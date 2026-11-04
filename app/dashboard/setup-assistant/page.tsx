@@ -3,10 +3,13 @@
 import { useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
+import { CLIENT_IMAGE_ACCEPT, ImagePrepError, prepareImageForUpload } from '@/lib/ai-setup/client-image';
 
 interface ServiceItem {
   name: string;
-  price: number;
+  /** null = Ace could not see a price; the owner must type one before Confirm. */
+  price: number | null;
+  needsPrice?: boolean;
   duration_minutes: number;
   deposit_amount: number;
   description: string;
@@ -14,9 +17,63 @@ interface ServiceItem {
 
 interface ProductItem {
   name: string;
-  price: number;
+  /** null = Ace could not see a price; the owner must type one before Confirm. */
+  price: number | null;
+  needsPrice?: boolean;
   description: string;
   category: string;
+  /** Product photo kept in the browser until the owner confirms. */
+  photoFile?: File;
+  photoPreview?: string;
+  /** Set once the photo has been uploaded during Confirm. */
+  imageUrl?: string;
+}
+
+interface AceImageItem {
+  kind?: 'product' | 'service';
+  name?: string;
+  price?: number | null;
+  description?: string;
+  category?: string;
+  duration_minutes?: number;
+}
+
+type ImageMode = 'menu' | 'product_photo';
+
+/** Price input → state. Clearing an Ace item that had no price keeps it unpriced. */
+function priceFromInput(value: string, needsPrice?: boolean): number | null {
+  if (value === '') return needsPrice ? null : 0;
+  return Number(value);
+}
+
+function priceInputValue(price: number | null): number | '' {
+  return price === null ? '' : (price || '');
+}
+
+const MISSING_PRICE_CLASS = 'border-red-500 bg-red-50 dark:border-red-500 dark:bg-red-900/20';
+
+async function readJson(res: Response): Promise<Record<string, any>> {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+/** Turn an /api/ai-setup/apply response into one readable message. */
+function describeApplyFailure(data: Record<string, any>): string {
+  if (typeof data.error === 'string' && data.error) return data.error;
+  const lines: string[] = [];
+  const labels: Record<string, string> = { services: 'Services', products: 'Products', operating_hours: 'Operating hours', greeting: 'Bot greeting' };
+  for (const [key, section] of Object.entries((data.results || {}) as Record<string, any>)) {
+    if (!section || typeof section !== 'object') continue;
+    const label = labels[key] || key;
+    if (Array.isArray(section.errors)) {
+      for (const e of section.errors) lines.push(`${label}: "${e?.name}" — ${e?.error}`);
+    }
+    if (section.error) lines.push(`${label}: ${section.error}`);
+  }
+  return lines.length ? `Some items were not created:\n${lines.join('\n')}` : 'Failed to apply setup. Please try again.';
 }
 
 interface OperatingHours {
@@ -123,10 +180,12 @@ export default function SetupAssistantPage() {
 
   // Image upload
   const [parsing, setParsing] = useState(false);
+  const [imageMessage, setImageMessage] = useState<string | null>(null);
 
   // Apply
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   // ── Step 1: What type of business ──
   const handleBusinessType = (type: 'services' | 'products' | 'both') => {
@@ -174,51 +233,128 @@ export default function SetupAssistantPage() {
     setParsingText(false);
   };
 
-  // ── Image upload → AI extracts items ──
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setParsing(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('business_id', business.id);
-    formData.append('type', businessType === 'products' ? 'products' : 'services');
-    try {
-      const res = await fetch('/api/ai-setup/parse-image', { method: 'POST', body: formData });
-      if (res.ok) {
-        const data = await res.json();
-        const items = data.items || [];
-        if (items.length === 0) {
-          alert(data.message || 'Could not read the image clearly. Try uploading a clearer photo with visible text and prices, or add items manually.');
-        } else if (data.type === 'products' || businessType === 'products') {
-          setProducts(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
-            name: (item.name as string) || '', price: (item.price as number) || 0,
-            description: (item.description as string) || '', category: (item.category as string) || '',
-          }))]);
-        } else {
-          setServices(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
-            name: (item.name as string) || '', price: (item.price as number) || 0,
-            duration_minutes: (item.duration_minutes as number) || 30, deposit_amount: 0,
-            description: (item.description as string) || '',
-          }))]);
-        }
-      } else {
-        alert('Ace couldn\'t read that image. Try a clearer photo or add items manually.');
-      }
-    } catch {
-      alert('Something went wrong reading the image. Please try again.');
-    }
-    setParsing(false);
+  // Where an Ace item goes: by business type, and by the item's kind when the business offers both
+  const offersProducts = businessType === 'products' || businessType === 'both';
+  const routeToProducts = (kind: AceImageItem['kind']) =>
+    businessType === 'products' || (businessType === 'both' && kind !== 'service');
+
+  // ── Image upload → Ace proposes items (nothing is saved until Confirm) ──
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, mode: ImageMode) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
+    if (files.length === 0) return;
+    setParsing(true);
+    setImageMessage(null);
+    const problems: string[] = [];
+
+    // One image at a time: each image is one Ace request
+    for (const original of files) {
+      const label = files.length > 1 ? `${original.name}: ` : '';
+      let file: File;
+      try {
+        file = await prepareImageForUpload(original);
+      } catch (err) {
+        problems.push(label + (err instanceof ImagePrepError ? err.message : 'Could not prepare this photo.'));
+        continue;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('business_id', business.id);
+      formData.append('mode', mode);
+      try {
+        const res = await fetch('/api/ai-setup/parse-image', { method: 'POST', body: formData });
+        const data = await readJson(res);
+        if (!res.ok) {
+          problems.push(label + (data.error || 'Ace couldn\'t read that image. Try a clearer photo or add items manually.'));
+          if (res.status === 403 || res.status === 429) break; // allowance or rate limit reached — stop sending more
+          continue;
+        }
+        const items: AceImageItem[] = Array.isArray(data.items) ? data.items : [];
+        if (items.length === 0) {
+          problems.push(label + (data.message || 'Could not read the image clearly. Try a clearer photo or add items manually.'));
+          continue;
+        }
+
+        const newProducts: ProductItem[] = [];
+        const newServices: ServiceItem[] = [];
+        for (const item of items) {
+          const price = typeof item.price === 'number' && Number.isFinite(item.price) ? item.price : null;
+          if (mode === 'product_photo' || routeToProducts(item.kind)) {
+            const product: ProductItem = {
+              name: item.name || '', price, needsPrice: price === null,
+              description: item.description || '', category: item.category || '',
+            };
+            if (mode === 'product_photo') {
+              product.photoFile = file;
+              product.photoPreview = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined;
+            }
+            newProducts.push(product);
+          } else {
+            newServices.push({
+              name: item.name || '', price, needsPrice: price === null,
+              duration_minutes: item.duration_minutes || 30, deposit_amount: 0,
+              description: item.description || '',
+            });
+          }
+        }
+        if (newProducts.length) setProducts(prev => [...prev, ...newProducts]);
+        if (newServices.length) setServices(prev => [...prev, ...newServices]);
+      } catch {
+        problems.push(label + 'Something went wrong reading the image. Please try again.');
+      }
+    }
+
+    if (problems.length) setImageMessage(problems.join('\n'));
+    setParsing(false);
   };
+
+  const totalItems = services.filter(s => s.name.trim()).length + products.filter(p => p.name.trim()).length;
+  const unpricedCount = services.filter(s => s.name.trim() && s.price === null).length
+    + products.filter(p => p.name.trim() && p.price === null).length;
+  const hasDecimalPrice = [...services, ...products].some(i => i.name.trim() && i.price !== null && !Number.isInteger(i.price));
 
   // ── Apply setup ──
   const handleApply = async () => {
+    if (unpricedCount > 0) return;
     setApplying(true);
+    setApplyError(null);
     try {
+      // 1. Upload product photos now that the owner has confirmed
+      const withPhotos = [...products];
+      for (let i = 0; i < withPhotos.length; i++) {
+        const p = withPhotos[i];
+        if (!p.name.trim() || !p.photoFile || p.imageUrl) continue;
+        const fd = new FormData();
+        fd.append('file', p.photoFile);
+        fd.append('business_id', business.id);
+        const upRes = await fetch('/api/products/upload-image', { method: 'POST', body: fd });
+        const upData = await readJson(upRes);
+        if (!upRes.ok || typeof upData.url !== 'string') {
+          setProducts(withPhotos);
+          setApplyError(`Couldn't upload the photo for "${p.name}": ${upData.error || 'Upload failed.'} Nothing was created — please try again.`);
+          setApplying(false);
+          return;
+        }
+        // Keep the URL so a retry does not upload the same photo again
+        withPhotos[i] = { ...p, imageUrl: upData.url };
+      }
+      setProducts(withPhotos);
+
+      // 2. Create everything
       const payload: Record<string, unknown> = { business_id: business.id };
-      if (services.length > 0) payload.services = services.filter(s => s.name.trim());
-      if (products.length > 0) payload.products = products.filter(p => p.name.trim());
+      if (services.length > 0) {
+        payload.services = services.filter(s => s.name.trim()).map(s => ({
+          name: s.name, price: s.price, duration_minutes: s.duration_minutes,
+          deposit_amount: s.deposit_amount, description: s.description,
+        }));
+      }
+      if (withPhotos.length > 0) {
+        payload.products = withPhotos.filter(p => p.name.trim()).map(p => ({
+          name: p.name, price: p.price, description: p.description, category: p.category,
+          ...(p.imageUrl ? { image_url: p.imageUrl } : {}),
+        }));
+      }
       if (Object.keys(hours).length > 0) payload.operating_hours = hours;
       if (greeting.trim()) payload.greeting = greeting.trim();
       const res = await fetch('/api/ai-setup/apply', {
@@ -226,18 +362,18 @@ export default function SetupAssistantPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
+      const data = await readJson(res);
+      // Only a fully successful apply counts as complete
+      if (res.ok && data.success === true) {
         setApplied(true);
       } else {
-        alert('Failed to apply setup. Please try again.');
+        setApplyError(describeApplyFailure(data));
       }
     } catch {
-      alert('Something went wrong. Please try again.');
+      setApplyError('Something went wrong. Please try again.');
     }
     setApplying(false);
   };
-
-  const totalItems = services.filter(s => s.name.trim()).length + products.filter(p => p.name.trim()).length;
 
   // ── Success ──
   if (applied) {
@@ -321,7 +457,7 @@ export default function SetupAssistantPage() {
         <div className="space-y-4">
           {/* Services section */}
           {(businessType === 'services' || businessType === 'both') && (
-            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-3">
+            <section aria-label={config.itemPlural} className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{config.itemPlural} ({services.length})</h3>
                 <button onClick={addService} className="text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add manually</button>
@@ -332,8 +468,10 @@ export default function SetupAssistantPage() {
                 <div key={i} className="flex items-center gap-2">
                   <input value={s.name} onChange={e => { const c = [...services]; c[i] = { ...c[i], name: e.target.value }; setServices(c); }}
                     placeholder={config.itemLabel} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
-                  <input type="number" value={s.price || ''} onChange={e => { const c = [...services]; c[i] = { ...c[i], price: Number(e.target.value) }; setServices(c); }}
-                    placeholder={config.priceLabel} className="w-20 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <input type="number" min={0} value={priceInputValue(s.price)} onChange={e => { const c = [...services]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].needsPrice) }; setServices(c); }}
+                    aria-label={`${config.priceLabel} for ${s.name || config.itemLabel}`} aria-invalid={s.price === null}
+                    placeholder={s.price === null ? 'Add price' : config.priceLabel}
+                    className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${s.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
                   <input type="number" value={s.duration_minutes || ''} onChange={e => { const c = [...services]; c[i] = { ...c[i], duration_minutes: Number(e.target.value) }; setServices(c); }}
                     placeholder="Min" title={config.durationLabel} className="w-16 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
                   <button onClick={() => setServices(services.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
@@ -341,29 +479,56 @@ export default function SetupAssistantPage() {
                   </button>
                 </div>
               ))}
-            </div>
+            </section>
           )}
 
           {/* Products section */}
-          {(businessType === 'products' || businessType === 'both') && (
-            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-3">
+          {offersProducts && (
+            <section aria-label="Products" className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Products ({products.length})</h3>
                 <button onClick={addProduct} className="text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add manually</button>
               </div>
 
               {products.map((p, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input value={p.name} onChange={e => { const c = [...products]; c[i] = { ...c[i], name: e.target.value }; setProducts(c); }}
-                    placeholder="Product name" className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
-                  <input type="number" value={p.price || ''} onChange={e => { const c = [...products]; c[i] = { ...c[i], price: Number(e.target.value) }; setProducts(c); }}
-                    placeholder="Price" className="w-20 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
-                  <button onClick={() => setProducts(products.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
-                    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
+                <div key={i} className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    {(p.photoPreview || p.imageUrl) && (
+                      // eslint-disable-next-line @next/next/no-img-element -- local blob preview, not optimisable
+                      <img src={p.photoPreview || p.imageUrl} alt={`Photo of ${p.name || 'product'}`} className="h-9 w-9 rounded object-cover flex-shrink-0" />
+                    )}
+                    <input value={p.name} onChange={e => { const c = [...products]; c[i] = { ...c[i], name: e.target.value }; setProducts(c); }}
+                      placeholder="Product name" className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                    <input type="number" min={0} value={priceInputValue(p.price)} onChange={e => { const c = [...products]; c[i] = { ...c[i], price: priceFromInput(e.target.value, c[i].needsPrice) }; setProducts(c); }}
+                      aria-label={`Price for ${p.name || 'product'}`} aria-invalid={p.price === null}
+                      placeholder={p.price === null ? 'Add price' : 'Price'}
+                      className={`w-20 text-sm border rounded px-2 py-1.5 dark:bg-gray-700 dark:text-gray-100 ${p.price === null ? MISSING_PRICE_CLASS : 'border-gray-200 dark:border-gray-600'}`} />
+                    <button onClick={() => {
+                      if (p.photoPreview && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(p.photoPreview);
+                      setProducts(products.filter((_, j) => j !== i));
+                    }} aria-label={`Remove ${p.name || 'product'}`} className="text-red-400 hover:text-red-600">
+                      <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                  {p.photoFile && (
+                    <div className="flex gap-2 pl-11">
+                      <input value={p.category} onChange={e => { const c = [...products]; c[i] = { ...c[i], category: e.target.value }; setProducts(c); }}
+                        placeholder="Category" aria-label={`Category for ${p.name || 'product'}`} maxLength={100}
+                        className="w-32 text-xs border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                      <input value={p.description} onChange={e => { const c = [...products]; c[i] = { ...c[i], description: e.target.value }; setProducts(c); }}
+                        placeholder="Description" aria-label={`Description for ${p.name || 'product'}`} maxLength={1000}
+                        className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                    </div>
+                  )}
                 </div>
               ))}
-            </div>
+            </section>
+          )}
+
+          {unpricedCount > 0 && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              Ace couldn&apos;t see a price for {unpricedCount} item{unpricedCount !== 1 ? 's' : ''}. Type a price in the highlighted box{unpricedCount !== 1 ? 'es' : ''} before you confirm.
+            </p>
           )}
 
           {/* Paste text → AI extracts */}
@@ -397,23 +562,39 @@ export default function SetupAssistantPage() {
 
           {/* Upload image → AI extracts (hidden for faith-based and non-profit) */}
           {!noProductCategory && (
-          <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-4">
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-              Or upload a photo of your {businessType === 'products' ? 'product catalog' : 'price list'}
+          <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-4 space-y-3">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Or upload photos and let Ace read them
             </p>
-            <label className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-600 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
-              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" disabled={parsing} />
-              {parsing ? (
-                <span className="text-sm text-gray-500">Ace is reading your image...</span>
-              ) : (
-                <>
+            <p className="text-xs text-gray-400">Each photo counts as one Ace request. Nothing is created until you confirm.</p>
+            {parsing ? (
+              <p role="status" className="text-sm text-gray-500 py-3 text-center">Ace is reading your image...</p>
+            ) : (
+              <div className={`grid gap-2 ${offersProducts ? 'sm:grid-cols-2' : ''}`}>
+                <label className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
+                  <input type="file" accept={CLIENT_IMAGE_ACCEPT} multiple onChange={e => handleImageUpload(e, 'menu')} className="hidden" disabled={parsing}
+                    aria-label="Upload photos of a menu or price list" />
                   <svg aria-hidden="true" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  <span className="text-sm text-gray-500">Click to upload photo</span>
-                </>
-              )}
-            </label>
+                  <span className="text-sm text-gray-500">Menu or price list</span>
+                </label>
+                {offersProducts && (
+                  <label className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
+                    <input type="file" accept={CLIENT_IMAGE_ACCEPT} multiple onChange={e => handleImageUpload(e, 'product_photo')} className="hidden" disabled={parsing}
+                      aria-label="Upload photos of single products" />
+                    <svg aria-hidden="true" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span className="text-sm text-gray-500">Photo of a product</span>
+                  </label>
+                )}
+              </div>
+            )}
+            {imageMessage && (
+              <p role="alert" className="text-sm text-red-600 dark:text-red-400 whitespace-pre-line">{imageMessage}</p>
+            )}
           </div>
           )}
 
@@ -553,7 +734,9 @@ export default function SetupAssistantPage() {
                 {services.filter(s => s.name.trim()).map((s, i) => (
                   <div key={i} className="flex justify-between text-sm">
                     <span className="text-gray-700 dark:text-gray-300">{s.name}</span>
-                    <span className="text-gray-500">{s.price > 0 ? `${s.price}` : 'Free'} &middot; {s.duration_minutes}min</span>
+                    {s.price === null
+                      ? <span className="text-red-600 dark:text-red-400 font-medium">Price needed</span>
+                      : <span className="text-gray-500">{s.price > 0 ? `${s.price}` : 'Free'} &middot; {s.duration_minutes}min</span>}
                   </div>
                 ))}
               </div>
@@ -567,8 +750,10 @@ export default function SetupAssistantPage() {
               <div className="space-y-1">
                 {products.filter(p => p.name.trim()).map((p, i) => (
                   <div key={i} className="flex justify-between text-sm">
-                    <span className="text-gray-700 dark:text-gray-300">{p.name}</span>
-                    <span className="text-gray-500">{p.price}</span>
+                    <span className="text-gray-700 dark:text-gray-300">{p.name}{(p.photoFile || p.imageUrl) ? ' (with photo)' : ''}</span>
+                    {p.price === null
+                      ? <span className="text-red-600 dark:text-red-400 font-medium">Price needed</span>
+                      : <span className="text-gray-500">{p.price}</span>}
                   </div>
                 ))}
               </div>
@@ -606,11 +791,25 @@ export default function SetupAssistantPage() {
             <p className="text-sm text-gray-400 text-center py-4">Nothing to create yet. Go back and add some items.</p>
           )}
 
+          {unpricedCount > 0 && (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {unpricedCount} item{unpricedCount !== 1 ? 's need' : ' needs'} a price. Go back to your items and type the price{unpricedCount !== 1 ? 's' : ''} before you confirm.
+            </p>
+          )}
+
+          {hasDecimalPrice && (
+            <p className="text-xs text-gray-500">Prices are saved as whole numbers, so decimals are rounded (e.g. 12.50 becomes 13).</p>
+          )}
+
+          {applyError && (
+            <p role="alert" className="text-sm text-red-600 dark:text-red-400 whitespace-pre-line">{applyError}</p>
+          )}
+
           <div className="flex justify-between">
             <button onClick={() => setStep('greeting')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
             <button
               onClick={handleApply}
-              disabled={applying || (totalItems === 0 && Object.keys(hours).length === 0 && !greeting)}
+              disabled={applying || unpricedCount > 0 || (totalItems === 0 && Object.keys(hours).length === 0 && !greeting)}
               className="px-6 py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {applying ? 'Setting up...' : 'Confirm & Create'}

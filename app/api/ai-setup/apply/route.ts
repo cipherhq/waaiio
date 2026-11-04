@@ -3,11 +3,11 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
-import { buildAiSetupServiceRow } from '@/lib/services/payload-builders';
+import { buildAiSetupProductRow, buildAiSetupServiceRow } from '@/lib/services/payload-builders';
 
 interface ServiceItem {
   name: string;
-  price: number;
+  price: number | null;
   duration_minutes?: number;
   deposit_amount?: number;
   description?: string;
@@ -15,9 +15,31 @@ interface ServiceItem {
 
 interface ProductItem {
   name: string;
-  price: number;
+  price: number | null;
   description?: string;
   category?: string;
+  image_url?: string | null;
+}
+
+interface ItemError { name: string; error: string }
+
+const MAX_ITEMS_PER_SECTION = 500;
+
+/** Build each row independently so one bad item never sinks the batch. */
+function buildRows<T, R>(items: T[], nameOf: (item: T) => string, build: (item: T) => R) {
+  const rows: R[] = [];
+  const errors: ItemError[] = [];
+  for (const item of items) {
+    try {
+      rows.push(build(item));
+    } catch (err) {
+      errors.push({
+        name: nameOf(item).slice(0, 200),
+        error: err instanceof RangeError ? err.message : 'Invalid item.',
+      });
+    }
+  }
+  return { rows, errors };
 }
 
 interface OperatingHours {
@@ -40,6 +62,12 @@ export async function POST(request: NextRequest) {
   };
 
   if (!business_id) return NextResponse.json({ error: 'Missing business_id' }, { status: 400 });
+  if ((services !== undefined && !Array.isArray(services)) || (products !== undefined && !Array.isArray(products))) {
+    return NextResponse.json({ error: 'services and products must be lists' }, { status: 400 });
+  }
+  if ((services?.length || 0) > MAX_ITEMS_PER_SECTION || (products?.length || 0) > MAX_ITEMS_PER_SECTION) {
+    return NextResponse.json({ error: `At most ${MAX_ITEMS_PER_SECTION} items per section` }, { status: 400 });
+  }
 
   // Verify ownership + get tier
   const { data: biz } = await supabase
@@ -87,15 +115,26 @@ export async function POST(request: NextRequest) {
 
         let sortOrder = (lastService?.sort_order ?? -1) + 1;
 
-        const rows = newServices.map((s) => buildAiSetupServiceRow({
+        const { rows, errors } = buildRows(newServices, (s) => String(s.name), (s) => buildAiSetupServiceRow({
           businessId: business_id, name: s.name, price: s.price,
           duration_minutes: s.duration_minutes, deposit_amount: s.deposit_amount,
           description: s.description, sortOrder: sortOrder++,
         }));
 
-        const { data: created, error } = await service.from('services').insert(rows).select('id, name');
-        if (error) logger.error('[AI-SETUP] Services insert error:', error.message);
-        results.services = { created: created?.length || 0, skipped: skippedServices, error: error?.message };
+        let created = 0;
+        let insertError: string | undefined;
+        if (rows.length > 0) {
+          const { data, error } = await service.from('services').insert(rows).select('id, name');
+          if (error) logger.error('[AI-SETUP] Services insert error:', error.message);
+          created = data?.length || 0;
+          // Raw database messages stay in the server log
+          insertError = error ? 'Could not save these items. Please try again.' : undefined;
+        }
+        results.services = {
+          created, skipped: skippedServices,
+          ...(errors.length ? { errors } : {}),
+          ...(insertError ? { error: insertError } : {}),
+        };
       } else {
         results.services = { created: 0, skipped: skippedServices };
       }
@@ -125,19 +164,27 @@ export async function POST(request: NextRequest) {
 
         let sortOrder = (lastProduct?.sort_order ?? -1) + 1;
 
-        const rows = newProducts.map((p) => ({
-          business_id,
-          name: String(p.name).trim(),
-          price: p.price || 0,
-          description: p.description || null,
-          category: p.category || null,
-          is_active: true,
-          sort_order: sortOrder++,
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const { rows, errors } = buildRows(newProducts, (p) => String(p.name), (p) => buildAiSetupProductRow({
+          businessId: business_id, name: p.name, price: p.price,
+          description: p.description, category: p.category, image_url: p.image_url,
+          sortOrder: sortOrder++, supabaseUrl,
         }));
 
-        const { data: created, error } = await service.from('products').insert(rows).select('id, name');
-        if (error) logger.error('[AI-SETUP] Products insert error:', error.message);
-        results.products = { created: created?.length || 0, skipped: skippedProducts, error: error?.message };
+        let created = 0;
+        let insertError: string | undefined;
+        if (rows.length > 0) {
+          const { data, error } = await service.from('products').insert(rows).select('id, name');
+          if (error) logger.error('[AI-SETUP] Products insert error:', error.message);
+          created = data?.length || 0;
+          // Raw database messages stay in the server log
+          insertError = error ? 'Could not save these items. Please try again.' : undefined;
+        }
+        results.products = {
+          created, skipped: skippedProducts,
+          ...(errors.length ? { errors } : {}),
+          ...(insertError ? { error: insertError } : {}),
+        };
       } else {
         results.products = { created: 0, skipped: skippedProducts };
       }
@@ -179,7 +226,15 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    return NextResponse.json({ success: true, results });
+    // Any section error (item validation or write failure) means the setup is
+    // NOT complete — the client must not show success. Re-running is safe:
+    // already-created names are skipped as duplicates.
+    const failed = Object.values(results).some((r) => {
+      const section = r as { error?: string; errors?: ItemError[] };
+      return Boolean(section.error) || Boolean(section.errors?.length);
+    });
+
+    return NextResponse.json({ success: !failed, results }, { status: failed ? 207 : 200 });
   } catch (error) {
     logger.error('[AI-SETUP] Apply error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to apply setup' }, { status: 500 });

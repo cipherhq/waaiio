@@ -10,6 +10,7 @@ import { assertValidDepositConfiguration } from '@/lib/payments/deposit-amount-a
  *   - buildGivingServicePayload: always includes service_type='giving'
  *   - buildServicePayload: never includes service_type (DB default 'booking' applies)
  *   - buildAiSetupServiceRow: never includes service_type (DB default 'booking' applies)
+ *   - buildAiSetupProductRow: products table row for AI Setup (same price clamping/rounding)
  */
 
 // ── Giving page payload ──
@@ -124,16 +125,42 @@ export function buildServicePayload(input: ServiceFormInput) {
 export interface AiSetupServiceInput {
   businessId: string;
   name: string;
-  price: number;
+  /** Required. null/undefined/non-numeric = no price → rejected (Owner decision 2026-11-04). */
+  price: number | null | undefined;
   duration_minutes?: number;
   deposit_amount?: number;
   description?: string | null;
   sortOrder: number;
 }
 
+const AI_SETUP_MAX_PRICE = 99999999;
+
+/**
+ * Shared AI Setup price rule: a price must be present and numeric; it is
+ * clamped to [0, 99999999] and rounded to a whole number because
+ * services.price / services.deposit_amount / products.price are INTEGER columns.
+ * Throws RangeError when no usable price was supplied.
+ */
+function resolveAiSetupPrice(value: unknown): number {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    throw new RangeError('Price is required.');
+  }
+  if (typeof value !== 'number' && typeof value !== 'string') throw new RangeError('Price must be a number.');
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new RangeError('Price must be a number.');
+  return Math.round(Math.max(0, Math.min(n, AI_SETUP_MAX_PRICE)));
+}
+
+function requireAiSetupName(value: unknown): string {
+  const name = String(value ?? '').trim().slice(0, 200).trim();
+  if (!name) throw new RangeError('Name is required.');
+  return name;
+}
+
 export function buildAiSetupServiceRow(input: AiSetupServiceInput) {
-  const price = Math.max(0, Math.min(Number(input.price) || 0, 99999999));
-  const deposit = Math.max(0, Math.min(Number(input.deposit_amount) || 0, 99999999));
+  const price = resolveAiSetupPrice(input.price);
+  const depositRaw = Number(input.deposit_amount);
+  const deposit = Math.round(Math.max(0, Math.min(Number.isFinite(depositRaw) ? depositRaw : 0, AI_SETUP_MAX_PRICE)));
 
   assertValidDepositConfiguration({
     price,
@@ -143,12 +170,66 @@ export function buildAiSetupServiceRow(input: AiSetupServiceInput) {
 
   return {
     business_id: input.businessId,
-    name: String(input.name).trim().slice(0, 200),
+    name: requireAiSetupName(input.name),
     price,
-    duration_minutes: Math.max(0, Math.min(Number(input.duration_minutes) || 30, 1440)),
+    duration_minutes: Math.max(0, Math.min(Math.round(Number(input.duration_minutes) || 30), 1440)),
     deposit_amount: deposit,
     description: input.description ? String(input.description).slice(0, 1000) : null,
     price_is_variable: false,
+    is_active: true,
+    sort_order: input.sortOrder,
+  };
+}
+
+// ── AI Setup product row ──
+
+export interface AiSetupProductInput {
+  businessId: string;
+  name: string;
+  /** Required. null/undefined/non-numeric = no price → rejected (Owner decision 2026-11-04). */
+  price: number | null | undefined;
+  description?: string | null;
+  category?: string | null;
+  /** Must be this business's own product image in Supabase Storage (see isAiSetupProductImageUrl). */
+  image_url?: string | null;
+  sortOrder: number;
+  supabaseUrl: string | undefined;
+}
+
+/**
+ * True only for a public URL of a file written by /api/products/upload-image for
+ * THIS business: {SUPABASE_URL}/storage/v1/object/public/business-documents/{businessId}/products/{file}.
+ * Rejects other businesses' files, outside hosts, nested paths and traversal.
+ */
+export function isAiSetupProductImageUrl(url: unknown, businessId: string, supabaseUrl: string | undefined): boolean {
+  if (typeof url !== 'string' || !supabaseUrl || !businessId) return false;
+  const base = supabaseUrl.replace(/\/+$/, '');
+  const prefix = `${base}/storage/v1/object/public/business-documents/${businessId}/products/`;
+  if (!url.startsWith(prefix)) return false;
+  const fileName = url.slice(prefix.length);
+  return /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/.test(fileName) && !fileName.includes('..');
+}
+
+export function buildAiSetupProductRow(input: AiSetupProductInput) {
+  const price = resolveAiSetupPrice(input.price);
+
+  let imageUrl: string | null = null;
+  if (input.image_url !== undefined && input.image_url !== null && input.image_url !== '') {
+    if (!isAiSetupProductImageUrl(input.image_url, input.businessId, input.supabaseUrl)) {
+      throw new RangeError('Product photo is not a valid upload for this business.');
+    }
+    imageUrl = input.image_url;
+  }
+
+  const category = input.category ? String(input.category).trim().slice(0, 100) : '';
+
+  return {
+    business_id: input.businessId,
+    name: requireAiSetupName(input.name),
+    price,
+    description: input.description ? String(input.description).slice(0, 1000) : null,
+    category: category || null,
+    image_url: imageUrl,
     is_active: true,
     sort_order: input.sortOrder,
   };
