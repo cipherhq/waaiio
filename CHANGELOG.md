@@ -46,6 +46,41 @@
 - `app/dashboard/setup-assistant/page.tsx`: pasted-text items from Ace without a price (missing, blank or not a number) are marked "price needed" and block Confirm, instead of being saved as Free. A price of 0 from Ace is kept. Image and text items share `aceItemPrice`. Test: 1 new rendered case.
 - Could break: until the chat route is decided, only images count. Free plans allow 3 Ace uses a month, so a free business can read 3 images a month.
 
+## 2026-11-03 — Release Process V3: reusable release gate (schema 8)
+
+- Owner-approved plan (Issue #843, `RELEASE_GATE_V2.md` §9). One reusable gate replaces a new gate profile per release. Docs: `docs/RELEASE_V3_GATE.md`.
+- New `scripts/release-gate-v3.mjs` with `scripts/release-v3/`:
+  - lane classifier (path allowlist plus content check; unknown or payment paths go to full);
+  - read-only DB observer (psql, `release_observer` login);
+  - admission against an Owner-approved lock: ledger complete set, exact statements, catalog = lock + deltas, M430 absence;
+  - Vercel/GitHub reads: admin pin always from `targets.production.id`;
+  - packet: 24h, single use, bound by sha256 to a recorded Owner approval.
+- Workflows `release-prepare.yml` (reads only, writes the packet) and `release-deploy.yml` (re-checks production before every mutation; merchant then admin; one alias POST; no retry; no automatic rollback).
+- Catalog oracle (`scripts/release-v3/catalog-oracle.mjs`, `catalog-v3.sql`) builds the catalog delta of each migration in disposable PostgreSQL 17. Committed: `supabase/catalog-deltas/508_business_control_columns_guard.json` (equals the change measured in production) and `scripts/release-v3/m430-identities.json`.
+- `scripts/release-v3/lock.json`: production and staging catalog and ledger digests after M508 (read-only connector, 2026-11-03); certified `bdc007a8`.
+  - Tied to the approved schema 9 release: re-read with the schema 9 query and ledger recipe, both environments equal its approved values exactly.
+  - Per-object maps in `lock-catalog-{production,staging}.json`.
+- Classifier: a document is docs-only only if no tooling reads it and it matches no full-lane path (the stricter class wins). `RELEASE_GATE_V2.md` §9.3 and the §9 adoption line are worded to match (#844 review follow-ups).
+- Review 1 fixes:
+  - the classifier scans the whole before and after version of every allowlisted code file;
+  - it follows imports into repository modules at the target;
+  - it parses imports across lines and comments, and rejects `..` in aliases;
+  - payment-named paths, symlinks and submodules are always full;
+  - an import counts as type-only only if its clause is exactly `type { names }` (no comments), and only when its `import`/`export` keyword starts a line, so comments cannot hide a real import (no hand-written lexing); computed global lookups are full.
+- Review 2 fixes: any `\u`/`\x` escape, external form posts and active SVG content (namespaced script, entities, DTDs, external links) are full; runtime identity also checks the Supabase project; the observer role must have no role memberships; 90-day release-record retention documented.
+- Review 2, round 7: code construction and reflection (`constructor`, `prototype`, `global`, property descriptors), timers not given an inline function, workers, beacons and string-assembled computed lookups are full. The docs state the classifier's limit: a fail-closed filter against accidental drift, not an adversarial sandbox; the standard-lane reviewer stays the backstop (Owner decision 2026-11-04: accepted).
+- Prepare requires the 15 named CI jobs, including the payment suites. Optional `verify-full` TLS for the observer (`RELEASE_OBSERVER_CA_PEM`).
+- The observer role's claims are corrected: it inherits PUBLIC grants, and read-only is a session default. Production needs an Owner decision before the role is applied (private advisory). The `release-observer` environment must be restricted to `main`.
+- `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.
+- CI:
+  - new job "Catalog oracle (PostgreSQL 17)" (regenerates deltas; real-PG proof of the observer role, 6 tests), required through the existing "Migration validation" aggregator;
+  - advisory PR lane summary in the release-gate job;
+  - file-presence guards for the new tests.
+- `scripts/ci-bootstrap-test-db.sh`: optional `CI_BOOTSTRAP_PREREQUISITES_ONLY=1` (default behaviour unchanged).
+- Tests: `scripts/__tests__/release-v3-{classify,admission,gate}.test.ts` (unit and end-to-end prepare/deploy with faked platforms), plus `release-v3-observer.pg.test.ts`.
+- Runs no SQL in any environment and changes no setting. Schema 2–7 and 9 profiles are untouched until the first successful schema 8 release.
+- Could break: Migration validation now also needs the PG17 oracle job. A future migration PR must commit its catalog delta.
+
 ## 2026-11-04 — Table reservations: no phantom add-ons; confirmation names the table
 
 - `lib/bot/flows/scheduling.flow.ts`:
@@ -102,6 +137,18 @@
 - Docs: `docs/POSTLAUNCH_BOT_CODE_LOCK_RELEASE.md`. CI: file-presence guard for the new test.
 - Runs no SQL and changes no setting.
 - Could break: nothing for schema 2–7 manifests; their code paths and tests are unchanged.
+
+## 2026-11-03 — Governance: Release Process V3 final review fixes (#844, docs only)
+
+- The final #844 delta (`2a91ec57`, reviewer-of-record fixes) on top of the entry below:
+  - `RELEASE_GATE_V2.md` §9.1: until the reusable gate exists, each gate profile checks M430 absence read-only and records it.
+  - Migration discipline now names SECURITY DEFINER functions in private schemas.
+  - Release packets record MCP and Graphify checks once §9.4 applies.
+  - §9.3 adds the content check (`'use server'`, data/payment/provider imports, env reads, network/storage calls make an allowlisted file full); a reviewer may raise a lane, never lower it.
+  - §9.3 lists governance and agent-instruction files that need CTO review.
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: "ChatGPT" / "ChatGPT/CTO" wording replaced by the CTO reviewer of record (an independent Claude reviewer, every time).
+- `CLAUDE.md`: CI Process wording (CI runs on every PR push and is the merge evidence).
+- Could break: nothing at runtime.
 
 ## 2026-11-03 — Governance: Release Process V3 (docs only)
 
