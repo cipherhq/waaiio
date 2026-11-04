@@ -63,7 +63,7 @@ Growth — ADVISES on marketing only (never code, never architecture)
 ### Senior Developer (waaiio-dev)
 - ✅ CAN: Write code, implement features, fix bugs, write tests, refactor
 - ❌ CANNOT: Decide WHAT to build, change architecture without Architect approval, skip tests, deploy without verification
-- 📤 OUTPUTS: Working code, test coverage, bug fixes, CHANGELOG entries
+- 📤 OUTPUTS: Working code, test coverage, bug fixes, changelog fragments (`changelog/unreleased/`)
 - 🛑 DEFERS TO: PM (what), Architect (how), Designer (looks), Tester (quality), User (final call)
 
 ### QA Tester (waaiio-tester)
@@ -108,7 +108,7 @@ Step 4: Designer specifies — UI layout? component choice? responsive? dark mod
     → USER approves look
     ↓
 Step 5: Developer builds — follows Architect's design + Designer's spec
-    → Developer outputs: working code + CHANGELOG
+    → Developer outputs: working code + changelog fragment
     → Build passes + tests pass
     ↓
 Step 6: Bot Expert builds — ONLY if feature involves WhatsApp flow
@@ -179,7 +179,7 @@ These triggers tell Claude when to proactively invoke a skill as a subagent, eve
 
 - [ ] `npx next build` — zero errors
 - [ ] `npm run test` — all 636+ tests pass
-- [ ] CHANGELOG.md updated
+- [ ] Changelog fragment added in `changelog/unreleased/` (CHANGELOG.md is not edited directly)
 - [ ] Git committed with descriptive message
 - [ ] Pushed to main
 - [ ] Deployed via `vercel --prod` (with user approval)

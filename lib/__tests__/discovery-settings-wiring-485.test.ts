@@ -109,7 +109,8 @@ describe('Fix A — Settings address captures Google coordinates', () => {
     // The update payload must include these coordinate fields
     expect(source).toContain('latitude: form.latitude');
     expect(source).toContain('longitude: form.longitude');
-    expect(source).toContain("city: form.city || null");
+    // #867: city is NOT NULL, so the payload sends the trimmed city (save is blocked when empty).
+    expect(source).toContain("city: form.city.trim()");
   });
 
   it('PlacesAutocomplete onChange captures placeData', () => {
@@ -186,7 +187,8 @@ describe('Fix A — Settings address captures Google coordinates', () => {
       source.indexOf('async function handleSave'),
       source.indexOf('async function handleSave') + 900
     );
-    expect(handleSaveBlock).toContain("city: form.city || null");
+    // #867: the payload sends the trimmed city; an empty city blocks the save instead of sending null.
+    expect(handleSaveBlock).toContain("city: form.city.trim()");
   });
 });
 
