@@ -34,10 +34,11 @@ const SAT = '2026-11-07';
 const MON = '2026-11-09';
 const TUE = '2026-11-10';
 const LATE = { open: '18:00', close: '02:00' };
+// Saturday has no entry (no usable hours => no business-hours check), so a
+// D+1 00:15 start is a valid booking for the cross-midnight overlap cases.
 const HOURS = {
   thursday: LATE,
-  friday: LATE,
-  saturday: { ...LATE, closed: false },
+  friday: { ...LATE, closed: false },
   monday: { open: '09:00', close: '17:00' }, // daytime
   tuesday: { open: '09:00', close: '00:00', is_open: true }, // closes at midnight
   wednesday: { closed: true },
@@ -254,10 +255,18 @@ suite('M510 overnight table reservations (real PostgreSQL)', () => {
       await expect(bookErr(biz, await resource(biz, { from: '18:00' }), FRI, '01:00')).rejects.toThrow(/^before_opening:/);
     });
 
-    it('unchanged from M476: with no table window the RPC does not check business opening for the start (01:00 + 90 on Friday)', async () => {
-      // Ends 02:30 on the same calendar day, so no midnight crossing; this path is exactly M476's.
+    it('01:00 start with no table window is rejected by business hours (before_opening)', async () => {
       const biz = await business();
-      expect((await book(client, biz, await resource(biz), FRI, '01:00')).slot_available).toBe(true);
+      await expect(bookErr(biz, await resource(biz), FRI, '01:00'))
+        .rejects.toThrow(/^before_opening:Earliest reservation time is 18:00$/);
+    });
+
+    it('15:00 start with no table window is rejected (before_opening); 18:00 is allowed', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      await expect(bookErr(biz, res, FRI, '15:00')).rejects.toThrow(/^before_opening:Earliest reservation time is 18:00$/);
+      await expect(bookErr(biz, res, FRI, '17:59')).rejects.toThrow(/^before_opening:/);
+      expect((await book(client, biz, res, FRI, '18:00')).slot_available).toBe(true);
     });
 
     it('a start of 24:00 is not before midnight and keeps past_midnight', async () => {
@@ -315,6 +324,63 @@ suite('M510 overnight table reservations (real PostgreSQL)', () => {
     }
   });
 
+  describe('start must fall inside business hours (Owner decision 2026-11-04, second)', () => {
+    const WED = '2026-11-11';
+
+    it('daytime 09:00-17:00: 08:00 is rejected (before_opening), 09:00 is allowed', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      await expect(bookErr(biz, res, MON, '08:00')).rejects.toThrow(/^before_opening:Earliest reservation time is 09:00$/);
+      expect((await book(client, biz, res, MON, '09:00')).slot_available).toBe(true);
+    });
+
+    it('daytime 09:00-17:00: must end by closing (15:30 + 90 ok, 16:00 + 90 after_closing)', async () => {
+      const biz = await business();
+      const res = await resource(biz);
+      expect((await book(client, biz, res, MON, '15:30')).slot_available).toBe(true);
+      await expect(bookErr(biz, await resource(biz), MON, '16:00'))
+        .rejects.toThrow(/^after_closing:Reservation would extend past closing time 17:00$/);
+    });
+
+    const closedDays: Array<[string, unknown]> = [
+      ['{closed:true}', { wednesday: { closed: true } }],
+      ['{open, close, closed:true}', { wednesday: { open: '09:00', close: '17:00', closed: true } }],
+      ['{open, close, is_open:false}', { wednesday: { open: '09:00', close: '17:00', is_open: false } }],
+    ];
+    for (const [name, hours] of closedDays) {
+      it(`closed day ${name} is rejected (day_unavailable)`, async () => {
+        const biz = await business(hours);
+        await expect(bookErr(biz, await resource(biz), WED, '12:00'))
+          .rejects.toThrow(/^day_unavailable:The business is closed on Wednesday$/);
+      });
+    }
+
+    const noUsableHours: Array<[string, unknown]> = [
+      ['{} hours', {}],
+      ['day missing', { monday: { open: '09:00', close: '17:00' } }],
+      ['12-hour strings', { wednesday: { open: '9am', close: '5pm' } }],
+      ['missing close', { wednesday: { open: '09:00' } }],
+      ['closed as string "true"', { wednesday: { open: '09:00', close: '17:00', closed: 'true' } }],
+      ['day is a string', { wednesday: '09:00-17:00' }],
+    ];
+    for (const [name, hours] of noUsableHours) {
+      it(`no usable hours (${name}) accepts as before: 03:00 and 20:00 on Wednesday`, async () => {
+        const biz = await business(hours);
+        const res = await resource(biz);
+        expect((await book(client, biz, res, WED, '03:00')).slot_available).toBe(true);
+        expect((await book(client, biz, res, WED, '20:00')).slot_available).toBe(true);
+      });
+    }
+
+    it("the table's own window still applies inside business hours", async () => {
+      const biz = await business();
+      await expect(bookErr(biz, await resource(biz, { from: '10:00' }), MON, '09:30')).rejects.toThrow(/^before_opening:Earliest reservation time is 10:00:00$/);
+      await expect(bookErr(biz, await resource(biz, { to: '15:00' }), MON, '14:00')).rejects.toThrow(/^after_closing:Reservation would extend past closing time 15:00:00$/);
+      const { rows: [r] } = await q(`INSERT INTO seating_resources (business_id, name, available_days) VALUES ($1, 'Weekend', '{saturday}') RETURNING id`, [biz]);
+      await expect(bookErr(biz, { id: r.id, duration: 90, deposit: 0 }, MON, '10:00')).rejects.toThrow(/^day_unavailable:This resource is not available on Monday$/);
+    });
+  });
+
   describe('overlap across D and D+1', () => {
     it('D 23:30-01:00 booked first blocks D+1 00:15', async () => {
       const biz = await business();
@@ -331,7 +397,8 @@ suite('M510 overnight table reservations (real PostgreSQL)', () => {
     });
 
     it('D-1 direction: Thursday 23:30-01:00 blocks Friday 00:30', async () => {
-      const biz = await business();
+      // Friday without hours, so 00:30 Friday is itself a valid start
+      const biz = await business({ thursday: LATE });
       const res = await resource(biz);
       expect((await book(client, biz, res, THU, '23:30')).slot_available).toBe(true);
       expect((await book(client, biz, res, FRI, '00:30')).slot_available).toBe(false);

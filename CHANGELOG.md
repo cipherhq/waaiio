@@ -4,23 +4,35 @@ Owner decisions (2026-11-04), table bookings only:
 - A closing time earlier than or equal to the opening time means the business closes the next day.
 - A late booking belongs to its start date. It must start before midnight and end at or before closing. Example: Fri 23:00–00:30 with Fri hours 18:00–02:00 is allowed and stored as Friday 23:00.
 - The database enforces this. Seating resources' own windows stay non-overnight (`seating_no_overnight` unchanged). Max duration stays 1–480.
+- Second decision, same day: the database rejects a table booking whose start falls outside the business's opening hours, even when the table has no window of its own. A closed day is rejected. A day with no usable hours is not checked (see "No usable hours" below).
 
 What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREATE OR REPLACE` of `public.book_table_atomic`, M476 body otherwise verbatim):
-- Reads `businesses.operating_hours -> <weekday of p_date>`. The day is overnight only when the entry is an object, `closed` is absent or JSON `false`, `is_open` is absent or JSON `true`, and `open`/`close` are both `HH:MM` strings matching `^([01]\d|2[0-3]):[0-5]\d$` with close ≤ open (a 00:00 close counts). Anything else is "not overnight" (fail closed).
+- Reads `businesses.operating_hours -> <weekday of p_date>` and sorts the day into one of three cases:
+  - **closed**: the entry is an object with `closed` = JSON `true` or `is_open` = JSON `false`;
+  - **usable hours**: an object, `closed` absent or JSON `false`, `is_open` absent or JSON `true`, and `open`/`close` both match `^([01]\d|2[0-3]):[0-5]\d$`. The day is overnight when close ≤ open (a 00:00 close counts);
+  - **no usable hours**: anything else (`{}` hours, day missing, missing keys, malformed values, a business row not found).
+- Only usable overnight hours allow an end past midnight (fail closed).
+- Business-hours checks (new):
+  - closed day → `day_unavailable` ("The business is closed on Wednesday");
+  - usable hours, overnight or daytime: the start must be ≥ open and before 24:00, else `before_opening` ("Earliest reservation time is 18:00"). Friday 18:00–02:00 rejects 01:00 and 15:00 and accepts 18:00;
+  - usable daytime hours: the end must be ≤ close, else `after_closing`. M476 had no business-hours end check, only the table's `available_to`.
+  - These run after the midnight checks below. So a booking that crosses midnight on a closed or daytime day still gets `past_midnight`, as before.
+  - The table's own `available_days` / `available_from` / `available_to` checks are unchanged and apply in addition.
+- **No usable hours: no business-hours check, exactly as M476.** Many businesses have `{}` hours, and the Owner has not decided to block them, so their tables can still be booked at any time of day (within the table's own window).
 - An end past 24:00 is allowed only on an overnight day, with a start before 24:00, ending at or before close + 24h. Rejections:
   - not an overnight day, or a start of `24:00` → `past_midnight` (unchanged M476 check);
   - overnight day but ending after closing → `after_closing` ("past closing time 02:00").
 - Advisory lock is per (business, resource), no longer per date, so bookings on neighbouring dates of the same table serialise.
 - Overlap uses one minute axis over `b.date` from D-1 to D+1, so D 23:30–01:00 and D+1 00:15 block each other in either order.
 - `supabase/catalog-deltas/510_table_overnight_reservations.json`: exactly one `modify` of `book_table_atomic` (new body hash; ACL, owner, INVOKER, no config unchanged). The replay's pre-510 digest of this function equals the production and staging lock digest.
-- `lib/__tests__/table-overnight-510.pg.test.ts` (43 cases, real PostgreSQL) and the matching `ci.yml` guard and unit-job exclude.
+- `lib/__tests__/table-overnight-510.pg.test.ts` (56 cases, real PostgreSQL) and the matching `ci.yml` guard and unit-job exclude.
 
-Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, `day_unavailable` / `before_opening` / `after_closing` from the table's own window, insert columns, error codes, `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`.
+Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, `day_unavailable` / `before_opening` / `after_closing` from the table's own window, insert columns, the set of error codes (no new code), `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`.
 
 Could break:
 - The RPC now reads `businesses` (service_role already has it). If that read is denied it errors, so the booking is refused.
 - All bookings for one table now queue on one lock instead of one per date; a busy table's bookings wait for each other briefly.
-- A start before the business opens is still not checked by the database (as in M476); only the table's own `available_from` is. The bot does not offer overnight slots yet; that is a separate app change.
+- Businesses with usable hours now get table bookings refused outside those hours, on closed days, or (daytime) past closing, even if the table has no window. Any app path that offers such times now gets an error. The bot builds table slots from the table's own window when it has one, otherwise from these business hours (`lib/bot/flows/shared/table-same-day.ts`). So a table whose window reaches outside the business hours (for example a table open 12:00–23:00 at a lounge open 18:00) can be offered a time the database now refuses with `before_opening`. The bot shows its "time not available" message for that code. The bot does not offer overnight slots yet; that is a separate app change.
 - Not applied anywhere. Staging and production need their own Owner approvals.
 
 ## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight
