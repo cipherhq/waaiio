@@ -9,6 +9,7 @@
  * Runs in CI's "Catalog oracle (PostgreSQL 17)" job.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { GUARD_BODY_SHA256 } from '../release-v3/db-observe.mjs';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -90,5 +91,44 @@ describe('release_observer role (release-observer-role.sql)', () => {
   });
   it('refuses to run twice (an existing role must be reviewed, not overwritten)', async () => {
     await expect(db.query(readFileSync('scripts/release-v3/release-observer-role.sql', 'utf8'))).rejects.toThrow('already exists');
+  });
+});
+
+// Replica-only login guard (release-observer-replica-guard.sql). Login event
+// triggers exist from PostgreSQL 17; CI runs 17, so this always runs there.
+// A disposable server is never a replica, so the guard must REFUSE the login.
+describe.runIf(major >= 17)('replica-only login guard (release-observer-replica-guard.sql)', () => {
+  const guardDb = `${database}_guard`;
+  let guarded: pg.Client;
+  beforeAll(async () => {
+    await admin.query(`CREATE DATABASE ${guardDb}`);
+    const u = new URL(url!); u.pathname = `/${guardDb}`;
+    guarded = new pg.Client({ connectionString: u.toString() }); await guarded.connect();
+    await guarded.query(readFileSync('scripts/release-v3/release-observer-replica-guard.sql', 'utf8'));
+  });
+  afterAll(async () => { await guarded?.end(); await admin.query(`DROP DATABASE IF EXISTS ${guardDb} WITH (FORCE)`); });
+
+  it('refuses release_observer on a server that is not a replica', async () => {
+    const c = new pg.Client({ host: parsed.hostname, port: Number(parsed.port || 5432), user: 'release_observer', password, database: guardDb });
+    await expect(c.connect()).rejects.toThrow('release_observer may only connect to a read replica');
+    await c.end().catch(() => {});
+  });
+  it('leaves every other login alone', async () => {
+    const u = new URL(url!); u.pathname = `/${guardDb}`;
+    const c = new pg.Client({ connectionString: u.toString() });
+    await c.connect();
+    expect((await c.query('SELECT 1 AS ok')).rows[0].ok).toBe(1);
+    await c.end();
+  });
+  it('the installed guard is enabled, on login, with exactly the body the gate pins', async () => {
+    const r = await guarded.query(`SELECT t.evtenabled AS enabled, t.evtevent AS event, encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') AS body
+      FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE t.evtname = 'release_observer_replica_only' AND n.nspname = 'release_ops'`);
+    expect(r.rows).toEqual([{ enabled: 'O', event: 'login', body: GUARD_BODY_SHA256 }]);
+  });
+  it('the guard function is not executable by PUBLIC and the schema is closed', async () => {
+    const r = await guarded.query(`SELECT has_function_privilege('release_observer', 'release_ops.release_observer_replica_only()', 'EXECUTE') AS fn,
+      has_schema_privilege('release_observer', 'release_ops', 'USAGE') AS sch`);
+    expect(r.rows[0]).toEqual({ fn: false, sch: false });
   });
 });

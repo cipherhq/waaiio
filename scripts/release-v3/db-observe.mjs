@@ -13,10 +13,18 @@ const here = file => new URL(file, import.meta.url);
 export const LEDGER_QUERY = readFileSync(here('./ledger-v3.sql'), 'utf8');
 export const LEDGER_QUERY_SHA256 = sha256(readFileSync(here('./ledger-v3.sql')));
 export const OBSERVER_ROLE = 'release_observer';
+// Production reads go to a read replica (Owner decision 2026-11-04): the server
+// enforces read-only there, and release-observer-replica-guard.sql refuses the
+// same login on the primary. Staging has no replica and no such exposure.
 export const ENVIRONMENTS = Object.freeze({
-  production: { project_ref: 'cxcmiqotkowhxinjbytg', secret: 'RELEASE_OBSERVER_PRODUCTION_URL' },
-  staging: { project_ref: 'tqjvrzopvtczxfxiwmnz', secret: 'RELEASE_OBSERVER_STAGING_URL' },
+  production: { project_ref: 'cxcmiqotkowhxinjbytg', secret: 'RELEASE_OBSERVER_PRODUCTION_URL', replica: true },
+  staging: { project_ref: 'tqjvrzopvtczxfxiwmnz', secret: 'RELEASE_OBSERVER_STAGING_URL', replica: false },
 });
+// The reviewed guard body, read from the SQL file the Owner applies.
+const GUARD_SQL = readFileSync(here('./release-observer-replica-guard.sql'), 'utf8');
+const GUARD_BODY = /AS \$\$([\s\S]*?)\$\$;/.exec(GUARD_SQL)?.[1];
+if (!GUARD_BODY) throw new Error('Replica guard body not found');
+export const GUARD_BODY_SHA256 = sha256(Buffer.from(GUARD_BODY, 'utf8'));
 
 const strip = sql => sql.split('\n').filter(line => !line.startsWith('--')).join('\n').trim().replace(/;$/, '');
 // One read-only transaction returns one JSON document.
@@ -28,6 +36,10 @@ SELECT json_build_object(
  'statement_timeout', current_setting('statement_timeout'),
  'role_flags', (SELECT json_build_object('super', rolsuper, 'bypassrls', rolbypassrls, 'createrole', rolcreaterole, 'createdb', rolcreatedb, 'replication', rolreplication) FROM pg_roles WHERE rolname = current_user),
  'role_memberships', (SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = current_user),
+ 'in_recovery', pg_is_in_recovery(),
+ 'replica_guard', (SELECT json_build_object('enabled', t.evtenabled, 'event', t.evtevent, 'body_sha256', encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex'))
+   FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE t.evtname = 'release_observer_replica_only' AND n.nspname = 'release_ops' AND p.proname = 'release_observer_replica_only'),
  'server_version_num', current_setting('server_version_num'),
  'observed_at', clock_timestamp(),
  'catalog', (SELECT coalesce(json_agg(json_build_object('identity', identity, 'digest', digest) ORDER BY identity COLLATE "C"), '[]'::json) FROM (${strip(CATALOG_QUERY)}) catalog),
@@ -72,7 +84,17 @@ export function parseObservation(text, { major = 17 } = {}) {
       || !(row.statement_count === null || Number.isSafeInteger(row.statement_count))) fail('Invalid ledger row');
     versions.add(row.version);
   }
-  return { observed_at: doc.observed_at, catalog, ledger: doc.ledger };
+  if (typeof doc.in_recovery !== 'boolean') fail('Database observation has no recovery state');
+  return { observed_at: doc.observed_at, catalog, ledger: doc.ledger, in_recovery: doc.in_recovery, replica_guard: doc.replica_guard ?? null };
+}
+
+// Production must be observed on a replica that carries the reviewed guard.
+export function requireReplica(environment, observation) {
+  if (!ENVIRONMENTS[environment]?.replica) return true;
+  const guard = observation.replica_guard;
+  if (observation.in_recovery !== true) fail(`${environment} observation must run on a read replica`);
+  if (!guard || guard.event !== 'login' || !['O', 'A'].includes(guard.enabled) || guard.body_sha256 !== GUARD_BODY_SHA256) fail(`${environment} replica-only login guard is missing, disabled or not the reviewed version`);
+  return true;
 }
 
 export function observeDatabase(environment, env = process.env, run = execFileSync) {
@@ -98,5 +120,7 @@ export function observeDatabase(environment, env = process.env, run = execFileSy
     // Never echo psql's error text: it can include connection details.
     fail(`${environment} read-only observation failed; no retry with any other credential`);
   } finally { if (caDir) rmSync(caDir, { recursive: true, force: true }); }
-  return { environment, project_ref: config.project_ref, ...parseObservation(output) };
+  const observation = { environment, project_ref: config.project_ref, ...parseObservation(output) };
+  requireReplica(environment, observation);
+  return observation;
 }

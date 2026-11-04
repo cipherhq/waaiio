@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { loadLock, loadLockMap, ledgerSnapshot, verifyLedger, verifyCatalog, verifyM430Absent, loadM430, postBootstrapMigrations, admitDatabase } from '../release-v3/admission.mjs';
 import { catalogMap, catalogAggregate, applyDeltas, validateDelta, compareCatalogs, diffCatalog, CATALOG_QUERY_SHA256, ORACLE } from '../release-v3/catalog-oracle.mjs';
 import { canonicalJson } from '../release-v3/common.mjs';
+import { GUARD_BODY_SHA256 } from '../release-v3/db-observe.mjs';
+const REPLICA = { in_recovery: true, replica_guard: { enabled: 'O', event: 'login', body_sha256: GUARD_BODY_SHA256 } };
 
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
 const h = (n: number) => sha(String(n));
@@ -154,9 +156,26 @@ describe('M430 is never in production', () => {
     const lock = { environments: { production: lockEnv(), staging: { ...lockEnv(), project_ref: 'tqjvrzopvtczxfxiwmnz' } } };
     const withM430 = new Map(baseCatalog); withM430.set(m430.added_identities[0], h(7));
     const stagingLock = { environments: { ...lock.environments, staging: { ...lockEnv(baseRows, withM430), project_ref: 'tqjvrzopvtczxfxiwmnz' } } };
-    expect(() => admitDatabase({ observation: { environment: 'production', project_ref: 'cxcmiqotkowhxinjbytg', ledger: baseRows, catalog: withM430 }, lock: { environments: { production: lockEnv(baseRows, withM430) } }, migrations: [], lockMap: null, m430 })).toThrow('M430');
+    expect(() => admitDatabase({ observation: { environment: 'production', project_ref: 'cxcmiqotkowhxinjbytg', ledger: baseRows, catalog: withM430, ...REPLICA }, lock: { environments: { production: lockEnv(baseRows, withM430) } }, migrations: [], lockMap: null, m430 })).toThrow('M430');
     expect(admitDatabase({ observation: { environment: 'staging', project_ref: 'tqjvrzopvtczxfxiwmnz', ledger: baseRows, catalog: withM430 }, lock: stagingLock, migrations: [], lockMap: null, m430 }).m430).toBeUndefined();
-    expect(() => admitDatabase({ observation: { environment: 'production', project_ref: 'tqjvrzopvtczxfxiwmnz', ledger: baseRows, catalog: baseCatalog }, lock, migrations: [], lockMap: null, m430 })).toThrow('wrong project');
+    expect(() => admitDatabase({ observation: { environment: 'production', project_ref: 'tqjvrzopvtczxfxiwmnz', ledger: baseRows, catalog: baseCatalog, ...REPLICA }, lock, migrations: [], lockMap: null, m430 })).toThrow('wrong project');
+  });
+});
+
+describe('production is observed only on a guarded read replica', () => {
+  const lock = { environments: { production: lockEnv() } };
+  const obs = (over: Record<string, unknown>) => ({ environment: 'production', project_ref: 'cxcmiqotkowhxinjbytg', ledger: baseRows, catalog: baseCatalog, ...REPLICA, ...over });
+  it('accepts a replica with the reviewed, enabled guard', () => expect(admitDatabase({ observation: obs({}), lock, migrations: [], lockMap: null, m430: { added_identities: [] } }).environment).toBe('production'));
+  it.each([
+    [{ in_recovery: false }, 'must run on a read replica'],
+    [{ replica_guard: null }, 'replica-only login guard is missing'],
+    [{ replica_guard: { enabled: 'D', event: 'login', body_sha256: GUARD_BODY_SHA256 } }, 'replica-only login guard is missing, disabled'],
+    [{ replica_guard: { enabled: 'O', event: 'login', body_sha256: 'f'.repeat(64) } }, 'not the reviewed version'],
+    [{ replica_guard: { enabled: 'O', event: 'ddl_command_start', body_sha256: GUARD_BODY_SHA256 } }, 'replica-only login guard'],
+  ])('refuses %j', (over, message) => expect(() => admitDatabase({ observation: obs(over), lock, migrations: [], lockMap: null, m430: { added_identities: [] } })).toThrow(message));
+  it('staging needs no replica', () => {
+    const stagingLock = { environments: { staging: { ...lockEnv(), project_ref: 'tqjvrzopvtczxfxiwmnz' } } };
+    expect(admitDatabase({ observation: { environment: 'staging', project_ref: 'tqjvrzopvtczxfxiwmnz', ledger: baseRows, catalog: baseCatalog, in_recovery: false, replica_guard: null }, lock: stagingLock, migrations: [], lockMap: null, m430: { added_identities: [] } }).environment).toBe('staging');
   });
 });
 

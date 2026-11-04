@@ -1,3 +1,15 @@
+## 2026-11-04 — Release V3: production observer reads a read replica
+
+- Owner decision (2026-11-04): the production read-only login (`release_observer`) connects to a Supabase read replica instead of narrowing pg_net's PUBLIC grants (Supabase owns those objects; two active cron jobs rely on them; details in a private advisory).
+- New `scripts/release-v3/release-observer-replica-guard.sql` (production only, not applied): a PostgreSQL 17 login event trigger in schema `release_ops` that refuses `release_observer` on any server that is not a replica.
+- Gate: the observation now records `pg_is_in_recovery()` and the guard (enabled, event, body sha256). Production admission requires a replica and the reviewed, enabled guard. Staging is unchanged.
+- Tests:
+  - unit and end-to-end cases (on the primary, guard missing, disabled, different body, wrong event);
+  - 4 real-PostgreSQL 17 proofs in the "Catalog oracle (PostgreSQL 17)" job: the login is refused on a primary, other logins work, the installed guard matches the pinned body, and the guard function and schema are closed to PUBLIC. The CI count check is now 10 passed, 0 skipped.
+- Docs: production setup order (Owner creates the replica, staging rehearsal, apply role then guard, secret points at the replica).
+- Runs no SQL and changes no setting.
+- Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
+
 ## 2026-11-03 — Release Process V3: reusable release gate (schema 8)
 
 - Owner-approved plan (Issue #843, `RELEASE_GATE_V2.md` §9). One reusable gate replaces a new gate profile per release. Docs: `docs/RELEASE_V3_GATE.md`.

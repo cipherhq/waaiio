@@ -73,7 +73,15 @@ So the standard lane keeps a human check:
 
 It gets no grant in any app schema, so applying it does not change the catalog reading. CI proves on real PostgreSQL 17 that, without extra PUBLIC grants, it cannot write even after turning read-only off and cannot read app tables (`scripts/__tests__/release-v3-observer.pg.test.ts`).
 
-**Owner decision needed before applying it in production.** Like every login it inherits PUBLIC's existing grants, and production has PUBLIC grants outside the app schemas that a direct login can use. The read-only setting is a default, not a hard limit. Details are in a private advisory, not here. Options: narrow those PUBLIC grants first (a separate reviewed change with its own approval), or accept the residual risk with the compensating controls below.
+**Production reads go to a read replica (Owner decision 2026-11-04).** Like every login, `release_observer` inherits PUBLIC's existing grants, and production has PUBLIC grants outside the app schemas that Supabase owns and we cannot revoke (details in a private advisory). A read replica enforces read-only at the server, so those grants cannot be used to write or queue anything there. Because a replica shares every role and password with the primary, `scripts/release-v3/release-observer-replica-guard.sql` adds a PostgreSQL 17 login trigger that refuses `release_observer` on any server that is not a replica. The gate refuses a production observation unless it ran on a replica and that guard is present, enabled and byte-identical to the reviewed body. CI proves on real PostgreSQL 17 that the guard refuses the login on a primary and leaves other logins alone; the replica side is verified live by the first production observation.
+
+Production setup, in order, each with its own Owner approval:
+1. the Owner creates a Supabase read replica for production (a billing add-on, done in the dashboard);
+2. rehearse the guard on staging (confirm Supabase accepts it and ordinary logins are unaffected), then remove it there;
+3. apply `release-observer-role.sql`, then `release-observer-replica-guard.sql`, to production (the primary; both replicate);
+4. the Owner sets `RELEASE_OBSERVER_PRODUCTION_URL` to the **replica's** connection string.
+
+Staging has no such PUBLIC exposure and uses its primary, without the guard.
 
 Compensating controls, required in every case:
 - the connection URLs live only in the GitHub environment **`release-observer`**, which the Owner creates with **deployment branches restricted to `main`** (otherwise a workflow on any pushed branch could name the environment and read the secrets);
@@ -81,7 +89,7 @@ Compensating controls, required in every case:
 - the Owner rotates the password after any suspected exposure and whenever the environment's access changes.
 
 Applying it is a separate Owner approval per environment, staging first. Run it as one statement, **not** with `apply_migration`: a ledger row would break the lock's ledger digest. The file creates the role without a password. The Owner then sets the password and stores the connection URLs as secrets in `release-observer`. Nobody else handles them:
-- `RELEASE_OBSERVER_PRODUCTION_URL`: Supabase session pooler, user `release_observer.cxcmiqotkowhxinjbytg`, `sslmode=require`;
+- `RELEASE_OBSERVER_PRODUCTION_URL`: the production **read replica**'s connection string, user `release_observer` (or `release_observer.cxcmiqotkowhxinjbytg` through a pooler), `sslmode=require`;
 - `RELEASE_OBSERVER_STAGING_URL`: the same, for `tqjvrzopvtczxfxiwmnz`;
 - optional `RELEASE_OBSERVER_CA_PEM`: the Supabase CA certificate. When set, the gate requires `verify-full` (certificate and host name). Recommended.
 

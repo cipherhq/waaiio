@@ -22,9 +22,10 @@
 -- but the API does not expose. `default_transaction_read_only` is only a
 -- session default: a session can turn it off. So read-only is NOT enforced by
 -- this file; the hard boundary is privileges. Details are in a private
--- advisory. The Owner chooses between narrowing those PUBLIC grants (a separate
--- reviewed production change) and accepting the residual risk with the
--- compensating controls in docs/RELEASE_V3_GATE.md.
+-- advisory. Owner decision 2026-11-04: production reads go to a read replica
+-- (server-enforced read-only), and release-observer-replica-guard.sql refuses
+-- this login on the primary. Apply that guard right after this file in
+-- production. Staging has no such exposure and uses its primary.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'release_observer') THEN
