@@ -5,6 +5,7 @@ import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardPr
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { calendarHourRange } from '@/lib/calendar/hour-range';
 
 interface Booking {
   id: string;
@@ -203,41 +204,10 @@ export default function CalendarPage() {
   const hasReservations = hasCapability('reservation');
   const hasEvents = hasCapability('ticketing');
 
-  // Derive calendar hours from business operating_hours (earliest open, latest close across all days)
+  // Calendar rows from operating_hours; open-past-midnight days show the whole day
   const { HOUR_START, HOUR_END, HOURS } = useMemo(() => {
-    let earliest = 8;
-    let latest = 20;
-    const oh = business.operating_hours;
-    if (oh && typeof oh === 'object') {
-      const entries = Object.values(oh);
-      if (entries.length > 0) {
-        let foundOpen = false;
-        for (const slot of entries) {
-          if (slot && typeof slot.open === 'string' && typeof slot.close === 'string') {
-            const openHour = parseInt(slot.open.split(':')[0], 10);
-            const closeHour = parseInt(slot.close.split(':')[0], 10);
-            if (!isNaN(openHour) && !isNaN(closeHour)) {
-              if (!foundOpen) {
-                earliest = openHour;
-                latest = closeHour;
-                foundOpen = true;
-              } else {
-                if (openHour < earliest) earliest = openHour;
-                if (closeHour > latest) latest = closeHour;
-              }
-            }
-          }
-        }
-      }
-    }
-    // Clamp to valid range
-    earliest = Math.max(0, Math.min(23, earliest));
-    latest = Math.max(earliest + 1, Math.min(24, latest));
-    return {
-      HOUR_START: earliest,
-      HOUR_END: latest,
-      HOURS: Array.from({ length: latest - earliest }, (_, i) => earliest + i),
-    };
+    const range = calendarHourRange(business.operating_hours);
+    return { HOUR_START: range.start, HOUR_END: range.end, HOURS: range.hours };
   }, [business.operating_hours]);
 
   // Load staff list for filter
