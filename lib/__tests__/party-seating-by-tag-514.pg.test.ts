@@ -167,6 +167,18 @@ suite('M514 party seating by tag (real PostgreSQL)', () => {
       expect(await invite(g1)).toMatchObject({ status: 'declined', tags: ['VIP', BRIDE], answer_tag: BRIDE });
     });
 
+    it('a tag the organiser added by hand is never adopted or removed, even when it equals the answer', async () => {
+      await asOwner(c => c.query('UPDATE public.event_invites SET tags=ARRAY[$1] WHERE id=$2', [GROOM, g2]));
+      await pool.query("UPDATE public.event_invites SET tags=ARRAY[NULL,'VIP']::text[] WHERE id=$1", [g3]);
+      await saveQuestions([side()]);
+      await accept('tok-514-2', 'groom');
+      expect(await invite(g2)).toMatchObject({ tags: [GROOM], answer_tag: null });
+      await accept('tok-514-2', 'bride');
+      expect(await invite(g2)).toMatchObject({ tags: [GROOM, BRIDE], answer_tag: BRIDE });
+      await accept('tok-514-3', 'groom');
+      expect(await invite(g3)).toMatchObject({ tags: [null, 'VIP', GROOM], answer_tag: GROOM });
+    });
+
     it('D2: a guest seated by hand keeps seat and auto-tag when the answer changes', async () => {
       await saveQuestions([side()]);
       await accept('tok-514-1', 'groom');
@@ -206,6 +218,30 @@ suite('M514 party seating by tag (real PostgreSQL)', () => {
       expect(await invite(g1)).toMatchObject({ tags: [GROOM, BRIDE], answer_tag: BRIDE });
       await saveQuestions([]);
       expect(await invite(g1)).toMatchObject({ tags: [GROOM, BRIDE], answer_tag: null });
+    });
+
+    it('deleting the option a guest chose keeps their tag as an ordinary tag (like D7)', async () => {
+      await saveQuestions([side()]);
+      await accept('tok-514-1', 'groom');
+      await accept('tok-514-2', 'bride');
+      const withoutGroom = side(); withoutGroom.options = [{ id: 'bride', label: BRIDE }, { id: 'friends', label: 'Friends' }];
+      await saveQuestions([withoutGroom]);
+      expect(await invite(g1)).toMatchObject({ tags: [GROOM], answer_tag: null });
+      expect(await invite(g2)).toMatchObject({ tags: [BRIDE], answer_tag: BRIDE });
+    });
+
+    it('only the answer authorities write answer_tag', async () => {
+      await saveQuestions([side()]);
+      await accept('tok-514-1', 'groom');
+      await expect(asOwner(c => c.query("UPDATE public.event_invites SET tags=ARRAY['VIP',$1], answer_tag='VIP' WHERE id=$2", [GROOM, g1])))
+        .rejects.toMatchObject({ code: '42501' });
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN'); await c.query('SET LOCAL ROLE service_role');
+        await expect(c.query("UPDATE public.event_invites SET answer_tag=NULL WHERE id=$1", [g1])).rejects.toMatchObject({ code: '42501' });
+      } finally { await c.query('ROLLBACK'); c.release(); }
+      await asOwner(c2 => c2.query("UPDATE public.event_invites SET tags=ARRAY['VIP',$1], answer_tag=$1 WHERE id=$2", [GROOM, g1]));
+      expect(await invite(g1)).toMatchObject({ tags: ['VIP', GROOM], answer_tag: GROOM });
     });
 
     it('ordinary owner writes still work without the private schema', async () => {
@@ -262,6 +298,16 @@ suite('M514 party seating by tag (real PostgreSQL)', () => {
       await reserve(tC, GROOM);
       expect((await invite(g3)).table_id).toBe(tC);
       await expect(asOwner(c => c.query('UPDATE public.event_invites SET plus_ones=1 WHERE id=$1', [g3]))).resolves.toBeTruthy();
+    });
+
+    it("a refusal never names another party's table or tag", async () => {
+      const foreign = id(30);
+      await pool.query("INSERT INTO party_tables(id,business_id,party_id,name,capacity,reserved_tag) VALUES($1,$2,$3,'Hidden table',4,'Secret tag')",
+        [foreign, otherBusiness, otherParty]);
+      const error = await seat('manual', { invite_id: g3, table_id: foreign }).then(() => null, (e: Error & { code?: string }) => e);
+      expect(error?.code).toBe('23514');
+      expect(error?.message).not.toMatch(/Hidden table|Secret tag/);
+      expect((await invite(g3)).table_id).toBeNull();
     });
 
     it('stores only trimmed reservations of 1-100 characters', async () => {

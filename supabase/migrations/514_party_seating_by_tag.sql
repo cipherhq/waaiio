@@ -5,7 +5,8 @@
 --    The chosen option's label becomes a guest tag, written in the database when
 --    the RSVP authority saves answers, so web and WhatsApp behave the same.
 --    event_invites.answer_tag remembers which tag came from the answer; only
---    that tag is swapped when the answer changes. Manual tags are never touched.
+--    that tag is swapped when the answer changes. A tag the organiser added by hand is
+--    never adopted or removed, even when it equals the answer.
 --    A pinned guest keeps an existing auto-tag (D2). Saving questions tags
 --    existing answers (D3). Unticking keeps the tags as ordinary tags (D7).
 -- 2. party_tables.reserved_tag reserves a table for one tag. The database refuses
@@ -81,15 +82,20 @@ BEGIN
   IF q IS NULL THEN next_answer_tag := NULL; RETURN; END IF;
   -- The organiser seated this guest by hand: keep the existing auto-tag (D2).
   IF pinned AND answer_tag IS NOT NULL THEN RETURN; END IF;
-  IF jsonb_typeof(answers)='object' AND jsonb_typeof(q->'options')='array' THEN
+  IF jsonb_typeof(answers)='object' AND coalesce(answers->>(q->>'id'),'')<>'' AND jsonb_typeof(q->'options')='array' THEN
     SELECT nullif(btrim(o.value->>'label'),'') INTO chosen FROM jsonb_array_elements(q->'options') o
       WHERE o.value->>'id' = answers->>(q->>'id') LIMIT 1;
+    -- The organiser deleted the option this guest chose: like D7, the tag stays as an ordinary tag.
+    IF chosen IS NULL THEN next_answer_tag := NULL; RETURN; END IF;
   END IF;
   IF chosen IS NOT DISTINCT FROM answer_tag THEN RETURN; END IF;
   next_tags := coalesce(tags,'{}'::text[]);
   IF answer_tag IS NOT NULL THEN next_tags := array_remove(next_tags,answer_tag); END IF;
-  IF chosen IS NOT NULL AND NOT chosen=ANY(next_tags) THEN next_tags := array_append(next_tags,chosen); END IF;
-  next_answer_tag := chosen;
+  -- A tag the organiser already gave this guest stays theirs: it is not adopted as the
+  -- auto-tag, so a later answer change never removes it.
+  IF chosen IS NOT NULL AND array_position(next_tags,chosen) IS NULL THEN
+    next_tags := array_append(next_tags,chosen); next_answer_tag := chosen;
+  ELSE next_answer_tag := NULL; END IF;
 END $$;
 
 CREATE FUNCTION private.party_answer_tag_514() RETURNS trigger
@@ -98,7 +104,14 @@ DECLARE n record;
 BEGIN
   IF NEW.party_id IS NULL THEN RETURN NEW; END IF;
   IF TG_OP='UPDATE' AND ROW(NEW.custom_answers,NEW.saved_question_snapshot)
-    IS NOT DISTINCT FROM ROW(OLD.custom_answers,OLD.saved_question_snapshot) THEN RETURN NEW; END IF;
+    IS NOT DISTINCT FROM ROW(OLD.custom_answers,OLD.saved_question_snapshot) THEN
+    -- answer_tag is bookkeeping for the answer authorities (owned by the owner of public.parties,
+    -- asserted below); a direct write could make a later RSVP remove a manual tag.
+    IF NEW.answer_tag IS DISTINCT FROM OLD.answer_tag
+      AND current_user <> pg_get_userbyid((SELECT relowner FROM pg_class WHERE oid='public.parties'::regclass)) THEN
+      RAISE EXCEPTION 'Answer tags follow RSVP answers' USING ERRCODE='42501'; END IF;
+    RETURN NEW;
+  END IF;
   -- guard_party_answers_489 runs first and lets only the RSVP authority write a
   -- non-empty snapshot. An empty snapshot has no tagging question; handling it
   -- here keeps ordinary owner writes free of any private-schema call.
@@ -109,7 +122,7 @@ BEGIN
   NEW.tags := n.next_tags; NEW.answer_tag := n.next_answer_tag;
   RETURN NEW;
 END $$;
-CREATE TRIGGER party_answer_tag_514 BEFORE INSERT OR UPDATE OF custom_answers, saved_question_snapshot
+CREATE TRIGGER party_answer_tag_514 BEFORE INSERT OR UPDATE OF custom_answers, saved_question_snapshot, answer_tag
   ON public.event_invites FOR EACH ROW EXECUTE FUNCTION private.party_answer_tag_514();
 
 CREATE FUNCTION private.party_reserved_table_514() RETURNS trigger
@@ -117,8 +130,10 @@ LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
 DECLARE t record;
 BEGIN
   IF NEW.table_id IS NULL OR (TG_OP='UPDATE' AND NEW.table_id IS NOT DISTINCT FROM OLD.table_id) THEN RETURN NEW; END IF;
-  SELECT pt.name, pt.reserved_tag INTO t FROM public.party_tables pt WHERE pt.id=NEW.table_id;
-  -- A missing or hidden table is rejected by trg_validate_invite_table (M457).
+  SELECT pt.name, pt.reserved_tag INTO t FROM public.party_tables pt
+    WHERE pt.id=NEW.table_id AND pt.party_id=NEW.party_id AND pt.business_id=NEW.business_id;
+  -- A missing, hidden or other party's table is rejected by trg_validate_invite_table (M457),
+  -- so this message only ever names the guest's own party's table.
   IF NOT FOUND OR t.reserved_tag IS NULL OR t.reserved_tag=ANY(coalesce(NEW.tags,'{}'::text[])) THEN RETURN NEW; END IF;
   RAISE EXCEPTION '% is reserved for %', t.name, t.reserved_tag USING ERRCODE='23514';
 END $$;
@@ -193,10 +208,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid='private.validate_party_questions_489(jsonb)'::regprocedure
       AND NOT prosecdef AND provolatile='i' AND proconfig=ARRAY['search_path=pg_catalog'])
     OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid='private.party_questions_489(uuid,uuid,jsonb)'::regprocedure
-      AND prosecdef AND proconfig=ARRAY['search_path=pg_catalog']
+      AND prosecdef AND provolatile='v' AND proconfig=ARRAY['search_path=pg_catalog']
       AND proowner=(SELECT relowner FROM pg_class WHERE oid='public.parties'::regclass))
     OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid='public.party_seating_snapshot_486(uuid)'::regprocedure
-      AND NOT prosecdef AND proconfig=ARRAY['search_path=public, extensions']) THEN
+      AND NOT prosecdef AND provolatile='v' AND proconfig=ARRAY['search_path=public, extensions']) THEN
     RAISE EXCEPTION 'M514 replaced function attributes invalid';
   END IF;
   FOREACH f IN ARRAY ARRAY['private.party_answer_tags_514(jsonb,jsonb,text[],text,boolean)'::regprocedure,

@@ -222,7 +222,7 @@ M494 `business_status_step_up` reserved by Codex on `codex/admin-merchant-save-t
 | 436 | scheduling_price_authority (#604) | fix/602-scheduling-price-authority | #604 | 2026-10-09 |
 | 437 | native_whatsapp_forms (#606) | feat/591-whatsapp-native-forms-phase2 | #606 | 2026-10-09 |
 | 438 | business_app_coexistence (#607) | feat/592-business-app-coexistence-phase2 | #607 | 2026-10-09 |
-| 514 | party_seating_by_tag (#874) | claude/party-seating-by-tag-4918b2 | claude | 2026-11-04 |
+| 514 | party_seating_by_tag (#874, PR #877) | claude/party-seating-by-tag-4918b2 | claude | 2026-11-04 |
 
 ### Stranded Reservations (PR #21)
 
