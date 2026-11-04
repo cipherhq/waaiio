@@ -55,6 +55,14 @@ Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashbo
   - a lounge with only appointments now gets a clarifying question for a plain "book", as bars already did;
   - same-day is off for any business whose stored timezone does not fit its country, until the timezone is corrected;
   - the confirm step does not re-check the time, so a slot that passes between choosing and confirming can still be booked (same as before for pre-filled times).
+
+## 2026-11-04 — Ace review screen: clearer "price needed" message
+
+- Owner decision (2026-11-04): the items-step message now reads "N item(s) need(s) a price. Type a price in the highlighted box(es) (0 if it's free) before you confirm." The old "Ace couldn't see a price…" was wrong when the owner had cleared a price Ace found, and gave no hint that 0 means Free.
+- `app/dashboard/setup-assistant/page.tsx`: the red "price needed" box and `aria-invalid` now show only on rows with a name. These are the rows that are counted and that block Confirm; unnamed rows are skipped when saving.
+- Tests: 2 new rendered cases plus 1 updated wording assertion. All 3 fail on the previous code.
+- Could break: nothing in data or behaviour; text and highlighting only. The review-step message is unchanged.
+
 ## 2026-11-04 — Ace review screen: a cleared price means "price needed"; long service names saved
 
 - Owner decision (2026-11-04): if Ace found a price and the owner clears the box, the item is "price needed" and blocks Confirm, instead of being saved as Free. Typing 0 still means Free.
