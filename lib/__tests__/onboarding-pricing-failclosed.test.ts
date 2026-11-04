@@ -106,7 +106,7 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
     expect(html).not.toMatch(/20,000/);
   });
 
-  it('Subscribe CTA contains exact DB fixture price for growth plan', () => {
+  it('Continue CTA contains exact DB fixture price for growth plan', () => {
     const DB_GROWTH = 35000;
 
     const projected = {
@@ -120,12 +120,12 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
       selectedPlan: 'growth',
     });
 
-    // Must contain "Subscribe" CTA with ₦35,000
-    expect(html).toContain('Subscribe');
+    // Must contain "Continue with" CTA with ₦35,000
+    expect(html).toContain('Continue with');
     expect(html).toContain('35,000');
   });
 
-  it('free plan renders "Start Free Trial", not "Subscribe"', () => {
+  it('free plan offers starting free and upgrading later', () => {
     const zeroed = {
       free: { ...CONSTANTS_TIERS_NG.free, price: 0, feePercentage: 0, feeFlat: 0 },
       growth: { ...CONSTANTS_TIERS_NG.growth, price: 0, feePercentage: 0, feeFlat: 0 },
@@ -137,7 +137,7 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
       selectedPlan: 'free',
     });
 
-    expect(html).toContain('Start Free Trial');
+    expect(html).toContain('Start free — upgrade later');
   });
 
   it('zeroed tiers never show constants fee percentages (2.5%/1.5%)', () => {

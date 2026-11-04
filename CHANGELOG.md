@@ -1,3 +1,480 @@
+## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
+
+- `lib/bot/flows/shared/capability-transition.ts`, `clearStaleCapabilityState`:
+  - Problem: it did not clear `_available_addons` or `_selected_addons`, and it did nothing when the previous capability was unknown. The saved-card "Menu" button sets `active_capability` to undefined. If the next service had no add-ons, `select_addons.skipIf` left the old choice in place, so the confirmation listed an add-on the customer had picked for an earlier booking (e.g. "➕ Add-ons: Cake") and `bookings.addons_snapshot` saved it.
+  - Fix: both add-on keys are now cleared on every capability switch, including when the previous capability is unknown. Only `select_addons` ever writes them, so a fresh session loses nothing.
+- Test: `lib/__tests__/capability-switch-addon-state.test.ts` (5; 4 fail on the previous code). The real `select_addons` and `confirmation` steps show no stale add-on after a switch.
+- Not changed:
+  - the fresh-session rule: with no previous capability, pre-filled service, date, time and party size are kept;
+  - same-capability calls (no-op);
+  - `_step_history` and back navigation;
+  - amounts: add-ons were never part of the charged total;
+  - payment and custody routes;
+  - the ordering flow, which uses its own cart add-on keys.
+- Could break: a customer who taps the saved-card "Menu" button and books again must re-pick add-ons. They were for the earlier booking.
+
+## 2026-11-04 — Table reservations: "back" onto an old add-ons step no longer crashes
+
+- `lib/bot/flows/scheduling.flow.ts`, `select_addons` (review finding P2-1 on PR #850):
+  - The executor's "back" command re-shows a step's prompt without running its `skipIf`, and a keyword capability switch keeps `_step_history`. A customer who reached add-ons in an ordinary booking, switched to a table reservation and pressed "back" onto that old entry hit a TypeError (`_available_addons` had been cleared by the table skip), so the bot sent a generic error.
+  - For a table reservation the prompt now clears add-on state and shows the party-size prompt, with `nextAfterPrompt` → `select_quantity`. This is the same pattern `apply_promo` and `enter_promo_code` already use for tables. Tables stay add-on-free (Owner decision of 2026-10-27).
+  - For other bookings, a missing add-on list now defaults to empty (only "No add-ons" is shown) instead of crashing.
+  - A merchant step override with `action = 'require'` on `select_addons` also bypasses `skipIf`; a table now gets the party-size prompt there too, and moves on to `select_quantity`. `validate` also accepts any reply for a table, so after "back" with that override the customer is not stuck re-asked for an add-on (review r1 P2-A).
+- Test: `lib/__tests__/table-reservation-addons-back-navigation.test.ts` (8, four through the real `FlowExecutor`; 5 fail on the previous code with the TypeError, a missing `nextAfterPrompt`, or the add-on loop).
+- Not changed: the executor, `book_table_atomic`, deposits, payment, the add-on list for ordinary bookings, `clearStaleCapabilityState` (review P2-2, reported separately).
+- Could break: after "back" lands on the old add-ons step, a table customer sees the party-size question. Their next reply re-asks party size once (the back command does not apply `nextAfterPrompt`), the same as the existing promo steps.
+
+## 2026-11-04 — Release V3: replica freshness limit 65 minutes; template1 is setup step 0
+
+- Owner decision (2026-11-04): the production read replica's last replayed commit may be at most 65 minutes old (was 15). Production commits at least hourly, so a healthy replica is not refused at night; a stall is still caught within about an hour. The receive LSN = replay LSN check is unchanged.
+- Owner decision (2026-11-04): Supabase is asked to close the `template1` gap. It is now setup step 0 in `docs/RELEASE_V3_GATE.md`: nothing is applied to production before Supabase confirms.
+- Files: `scripts/release-v3/db-observe.mjs` (one constant), `scripts/__tests__/release-v3-admission.test.ts` (boundary tests at 60 min and 65 min + 1 s), `docs/RELEASE_V3_GATE.md`, the guard SQL comment.
+- The guard function body is unchanged, so its pinned hash is unchanged.
+- Runs no SQL and changes no setting.
+- Could break: nothing. A replica more than 65 minutes behind stops the gate, as intended.
+
+## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight
+
+- Bug: the calendar's week and day grids ran from the earliest opening hour to the latest closing hour. A closing time after midnight (e.g. 02:00) counted as "earlier", so a business open 18:00–02:00 got a one-row grid (6pm) and bookings from 7pm onwards were invisible. A read-only production query on 2026-11-04 found 2 businesses with such hours: an events business (16:00–00:00, 18:00–04:00, 20:00–06:00) and a restaurant (22:00–06:00).
+- `lib/calendar/hour-range.ts` (new) `calendarHourRange()`:
+  - If any day closes at or before it opens (including a 00:00 close), the grid covers the whole day, 00:00–24:00.
+  - A part-hour close keeps its hour row; for example, 17:30 keeps the 17:00 row.
+  - Daytime-only hours give the same rows as before.
+- `app/dashboard/calendar/page.tsx`: uses the helper. The calculation inside the page is removed.
+- Owner decision (2026-11-04): fix this now, as its own display-only PR, ahead of the late table bookings work.
+- Tests: `lib/calendar/__tests__/hour-range.test.ts` (7), including the two production shapes. Existing calendar tests still pass.
+- Could break: nothing in data. Calendars for businesses open past midnight now show all 24 hours.
+
+## 2026-11-04 — Tables & Sections: reminder for food & drink only; reservations tab renamed
+
+Owner decisions (2026-11-04), following the #854 reviews.
+
+- `components/dashboard/OnboardingChecklist.tsx`: the "Add your tables & sections" reminder now shows only when both of these are true:
+  - Tables & Sections is on;
+  - the business is restaurant, cafe, bar, lounge, bakery, catering or food_truck.
+
+  Other businesses with the feature on no longer see the reminder, and their checklist no longer queries tables. A read-only production query on 2026-11-04 found 9 such businesses (a church, 5 shops, a tailor, an events business and a spa), none of which has tables. 2 restaurants keep the reminder.
+- `app/dashboard/reservations/page.tsx` and `components/dashboard/BookingPresentation.tsx`: the "Table Reservations" tab is now "Tables & Sections". The tab id is unchanged.
+- The welcome button "Book a Table" is NOT changed here. Its default list (`getDefaultWelcomeButtons` in `app/api/onboarding/register/route.ts`) has had no caller since #553: onboarding now goes through `lib/onboarding/provision-business.ts`, which saves no welcome buttons. So editing it would have had no effect. Customers already see "Book Table / Section" in the bot menu. Older businesses may still have "Book a Table" saved as a welcome button. A read-only production query on 2026-11-04 found 1 restaurant, and its welcome buttons are not sent today because it has several features. Changing saved buttons would be a separate, Owner-approved data change.
+- Notes the #854 reviews asked to record:
+  - For tables at a business whose stored timezone doesn't fit its country, a pre-filled "today" is now dropped and the tomorrow-first date picker is shown.
+  - While the tables reminder is open, the checklist does not auto-dismiss.
+- Tests:
+  - New checklist cases: a non-food business, a food_delivery business and a business with no category see no reminder, and their checklists send no tables query; each food & drink category sees the reminder.
+  - The dashboard tab tests now expect the new label.
+  - 10 cases fail on the previous code.
+- Could break: nothing in data or the bot. Text, and who sees the reminder, only.
+
+## 2026-11-04 — Tables & Sections: rename, setup nudge, same-day tables (app only)
+
+Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashboard/seating` URL are unchanged. This PR has no migration: the whole-word "table" keyword fix (M509) is its own PR, and this code works with or without it.
+
+- **Rename.**
+  - Bot menu (`lib/bot/flows/flow-localization.ts`): en and pcm `Book Table / Section`, es `Reservar mesa/zona`, fr `Réserver table/salle`.
+  - Why 20 characters (Owner decision 2026-11-04): the first wording, `Reserve a Table / Section`, is 25 characters. WhatsApp cuts list rows at 24 (`slice-561g` enforces this) and buttons at 20, and a menu with 3 or fewer options uses buttons. A test pins every certified-language label at 20 or fewer.
+  - fr `salle` means room/hall rather than space (`espace` would be 21 characters), so it is listed in `OWNER_REVIEW_ITEMS`. yo/ig/ha/tw keep their existing "make a reservation" text and are listed there too, for a native translation. fr, es, yo, ig, ha and tw are not certified, so customers see English.
+  - `app/dashboard/translations/message-presentation.ts`: same en label.
+  - `shared/capabilities.ts`: label `Tables & Sections`, new description.
+  - `components/dashboard/Sidebar.tsx` and `app/dashboard/seating/page.tsx`: title `Tables & Sections`.
+  - WhatsApp-native onboarding (`app/api/whatsapp/flow-data/onboarding.ts`): the feature option reads "Tables & Sections"; other generated titles are unchanged.
+  - Restaurants' appointment option is renamed from "Book a Table" to "Book Appointment" (Owner decision 2026-11-04). This is `cap.appointment.restaurant`, which now uses each locale's own `cap.appointment` text: en/pcm `Book Appointment`, fr `Prendre rendez-vous`, es `Reservar cita`, and the existing yo/ig/ha/tw appointment strings. All are 20 characters or fewer. The dashboard translation label is `Book Appointment (restaurants)`. Typed "book a table" at a restaurant used to match the old appointment label exactly; it now falls through to generic-booking disambiguation, which routes restaurants to Tables & Sections.
+- **Defaults: no change.** Bars and lounges were already on. Every food and drink category (restaurant, cafe, bar, lounge, bakery, catering, food_truck) keeps Tables & Sections on by default, exactly as on main (Owner decision 2026-11-04). Signup, `initCapabilities()`, the WhatsApp onboarding list and existing businesses are untouched, and `lib/capabilities/*` has no diff.
+- **Lounge works like bar** (`lib/bot/semantic-resolver.ts`, Owner decision 2026-11-04). A plain "book" or "I want to reserve" at a lounge starts Tables & Sections. If Tables & Sections is off, the bot asks rather than guessing, the same as for bars.
+- **A merchant's own keyword still wins** (`lib/bot/keyword-service.ts` `loadUnifiedKeywords`, Owner decision 2026-11-04).
+  - A business-scope keyword already overrides a category row with the same text.
+  - It now also overrides a category *regex* that matches the merchant's keyword as a whole: for example their `table` against M509's `\btables?\b`. This keeps today's precedence whether or not M509 is applied.
+  - A longer or different merchant keyword ("table tennis", "vegetable") does not hide the built-in one.
+  - The generic match types (`contains` etc.) are unchanged.
+- **Signup** (`app/get-started/steps/StepFeatures.tsx`). The option, already shown for every business type, is renamed "Reserve tables & sections", with new copy. It is free tier and needs no logic change.
+- **Setup nudge** (`components/dashboard/OnboardingChecklist.tsx`). "Add your tables & sections" links to `/dashboard/seating`.
+  - It shows when `table_reservation` is on and the business has no active `seating_resources` row (RLS owner-select, own `business_id`, `is_active = true`). A query error counts as "none".
+  - Once a row exists it disappears rather than being ticked off, and it is left out of the step count.
+- **Same-day tables** (`lib/bot/flows/shared/table-same-day.ts` new; `lib/bot/flows/scheduling.flow.ts` select_date/select_time).
+  - When it applies: table reservations only, and only when `businesses.timezone` fits the business's country (Owner decision 2026-11-04). The fit list:
+    - NG: Africa/Lagos
+    - GH: Africa/Accra
+    - GB: Europe/London
+    - US and CA: America/* or Pacific/Honolulu
+    - any other country: never
+  - Why: production has 24 US and 1 GB business still on the Africa/Lagos default, and the app never sets the timezone. Those businesses keep the tomorrow-first rule.
+  - When it applies:
+    - the date list starts at local today while a slot after the current local time is still free on that table;
+    - a "Today" shortcut appears (Today / Tomorrow / Pick a Date);
+    - typed "today"/"tomorrow" use the local date;
+    - today's time list and typed times exclude times at or before now;
+    - a pre-filled past time is cleared.
+  - A pre-filled date (`select_date` skipIf) follows the same rule for tables. Today is kept only when the timezone fits and a slot is left; otherwise it is dropped and the picker shows. A pre-filled "today" therefore never leads to an empty time list.
+  - Not changed in `bot.service.ts`: the generic entity pre-fill there runs before the capability is chosen, so it cannot know the booking is a table. The skipIf is where the table rule applies.
+  - Slot interval, duration and `available_to` trimming are as before. There is no lead time; none exists elsewhere.
+  - Appointments, classes and other scheduling are untouched and never read the timezone.
+  - `book_table_atomic` (M476) does not reject past dates or times. A new disposable-PG case proves it accepts 00:00 today, so the bot guard is what stops past slots.
+  - Left in English: the new "Today (…)" button and the two same-day error messages. They match the existing hardcoded "Tomorrow (…)" and "That date has passed" strings. Moving them to `getFlowCopy` keys needs reviewed translations for all 8 locales.
+  - Not in this PR: bookings that run past midnight (late bar/lounge hours). That is a separate follow-up.
+- **Tests:**
+  - `lib/__tests__/tables-and-sections.test.ts` (56): labels and the 20-character rule, lounge and restaurant routing, the menu, defaults equal to main (signup, `initCapabilities`, WhatsApp onboarding), same-day select_date/select_time on the real steps with a frozen clock, the country/timezone fit (including a US business on the Lagos default getting tomorrow-first), pre-fill skipIf, and appointment controls;
+  - `lib/__tests__/tables-and-sections-ui.test.tsx` (7): rendered checklist nudge, and the signup option for every business type;
+  - `lib/__tests__/table-reservation-730-db.test.ts` (+1 same-day RPC case);
+  - `lib/__tests__/table-reservation-730.test.ts`: label assertion updated to the rename;
+  - `lib/__tests__/keyword-merchant-precedence.test.ts` (7): through the real `loadUnifiedKeywords` and `matchUnifiedKeyword`, with the category row both before M509 (`table`/contains) and after it (`\btables?\b`/regex);
+  - `lib/bot/__tests__/slice-561g-pcm-ordering-remediation.test.ts`: restaurant appointment label assertions updated to "Book Appointment".
+- **Could break:**
+  - customers who typed "book a table" at a restaurant with appointments, but without Tables & Sections, used to reach appointments. Now they get the menu or a clarifying question;
+  - a lounge with only appointments now gets a clarifying question for a plain "book", as bars already did;
+  - same-day is off for any business whose stored timezone does not fit its country, until the timezone is corrected;
+  - the confirm step does not re-check the time, so a slot that passes between choosing and confirming can still be booked (same as before for pre-filled times).
+
+## 2026-11-04 — M509: the restaurant "table" keyword matches whole words only
+
+- Owner decision (2026-11-04). Release V3 rule: a migration ships in its own PR with its catalog delta. This PR was split out of #854, which is now app-only and works with or without M509.
+- `supabase/migrations/509_table_keyword_whole_word.sql` (data-only, idempotent, self-check, NOT applied):
+  - The problem: 041/164 seeded the category keyword `table` with `contains` matching. keyword-service checks `contains` with a substring test, so "vegetable", "comfortable" and "timetable" started a table reservation.
+  - The fix: only those seeded category rows (restaurant/cafe/bar/lounge, `start_capability`) become the regex `\btables?\b`. "table", "tables" and "table for 4" still match.
+  - Unchanged: `dine-in`, every business-scope keyword, and the generic `contains` semantics.
+  - The pattern is written as an `E''` string, so the stored value does not depend on `standard_conforming_strings`.
+- `supabase/catalog-deltas/509_table_keyword_whole_word.json`: `changes: []`, because only row data changes.
+- Tests:
+  - `lib/__tests__/table-keyword-whole-word.test.ts` (18): the real keyword-service matcher with the exact stored pattern.
+  - `lib/__tests__/table-keyword-whole-word-509.pg.test.ts` (5, real PostgreSQL): applies the 041 restaurant seed and 164, then 509 twice. Proves "vegetable soup" no longer matches while "table for 4" and "tables" still do, the other rows are untouched, and the self-check fails when it should.
+- CI (`.github/workflows/ci.yml`): the 509 PostgreSQL test gets a `test -f` guard in the PostgreSQL job and is excluded from the unit job, the same as M503–M508.
+- Could break: until #854's keyword-service change is merged, a merchant's own business-scope `table` keyword would no longer override the category row, because the keyword texts now differ. #854 restores that precedence (Owner decision 2026-11-04: the merchant keyword wins). Production has 0 such rows today.
+
+## 2026-11-04 — Release V3: production observer reads a read replica
+
+- Owner decision (2026-11-04): the production read-only login (`release_observer`) connects to a Supabase read replica instead of narrowing pg_net's PUBLIC grants (Supabase owns those objects; two active cron jobs rely on them; details in a private advisory).
+- New `scripts/release-v3/release-observer-replica-guard.sql` (production only, not applied): a PostgreSQL 17 login event trigger in schema `release_ops` that refuses `release_observer` on any server that is not a replica.
+- Gate: the observation now records `pg_is_in_recovery()` and the guard (enabled, event, body sha256). Production admission requires a replica and the reviewed, enabled guard. Staging is unchanged.
+- Tests:
+  - unit and end-to-end cases (on the primary, guard missing, disabled, different body, wrong event);
+  - 4 real-PostgreSQL 17 proofs in the "Catalog oracle (PostgreSQL 17)" job: the login is refused on a primary, other logins work, the installed guard matches the pinned body, and the guard function and schema are closed to PUBLIC. The CI count check is now 10 passed, 0 skipped.
+- Docs: production setup order (Owner creates the replica, staging rehearsal, apply role then guard, password only after the guard, secret points at the replica).
+- Review fixes:
+  - the guard is enabled ALWAYS, and the gate also pins its owner, language, security mode and `search_path`;
+  - production observations must come from a caught-up replica: receive LSN equals replay LSN, and the last replay is at most 15 minutes old;
+  - replica endpoint formats (`<ref>-rr-…`) are accepted;
+  - an ordinary non-superuser login is tested.
+- Known limit, documented, Owner decision pending: the guard cannot cover Supabase's `template1` database.
+- Runs no SQL and changes no setting.
+- Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
+
+## 2026-11-04 — Ace review screen: clearer "price needed" message
+
+- Owner decision (2026-11-04): the items-step message now reads "N item(s) need(s) a price. Type a price in the highlighted box(es) (0 if it's free) before you confirm." The old "Ace couldn't see a price…" was wrong when the owner had cleared a price Ace found, and gave no hint that 0 means Free.
+- `app/dashboard/setup-assistant/page.tsx`: the red "price needed" box and `aria-invalid` now show only on rows with a name. These are the rows that are counted and that block Confirm; unnamed rows are skipped when saving.
+- Tests: 2 new rendered cases plus 1 updated wording assertion. All 3 fail on the previous code.
+- Could break: nothing in data or behaviour; text and highlighting only. The review-step message is unchanged.
+
+## 2026-11-04 — Ace review screen: a cleared price means "price needed"; long service names saved
+
+- Owner decision (2026-11-04): if Ace found a price and the owner clears the box, the item is "price needed" and blocks Confirm, instead of being saved as Free. Typing 0 still means Free.
+- `app/dashboard/setup-assistant/page.tsx`:
+  - Ace items (from images and from pasted text) are marked `fromAce`. Clearing their price gives `null`, and a price of 0 is shown as "0" rather than an empty box.
+  - Items the owner adds by hand are unchanged: an empty box still means 0.
+  - Name inputs are capped at 200 characters.
+- `app/api/ai-setup/apply/route.ts`: a service name over 200 characters is now saved cut to 200, as products already were. Before, it was silently dropped while the page still showed "Setup Complete".
+- Tests:
+  - 1 rendered case: clearing blocks Confirm, typing 0 saves Free;
+  - 1 route case: long service name.
+  - Both fail on the previous code.
+- Could break: an owner who clears an Ace price expecting Free must now type 0.
+
+## 2026-11-04 — Ace reads menus and product photos (Setup Guide)
+
+- Owner decisions (2026-11-04):
+  1. Ace reads menus / price lists into items, and a photo of a single product becomes that product's picture with a suggested name, description and category (price only if visible). The owner reviews everything; nothing is written until Confirm.
+  2. Claude Sonnet reads images.
+  3. Each image counts toward the Ace allowance (`ace_setup`), like a text message.
+  4. An item with no visible price cannot be created until the owner types a price.
+- `lib/ai-setup/image-catalog.ts` (new): pinned model `ACE_IMAGE_MODEL = 'claude-sonnet-4-5-20250929'` (the old id `claude-sonnet-4-5-20241022` does not exist in the SDK's model list), prompts for `menu` and `product_photo` modes (image text is treated as data), and strict output validation: ≤100 items (1 for a product photo), name ≤200, category ≤100, description ≤1000, URLs/markup/control characters stripped, `kind` is `product` or `service`, price a finite number ≥0 kept to 2 decimal places (e.g. 12.5 stays 12.5) or `null` when not visible.
+- `app/api/ai-setup/parse-image/route.ts`: order is now auth → owner check → rate limit (`ai-parse:{business}:{user}`, 10/hour; previously keyed by business only and consumed before the owner check) → Ace quota (`checkAIFeature`, 403 with the reason when used up) → real-bytes check (`validateFileSignature`) → `sanitizeImage` re-encode to JPEG, long edge ≤1568 → Sonnet (no tools). Upload cap 4MB (under Vercel's body limit). Usage counting: see the review follow-ups below (every checked image counts, using the service client). `maxDuration = 60`. Model failures return 502.
+- `lib/services/payload-builders.ts`: new `buildAiSetupProductRow` and `isAiSetupProductImageUrl`. AI Setup service and product rows now require a price (missing/null → rejected). **Services only**: price and deposit are rounded to whole numbers, because `services.price` and `services.deposit_amount` are INTEGER (a decimal previously failed the whole insert). **Products** keep decimals, rounded to 2 decimal places (12.50 stays 12.5), because `products.price` is `numeric` in production (read-only `information_schema` check by the coordinator, 2026-11-04). Schema drift: the repo's migrations still say `products.price INTEGER` (migration 002, never altered in `supabase/migrations`), so the repo does not match production for this column. Clamping (0–99,999,999, name 200, category 100, description 1000) and the #376 deposit ≤ price rule are unchanged.
+- `app/api/ai-setup/apply/route.ts`: each item is built separately, so one bad item no longer sinks the batch (or, for a deposit above price, the whole request with a 500). Item errors and failed inserts are returned per section with `success: false` (HTTP 207); raw database messages stay in the server log. `image_url` is accepted only for `{SUPABASE_URL}/storage/v1/object/public/business-documents/{business_id}/products/{file}` (other businesses' files, other hosts, other folders, traversal and query strings are rejected).
+- `app/dashboard/setup-assistant/page.tsx`: photos are downscaled in the browser (canvas → JPEG, long edge ≤1600, `lib/ai-setup/client-image.ts`); explicit accept list; several photos at once, read one at a time; new "Photo of a product" option (shown when the business sells products) that keeps the photo in the browser and uploads it through `/api/products/upload-image` only after Confirm (menu photos are never stored); items routed by `kind` when the business offers both; server error messages shown; items without a price are highlighted and Confirm stays disabled until priced; any apply error is shown and "Setup Complete!" appears only on full success. Retrying is safe: created names are skipped as duplicates and an uploaded photo is not re-uploaded.
+- Tests: `app/api/ai-setup/__tests__/parse-image-route.test.ts` (20), `app/api/ai-setup/__tests__/apply-route.test.ts` (19; includes the same 12.50 price staying 12.5 as a product and becoming 13 as a service), `app/dashboard/setup-assistant/__tests__/setup-assistant-images.test.tsx` (10; includes the rounding note shown only for services).
+- Unchanged: payment, fee, payout and capability-gating code; `sanitizeImage` and `validateFileSignature` defaults; the upload-image route; churches/NGOs still have no image upload.
+- Could break: a service price with decimals (e.g. 12.50) is now saved as 13 instead of failing; the review screen says so for services only. Product prices with decimals are saved to 2 decimal places, which relies on `products.price` being `numeric` (true in production; a database built only from repo migrations has INTEGER and would reject a decimal product price). AI Setup items sent without a price are now rejected instead of saved as 0 (the page always sends a number for typed/manual items). A photo uploaded at Confirm stays in storage if the apply step then fails. Browsers that cannot decode HEIC (most non-Safari) ask for a JPEG/PNG instead.
+- Review 1 follow-ups:
+  - The usage count now follows Owner decision 3. A checked image counts before Ace is called, even if nothing is read or the call fails. Images that fail the file checks don't count.
+  - A cut-off reply from Ace (output limit reached) gets a "menu too long, split it" message. The Ace client is bounded to a 50s timeout and 1 retry, so calls finish inside the 60s limit.
+  - Prices:
+    - Ace prices above 99,999,999 come back blank ("price needed") instead of capped.
+    - At save time, negative prices and non-plain text prices (for example "0x10" or "1e3") are rejected per item instead of saved as 0 or as a different number.
+    - The existing 99,999,999 cap is unchanged.
+  - Product photo URLs must end in .jpg, .jpeg, .png or .webp, which are the only types the upload route writes.
+  - Transparent images get a white background before conversion to JPEG instead of black.
+  - If the duplicate check can't read existing items, that section saves nothing and reports an error, instead of risking duplicates.
+- Review 2 follow-ups:
+  - Ace image usage is now recorded.
+    - Before: `incrementAIUsage` ran with the signed-in user's client. `ai_usage` writes and `increment_ai_usage` are service-role only (migration 351), and the error was ignored, so nothing was counted (production `ace_setup_count` was 0 in every month).
+    - Now: parse-image counts with the service client.
+    - `incrementAIUsage` now calls the atomic RPC directly and returns whether the count was saved; voice and translation callers ignore the result as before.
+    - If an image can't be counted, it is refused (503) and not read.
+  - The Ace chat route has the same counting problem and is unchanged here, pending an Owner decision.
+  - The Ace client makes one attempt with a 55s timeout. The SDK timeout applies per attempt, so the earlier 50s plus 1 retry could exceed `maxDuration` 60.
+  - `sanitizeImage` has a new optional `flattenBackground` option, off by default. parse-image uses white, so transparent images aren't black even when the browser can't prepare the photo.
+  - The duplicate check now reads the business's existing names page by page and compares them ignoring case. Names with quote marks, brackets or commas no longer break it, and the same name twice in one batch is skipped.
+  - Opening-hours and greeting save errors return generic messages; the database detail stays in the server log.
+  - Test: `lib/bot/__tests__/ai-usage-increment.test.ts` (3).
+- Review 3 follow-ups:
+  - The duplicate check compares names as they will be saved: trimmed, cut to 200 characters, and ignoring case. A product name over 200 characters is no longer saved twice on retry.
+  - Paging moves on by the number of rows returned and stops on an empty page, so a lower server row cap can't end the read early.
+  - Tests cover more than 1000 existing names and the over-200-character name.
+- Owner decisions (2026-11-04, after review 2):
+  - Chat-route counting goes in a separate PR, after the limits are decided.
+  - An image that can't be counted is refused, with a retry message.
+  - Pasted-text items need a price, the same as photos.
+- `app/dashboard/setup-assistant/page.tsx`: pasted-text items from Ace without a price (missing, blank or not a number) are marked "price needed" and block Confirm, instead of being saved as Free. A price of 0 from Ace is kept. Image and text items share `aceItemPrice`. Test: 1 new rendered case.
+- Could break: until the chat route is decided, only images count. Free plans allow 3 Ace uses a month, so a free business can read 3 images a month.
+
+## 2026-11-03 — Release Process V3: reusable release gate (schema 8)
+
+- Owner-approved plan (Issue #843, `RELEASE_GATE_V2.md` §9). One reusable gate replaces a new gate profile per release. Docs: `docs/RELEASE_V3_GATE.md`.
+- New `scripts/release-gate-v3.mjs` with `scripts/release-v3/`:
+  - lane classifier (path allowlist plus content check; unknown or payment paths go to full);
+  - read-only DB observer (psql, `release_observer` login);
+  - admission against an Owner-approved lock: ledger complete set, exact statements, catalog = lock + deltas, M430 absence;
+  - Vercel/GitHub reads: admin pin always from `targets.production.id`;
+  - packet: 24h, single use, bound by sha256 to a recorded Owner approval.
+- Workflows `release-prepare.yml` (reads only, writes the packet) and `release-deploy.yml` (re-checks production before every mutation; merchant then admin; one alias POST; no retry; no automatic rollback).
+- Catalog oracle (`scripts/release-v3/catalog-oracle.mjs`, `catalog-v3.sql`) builds the catalog delta of each migration in disposable PostgreSQL 17. Committed: `supabase/catalog-deltas/508_business_control_columns_guard.json` (equals the change measured in production) and `scripts/release-v3/m430-identities.json`.
+- `scripts/release-v3/lock.json`: production and staging catalog and ledger digests after M508 (read-only connector, 2026-11-03); certified `bdc007a8`.
+  - Tied to the approved schema 9 release: re-read with the schema 9 query and ledger recipe, both environments equal its approved values exactly.
+  - Per-object maps in `lock-catalog-{production,staging}.json`.
+- Classifier: a document is docs-only only if no tooling reads it and it matches no full-lane path (the stricter class wins). `RELEASE_GATE_V2.md` §9.3 and the §9 adoption line are worded to match (#844 review follow-ups).
+- Review 1 fixes:
+  - the classifier scans the whole before and after version of every allowlisted code file;
+  - it follows imports into repository modules at the target;
+  - it parses imports across lines and comments, and rejects `..` in aliases;
+  - payment-named paths, symlinks and submodules are always full;
+  - an import counts as type-only only if its clause is exactly `type { names }` (no comments), and only when its `import`/`export` keyword starts a line, so comments cannot hide a real import (no hand-written lexing); computed global lookups are full.
+- Review 2 fixes: any `\u`/`\x` escape, external form posts and active SVG content (namespaced script, entities, DTDs, external links) are full; runtime identity also checks the Supabase project; the observer role must have no role memberships; 90-day release-record retention documented.
+- Review 2, round 7: code construction and reflection (`constructor`, `prototype`, `global`, property descriptors), timers not given an inline function, workers, beacons and string-assembled computed lookups are full. The docs state the classifier's limit: a fail-closed filter against accidental drift, not an adversarial sandbox; the standard-lane reviewer stays the backstop (Owner decision 2026-11-04: accepted).
+- Prepare requires the 15 named CI jobs, including the payment suites. Optional `verify-full` TLS for the observer (`RELEASE_OBSERVER_CA_PEM`).
+- The observer role's claims are corrected: it inherits PUBLIC grants, and read-only is a session default. Production needs an Owner decision before the role is applied (private advisory). The `release-observer` environment must be restricted to `main`.
+- `scripts/release-v3/release-observer-role.sql`: reviewed, not applied. Applying it needs Owner approval per environment, and the Owner sets the password.
+- CI:
+  - new job "Catalog oracle (PostgreSQL 17)" (regenerates deltas; real-PG proof of the observer role, 6 tests), required through the existing "Migration validation" aggregator;
+  - advisory PR lane summary in the release-gate job;
+  - file-presence guards for the new tests.
+- `scripts/ci-bootstrap-test-db.sh`: optional `CI_BOOTSTRAP_PREREQUISITES_ONLY=1` (default behaviour unchanged).
+- Tests: `scripts/__tests__/release-v3-{classify,admission,gate}.test.ts` (unit and end-to-end prepare/deploy with faked platforms), plus `release-v3-observer.pg.test.ts`.
+- Runs no SQL in any environment and changes no setting. Schema 2–7 and 9 profiles are untouched until the first successful schema 8 release.
+- Could break: Migration validation now also needs the PG17 oracle job. A future migration PR must commit its catalog delta.
+
+## 2026-11-04 — Table reservations: no phantom add-ons; confirmation names the table
+
+- `lib/bot/flows/scheduling.flow.ts`:
+  - `select_addons` is skipped for table reservations, and any carried-over add-on state is cleared. Add-ons were offered and listed in the confirmation, but `book_table_atomic` stores no add-ons and the total is the flat deposit, so they were never saved or charged.
+  - The confirmation summary shows the chosen table ("🪑 <table>") for table reservations, instead of `service_name`, which is only set from the table after booking and could hold a stale keyword-matched service.
+- Test: `lib/__tests__/table-reservation-addons-and-summary.test.ts` (4; the two table cases fail on the previous code).
+- Not changed: deposits, payment, `book_table_atomic`, other bookings. Findings needing Owner decisions (same-day reservations, the restaurant "Book a Table" label, the substring 'table' keyword, seating setup prompt) are tracked separately.
+- Could break: a table booking that previously showed add-ons no longer does. Those add-ons were never charged.
+
+## 2026-11-04 — WhatsApp link on the overview, and the own-number rule in plain words
+
+- Owner decisions (2026-11-04):
+  - show the direct WhatsApp link on the overview, display-only, with why the Waaiio link is the one to share;
+  - tell owners that only a brand-new number that has never had WhatsApp can be connected;
+  - own number is available on any plan;
+  - the coexistence pilot stays shown as unavailable.
+- `app/api/whatsapp/direct-link/route.ts` (new): owner-only GET that returns the business's `wa.me` link, using the same server readiness check as the public `/m/` links (`resolveBusinessChannel`). It returns `null` when that link would not work, and sends `Cache-Control: no-store`. The dashboard home still makes no direct channel query (existing safety tests unchanged).
+- `components/dashboard/DirectWhatsAppLink.tsx` (new), used in `app/dashboard/page.tsx`: shows "Direct WhatsApp link" as plain, non-selectable text under the short link, with the approved note. Shown only when the server returns a link.
+- Own-number wording: "Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect." Added to:
+  - the signup details step, whose subtitle no longer says "existing business or personal number";
+  - the success screen;
+  - the dashboard Connect page, shown above both connection options (including the recommended "Enter Phone Number").
+- Review follow-ups, so no visible page contradicts the decisions:
+  - the homepage FAQ no longer says an existing business WhatsApp number works;
+  - both help pages say own number is available on every plan (not Pro/Premium only) and repeat the brand-new-number rule;
+  - the route test now asserts the owner filter.
+- The signup plans panel now says "Connect your own WhatsApp number on any plan" instead of "Pro & Premium". Unused `WA_OPTIONS` code in the wizard is unchanged and not rendered.
+- Tests:
+  - `app/api/whatsapp/direct-link/__tests__/direct-link-route.test.ts` (5);
+  - `components/dashboard/__tests__/direct-whatsapp-link.test.tsx` (3);
+  - `app/get-started/steps/__tests__/own-number-warning.test.tsx` (3).
+- Could break: nothing; no database or permission change. The extra request on the dashboard home is one owner-checked GET.
+
+## 2026-11-04 — Admin Support: replies saved and shown again
+
+- `admin/src/pages/Support.tsx`: replies were written to a `body` column that does not exist; the real column is `message`. PostgREST rejected every admin reply (400, PGRST204, seen in staging edge logs) and the page showed "Failed to send message". The thread also rendered `body`, so every message appeared blank to admins. The insert, the type and the render now use `message`. No migration, RLS or permission change: the `admin_all_ticket_messages` / `is_admin()` gate is unchanged.
+- Test: `admin/src/__tests__/support-send-message.test.tsx` (3): existing messages render; a reply is sent as `{ ticket_id, sender_id, message, is_internal }` with no `body` key; a rejected insert keeps the draft and shows the failure. The first two fail on the previous code.
+- Could break: nothing; the merchant support page already used `message`.
+
+## 2026-11-03 — Release gate: schema 9 bot-code-lock profile (M508 only)
+
+- Owner decision (2026-11-03): ship #841 (short merchant links) and #842 (app side of M508) now through one last per-release profile, while Release Process V3 (#843) builds the reusable gate.
+- New `scripts/bot-code-lock-release-policy.mjs` (policy `postlaunch-bot-code-lock-v1`, manifest schema 9):
+  - pins baseline `73377818` → target `bdc007a8` (tree `45d2cfe5`): 32 changed blobs, no deletions;
+  - the only SQL is M508, by exact sha256.
+- Evidence per environment:
+  - every schema 7 rule, including the M507 function contract and M430 absence in production;
+  - exactly one ledger addition `508_business_control_columns_guard` with the reviewed statement bytes;
+  - one extra trusted catalog phase (`scripts/bot-code-lock-contracts.json`) with exactly the three M508 catalog changes, measured before and after in both environments (identical in both).
+- `scripts/postlaunch-release-policy.mjs`: `verifyPostlaunchEnvironment` takes optional extra trusted catalog phases. Schemas 6 and 7 pass none, so their behaviour is unchanged.
+- `scripts/reduced-release-evidence.mjs` recognizes schema 9. `scripts/reduced-release-gate.mjs` routes schema 9 through every postlaunch branch with its own identities, targets, suites, SQL tests and evidence verifier.
+- Merchant delta suites (7). `permanent-merchant-links` is not pinned: it expects the production app URL, and the gate uses `https://example.invalid` (same Owner decision as #838). It still runs in Main App CI.
+- Tests: `scripts/__tests__/bot-code-lock-release-policy.test.ts` (33). The schema 6 and 7 suites are unchanged and passing.
+- Docs: `docs/POSTLAUNCH_BOT_CODE_LOCK_RELEASE.md`. CI: file-presence guard for the new test.
+- Runs no SQL and changes no setting.
+- Could break: nothing for schema 2–7 manifests; their code paths and tests are unchanged.
+
+## 2026-11-03 — Governance: Release Process V3 final review fixes (#844, docs only)
+
+- The final #844 delta (`2a91ec57`, reviewer-of-record fixes) on top of the entry below:
+  - `RELEASE_GATE_V2.md` §9.1: until the reusable gate exists, each gate profile checks M430 absence read-only and records it.
+  - Migration discipline now names SECURITY DEFINER functions in private schemas.
+  - Release packets record MCP and Graphify checks once §9.4 applies.
+  - §9.3 adds the content check (`'use server'`, data/payment/provider imports, env reads, network/storage calls make an allowlisted file full); a reviewer may raise a lane, never lower it.
+  - §9.3 lists governance and agent-instruction files that need CTO review.
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: "ChatGPT" / "ChatGPT/CTO" wording replaced by the CTO reviewer of record (an independent Claude reviewer, every time).
+- `CLAUDE.md`: CI Process wording (CI runs on every PR push and is the merge evidence).
+- Could break: nothing at runtime.
+
+## 2026-11-03 — Governance: Release Process V3 (docs only)
+
+- Owner decision (2026-11-03, Issue #843): shorten releases by removing repeated work, without relaxing any safety rule or review.
+- `RELEASE_GATE_V2.md` new §9:
+  - non-negotiables: M430 never in production, payment safety for both custody routes, complete reviews, exact SHA, separate Owner approvals for merge/production migration/live money actions, Owner makes all product decisions, MCP and Graphify evidence required, findings raised immediately;
+  - database first;
+  - standard and full lanes (unknown paths go to full);
+  - one generated release packet approval, with the deploy job re-checking production itself;
+  - a reusable gate instead of a profile per release;
+  - CI on every push (already the case), a standard review brief and release trains;
+  - review-driven precision: one-time, digest-bound packet approval, certified-baseline check, path allowlist for the standard lane, staging-before-production ordering, and the gate 6 rule.
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md`: records that one release-packet approval covers gates 5, 7 and 9 for that packet. Merge, production migration and live money actions stay separate.
+- `CLAUDE.md`: pointer line to §9. The CI Process section is corrected: CI already runs on every PR push (`synchronize`, since #629), so the draft→ready toggle is only a fallback for a missing or cancelled run.
+- Owner decision (2026-11-03): the reviewer of record (the CTO review role) is an independent Claude reviewer: a separate, read-only, fresh-context Claude session or agent using MCP and Graphify. The two-reviewer gate uses two of them. ChatGPT is optional. Recorded in Operating Order "Roles", CLAUDE.md and Release Gate V2 §5.1.
+- No code change. §9.1 non-negotiables apply now. §9.2–§9.6 apply only after their tooling is merged; until then the current gate profiles apply.
+- Could break: nothing at runtime.
+
+## 2026-11-03 — Harden server-managed business columns (M508)
+
+- Owner decisions (2026-11-03): bot codes are fixed once set (owners cannot rename them; support or an admin can); WhatsApp channel and status fields on a business are managed by the server only; only the server can create a business.
+- `supabase/migrations/508_business_control_columns_guard.sql`:
+  - extends the 442 update guard (`guard_server_managed_columns`, same allow rule: service_role or the function owner) to also cover `assigned_channel_id`, `whatsapp_channel_id`, `wa_method`, `country_code`, `status`, `bot_code`, `trial_ends_at`, `is_verified`, `verified_at`, `verified_by`, `whatsapp_plan` and `is_whitelabel` (trial dates are set by the trial lifecycle functions, verification by admin review through the server);
+  - adds a BEFORE INSERT guard (`guard_business_insert`, trigger `trg_guard_business_insert`): only service_role or the function owner can create a business. Every app path (signup, admin onboarding, reseller, WhatsApp onboarding) already creates businesses with the service client;
+  - no data change. Server routes, cron jobs and SECURITY DEFINER functions (`assign_first_shared_channel`, channel promotion and transition) are unaffected.
+- `lib/channels/channel-resolver.ts`: `resolveByBusinessId` uses a business's channel pointer only if it is a shared platform number or a channel that business owns; otherwise it falls back as if the pointer were empty and does not cache it.
+- `app/dashboard/settings/tabs/BusinessTab.tsx`: the bot code is shown read-only with a note to contact support for a change.
+- `app/api/reseller/accounts/route.ts` and `[id]/route.ts`: sub-account create and status changes are written by the server client, scoped to the reseller's own sub-account. Every other PATCH field stays on the caller's client, so the existing guards (including the plan) still apply. The create still takes the plan and country the reseller picks, as before.
+- Tests: `lib/__tests__/business-control-columns-508.pg.test.ts` (real PostgreSQL, applies 442 → 507 → 508, with a before-508 control; 36), `lib/channels/__tests__/resolver-owned-channel-pointer.test.ts` (5), `app/dashboard/settings/tabs/__tests__/business-tab-bot-code-locked.test.tsx` (2), `app/api/reseller/accounts/__tests__/reseller-status-server-write.test.ts` (7). CI: file guard and Main App exclude for the new pg test.
+- Applied to staging and then production on 2026-11-03 with Owner approval, from this exact file (sha256 `dcaedb07…9e11`); the stored statements match the file in both environments. The release gate catalog pins the guard function and trigger, so the next release that includes M508 needs a gate update.
+- Could break: any non-server code path that writes those twelve columns, or creates a business, as the signed-in user now gets an error. Searched every write to `businesses` in `app/`, `lib/`, `components/`, `admin/src/` and `supabase/functions/` (35 app/lib files) for all twelve columns: the dashboard bot-code editor (removed here) and the reseller routes (moved to the server client here) were the only user-client writers of these columns or creators of businesses; all others use the service client.
+
+## 2026-11-03 — Short merchant links: /m/{BOT_CODE}
+
+- Owner decision (2026-11-03): shorten the shared WhatsApp link, for example `waaiio.com/m/CITADEL` instead of `waaiio.com/m/<uuid>`. Option A: use the business's existing unique bot code.
+- `app/m/resolve.ts`: `parseMerchantKey` accepts either the permanent UUID (looked up by `id`) or a bot code (A-Z/0-9/hyphen, 1–30 characters, upper-cased, looked up by `bot_code`). Anything else returns 400 with no database lookup. Every existing `/m/<uuid>` link keeps working.
+- `app/m/[businessId]/campaign/[campaignId]/route.ts`: the campaign ownership filter now uses the resolved `result.business.id`, never the raw key.
+- `lib/url.ts`: `buildShortMerchantLink(botCode, businessId)`. It uses the stored code only when it is already canonical (upper-case A-Z/0-9/hyphen); otherwise it falls back to the permanent `/m/<uuid>` link.
+- The short link is shown as text in the onboarding success share text (`OnboardingWizard`; `StepSuccess` now accepts `/m/{BOT_CODE}`), on the dashboard home and on the WhatsApp settings page. Every QR code, including the dashboard home QR card and the success-screen QR and download, encodes the permanent `/m/<uuid>` link (`qrLink`).
+- Deliberately unchanged:
+  - All QR codes and attendance links stay on the UUID.
+  - The public directory stays on the UUID; its API hides bot codes.
+  - The admin onboarding `permanent_link` is unchanged.
+- Tests: `lib/__tests__/permanent-merchant-links.test.ts`, `app/get-started/steps/__tests__/promotionGuidance.test.tsx` and `app/get-started/steps/__tests__/success-qr-permanent-link.test.tsx`. The new cases fail on the previous code.
+- Could break:
+  - Owners can currently change their bot code in Settings, and a changed code breaks that business's short links. Do not release short links until bot codes are locked against edits (tracked privately).
+  - Bot codes become guessable link keys. They were already public in every shared `wa.me` link, and `/m/` stays rate-limited at 30 per minute.
+
+## 2026-11-03 — Release gate: schema 7 first-assignment profile (M507 only)
+
+- Owner decision (2026-11-03): release #836 (first shared WhatsApp number at signup) and #839 through a narrow gate that admits exactly one reviewed migration, M507.
+- New `scripts/first-assignment-release-policy.mjs` (policy `postlaunch-first-assignment-v1`, manifest schema 7):
+  - pins baseline `5e3204d9` → target `73377818` (tree `208b1ba8`): 20 changed blobs, no deletions;
+  - the only SQL is `supabase/migrations/507_first_shared_channel_assignment.sql`, by exact sha256.
+- `scripts/first-assignment-function-contracts.json`: the exact expected contract for `assign_first_shared_channel(uuid)` and `get_bot_context(text,uuid)`. The test ties each body hash to the dollar-quoted body in the pinned migration. Production must have no M430 `allocate_shared_channel` or `reassign_shared_channel` function.
+- Evidence per environment:
+  - every schema 6 rule, through the shared `verifyPostlaunchEnvironment`, which was extracted from `verifyPostlaunchEvidence` with no behavior change;
+  - exactly one ledger addition named `507_first_shared_channel_assignment` with the reviewed statement bytes;
+  - the function contract.
+- Verify run:
+  - adds merchant suites `first-shared-assignment-admission` (35), `onboarding-655-flow-callback-fallback` (3) and `hide-inactive-countries-marketing` (4);
+  - the integration SQL job adds `first-shared-assignment-507.pg` (24) and pins the M507 source.
+- `scripts/reduced-release-gate.mjs`: schema 7 follows every postlaunch branch, with its own identities, targets, policy, SQL tests and evidence verifier. `scripts/reduced-release-evidence.mjs` recognizes schema 7.
+- Tests: `scripts/__tests__/first-assignment-release-policy.test.ts` (29). Existing gate suites are unchanged and passing (postlaunch 40).
+- Docs: `docs/POSTLAUNCH_FIRST_ASSIGNMENT_RELEASE.md`. CI: file-presence guard for the new test.
+- Runs no SQL and changes no setting. Applying M507 and setting `ENABLE_FIRST_SHARED_ASSIGNMENT` remain separate Owner-approved steps.
+- Could break: nothing for schema 2–6 manifests; their code paths and tests are unchanged.
+
+## 2026-11-03 — Marketing: stop offering Ghana while it is switched off
+
+- Owner decision (2026-11-03): Ghana is not offered for now; it is switched off in admin. Production's country picker already follows the active-country data, but three fixed texts still named Ghana.
+- `components/marketing/Footer.tsx`: removed the Ghana country badge.
+- `app/(marketing)/pricing/page.tsx`: the "5 Countries" feature card now shows the count and names of the active countries from the same pricing API as the picker (for example "4 Countries — Nigeria, United States, United Kingdom, Canada"). A plain comma list, not `Intl.ListFormat`, which older Safari versions lack.
+- `app/(marketing)/pricing/layout.tsx`: the page description no longer names Ghana.
+- `public/llms.txt`: the AI-search summary says 4 countries, without Ghana.
+- Test: `lib/__tests__/hide-inactive-countries-marketing.test.tsx` (4; all fail on the previous code).
+- Not changed: legal and policy pages (privacy, DPA, AML/KYC, refund policy) and other marketing pages that mention Ghana. Removing those is a separate Owner decision.
+- Could break: if Ghana is switched back on, the footer badge, the pricing description and `llms.txt` must be updated by hand. The pricing card follows the data automatically.
+
+## 2026-11-03 — Release gate: drop two environment-dependent QR suites
+
+- `scripts/postlaunch-release-policy.mjs`: removed `lib/__tests__/issue-496-qr-production.test.tsx` and `app/dashboard/queue/__tests__/queue-share-qr.test.tsx` from the pinned merchant delta suites. They hard-code the production app URL, and the gate's test environment sets `NEXT_PUBLIC_APP_URL=https://example.invalid`, so verify run 41680254404 failed (4/6 and 7/16) although the code is correct. Owner decision, 2026-11-03.
+- The other pinned suites are unchanged, and all pass under the gate environment at `5e3204d9`. Both QR files still run in Main App CI.
+- Follow-up: make both tests derive the expected URL from the configured app URL.
+
+## 2026-11-03 — App-only release profile pinned to b741 → 5e3204d9
+
+- `scripts/postlaunch-release-targets.json`: baseline `b741c7cf` → target `5e3204d9` (tree `7ef94107`). 17 changed blobs (sha256 of target content), no deletions, no `supabase/` or SQL paths.
+- `scripts/postlaunch-release-policy.mjs`:
+  - new fixed identity;
+  - delta suites for pricing (1), QR (6), queue QR (16) and admin Users (3);
+  - three new acceptance cases (pricing countries, admin Users list, QR assigned channel).
+  - All existing suites and cases are kept.
+- `scripts/__tests__/postlaunch-release-policy.test.ts`: expects 17 blobs.
+- `docs/POSTLAUNCH_APP_ONLY_RELEASE.md`: successor pin documented.
+- Could break: nothing at runtime. This is release verification only. Migration 507 (#836) is not part of this release.
+
+## 2026-11-03 — Signup works again without M430: first shared WhatsApp number
+
+- **Why:** production has no `ENABLE_CHANNEL_ALLOCATION_OPERATIONS` and no `allocate_shared_channel` (M430 is staging-only, by Owner decision). So `provisionPendingBusiness` threw 503 and nobody could sign up; the newest production business is from 2026-09-27. 38 active shared businesses also have no number.
+- `supabase/migrations/507_first_shared_channel_assignment.sql`:
+  - `assign_first_shared_channel(p_business_id)` (SECURITY DEFINER, `search_path = public, pg_temp`, `service_role` only). It gives a business with no channel at all its own country's active, connection-active, unowned shared number. The only fallback is the approved GH → NG.
+  - It locks the business row, never replaces an existing assignment, and refuses any business with `whatsapp_channel_id`, a non-shared `wa_method`, or any channel row of its own.
+  - No capacity limit (Owner decision 2026-11-03). No backfill, constraint or setting changes.
+  - `get_bot_context`: ports only the #266 R3 ambiguity check, with the body identical to the staging final state. When the business is unresolved and the phone has active sessions with more than one business, it returns `ambiguous: true` and the business list; the bot then shows the picker (`lib/bot/bot.service.ts` ~943). The business-scoped path is unchanged.
+- `lib/channels/operation-admission.ts`:
+  - New server-only switch `ENABLE_FIRST_SHARED_ASSIGNMENT`, off by default.
+  - New `WHATSAPP_NUMBER_UNAVAILABLE` response.
+- `lib/onboarding/whatsapp-readiness.ts`:
+  - `assignFirstSharedChannel`.
+  - `allocateSharedChannelForNewBusiness`: uses the M430 path when broad channel operations are on (staging), otherwise M507.
+- Callers:
+  - `lib/onboarding/provision-business.ts` (register signup; admin-assisted stays closed because its routes are still broad-gated) is admitted by either switch. `app/api/whatsapp/flow-callback/onboarding.ts` uses the new wrapper but is still admitted only by the broad switch; this was review-required.
+  - `app/api/onboarding/verify/route.ts` assigns the first number for an unassigned shared business when only the new switch is on, and returns 503 `WHATSAPP_NUMBER_UNAVAILABLE` if none is eligible.
+- Unchanged: reassignment, stale-channel repair, dedicated promotion, Embedded Signup, disconnect, admin channel changes and admin onboarding all stay behind `ENABLE_CHANNEL_ALLOCATION_OPERATIONS`. Staging behavior is unchanged.
+- Tests:
+  - `lib/__tests__/first-shared-assignment-507.pg.test.ts` (real PostgreSQL, 24 tests).
+  - `lib/__tests__/first-shared-assignment-admission.test.ts` (35 tests).
+  - `lib/__tests__/onboarding-655-flow-callback-fallback.test.ts`: assertion updated to the new wrapper, with no direct RPC.
+- Could break: nothing while the switch is off. Turning it on in production is a separate Owner-approved environment change, after M507 is applied through the release process.
+
+## 2026-11-03 — QR page no longer shows an unrelated WhatsApp number
+
+- `app/dashboard/qr-code/page.tsx`: when a business had no assigned channel, the page picked any active shared number (often another country's), so it looked ready. But the printed QR (`/m/{businessId}`, `app/m/resolve.ts`) only resolves through `assigned_channel_id || whatsapp_channel_id`, so customers got "not connected". The page now mirrors that rule. It reads the assigned channel as a dedicated channel from the base table (allowed by the owner RLS policy) or as a shared channel from `whatsapp_channels_public` (owners cannot read shared channels from the base table). With no usable assigned channel it shows "WhatsApp isn't connected yet". The queue template keeps its own guidance. The unused owner-contact phone state was removed.
+- Tests: `lib/__tests__/issue-496-qr-production.test.tsx` (unassigned → warning; assigned shared via view → no warning), `app/dashboard/queue/__tests__/queue-share-qr.test.tsx` (mocks now follow production RLS: shared rows only through the view; the old any-shared-number fallback case now asserts the queue QR is withheld).
+- Known limitation: the browser cannot see `connection_status` or staging-only fallback countries, so country/connection checks stay server-side. Today 3 Nigerian businesses sit on the US number, and all are in the cleanup scope.
+- Unchanged: the `/m/{businessId}` redirect, the bot, channel assignment.
+- Could break: merchants without an assigned channel now see a warning they did not see before. That is intended.
+
+## 2026-11-03 — Pricing page shows all five countries again
+
+- Owner direction (2026-11-03): "everything should show in pricing". Reverts the presentation part of #802: `app/(marketing)/pricing/page.tsx` restores the country picker (Nigeria, US, UK, Canada, Ghana) and the five-country feature card; `components/marketing/Footer.tsx` restores all country badges on /pricing; `lib/__tests__/marketing-country-pricing.test.tsx` returns to the multi-country assertions.
+- Prices still come only from the canonical `/api/public/pricing` projection (database). No pricing data, API, onboarding or payment change.
+- Could break: nothing functional; marketing copy returns to the pre-#802 wording.
+
+## 2026-11-03 — Admin Users list loads again
+
+- `admin/src/pages/Users.tsx`: the profiles query requested `country_code` and `metadata`, which are not columns on `public.profiles`; PostgREST returned 400 and the Users list was always empty (staging and production, since the initial deploy). The query now selects only existing columns; the two fields are optional in the type, so Country shows "—" and status shows "active".
+- Review fix (P1): `profiles.email` is nullable (17 of 108 production profiles have no email). `Profile.email` is now `string | null`, the search filter uses `(p.email ?? '')`, and the detail title falls back to `''`. Without this, typing a search term crashed the page once the list loaded. Regression test: `admin/src/__tests__/users-null-email-search-833.test.tsx`.
+- Unchanged: Suspend/Reactivate still writes `profiles.metadata` and therefore still cannot succeed — kept as-is pending an Owner decision (remove the control, or add the column via a reviewed migration).
+- Could break: nothing that worked before; the list simply loads now.
+
+## 2026-11-02 — Fixed app-only successor release verification
+
+- Add a fixed postlaunch application profile with completed-schema preservation, current controls, exact source evidence and unchanged approval gates.
+- Preserve manual admin alias assignment when the reviewed latest pointer is the serving baseline.
+
 ## 2026-11-02 — Function signature replacement verification
 
 - Align the production catalog projection with the canonical removal of a superseded function signature, retaining strict metadata checks.

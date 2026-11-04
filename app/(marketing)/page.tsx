@@ -44,7 +44,7 @@ const FAQ_DATA = [
   },
   {
     question: 'Can I use my own WhatsApp number?',
-    answer: 'Yes. You can use your existing business WhatsApp number or start with a shared Waaiio number. You can upgrade to a dedicated number when ready.',
+    answer: 'Yes, on any plan. It must be a brand-new number that has never had WhatsApp (for example a new SIM); a number that already has WhatsApp or WhatsApp Business on it will not connect. You can also start straight away on a shared Waaiio number.',
   },
 ];
 

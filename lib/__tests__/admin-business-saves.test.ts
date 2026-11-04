@@ -9,11 +9,12 @@ const f = vi.hoisted(() => ({
   categoryError: false, readError: false, writeError: false, zero: false, savedValue: null as string | null,
   writes: [] as Array<{ table: string; values: Record<string, unknown>; filters: Record<string, unknown> }>,
   stepUp: null as Record<string, unknown> | null,
-  audit: vi.fn(),
+  audit: vi.fn(), owner: vi.fn(), reads: [] as string[],
 }));
 vi.mock('@/lib/admin-audit', () => ({ logAdminAudit: (...args: unknown[]) => f.audit(...args) }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({
   auth: {
+    admin: { getUserById: (id: string) => f.owner(id) },
     getClaims: async () => ({ data: { claims: f.validToken ? { sub: 'admin', aal: f.aal, session_id: 'session' } : null }, error: null }),
     getUser: async () => ({ data: { user: { id: 'admin', app_metadata: { role: f.role } } }, error: null }),
   },
@@ -29,6 +30,7 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({
         return { data: [{ id: 'grant' }], error: null };
       }
       if (table !== 'businesses') throw new Error('Unexpected table ' + table);
+      if (!values) f.reads.push(String(filters.id));
       if (!values) return { data: f.before, error: f.readError ? { message: 'read failed' } : null };
       f.writes.push({ table, values, filters: { ...filters } });
       const field = Object.keys(values)[0];
@@ -46,7 +48,7 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({
     return q;
   },
 }) }));
-import { POST as profile, OPTIONS } from '@/app/api/admin/businesses/[id]/profile/route';
+import { POST as profile, GET as ownerEmail, OPTIONS } from '@/app/api/admin/businesses/[id]/profile/route';
 import { POST as status } from '@/app/api/admin/businesses/[id]/status/route';
 import { hashOperationParams } from '@/lib/admin-step-up';
 function request(body: unknown) {
@@ -67,6 +69,7 @@ beforeEach(() => {
   f.role = 'admin'; f.aal = 'aal2'; f.session = true; f.validToken = true;
   f.before = { id, name: 'Before', city: 'Lagos', category: 'restaurant', status: 'active' };
   f.categoryError = false; f.readError = false; f.writeError = false; f.zero = false; f.savedValue = null;
+  f.reads.length = 0; f.owner.mockReset().mockResolvedValue({ data: { user: { id: 'owner-a', email: 'current@example.test', app_metadata: { private: true } } }, error: null });
   f.writes.length = 0; f.stepUp = null; f.audit.mockReset().mockResolvedValue({});
 });
 for (const [name, handler, body] of [['profile', profile, () => ({ field: 'name', value: 'After' })], ['status', status, statusBody]] as const) {
@@ -113,4 +116,49 @@ describe('status action binding and persistence', () => {
     expect((await call(status, statusBody())).status).toBe(403); expect(f.writes).toHaveLength(1);
   });
   it('rejects stale previous status before consuming authorization', async () => { authorize(); f.before!.status = 'suspended'; expect((await call(status, statusBody())).status).toBe(409); expect(f.stepUp).not.toBeNull(); expect(f.writes).toEqual([]); });
+});
+
+
+describe('owner sign-in email GET with real admin authorization', () => {
+  const read = (businessId = id) => ownerEmail(new NextRequest('https://example.test/api/admin/businesses/' + businessId + '/profile', {
+    headers: { authorization: 'Bearer synthetic', origin: 'https://admin-staging.waaiio.com' },
+  }), { params: Promise.resolve({ id: businessId }) });
+  beforeEach(() => { f.before = { id, owner_id: 'owner-a' }; });
+  it('derives the owner from the scoped business and returns only its current Auth email', async () => {
+    const result = await read();
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ businessId: id, ownerEmail: 'current@example.test' });
+    expect(f.reads).toEqual([id]); expect(f.owner).toHaveBeenCalledExactlyOnceWith('owner-a');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
+    expect(f.writes).toEqual([]);
+  });
+  it.each(['support', 'finance', 'operations', 'merchant'])('denies %s before business or Auth owner reads', async role => {
+    f.role = role; expect((await read()).status).toBe(403);
+    expect(f.reads).toEqual([]); expect(f.owner).not.toHaveBeenCalled();
+  });
+  it.each(['aal1', 'revoked', 'invalid'])('denies %s authentication before owner reads', async kind => {
+    if (kind === 'aal1') f.aal = 'aal1';
+    if (kind === 'revoked') f.session = false;
+    if (kind === 'invalid') f.validToken = false;
+    expect((await read()).status).toBe(403); expect(f.owner).not.toHaveBeenCalled(); expect(f.reads).toEqual([]);
+  });
+  it('rejects invalid business IDs before lookup', async () => {
+    expect((await read('invalid')).status).toBe(400); expect(f.owner).not.toHaveBeenCalled();
+  });
+  it('reports a missing business without looking up an owner', async () => {
+    f.before = null; expect((await read()).status).toBe(404); expect(f.owner).not.toHaveBeenCalled();
+  });
+  it('reports database failures without owner lookup', async () => {
+    f.readError = true; expect((await read()).status).toBe(500); expect(f.owner).not.toHaveBeenCalled();
+  });
+  it.each(['error', 'missing', 'mismatch', 'throw'])('reports Auth %s generically, never as an absent email', async kind => {
+    if (kind === 'throw') f.owner.mockRejectedValue(new Error('private detail'));
+    else f.owner.mockResolvedValue({ data: { user: kind === 'missing' ? null : { id: kind === 'mismatch' ? 'someone-else' : 'owner-a', email: 'private@example.test' } }, error: kind === 'error' ? { message: 'private detail' } : null });
+    const result = await read(); expect(result.status).toBe(503);
+    expect(await result.json()).toEqual({ error: 'Owner email unavailable' }); expect(f.writes).toEqual([]);
+  });
+  it('supports an existing phone-only owner without inventing an email', async () => {
+    f.owner.mockResolvedValue({ data: { user: { id: 'owner-a' } }, error: null });
+    expect(await (await read()).json()).toEqual({ businessId: id, ownerEmail: null });
+  });
 });

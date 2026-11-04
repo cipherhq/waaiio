@@ -18,9 +18,10 @@ import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
+import { DirectWhatsAppLink } from '@/components/dashboard/DirectWhatsAppLink';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import { buildMerchantLink } from '@/lib/url';
+import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
 
 interface Stats {
   totalBookings: number;
@@ -84,8 +85,10 @@ export default function DashboardOverview() {
   const country = (business.country_code || 'NG') as CountryCode;
   const categoryTemplate = getCategoryByKey(business.category);
 
-  // Permanent Waaiio link — survives connected number changes
-  const whatsappLink = buildMerchantLink(business.id);
+  // Short Waaiio link (/m/BOT_CODE) — survives connected number changes
+  const whatsappLink = buildShortMerchantLink(business.bot_code, business.id);
+  // Printed QR codes stay on the permanent /m/{uuid} link (bot codes can still change).
+  const qrLink = buildMerchantLink(business.id);
 
   // Check if account deletion is scheduled (grace period)
   useEffect(() => {
@@ -534,6 +537,7 @@ export default function DashboardOverview() {
                     </button>
                   </div>
                 )}
+                <DirectWhatsAppLink businessId={business.id} />
               </div>
             )}
           </div>
@@ -579,7 +583,7 @@ export default function DashboardOverview() {
               className="mt-4 flex items-center gap-5 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 transition hover:border-brand/20 hover:shadow-sm"
             >
               <div className="shrink-0 rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-2">
-                <QRCodeCanvas value={whatsappLink} size={80} level="H" />
+                <QRCodeCanvas value={qrLink} size={80} level="H" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Your QR Code</p>

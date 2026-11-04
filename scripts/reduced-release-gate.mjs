@@ -16,11 +16,23 @@ import { ACCOUNTING_TARGETS, ACCOUNTING_EVIDENCE_POLICY, ACCOUNTING_SQL_TESTS, A
 import { SECURITY_IDENTITIES, SECURITY_TARGETS, SECURITY_EVIDENCE_POLICY, SECURITY_SQL_TESTS, SECURITY_STORAGE_TESTS, SECURITY_RUNTIME_SOURCES, SECURITY_MIGRATIONS, verifySecurityPrerequisites } from './reduced-security-policy.mjs';
 import { isFullRelease as full, FULL_IDENTITIES, FULL_SCHEMA_CONTRACT, fullInventoryDigest, FULL_TARGETS, FULL_EVIDENCE_POLICY, FULL_MAIN_SQL_TESTS, FULL_SQL_TESTS, FULL_RUNTIME_SOURCES, requireFrozenFullRelease } from './full-release-policy.mjs';
 import { verifyFullReleaseEvidence } from './full-release-evidence.mjs';
+import {isPostlaunchRelease as appOnly,POSTLAUNCH_IDENTITIES,POSTLAUNCH_TARGETS,POSTLAUNCH_EVIDENCE_POLICY,postlaunchInventoryDigest,verifyPostlaunchEvidence,requireFixedPostlaunch} from './postlaunch-release-policy.mjs';
+import {isFirstAssignmentRelease as firstAssignment,FIRST_ASSIGNMENT_IDENTITIES,FIRST_ASSIGNMENT_TARGETS,FIRST_ASSIGNMENT_EVIDENCE_POLICY,firstAssignmentInventoryDigest,verifyFirstAssignmentEvidence,requireFixedFirstAssignment,FIRST_ASSIGNMENT_MAIN_SQL_TESTS,FIRST_ASSIGNMENT_SQL_TESTS,FIRST_ASSIGNMENT_CANONICAL_SOURCES} from './first-assignment-release-policy.mjs';
+import {isBotCodeLockRelease as botCodeLock,BOT_CODE_LOCK_IDENTITIES,BOT_CODE_LOCK_TARGETS,BOT_CODE_LOCK_EVIDENCE_POLICY,botCodeLockInventoryDigest,verifyBotCodeLockEvidence,requireFixedBotCodeLock,BOT_CODE_LOCK_MAIN_SQL_TESTS,BOT_CODE_LOCK_SQL_TESTS,BOT_CODE_LOCK_CANONICAL_SOURCES} from './bot-code-lock-release-policy.mjs';
+// Schema 7 (first assignment) and schema 9 (bot-code lock) are the schema 6
+// postlaunch profile plus one reviewed, already-applied migration each, so every
+// postlaunch rule below applies to all three.
+const postlaunch=m=>appOnly(m)||firstAssignment(m)||botCodeLock(m);
+const inventoryRelease=m=>full(m)||postlaunch(m);
+const identitiesFor=m=>botCodeLock(m)?BOT_CODE_LOCK_IDENTITIES:firstAssignment(m)?FIRST_ASSIGNMENT_IDENTITIES:appOnly(m)?POSTLAUNCH_IDENTITIES:FULL_IDENTITIES;
+const inventoryDigest=(m,k)=>botCodeLock(m)?botCodeLockInventoryDigest(k):firstAssignment(m)?firstAssignmentInventoryDigest(k):appOnly(m)?postlaunchInventoryDigest(k):fullInventoryDigest(k);
+const requireFixedProfile=m=>botCodeLock(m)?requireFixedBotCodeLock():firstAssignment(m)?requireFixedFirstAssignment():requireFixedPostlaunch();
+const mainSqlTestsFor=m=>botCodeLock(m)?BOT_CODE_LOCK_MAIN_SQL_TESTS:firstAssignment(m)?FIRST_ASSIGNMENT_MAIN_SQL_TESTS:FULL_MAIN_SQL_TESTS;
 const security = manifest => manifest?.schema_version === 4 && manifest.policy === SECURITY_POLICY;
-const accounting = manifest => (manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || security(manifest) || full(manifest);
-const policyFor = manifest => full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
-const sqlTestsFor = manifest => full(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
-const runtimeFor = manifest => full(manifest) ? FULL_RUNTIME_SOURCES : security(manifest) ? SECURITY_RUNTIME_SOURCES : accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
+const accounting = manifest => (manifest?.schema_version === 3 && manifest.policy === ACCOUNTING_POLICY) || security(manifest) || inventoryRelease(manifest);
+const policyFor = manifest => botCodeLock(manifest) ? BOT_CODE_LOCK_EVIDENCE_POLICY : firstAssignment(manifest) ? FIRST_ASSIGNMENT_EVIDENCE_POLICY : appOnly(manifest) ? POSTLAUNCH_EVIDENCE_POLICY : full(manifest) ? FULL_EVIDENCE_POLICY : security(manifest) ? SECURITY_EVIDENCE_POLICY : accounting(manifest) ? ACCOUNTING_EVIDENCE_POLICY : PAYOUT_EVIDENCE_POLICY;
+const sqlTestsFor = manifest => botCodeLock(manifest) ? BOT_CODE_LOCK_SQL_TESTS : firstAssignment(manifest) ? FIRST_ASSIGNMENT_SQL_TESTS : inventoryRelease(manifest) ? FULL_SQL_TESTS : security(manifest) ? SECURITY_SQL_TESTS : accounting(manifest) ? ACCOUNTING_SQL_TESTS : INTEGRATION_SQL_TESTS;
+const runtimeFor = manifest => inventoryRelease(manifest) ? FULL_RUNTIME_SOURCES : security(manifest) ? SECURITY_RUNTIME_SOURCES : accounting(manifest) ? ACCOUNTING_RUNTIME_SOURCES : INTEGRATION_RUNTIME_SOURCES;
 const REPO = 'cipherhq/waaiio';
 const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
 const OWNER = 'cipherhq';
@@ -46,13 +58,13 @@ export const TARGETS = Object.freeze({
 const payout = manifest => (manifest?.schema_version === 2 && manifest.policy === PAYOUT_POLICY) || accounting(manifest);
 function targetConfig(manifest, kind) {
   if (!payout(manifest)) return TARGETS[kind];
-  const config = (full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
+  const config = (botCodeLock(manifest) ? BOT_CODE_LOCK_TARGETS : firstAssignment(manifest) ? FIRST_ASSIGNMENT_TARGETS : appOnly(manifest) ? POSTLAUNCH_TARGETS : full(manifest) ? FULL_TARGETS : security(manifest) ? SECURITY_TARGETS : accounting(manifest) ? ACCOUNTING_TARGETS : PAYOUT_TARGETS)[kind];
   if (!config?.suites.length) fail('Payout policy execution contract is not frozen');
   return { ...TARGETS[kind], ...config };
 }
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 const ancestor = (cwd, before, after) => { try { git(cwd, 'merge-base', '--is-ancestor', before, after); return true; } catch { return false; } };
-// Optional, named v3-only manual-admin contract. Operational IDs stay in the
+// Named manual-admin contract for accounting release profiles. Operational IDs stay in the
 // private manifest, whose exact bytes are already bound by CI and approval.
 export function manualAdminPolicy(manifest) {
   if (manifest?.projects?.merchant?.manual_alias !== undefined) fail('Manual alias policy is admin-only');
@@ -62,7 +74,7 @@ export function manualAdminPolicy(manifest) {
   if (!accounting(manifest) || policy?.policy !== 'canonical-admin-alias-v1'
     || Object.keys(policy).sort().join(',') !== 'policy,preexisting_target'
     || !pin || Object.keys(pin).sort().join(',') !== 'created_at,id,project_id,ready_state,sha,source'
-    || !/^dpl_[A-Za-z0-9]+$/.test(pin.id || '') || pin.id === manifest.projects.admin.baseline_deployment_id
+    || !/^dpl_[A-Za-z0-9]+$/.test(pin.id || '') || (pin.id === manifest.projects.admin.baseline_deployment_id && (!postlaunch(manifest) || pin.sha !== manifest.projects.admin.baseline_sha))
     || pin.project_id !== TARGETS.admin.project || !SHA.test(pin.sha || '')
     || pin.ready_state !== 'READY' || pin.source !== 'cli'
     || !Number.isSafeInteger(pin.created_at) || pin.created_at <= 0) fail('Invalid manual admin alias policy');
@@ -70,6 +82,15 @@ export function manualAdminPolicy(manifest) {
 }
 const deploymentDescriptor = d => ({ id:d.id, project_id:d.projectId, sha:d.meta?.githubCommitSha,
   ready_state:d.readyState, source:d.source, created_at:d.createdAt });
+export function validateManualAdminBaseline(manifest, baseline) {
+  const policy=manualAdminPolicy(manifest), entry=manifest.projects.admin;
+  if(!policy)fail('Manual admin policy required');
+  const pin=policy.preexisting_target;
+  if(baseline.id!==entry.baseline_deployment_id || baseline.projectId!==TARGETS.admin.project || baseline.meta?.githubCommitSha!==entry.baseline_sha
+    || baseline.readyState!=='READY' || !Number.isSafeInteger(baseline.createdAt)
+    || (pin.id===entry.baseline_deployment_id ? (!postlaunch(manifest) || baseline.target!=='production' || !isDeepStrictEqual(deploymentDescriptor(baseline),pin)) : pin.created_at>=baseline.createdAt)) fail('Invalid manual admin baseline chronology');
+  return true;
+}
 function candidateMatches(deployment, candidate, manifest) {
   return deployment.id === candidate.id && deployment.projectId === TARGETS.admin.project
     && deployment.meta?.githubCommitSha === manifest.projects.admin.target_sha && deployment.readyState === 'READY'
@@ -85,12 +106,13 @@ export function parseManifest(raw, integration) {
     if (!entry || !SHA.test(entry.baseline_sha) || !SHA.test(entry.target_sha) || !SHA.test(entry.target_tree)
       || entry.baseline_sha === entry.target_sha || entry.project_id !== TARGETS[kind].project) fail(`Invalid ${kind} target identity`);
   }
-  if (!full(manifest) && manifest.projects.admin.target_sha === manifest.projects.merchant.target_sha) fail('Project-specific source targets are required');
-  if (security(manifest) || full(manifest)) for (const kind of Object.keys(TARGETS)) {
-    const expected = (full(manifest) ? FULL_IDENTITIES : SECURITY_IDENTITIES)[kind];
+  if (!inventoryRelease(manifest) && manifest.projects.admin.target_sha === manifest.projects.merchant.target_sha) fail('Project-specific source targets are required');
+  if (security(manifest) || inventoryRelease(manifest)) for (const kind of Object.keys(TARGETS)) {
+    const expected = (inventoryRelease(manifest) ? identitiesFor(manifest) : SECURITY_IDENTITIES)[kind];
     for (const field of ['baseline_sha', 'target_sha', 'target_tree']) if (manifest.projects[kind][field] !== expected[field]) fail('Security source identity differs from fixed reviewed target');
-    if (full(manifest) && manifest.projects[kind].source_inventory_sha256 !== fullInventoryDigest(kind)) fail('Full release source inventory binding mismatch');
+    if (inventoryRelease(manifest) && manifest.projects[kind].source_inventory_sha256 !== inventoryDigest(manifest,kind)) fail('Full release source inventory binding mismatch');
   }
+  if(postlaunch(manifest)){requireFixedProfile(manifest);if(!manualAdminPolicy(manifest))fail('Postlaunch requires fixed manual admin alias policy');}
   manualAdminPolicy(manifest);
   if (payout(manifest)) manifestBinding(raw, manifest);
   return manifest;
@@ -98,8 +120,8 @@ export function parseManifest(raw, integration) {
 export function checkDelta(kind, changed, deleted, manifest) {
   const allowed = targetConfig(manifest, kind)?.allowed;
   if (payout(manifest) && !isDeepStrictEqual([...changed].sort(), [...allowed].sort())) fail('Payout release requires the exact reviewed source inventory');
-  if (full(manifest) && !isDeepStrictEqual([...deleted].sort(), Object.keys(FULL_IDENTITIES[kind].deleted_blobs).sort())) fail('Full release deletion inventory mismatch');
-  if (!allowed || (!full(manifest) && deleted.length) || !changed.length || new Set(changed).size !== changed.length
+  if (inventoryRelease(manifest) && !isDeepStrictEqual([...deleted].sort(), Object.keys(identitiesFor(manifest)[kind].deleted_blobs).sort())) fail('Full release deletion inventory mismatch');
+  if (!allowed || (!inventoryRelease(manifest) && deleted.length) || !changed.length || new Set(changed).size !== changed.length
     || changed.some(file => !allowed.includes(file))) fail('Reduced release contains an unapproved source delta');
 }
 // Full targets contain many files. Read exact Git blob bytes in one bounded
@@ -123,22 +145,22 @@ function fullBlobDigests(repository, revision, paths) {
 }
 export function inspectTarget(repository, kind, entry, integration, manifest) {
   if (!TARGETS[kind]) fail('Unknown project');
-  if (full(manifest) && (entry.source_inventory_sha256 !== fullInventoryDigest(kind) || entry.source_blobs !== undefined || entry.deleted_blobs !== undefined)) fail('Full release source inventory binding mismatch');
+  if (inventoryRelease(manifest) && (entry.source_inventory_sha256 !== inventoryDigest(manifest,kind) || entry.source_blobs !== undefined || entry.deleted_blobs !== undefined)) fail('Full release source inventory binding mismatch');
   if (!ancestor(repository, entry.baseline_sha, entry.target_sha) || !ancestor(repository, entry.target_sha, integration)) fail('Reduced source lineage is unproven');
   if (git(repository, 'rev-parse', `${entry.target_sha}^{tree}`) !== entry.target_tree) fail('Reduced target tree mismatch');
-  const changed = git(repository, 'diff', '--name-only', ...(full(manifest) ? ['--no-renames'] : []), entry.baseline_sha, entry.target_sha).split('\n').filter(Boolean);
+  const changed = git(repository, 'diff', '--name-only', ...(inventoryRelease(manifest) ? ['--no-renames'] : []), entry.baseline_sha, entry.target_sha).split('\n').filter(Boolean);
   const deleted = git(repository, 'diff', '--name-only', '--no-renames', '--diff-filter=D', entry.baseline_sha, entry.target_sha).split('\n').filter(Boolean);
   checkDelta(kind, changed, deleted, manifest);
   if (payout(manifest)) {
     const present = changed.filter(file => !deleted.includes(file));
-    const blobs = full(manifest) ? fullBlobDigests(repository, entry.target_sha, present) : Object.fromEntries(present.map(file => [file, hash(execFileSync('git', ['show', `${entry.target_sha}:${file}`], { cwd: repository }))]));
+    const blobs = inventoryRelease(manifest) ? fullBlobDigests(repository, entry.target_sha, present) : Object.fromEntries(present.map(file => [file, hash(execFileSync('git', ['show', `${entry.target_sha}:${file}`], { cwd: repository }))]));
     if (accounting(manifest) && !isDeepStrictEqual(blobs, targetConfig(manifest, kind).blobs)) fail('Accounting source differs from fixed reviewed blobs');
-    if (full(manifest)) {
+    if (inventoryRelease(manifest)) {
       const deletedBlobs = fullBlobDigests(repository, entry.baseline_sha, deleted);
-      if (!isDeepStrictEqual(deletedBlobs, FULL_IDENTITIES[kind].deleted_blobs)) fail('Full release deleted baseline blob mismatch');
+      if (!isDeepStrictEqual(deletedBlobs, identitiesFor(manifest)[kind].deleted_blobs)) fail('Full release deleted baseline blob mismatch');
     }
-    if (full(manifest)) {
-      if (entry.source_inventory_sha256 !== fullInventoryDigest(kind) || entry.source_blobs !== undefined || entry.deleted_blobs !== undefined) fail('Full release source inventory binding mismatch');
+    if (inventoryRelease(manifest)) {
+      if (entry.source_inventory_sha256 !== inventoryDigest(manifest,kind) || entry.source_blobs !== undefined || entry.deleted_blobs !== undefined) fail('Full release source inventory binding mismatch');
     } else if (!isDeepStrictEqual(entry.source_blobs, blobs)) fail('Private manifest source blob mismatch');
   }
   return changed;
@@ -210,13 +232,13 @@ export function validateCodeReceipt(receipt, kind, manifest, runId, attempt, raw
   if (!isDeepStrictEqual(receipt.suites,suites)) fail('Exact-target per-file test evidence missing or skipped');
 }
 function integrationCommands(manifest) {
-  const commands = [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(full(manifest) ? FULL_MAIN_SQL_TESTS : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
-  if (security(manifest) || full(manifest)) commands.push(['node', 'scripts/reduced-security-storage-tests.mjs']);
+  const commands = [['npm', 'ci'], ['npm', 'exec', '--', 'vitest', 'run', ...Object.keys(inventoryRelease(manifest) ? mainSqlTestsFor(manifest) : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest)), '--no-file-parallelism', '--reporter=json']];
+  if (security(manifest) || inventoryRelease(manifest)) commands.push(['node', 'scripts/reduced-security-storage-tests.mjs']);
   return commands;
 }
 function integrationSources(repository, integration, manifest) {
   const sql = {};
-  for (const entry of [...(full(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
+  for (const entry of [...(inventoryRelease(manifest) ? FULL_SCHEMA_CONTRACT : policyFor(manifest).schema_contracts).canonical_sources, ...(botCodeLock(manifest) ? BOT_CODE_LOCK_CANONICAL_SOURCES : firstAssignment(manifest) ? FIRST_ASSIGNMENT_CANONICAL_SOURCES : []), ...(security(manifest) ? SECURITY_MIGRATIONS : [])]) {
     const file = `supabase/migrations/${entry.name}`;
     const actual = hash(execFileSync('git', ['show', `${integration}:${file}`], { cwd: repository }));
     if (actual !== entry.sha256) fail('Canonical integration SQL differs from reviewed prerequisite');
@@ -248,8 +270,8 @@ export async function testIntegration(manifest, sourcePath, outputPath, environm
     env:{...env, TEST_DATABASE_URL:'postgresql://postgres:postgres@127.0.0.1:5432/postgres', REQUIRE_PG_TESTS:'true'},
     encoding:'utf8', maxBuffer:20*1024*1024, stdio:['ignore','pipe','inherit'] });
   let report; try { report=JSON.parse(output); } catch { fail('Invalid integration SQL test report'); }
-  const files=summarizeTests(report, full(manifest) ? FULL_MAIN_SQL_TESTS : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest), sourcePath);
-  if (security(manifest) || full(manifest)) {
+  const files=summarizeTests(report, inventoryRelease(manifest) ? mainSqlTestsFor(manifest) : security(manifest) ? ACCOUNTING_SQL_TESTS : sqlTestsFor(manifest), sourcePath);
+  if (security(manifest) || inventoryRelease(manifest)) {
     const storageOutput = execFileSync('node', ['scripts/reduced-security-storage-tests.mjs'], { cwd: sourcePath, env, encoding: 'utf8', maxBuffer: 20*1024*1024, stdio: ['ignore','pipe','inherit'] });
     let storageReport; try { storageReport=JSON.parse(storageOutput); } catch { fail('Invalid storage SQL test report'); }
     Object.assign(files, summarizeTests(storageReport, SECURITY_STORAGE_TESTS, sourcePath));
@@ -345,8 +367,7 @@ export async function live(kind,token,manifest,candidate){
       const entry=manifest.projects.admin, pin=manual.preexisting_target;
       if (id!==entry.baseline_deployment_id && id!==candidate?.id) fail('Unapproved manual admin serving identity');
       const baseline=id===entry.baseline_deployment_id?deployment:await vercel(`/v13/deployments/${entry.baseline_deployment_id}`,token);
-      if(baseline.id!==entry.baseline_deployment_id || baseline.projectId!==config.project || baseline.meta?.githubCommitSha!==entry.baseline_sha
-        || baseline.readyState!=='READY' || !Number.isSafeInteger(baseline.createdAt) || pin.created_at>=baseline.createdAt) fail('Invalid manual admin baseline chronology');
+      validateManualAdminBaseline(manifest,baseline);
       const latest=latestId===id?deployment:await vercel(`/v13/deployments/${latestId}`,token);
       if (latestId===pin.id) {
         if(!isDeepStrictEqual(deploymentDescriptor(latest),pin)) fail('Pinned manual admin target changed');
@@ -396,11 +417,15 @@ export async function preflight(manifest,controlPath,sourcePaths,runId,attempt,e
   return before;
 }
 function privateEvidence(manifest, runId, attempt, env) {
-  if (full(manifest)) requireFrozenFullRelease();
+  if (postlaunch(manifest)) requireFixedProfile(manifest);
+  else if (full(manifest)) requireFrozenFullRelease();
   if (!payout(manifest)) return;
-  const reportBytes = full(manifest) ? decodeFullReportTransport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, env) : decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
+  const reportBytes = inventoryRelease(manifest) ? decodeFullReportTransport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT, env) : decodePrivateReport(env.PRIVATE_RELEASE_ACCEPTANCE_REPORT);
   const evidence = verifyPrivateEvidence({ rawManifest: env.REDUCED_RELEASE_MANIFEST, manifest, receiptBytes: env.PRIVATE_RELEASE_RECEIPT, reportBytes, approvedHash: env.PRIVATE_RELEASE_ACCEPTANCE_SHA256, policy: policyFor(manifest) });
-  if (full(manifest)) verifyFullReleaseEvidence(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  if(botCodeLock(manifest)) verifyBotCodeLockEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  else if(firstAssignment(manifest)) verifyFirstAssignmentEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  else if(appOnly(manifest)) verifyPostlaunchEvidence(JSON.parse(reportBytes),manifest,Date.now(),Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
+  else if (full(manifest)) verifyFullReleaseEvidence(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   else if (accounting(manifest)) verifyAccountingActivation(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (security(manifest)) verifySecurityPrerequisites(JSON.parse(reportBytes), manifest, Date.now(), Date.parse(JSON.parse(env.PRIVATE_RELEASE_RECEIPT).approved_at));
   if (evidence.verification.run_id !== runId || evidence.verification.run_attempt !== attempt) fail('Approved private evidence refers to a different code verification');
@@ -449,7 +474,7 @@ async function main(){
   const manifest=parseManifest(process.env.REDUCED_RELEASE_MANIFEST,integration);
   if(command==='plan'){
     await control(manifest,controlPath,process.env.GITHUB_TOKEN);
-    if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,`payout_policy=${payout(manifest)}\nfull_release_policy=${full(manifest)}\n`);
+    if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,`payout_policy=${payout(manifest)}\nfull_release_policy=${inventoryRelease(manifest)}\n`);
     if(process.env.GITHUB_OUTPUT)for(const kind of Object.keys(TARGETS))appendFileSync(process.env.GITHUB_OUTPUT,`${kind}_target=${manifest.projects[kind].target_sha}\n`);
   }else if(command==='test-integration'){
     await testIntegration(manifest,controlPath,resolve(process.argv[3]));

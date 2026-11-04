@@ -11,7 +11,7 @@ import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { Building2, CheckCircle, Clock, Ban, Search, FlaskConical, Shield } from 'lucide-react';
 import { getCurrencyCode, type CountryCode } from '@/lib/verification';
-import { adminApiFetch } from '@/lib/adminApi';
+import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
 import { logAudit } from '@/lib/auditLog';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, PLAN_LABELS, tierMeetsRequirement, type SubscriptionTier } from '@shared/capabilities';
 
@@ -37,6 +37,7 @@ interface Business {
   payout_mode: string;
   status: string;
   phone: string | null;
+  email: string | null;
   city: string | null;
   neighborhood: string | null;
   created_at: string;
@@ -177,6 +178,16 @@ export default function Businesses() {
   // Products & Services
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+
+  const ownerEmailResource = useBusinessResource<string | null>(isFullAdmin ? selectedId : null, async id => {
+    const response = await adminApiGet(`/api/admin/businesses/${id}/profile`);
+    if (!response.ok) throw new Error('Owner email unavailable');
+    const result = await response.json();
+    if (result.businessId !== id || (result.ownerEmail !== null && typeof result.ownerEmail !== 'string')) {
+      throw new Error('Owner email unavailable');
+    }
+    return result.ownerEmail;
+  });
 
   const payoutResource = useBusinessResource<PayoutAccount | null>(selectedId, async id => {
     const { data, error } = await adminDb.from('payout_accounts')
@@ -337,7 +348,7 @@ export default function Businesses() {
     const [bizRes, chRes] = await Promise.all([
       adminDb
         .from('businesses')
-        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
+        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, email, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
         .order('created_at', { ascending: false }),
       adminDb
         .from('whatsapp_channels')
@@ -926,6 +937,11 @@ export default function Businesses() {
             )}
             <DetailRow label="Country" value={selected.country_code} />
             <DetailRow label="Phone" value={selected.phone} />
+            <DetailRow label="Business contact email" value={selected.email || 'Not provided'} />
+            {isFullAdmin && <>
+              <ResourceNotice label="Owner sign-in email" resource={ownerEmailResource} />
+              {ownerEmailResource.status === 'ready' && <DetailRow label="Owner sign-in email" value={ownerEmailResource.data || 'Not provided'} />}
+            </>}
             <DetailRow label="Payout Mode" value={selected.payout_mode === 'direct_split' ? 'Direct Split' : 'Platform Managed'} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
 
