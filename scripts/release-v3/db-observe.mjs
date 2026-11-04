@@ -98,8 +98,9 @@ export function parseObservation(text, { major = 17 } = {}) {
 // Longest accepted gap since the replica last replayed a primary commit.
 // Owner decision 2026-11-04: 65 minutes. The production primary commits at
 // least hourly (pg_cron), so a healthy replica is never refused in quiet
-// periods; a stall is caught within about an hour. The receive = replay check
-// still applies on every read.
+// periods. The receive = replay check still applies on every read, but a
+// replica cut off from the primary passes it, so it is refused only after
+// 65 minutes (see docs/RELEASE_V3_GATE.md).
 export const REPLICA_MAX_REPLAY_AGE_SECONDS = 65 * 60;
 // Production must be observed on a replica that carries the reviewed guard.
 export function requireReplica(environment, observation) {
