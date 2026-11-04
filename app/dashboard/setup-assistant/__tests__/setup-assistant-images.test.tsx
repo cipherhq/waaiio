@@ -140,6 +140,32 @@ describe('items without a visible price', () => {
   });
 });
 
+describe('pasted text', () => {
+  it('marks text items without a price as "price needed" instead of Free; keeps 0 and real prices', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { suggestion: { products: [
+      { name: 'Zobo' },
+      { name: 'Chapman', price: 800 },
+      { name: 'Water', price: 0 },
+      { name: 'Kunu', price: '' },
+    ] } }));
+    await chooseType(/We sell products/);
+    fireEvent.change(screen.getByPlaceholderText(/Paste your product list here/), { target: { value: 'Zobo\nChapman - 800\nWater - free\nKunu' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Extract with Ace' }));
+    await waitFor(() => expect(screen.getByLabelText('Price for Zobo')).toBeTruthy());
+
+    expect(screen.getByLabelText('Price for Zobo').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByLabelText('Price for Kunu').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByLabelText('Price for Chapman').getAttribute('aria-invalid')).not.toBe('true');
+    expect(screen.getByLabelText('Price for Water').getAttribute('aria-invalid')).not.toBe('true');
+
+    goToReview();
+    const confirm = screen.getByRole('button', { name: 'Confirm & Create' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    expect(callsTo('/api/ai-setup/apply')).toHaveLength(0);
+  });
+});
+
 describe('decimal prices', () => {
   it('keeps a product decimal price, warns only about service rounding', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, {

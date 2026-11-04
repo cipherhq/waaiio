@@ -40,6 +40,16 @@ interface AceImageItem {
 
 type ImageMode = 'menu' | 'product_photo';
 
+/**
+ * Price from an Ace suggestion (image or pasted text). A number ≥ 0 (or a
+ * plain decimal string) is kept; anything else is null = "price needed".
+ * Owner decision: Ace items without a price are never created as Free.
+ */
+function aceItemPrice(value: unknown): number | null {
+  if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value.trim())) return Number(value.trim());
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 /** Price input → state. Clearing an Ace item that had no price keeps it unpriced. */
 function priceFromInput(value: string, needsPrice?: boolean): number | null {
   if (value === '') return needsPrice ? null : 0;
@@ -213,15 +223,19 @@ export default function SetupAssistantPage() {
       if (res.ok) {
         const data = await res.json();
         if (data.suggestion?.services?.length) {
-          setServices(prev => [...prev, ...data.suggestion.services.map((s: ServiceItem) => ({
-            name: s.name || '', price: s.price || 0, duration_minutes: s.duration_minutes || 30,
-            deposit_amount: s.deposit_amount || 0, description: s.description || '',
-          }))]);
+          setServices(prev => [...prev, ...data.suggestion.services.map((s: ServiceItem) => {
+            const price = aceItemPrice(s.price);
+            return {
+              name: s.name || '', price, needsPrice: price === null, duration_minutes: s.duration_minutes || 30,
+              deposit_amount: s.deposit_amount || 0, description: s.description || '',
+            };
+          })]);
         }
         if (data.suggestion?.products?.length) {
-          setProducts(prev => [...prev, ...data.suggestion.products.map((p: ProductItem) => ({
-            name: p.name || '', price: p.price || 0, description: p.description || '', category: p.category || '',
-          }))]);
+          setProducts(prev => [...prev, ...data.suggestion.products.map((p: ProductItem) => {
+            const price = aceItemPrice(p.price);
+            return { name: p.name || '', price, needsPrice: price === null, description: p.description || '', category: p.category || '' };
+          })]);
         }
         setFreeTextItems('');
       } else {
@@ -279,7 +293,7 @@ export default function SetupAssistantPage() {
         const newProducts: ProductItem[] = [];
         const newServices: ServiceItem[] = [];
         for (const item of items) {
-          const price = typeof item.price === 'number' && Number.isFinite(item.price) ? item.price : null;
+          const price = aceItemPrice(item.price);
           if (mode === 'product_photo' || routeToProducts(item.kind)) {
             const product: ProductItem = {
               name: item.name || '', price, needsPrice: price === null,

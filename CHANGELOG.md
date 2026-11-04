@@ -35,6 +35,11 @@
   - The duplicate check now reads the business's existing names page by page and compares them ignoring case. Names with quote marks, brackets or commas no longer break it, and the same name twice in one batch is skipped.
   - Opening-hours and greeting save errors return generic messages; the database detail stays in the server log.
   - Test: `lib/bot/__tests__/ai-usage-increment.test.ts` (3).
+- Owner decisions (2026-11-04, after review 2):
+  - Chat-route counting goes in a separate PR, after the limits are decided.
+  - An image that can't be counted is refused, with a retry message.
+  - Pasted-text items need a price, the same as photos.
+- `app/dashboard/setup-assistant/page.tsx`: pasted-text items from Ace without a price (missing, blank or not a number) are marked "price needed" and block Confirm, instead of being saved as Free. A price of 0 from Ace is kept. Image and text items share `aceItemPrice`. Test: 1 new rendered case.
 - Could break: until the chat route is decided, only images count. Free plans allow 3 Ace uses a month, so a free business can read 3 images a month.
 
 ## 2026-11-04 — Table reservations: no phantom add-ons; confirmation names the table
