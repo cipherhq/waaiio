@@ -56,6 +56,39 @@ Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashbo
   - same-day is off for any business whose stored timezone does not fit its country, until the timezone is corrected;
   - the confirm step does not re-check the time, so a slot that passes between choosing and confirming can still be booked (same as before for pre-filled times).
 
+## 2026-11-04 — M509: the restaurant "table" keyword matches whole words only
+
+- Owner decision (2026-11-04). Release V3 rule: a migration ships in its own PR with its catalog delta. This PR was split out of #854, which is now app-only and works with or without M509.
+- `supabase/migrations/509_table_keyword_whole_word.sql` (data-only, idempotent, self-check, NOT applied):
+  - The problem: 041/164 seeded the category keyword `table` with `contains` matching. keyword-service checks `contains` with a substring test, so "vegetable", "comfortable" and "timetable" started a table reservation.
+  - The fix: only those seeded category rows (restaurant/cafe/bar/lounge, `start_capability`) become the regex `\btables?\b`. "table", "tables" and "table for 4" still match.
+  - Unchanged: `dine-in`, every business-scope keyword, and the generic `contains` semantics.
+  - The pattern is written as an `E''` string, so the stored value does not depend on `standard_conforming_strings`.
+- `supabase/catalog-deltas/509_table_keyword_whole_word.json`: `changes: []`, because only row data changes.
+- Tests:
+  - `lib/__tests__/table-keyword-whole-word.test.ts` (18): the real keyword-service matcher with the exact stored pattern.
+  - `lib/__tests__/table-keyword-whole-word-509.pg.test.ts` (5, real PostgreSQL): applies the 041 restaurant seed and 164, then 509 twice. Proves "vegetable soup" no longer matches while "table for 4" and "tables" still do, the other rows are untouched, and the self-check fails when it should.
+- CI (`.github/workflows/ci.yml`): the 509 PostgreSQL test gets a `test -f` guard in the PostgreSQL job and is excluded from the unit job, the same as M503–M508.
+- Could break: until #854's keyword-service change is merged, a merchant's own business-scope `table` keyword would no longer override the category row, because the keyword texts now differ. #854 restores that precedence (Owner decision 2026-11-04: the merchant keyword wins). Production has 0 such rows today.
+
+## 2026-11-04 — Release V3: production observer reads a read replica
+
+- Owner decision (2026-11-04): the production read-only login (`release_observer`) connects to a Supabase read replica instead of narrowing pg_net's PUBLIC grants (Supabase owns those objects; two active cron jobs rely on them; details in a private advisory).
+- New `scripts/release-v3/release-observer-replica-guard.sql` (production only, not applied): a PostgreSQL 17 login event trigger in schema `release_ops` that refuses `release_observer` on any server that is not a replica.
+- Gate: the observation now records `pg_is_in_recovery()` and the guard (enabled, event, body sha256). Production admission requires a replica and the reviewed, enabled guard. Staging is unchanged.
+- Tests:
+  - unit and end-to-end cases (on the primary, guard missing, disabled, different body, wrong event);
+  - 4 real-PostgreSQL 17 proofs in the "Catalog oracle (PostgreSQL 17)" job: the login is refused on a primary, other logins work, the installed guard matches the pinned body, and the guard function and schema are closed to PUBLIC. The CI count check is now 10 passed, 0 skipped.
+- Docs: production setup order (Owner creates the replica, staging rehearsal, apply role then guard, password only after the guard, secret points at the replica).
+- Review fixes:
+  - the guard is enabled ALWAYS, and the gate also pins its owner, language, security mode and `search_path`;
+  - production observations must come from a caught-up replica: receive LSN equals replay LSN, and the last replay is at most 15 minutes old;
+  - replica endpoint formats (`<ref>-rr-…`) are accepted;
+  - an ordinary non-superuser login is tested.
+- Known limit, documented, Owner decision pending: the guard cannot cover Supabase's `template1` database.
+- Runs no SQL and changes no setting.
+- Could break: nothing yet. A production observation made on the primary, or without the guard, now stops the gate (intended).
+
 ## 2026-11-04 — Ace review screen: clearer "price needed" message
 
 - Owner decision (2026-11-04): the items-step message now reads "N item(s) need(s) a price. Type a price in the highlighted box(es) (0 if it's free) before you confirm." The old "Ace couldn't see a price…" was wrong when the owner had cleared a price Ace found, and gave no hint that 0 means Free.

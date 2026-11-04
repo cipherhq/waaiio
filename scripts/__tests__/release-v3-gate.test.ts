@@ -10,7 +10,7 @@ import { buildPacket, packetBytes, packetDigest, acceptPacket, verifySingleUse, 
 import { parseObservation, connectionEnvironment, OBSERVATION_SQL, observeDatabase } from '../release-v3/db-observe.mjs';
 import { ledgerSnapshot } from '../release-v3/admission.mjs';
 import { catalogMap, catalogAggregate, CATALOG_QUERY_SHA256 } from '../release-v3/catalog-oracle.mjs';
-import { LEDGER_QUERY_SHA256 } from '../release-v3/db-observe.mjs';
+import { LEDGER_QUERY_SHA256, GUARD_BODY_SHA256 } from '../release-v3/db-observe.mjs';
 import { canonicalJson } from '../release-v3/common.mjs';
 
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
@@ -131,7 +131,7 @@ describe('packet approval binding', () => {
 
 describe('read-only observer session', () => {
   const doc = (over: Json = {}) => JSON.stringify({ current_user: 'release_observer', transaction_read_only: 'on', default_transaction_read_only: 'on', statement_timeout: '1min',
-    role_flags: { super: false, bypassrls: false, createrole: false, createdb: false, replication: false }, role_memberships: 0, server_version_num: '170006', observed_at: '2026-11-04T00:00:00Z',
+    role_flags: { super: false, bypassrls: false, createrole: false, createdb: false, replication: false }, role_memberships: 0, in_recovery: true, replica_guard: null, server_version_num: '170006', observed_at: '2026-11-04T00:00:00Z',
     catalog: [{ identity: 'table:public.t', digest: 'a'.repeat(64) }], ledger: [{ version: '1', name: 'x', statement_count: 1, statement_sha256: 'b'.repeat(64), row_sha256: 'c'.repeat(64) }], ...over });
   it('accepts a forced read-only, unprivileged PostgreSQL 17 release_observer session', () => expect(parseObservation(doc()).catalog.size).toBe(1));
   it.each([
@@ -139,6 +139,7 @@ describe('read-only observer session', () => {
     [{ transaction_read_only: 'off' }, 'forced read-only'], [{ role_flags: { super: true, bypassrls: false, createrole: false, createdb: false, replication: false } }, 'forced read-only'],
     [{ server_version_num: '160013' }, 'not PostgreSQL 17'],
     [{ role_memberships: 1 }, 'forced read-only'],
+    [{ in_recovery: 'yes' }, 'no recovery state'],
   ])('rejects %j', (over, message) => expect(() => parseObservation(doc(over))).toThrow(message));
   it('connection settings: release_observer login only, bound to its project, TLS required, password never on the command line', () => {
     const env = connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg:pw%40x@aws-0-x.pooler.supabase.com:5432/postgres?sslmode=require', 'cxcmiqotkowhxinjbytg', { PATH: '/bin' });
@@ -146,6 +147,10 @@ describe('read-only observer session', () => {
     expect(() => connectionEnvironment('postgresql://postgres.cxcmiqotkowhxinjbytg:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('release_observer');
     expect(() => connectionEnvironment('postgresql://release_observer.tqjvrzopvtczxfxiwmnz:pw@h:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('Observer connection must use the release_observer login');
     expect(() => connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg:pw@h:5432/postgres?sslmode=disable', 'cxcmiqotkowhxinjbytg')).toThrow('TLS');
+    // Read-replica endpoints carry the ref as `<ref>-rr-…`.
+    expect(connectionEnvironment('postgresql://release_observer:pw@db.cxcmiqotkowhxinjbytg-rr-us-east-1-abcde.supabase.co:5432/postgres', 'cxcmiqotkowhxinjbytg').PGUSER).toBe('release_observer');
+    expect(connectionEnvironment('postgresql://release_observer.cxcmiqotkowhxinjbytg-rr-us-east-1-abcde:pw@aws-0-x.pooler.supabase.com:5432/postgres', 'cxcmiqotkowhxinjbytg').PGUSER).toBe('release_observer.cxcmiqotkowhxinjbytg-rr-us-east-1-abcde');
+    expect(() => connectionEnvironment('postgresql://release_observer:pw@db.tqjvrzopvtczxfxiwmnz-rr-us-east-1-abcde.supabase.co:5432/postgres', 'cxcmiqotkowhxinjbytg')).toThrow('not for the expected project');
   });
   it('psql gets the credentials through the environment and errors are not echoed', () => {
     let seen: { args: string[]; env: Json } | null = null;
@@ -273,8 +278,8 @@ function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: st
   return { state, fetchImpl, run };
 }
 const observeWith = (prod = prodCatalog(), rows = prodRows) => (environment: string) => environment === 'production'
-  ? { environment, project_ref: 'cxcmiqotkowhxinjbytg', observed_at: '2026-11-04T00:00:00Z', catalog: prod, ledger: rows }
-  : { environment, project_ref: 'tqjvrzopvtczxfxiwmnz', observed_at: '2026-11-04T00:00:00Z', catalog: stagingCatalog(), ledger: stagingRows };
+  ? { environment, project_ref: 'cxcmiqotkowhxinjbytg', observed_at: '2026-11-04T00:00:00Z', catalog: prod, ledger: rows, in_recovery: true, replica_guard: { enabled: 'A', event: 'login', body_sha256: GUARD_BODY_SHA256, owner: 'postgres', language: 'plpgsql', definer: false, config: ['search_path=pg_catalog'] }, replica_freshness: { receive_lsn: '0/5000060', replay_lsn: '0/5000060', replay_age_seconds: 12 } }
+  : { environment, project_ref: 'tqjvrzopvtczxfxiwmnz', observed_at: '2026-11-04T00:00:00Z', catalog: stagingCatalog(), ledger: stagingRows, in_recovery: false, replica_guard: null };
 const baseEnv = (repo: Repo, over: Json = {}) => ({ GITHUB_ACTOR: 'cipherhq', GITHUB_TRIGGERING_ACTOR: 'cipherhq', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'cipherhq/waaiio',
   GITHUB_REF: 'refs/heads/main', GITHUB_SHA: repo.G, GITHUB_TOKEN: 'gh', VERCEL_TOKEN: 'vt', GITHUB_RUN_ID: '55', GITHUB_RUN_ATTEMPT: '1', TARGET_SHA: repo.T, PATH: process.env.PATH, HOME: process.env.HOME, ...over });
 const NOW = Date.parse('2026-11-04T01:00:00Z');
@@ -335,6 +340,11 @@ describe('prepare (end to end, faked platforms)', { timeout: 60_000 }, () => {
     await expect(prepare({ env: baseEnv(repo, { GITHUB_TRIGGERING_ACTOR: 'other' }), control: repo.dir, now: NOW, fetchImpl: world(repo).fetchImpl as never, observe: observeWith() as never })).rejects.toThrow('Owner dispatch');
     await expect(prepare({ env: baseEnv(repo, { GITHUB_REF: 'refs/heads/feature' }), control: repo.dir, now: NOW, fetchImpl: world(repo).fetchImpl as never, observe: observeWith() as never })).rejects.toThrow('Owner dispatch');
     await expect(prepare({ env: baseEnv(repo, { RAISE_LANE: 'standard' }), control: repo.dir, now: NOW, fetchImpl: world(repo).fetchImpl as never, observe: observeWith() as never })).rejects.toThrow('never lowered');
+  });
+  it('refuses a production observation made on the primary instead of the replica', async () => {
+    const repo = make({ 'components/ui/A.tsx': 'export const A = 8;\n' });
+    const onPrimary = (environment: string) => ({ ...observeWith()(environment), ...(environment === 'production' ? { in_recovery: false } : {}) });
+    await expect(prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: world(repo).fetchImpl as never, observe: onPrimary as never })).rejects.toThrow('production observation must run on a read replica');
   });
   it('captures lock maps only while the live catalog still equals the lock', async () => {
     const repo = make({ 'components/ui/A.tsx': 'export const A = 7;\n' });
