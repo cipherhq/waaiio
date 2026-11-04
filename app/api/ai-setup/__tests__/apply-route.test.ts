@@ -119,19 +119,23 @@ describe('ownership', () => {
 });
 
 describe('products', () => {
-  it('clamps and rounds product rows', async () => {
+  it('clamps product rows and keeps prices to 2 decimal places (products.price is numeric)', async () => {
     const res = await post({
       products: [
-        { name: 'N'.repeat(300), price: 12.6, category: 'C'.repeat(150), description: 'D'.repeat(2000) },
+        { name: 'N'.repeat(300), price: 12.5, category: 'C'.repeat(150), description: 'D'.repeat(2000) },
         { name: 'Huge', price: 1e12 },
         { name: 'Negative', price: -4 },
+        { name: 'Three decimals', price: 9.999 },
+        { name: 'Cents', price: 4.75 },
       ],
     });
     expect(res.status).toBe(200);
     expect((await res.json()).success).toBe(true);
-    const [a, b, c] = h.inserts.products;
+    const [a, b, c, d, e] = h.inserts.products;
     expect((a.name as string).length).toBe(200);
-    expect(a.price).toBe(13);
+    expect(a.price).toBe(12.5);
+    expect(d.price).toBe(10);
+    expect(e.price).toBe(4.75);
     expect((a.category as string).length).toBe(100);
     expect((a.description as string).length).toBe(1000);
     expect(a.business_id).toBe('biz-1');
@@ -183,10 +187,24 @@ describe('products', () => {
 });
 
 describe('services', () => {
-  it('rounds service price and deposit to whole numbers', async () => {
-    const body = await (await post({ services: [{ name: 'Braids', price: 2500.5, deposit_amount: 999.4, duration_minutes: 90.7 }] })).json();
+  it('rounds service price and deposit to whole numbers (services.price is INTEGER)', async () => {
+    const body = await (await post({ services: [
+      { name: 'Braids', price: 2500.5, deposit_amount: 999.4, duration_minutes: 90.7 },
+      { name: 'Trim', price: 12.5 },
+    ] })).json();
     expect(body.success).toBe(true);
     expect(h.inserts.services[0]).toMatchObject({ price: 2501, deposit_amount: 999, duration_minutes: 91 });
+    expect(h.inserts.services[1].price).toBe(13);
+  });
+
+  it('same 12.50 price: product stays 12.5, service becomes 13', async () => {
+    const body = await (await post({
+      products: [{ name: 'Latte', price: 12.5 }],
+      services: [{ name: 'Latte art class', price: 12.5 }],
+    })).json();
+    expect(body.success).toBe(true);
+    expect(h.inserts.products[0].price).toBe(12.5);
+    expect(h.inserts.services[0].price).toBe(13);
   });
 
   it('rejects a service with no price, and a deposit above price, without a 500', async () => {

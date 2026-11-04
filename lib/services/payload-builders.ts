@@ -10,7 +10,7 @@ import { assertValidDepositConfiguration } from '@/lib/payments/deposit-amount-a
  *   - buildGivingServicePayload: always includes service_type='giving'
  *   - buildServicePayload: never includes service_type (DB default 'booking' applies)
  *   - buildAiSetupServiceRow: never includes service_type (DB default 'booking' applies)
- *   - buildAiSetupProductRow: products table row for AI Setup (same price clamping/rounding)
+ *   - buildAiSetupProductRow: products table row for AI Setup (same clamping; price kept to 2 dp)
  */
 
 // ── Giving page payload ──
@@ -137,18 +137,20 @@ const AI_SETUP_MAX_PRICE = 99999999;
 
 /**
  * Shared AI Setup price rule: a price must be present and numeric; it is
- * clamped to [0, 99999999] and rounded to a whole number because
- * services.price / services.deposit_amount / products.price are INTEGER columns.
+ * clamped to [0, 99999999]. Rounding is per table: services.price and
+ * services.deposit_amount are INTEGER (whole numbers); products.price is
+ * numeric in production (kept to 2 decimal places).
  * Throws RangeError when no usable price was supplied.
  */
-function resolveAiSetupPrice(value: unknown): number {
+function resolveAiSetupPrice(value: unknown, decimals: 0 | 2): number {
   if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
     throw new RangeError('Price is required.');
   }
   if (typeof value !== 'number' && typeof value !== 'string') throw new RangeError('Price must be a number.');
   const n = Number(value);
   if (!Number.isFinite(n)) throw new RangeError('Price must be a number.');
-  return Math.round(Math.max(0, Math.min(n, AI_SETUP_MAX_PRICE)));
+  const factor = decimals === 2 ? 100 : 1;
+  return Math.round(Math.max(0, Math.min(n, AI_SETUP_MAX_PRICE)) * factor) / factor;
 }
 
 function requireAiSetupName(value: unknown): string {
@@ -158,7 +160,7 @@ function requireAiSetupName(value: unknown): string {
 }
 
 export function buildAiSetupServiceRow(input: AiSetupServiceInput) {
-  const price = resolveAiSetupPrice(input.price);
+  const price = resolveAiSetupPrice(input.price, 0);
   const depositRaw = Number(input.deposit_amount);
   const deposit = Math.round(Math.max(0, Math.min(Number.isFinite(depositRaw) ? depositRaw : 0, AI_SETUP_MAX_PRICE)));
 
@@ -211,7 +213,7 @@ export function isAiSetupProductImageUrl(url: unknown, businessId: string, supab
 }
 
 export function buildAiSetupProductRow(input: AiSetupProductInput) {
-  const price = resolveAiSetupPrice(input.price);
+  const price = resolveAiSetupPrice(input.price, 2);
 
   let imageUrl: string | null = null;
   if (input.image_url !== undefined && input.image_url !== null && input.image_url !== '') {

@@ -140,6 +140,36 @@ describe('items without a visible price', () => {
   });
 });
 
+describe('decimal prices', () => {
+  it('keeps a product decimal price, warns only about service rounding', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      items: [
+        { kind: 'product', name: 'Latte', price: 12.5 },
+        { kind: 'service', name: 'Trim', price: 12.5 },
+      ],
+    }));
+    await chooseType(/Both — services and products/);
+    await uploadMenu();
+    goToReview();
+    expect(screen.getByText(/Services prices are saved as whole numbers/)).toBeTruthy();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { success: true, results: {} }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm & Create' }));
+    await waitFor(() => expect(screen.getByText('Setup Complete!')).toBeTruthy());
+    const payload = JSON.parse(callsTo('/api/ai-setup/apply')[0][1].body as string);
+    expect(payload.products[0].price).toBe(12.5);
+  });
+
+  it('shows no rounding note when only products have decimals', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ kind: 'product', name: 'Latte', price: 12.5 }] }));
+    await chooseType(/We sell products/);
+    await uploadMenu();
+    goToReview();
+    expect(screen.queryByText(/saved as whole numbers/)).toBeNull();
+    expect(screen.getByText('12.5')).toBeTruthy();
+  });
+});
+
 describe('server messages', () => {
   it('shows the server error when Ace refuses an image', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(403, { error: 'Monthly ace setup limit reached (3). Upgrade for more.' }));

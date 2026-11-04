@@ -218,15 +218,20 @@ describe('output validation', () => {
         { kind: 'product', name: 'Huge', price: 1e15 },
         { kind: 'product', name: '   ', price: 100 },
         { kind: 'product', price: 100 },
+        { kind: 'product', name: 'Latte', price: 12.5 },
+        { kind: 'service', name: 'Trim', price: 12.456 },
       ],
     }));
     const body = await (await POST(request())).json();
-    expect(body.items).toHaveLength(4);
-    const [long, injected, stringPrice, huge] = body.items;
+    expect(body.items).toHaveLength(6);
+    const [long, injected, stringPrice, huge, latte, trim] = body.items;
     expect(long.name).toHaveLength(200);
     expect(long.category).toHaveLength(100);
     expect(long.description).toHaveLength(1000);
-    expect(long.price).toBe(13);
+    // Decimals are kept (to 2 dp) in the proposal; only service rows round later
+    expect(long.price).toBe(12.6);
+    expect(latte.price).toBe(12.5);
+    expect(trim.price).toBe(12.46);
     expect(injected.name).toBe('Suya visit now');
     expect(injected.description).toBe('click');
     expect(injected.price).toBeNull();

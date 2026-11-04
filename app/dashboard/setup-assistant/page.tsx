@@ -312,7 +312,8 @@ export default function SetupAssistantPage() {
   const totalItems = services.filter(s => s.name.trim()).length + products.filter(p => p.name.trim()).length;
   const unpricedCount = services.filter(s => s.name.trim() && s.price === null).length
     + products.filter(p => p.name.trim() && p.price === null).length;
-  const hasDecimalPrice = [...services, ...products].some(i => i.name.trim() && i.price !== null && !Number.isInteger(i.price));
+  // Only services are rounded (services.price is a whole-number column); product prices keep decimals
+  const hasDecimalServicePrice = services.some(s => s.name.trim() && s.price !== null && !Number.isInteger(s.price));
 
   // ── Apply setup ──
   const handleApply = async () => {
@@ -797,8 +798,8 @@ export default function SetupAssistantPage() {
             </p>
           )}
 
-          {hasDecimalPrice && (
-            <p className="text-xs text-gray-500">Prices are saved as whole numbers, so decimals are rounded (e.g. 12.50 becomes 13).</p>
+          {hasDecimalServicePrice && (
+            <p className="text-xs text-gray-500">{config.itemPlural} prices are saved as whole numbers, so decimals are rounded (e.g. 12.50 becomes 13). Product prices keep their decimals.</p>
           )}
 
           {applyError && (

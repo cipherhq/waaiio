@@ -138,12 +138,13 @@ export function cleanCatalogText(value: unknown, max: number): string {
 }
 
 /**
- * Price is either a finite non-negative number (rounded to a whole number,
- * matching the INTEGER price columns on products/services) or null.
+ * Price is either a finite non-negative number (kept to 2 decimal places —
+ * products.price is numeric in production) or null. Services are rounded to
+ * whole numbers only when their row is built (services.price is INTEGER).
  */
 export function normalizeCatalogPrice(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return Math.round(Math.min(value, MAX_PRICE));
+  return Math.round(Math.min(value, MAX_PRICE) * 100) / 100;
 }
 
 export function normalizeAceImageItems(parsed: unknown, mode: AceImageMode): AceImageItem[] {
