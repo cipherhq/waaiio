@@ -126,6 +126,9 @@ export function StepSuccess({
             <p className="mt-1 text-xs text-gray-600">
               Customers can message your business number directly. Available on every plan. WhatsApp message usage charges still apply.
             </p>
+            <p className="mt-2 text-xs font-medium text-amber-700" data-testid="own-number-warning">
+              Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect.
+            </p>
             <div className="mt-3 flex items-center gap-3">
               <a
                 href="/dashboard/whatsapp/connect"

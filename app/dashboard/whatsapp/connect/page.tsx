@@ -603,7 +603,8 @@ export default function ConnectWhatsAppPage() {
               <span className="text-2xl">🔗</span>
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Connect via Facebook</p>
-                <p className="text-xs text-gray-500 mt-0.5">Add or connect your own number using Meta Embedded Signup.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Connect your own number using Meta Embedded Signup.</p>
+                <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300" data-testid="own-number-warning">Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect.</p>
               </div>
             </div>
           </button>
