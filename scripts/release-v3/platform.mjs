@@ -2,7 +2,6 @@
 // Every call takes an injectable fetch so tests run without network.
 // Permission failures (401/403) are never retried and never switched to
 // another credential.
-import { isDeepStrictEqual } from 'node:util';
 import { fail, sha256, DEPLOYMENT_ID, SHA, REPO } from './common.mjs';
 
 export const TEAM = 'team_AEcg69CktrGEptXDznpae8Rp';
@@ -128,5 +127,3 @@ export function validateJobs(payload) {
   if (bad.length) fail(`CI jobs not successful: ${bad.map(j => j.name).sort().join(', ')}`);
   return payload.jobs.map(j => j.name).sort();
 }
-
-export const sameDescriptor = (a, b) => isDeepStrictEqual(a, b);
