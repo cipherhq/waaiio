@@ -15,6 +15,7 @@ interface PlaceData {
   lng: number;
   placeId: string;
   city?: string;
+  state?: string;
 }
 
 interface PlacesAutocompleteProps {
@@ -136,6 +137,7 @@ export default function PlacesAutocomplete({
         lng: result.lng,
         placeId: result.placeId,
         city: result.components.city || undefined,
+        state: result.components.state || undefined,
       });
     } catch {
       // The selected description remains editable; no coordinates are fabricated.

@@ -1,3 +1,21 @@
+## 2026-11-04 — Settings: owners can see and correct City and State (#867, part 2)
+
+- Problem: Settings → Business showed only one Address field. `city` was set silently from address autocomplete, and typing an address blanked it. `state` was never editable outside onboarding, so wrong values such as a Lagos business stored as state "Maryland" could not be fixed. Directory location search reads these columns.
+- `app/dashboard/settings/tabs/BusinessTab.tsx`:
+  - new editable "City or area" and "State" fields under Address, with a note that directory location search uses them;
+  - saving writes trimmed `city` and `state`, with empty values saved as null;
+  - typing an address no longer blanks City or State;
+  - picking an address suggestion fills both.
+- `components/ui/PlacesAutocomplete.tsx`: place data now also carries `state` (Google `administrative_area_level_1`). It is optional, so other users of the component are unchanged.
+- `components/dashboard/DashboardProvider.tsx`: `Business` type gains optional `state` (the row was already loaded with `select('*')`).
+- Test: `app/dashboard/settings/tabs/__tests__/business-tab-city-state-867.test.tsx` (5, rendered; all fail on the previous code).
+- Not changed:
+  - the Discovery Profile page (still writes city only; follow-up);
+  - onboarding;
+  - the guarded server-only columns (`city` and `state` are owner-writable today);
+  - State is free text, not a dropdown, because the code has no complete state list per country.
+- Could break: owners now see City and State values that autocomplete chose and may edit them; directory location search uses what they save.
+
 ## 2026-11-04 — Bot: add-on choices no longer carry across a capability switch (#859)
 
 - `lib/bot/flows/shared/capability-transition.ts`, `clearStaleCapabilityState`:

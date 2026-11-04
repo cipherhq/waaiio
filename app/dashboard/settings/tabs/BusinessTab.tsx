@@ -48,6 +48,7 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
     latitude: (business as unknown as Record<string, unknown>).latitude as number | null ?? null,
     longitude: (business as unknown as Record<string, unknown>).longitude as number | null ?? null,
     city: business.city || '',
+    state: business.state || '',
   });
 
   const [hours, setHours] = useState<WeekSchedule>(() => {
@@ -93,7 +94,8 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
         deposit_per_guest: form.deposit_per_guest,
         latitude: form.latitude,
         longitude: form.longitude,
-        city: form.city || null,
+        city: form.city.trim() || null,
+        state: form.state.trim() || null,
       })
       .eq('id', business.id);
     setSaving(false);
@@ -294,14 +296,41 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                           latitude: placeData.lat,
                           longitude: placeData.lng,
                           city: placeData.city || prev.city,
+                          state: placeData.state || prev.state,
                         }));
                       } else {
-                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null, city: '' }));
+                        // Typed text: keep City and State, which the owner can see and edit below (#867).
+                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null }));
                       }
                     }}
                     placeholder="Enter your business address"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="business-city" className="mb-1 block text-sm font-medium text-gray-700">City or area</label>
+                    <input
+                      id="business-city"
+                      type="text"
+                      value={form.city}
+                      onChange={(e) => setForm({ ...form, city: e.target.value })}
+                      placeholder="e.g. Ikoyi"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="business-state" className="mb-1 block text-sm font-medium text-gray-700">State</label>
+                    <input
+                      id="business-state"
+                      type="text"
+                      value={form.state}
+                      onChange={(e) => setForm({ ...form, state: e.target.value })}
+                      placeholder="e.g. Lagos"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 sm:col-span-2">Customers searching the WhatsApp directory by location find you through these. They fill in from the address; correct them if they are wrong.</p>
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5 mb-1">
