@@ -1,3 +1,164 @@
+## 2026-11-04 — Release V3: staging lock records the release robot's access to schema public
+
+- Owner decision 2026-11-04 (option A). The first prepare run stopped because staging revoked PUBLIC `USAGE` on schema `public` and production did not. The read-only `release_observer` therefore saw `public` types schema-qualified on staging, and about 928 catalog digests differed from the lock.
+- Staging only, Owner-approved: `GRANT USAGE ON SCHEMA public TO release_observer;`. It resolves names only; it grants no table access.
+- `scripts/release-v3/lock.json` and `lock-catalog-staging.json`: the staging entry records the changed `schema:public` digest. The staging catalog is 6400 objects, `12ff1745…` (was `80f4ec20…`). `observed.staging_public_usage` keeps the previous values. Production is unchanged.
+- Verified read-only: live staging as `postgres` and as `release_observer` both read `c0d2774c…`, which is this lock plus the 509 and 510 deltas.
+- `docs/RELEASE_V3_GATE.md`: documents the grant and that it must not be applied to production.
+- Tests: the release-v3 admission test pins the new staging digest and the recorded previous values.
+- Could break: #872 also edits the staging lock map and must be rebased onto this change.
+
+## 2026-11-04 — Settings: owners can see and correct City and State (#867, part 2)
+
+- Problem: Settings → Business showed only one Address field. `city` was set silently from address autocomplete, and typing an address blanked it. `state` was never editable outside onboarding, so wrong values such as a Lagos business stored as state "Maryland" could not be fixed. Directory location search reads these columns.
+- `app/dashboard/settings/tabs/BusinessTab.tsx`:
+  - new editable "City or area" (max 50) and "State" (max 100) fields under Address, with help text linked to both;
+  - picking an address suggestion fills both;
+  - typing an address by hand still clears City and State, along with the coordinates (#485 kept), and the owner re-enters them;
+  - `businesses.city` is NOT NULL, so saving with City empty now shows "Enter your city or area before saving." instead of a failed save. On main, a manual address edit followed by save sent `city: null` and failed;
+  - State saves trimmed, or null when empty.
+- `components/ui/PlacesAutocomplete.tsx`: place data now also carries `state` (Google `administrative_area_level_1`). It is optional, so other users of the component are unchanged.
+- `components/dashboard/DashboardProvider.tsx`: `Business` type gains optional `state` (the row was already loaded with `select('*')`).
+- Tests:
+  - `app/dashboard/settings/tabs/__tests__/business-tab-city-state-867.test.tsx` (6, rendered).
+  - `address-forms-751`, `discovery-settings-wiring-485` and `places-autocomplete-751` were updated to the required-City rule and the extra `state` field. Their #485 intent, that a manual edit invalidates coordinates and city, is kept.
+- Not changed:
+  - the Discovery Profile page (still writes city only; follow-up);
+  - onboarding;
+  - the guarded server-only columns (`city` and `state` are owner-writable today);
+  - State is free text, not a dropdown, because the code has no complete state list per country.
+- Could break: owners now see City and State values that autocomplete chose and may edit them; directory location search uses what they save.
+
+## 2026-11-04 — Directory search finds businesses by area, as customers type it (#867, part 1)
+
+- Problem: in production, "Shop in ikoyi" returned 0 results although an eligible Ikoyi shop is listed. Address autocomplete stores the area in `city` ("Ikoyi") and the metro in `state` ("Lagos") with a bare street address. The search needed city = Lagos AND an address mentioning Ikoyi, so such businesses never matched.
+- `lib/marketplace/search.ts`:
+  - An area search now matches when city or address names the parent city and the address names the area, or when the city field is the area and state or address names the parent city.
+  - State is never used on its own, so a business with only a wrong state stays excluded, as #584 required.
+  - A city search ("shop in Lagos") also matches the address.
+- `lib/marketplace/query-parser.ts`: "shops Ikoyi" and "Ikoyi shop" now read like "shop in Ikoyi". This applies only to messages of 2-5 words, where one side is a category or generic word and the other exactly names a curated city or area. Substrings such as "shop a" or "Salon East" are left alone.
+- `lib/bot/handlers/directory-search.ts`: "businesses in Ikoyi" and "Ikoyi" search the place instead of looking for that literal phrase in names. "boutique in Ikoyi" searches the name "boutique". Text is dropped only when the place is a city or area. A bare word, a state ("Oyo") or a country ("Nigeria") keeps its text, so a search never lists a whole country (review r2 P1-1).
+- Tests:
+  - `lib/bot/__tests__/directory-search-867.test.ts` (new, 8);
+  - new cases in `query-parser.test.ts` and `discovery-search-query.test.ts`. The test double now evaluates nested `and(...)` filters, and the real-client test checks the serialized filter.
+  - 15 tests fail on the previous code.
+- Not changed: the "did you mean" fallback (`search_businesses_fuzzy`, M447), the web directory, the settings page (#867 part 2), eligibility rules, ranking.
+- Could break: area and city searches return more matches than before (businesses whose city or address names the place). The wrong-state exclusion is kept.
+
+## 2026-11-04 — M510: late-night table bookings fit inside the business's open time (database only)
+
+Owner decision (2026-11-04, revised; table bookings only). It replaces the earlier "must start before midnight" rule:
+- A table booking is allowed when it fits completely inside the business's open time (`businesses.operating_hours`).
+- A closing time earlier than or equal to the opening time closes the next day. Equal open and close (for example `00:00`/`00:00`, not marked closed) means open 24 hours from that time.
+- Bookings are stored on their real calendar date and time. Starts after midnight are allowed when the business is open then. Example: open Mon 22:00 to Tue 06:00 accepts Tue 01:00–02:30, stored as Tuesday 01:00.
+- Back-to-back open days join up. Fri and Sat both `00:00`/`00:00` allow Fri 23:30–01:00. Fri 18:00–02:00 plus Sat 02:00–06:00 is one stretch to Sat 06:00.
+- A closed day (`closed: true` / `is_open: false`) contributes no open time. A Tue 01:00 booking is allowed only through Monday's overnight hours: with Monday closed it is refused, even if Tuesday opens at 22:00.
+- No usable hours for the booking's date (`{}` hours, day missing, malformed values): no business-hours check, and an end past 24:00 is `past_midnight`, exactly as before. Many businesses have `{}` hours, and the Owner has not decided to block them.
+
+What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREATE OR REPLACE` of `public.book_table_atomic`, M476 body otherwise verbatim):
+- **Weekday entries.** Each is read as one of:
+  - **closed**: an object with `closed` = JSON `true` or `is_open` = JSON `false`;
+  - **open**: an object, `closed` absent or JSON `false`, `is_open` absent or JSON `true`, and `open`/`close` both match `^([01]\d|2[0-3]):[0-5]\d$`;
+  - **unknown**: anything else, including string flags such as `"true"`.
+- **One minute axis.** The open time of the booking's date (D), D-1 and D+1 is placed on one axis relative to D, and stretches that touch or overlap are joined. The booking `[start, start + duration]` must lie inside one stretch.
+- **Whose hours decide.** Whether there is a check at all depends on D's own entry only. With Mon 22:00–06:00 and Tuesday missing, Tue 12:00 is not checked.
+- **Error codes** (no new codes; the bot already shows its "time not available" message for all three):
+  - starts inside open time but ends after it → `after_closing` ("…past closing time 06:00");
+  - starts outside open time while the business still opens later that day → `before_opening` ("Earliest reservation time is 22:00");
+  - starts outside open time with no later opening that day → `day_unavailable` ("The business is closed on Tuesday" when D is closed, otherwise "The business is not open at that time on Tuesday");
+  - a start of `24:00` → `past_midnight` (it is not a time on D);
+  - an end after 2880 minutes (D+2 00:00) → `after_closing` ("…past closing time 00:00 (end of the next day)"), even inside joined open time. The overlap check only reads D-1..D+1, so a longer booking could otherwise be double-booked (review finding: Fri 18:00/18:00 + Sat 18:00–06:00, a direct 1800-minute call at Fri 23:00 ran to Sun 05:00 and a Sun 01:00 booking was also accepted). The bot cannot reach this, because table durations are 1–480. Not added for days with no usable hours, where an end past 1440 is already `past_midnight`.
+- **Order of checks.** Business hours are checked after the table's own `available_from` and before its `available_to`. The table's own `available_days` / `available_from` / `available_to` checks are unchanged. Table windows stay non-overnight (`seating_no_overnight` unchanged), so a table with `available_to` cannot take a booking that crosses midnight.
+- **Lock.** The advisory lock is per (business, table), not per date, so bookings on neighbouring dates of the same table serialise. The key is `abs(hashtext(...)::bigint)`: `abs()` of the int4 value -2147483648 raised "integer out of range", and one unlucky table would always have failed.
+- **Overlap.** Overlap uses one minute axis over `b.date` from D-1 to D+1, with the same statuses as M476 (`pending`, `confirmed`, `in_progress`). A booking running past midnight blocks the next day's early bookings, and the other way round.
+- **Catalog delta.** `supabase/catalog-deltas/510_table_overnight_reservations.json` has exactly one `modify`, of `book_table_atomic`: new body hash; ACL, owner, INVOKER and no config unchanged. The replay's pre-510 digest of this function equals the production and staging lock digest.
+- **Tests.** `lib/__tests__/table-overnight-510.pg.test.ts` has 75 cases on real PostgreSQL, including that reproduction and the exact-2880 boundary. `ci.yml` has the pg-file guard and the unit-job exclude.
+
+Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, insert columns, `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`, the 1–480 duration CHECK.
+
+Could break:
+- Businesses with usable hours now get table bookings refused outside their open time, even when the table has no window. This includes a daytime business at 23:30, which was `past_midnight` before and is now `day_unavailable`.
+- A table whose own window reaches outside the business hours can be offered times the database now refuses. The bot builds table slots from the table's window when it has one (`lib/bot/flows/shared/table-same-day.ts`).
+- The bot does not offer overnight or after-midnight slots yet; that is a separate app change.
+- The RPC reads `businesses`, which service_role already has. If that read is denied, the booking errors and is refused.
+- All bookings for one table queue on one lock instead of one per date.
+- Not applied anywhere. Staging and production need their own Owner approvals.
+
+## 2026-11-04 — Per-PR changelog fragments (no more CHANGELOG.md conflicts)
+
+- Owner decisions (2026-11-04):
+  - Each PR records its changelog entry as its own file, `changelog/unreleased/YYYY-MM-DD-<branch-name>.md` (branch name with `/` as `-`), instead of editing the top of `CHANGELOG.md`.
+  - Fragments count as docs for the Release V3 lane.
+  - The orchestrating session collects fragments into `CHANGELOG.md` before each release.
+- Why: every PR edited the same lines of `CHANGELOG.md`, so each merge made other open PRs conflict. The fix changed their heads and invalidated exact-head review approvals. On 2026-11-04 that forced extra review rounds on #851, #854, #855, #858, #860, #861, #862, #853, #864 and #865.
+- `scripts/changelog/collect.mjs`:
+  - `check` validates every fragment:
+    - name pattern and a real date;
+    - a regular file (not a folder or symlink); dotfiles are ignored;
+    - a `## YYYY-MM-DD — title` heading matching the file name;
+    - some entry text.
+  - `collect [--dry-run]` prepends fragments to `CHANGELOG.md`, ordered by fragment date, newest first, then by file name. It writes atomically, then deletes the fragments. If any fragment is malformed, it changes nothing.
+  - The command-line entry check uses the real file URL, so the check also runs from paths with spaces, unicode or symlinks.
+- `scripts/release-v3/classify.mjs`:
+  - Correctly named fragments and `changelog/README.md` count as docs (standard lane, 1 review).
+  - The collector reads them, so this is a narrow carve-out (`CHANGELOG_TOOL_DOCS`), tested by the drift test. That test now also scans `scripts/changelog/`.
+  - Any other file under `changelog/` stays full lane.
+- `docs/RELEASE_V3_GATE.md`:
+  - New step 0, "Collect changelog fragments": a docs-only collect PR merges before prepare, and is skipped when there are no fragments.
+  - The Lane row now documents the carve-out.
+- `.github/workflows/ci.yml`: the "Engineering governance" job runs `collect.mjs check`.
+- `scripts/filter-secret-scan-false-positives.mjs`: fragments may contain SHA-256 values in prose, the same as `CHANGELOG.md`. Only `changelog/unreleased/<file>.md` qualifies, not nested paths.
+- Docs point to fragments and say to check `changelog/unreleased/` as well as `CHANGELOG.md`:
+  - `CLAUDE.md` rule 16
+  - `.github/PULL_REQUEST_TEMPLATE.md`
+  - `changelog/README.md` (new)
+  - `README.md`
+  - `docs/ENGINEERING_WORKFLOW.md`
+  - `docs/BRANCH-PROTECTION.md`
+  - `.agents/skills/waaiio-dev/SKILL.md`
+  - `.agents/skills/TEAM-PROTOCOL.md`
+- Tests:
+  - `scripts/__tests__/changelog-collect.test.ts` (21, including real CLI runs from paths with spaces, unicode and symlinks);
+  - `release-v3-classify` (2 new cases, plus the extended drift test);
+  - `secret-scanner-migration-json` (3 new cases).
+- Not changed:
+  - existing `CHANGELOG.md` history;
+  - retired release-target JSON files that pin a `CHANGELOG.md` hash.
+- Open PRs that already edit `CHANGELOG.md` can still merge.
+- Could break: a malformed fragment fails the "Engineering governance" check until it is fixed.
+
+## 2026-11-04 — Changelog fragments: review follow-ups
+
+- Follow-ups from the #866 and #864 reviews:
+  - `scripts/changelog/collect.mjs`:
+    - `check` now rejects fragments that still contain a merge-conflict line (`<<<<<<<`, `=======`, `>>>>>>>`). One slipped into #864's fragment and was caught by review.
+    - The repo root now comes from the script's own location, not the current folder. Running it from a subfolder used to report "OK (0)".
+  - Docs (`CLAUDE.md`, `changelog/README.md`, PR template): in the fragment name, every character other than letters, digits and `-` in the branch name becomes `-` (for example `/`, `_` and `.`).
+  - `docs/RELEASE_V3_GATE.md` step 0: the collect PR runs after the last PR for the release has merged, immediately before prepare. Its merge commit becomes the prepare target.
+  - `RELEASE_GATE_V2.md` §9.3: one line records the Owner-approved carve-out for changelog files.
+- Tests: `scripts/__tests__/changelog-collect.test.ts`, 5 new cases:
+  - 3 conflict-marker cases;
+  - running from a subfolder;
+  - a Markdown `---` rule is still fine.
+- Could break: a fragment with a leftover conflict line now fails the "Engineering governance" check.
+
+## 2026-11-04 — Dashboard calendar: show every booking; full-day grids open at opening time
+
+Owner decisions (2026-11-04), from the #863 reviews.
+
+- **Show every booking.** The week and day views now stretch their hour rows to include every timed entry in view, even outside business hours (e.g. a 06:00 or 20:00 booking on the default 08:00–20:00 grid).
+  - Before: those entries were silently left out. A read-only production query on 2026-11-04 found 73 timed entries hidden across 9 businesses; one church had dozens of 06:00 and 20:00 bookings.
+  - New: `lib/calendar/hour-range.ts` `hoursIncludingEntries()`.
+- **Full-day grids open at opening time.** When the grid covers the whole day (some day runs past midnight), the week and day views open scrolled to the earliest opening hour instead of 12AM. `calendarHourRange()` now also returns `openHour` and `overnight`.
+- `app/dashboard/calendar/page.tsx`:
+  - the week view uses `weekHours`, built from the 7 days in view, and the day view uses `dayHours`;
+  - hour rows carry `data-hour`;
+  - the scroll boxes have refs, and an effect sets the scroll position after loading.
+  - Month view is unchanged.
+- Review fix: `calendarHourRange()` now skips days marked closed (`closed: true` or `is_open: false`). Before, a 22:00–06:00 restaurant whose closed days are stored as 00:00–00:00 got opening hour 0, so its grid still opened at 12AM. A read-only production check on 2026-11-04 found that only that restaurant's opening hour changes (0 → 22); no daytime business's grid changes.
+- Tests: 10 new `hour-range` cases: show-all stretching, malformed times, HH:MM:SS, openHour/overnight, and closed days including the production restaurant's hours. 58/58 pass with the existing calendar tests.
+- Could break: nothing in data. Calendars with out-of-hours bookings show more rows.
+
 ## 2026-11-04 — Release V3 docs: setup step 0 in the role file; 65-minute residual risk stated precisely
 
 - Follow-up to the #860 review notes (P2, optional). Comments and docs only; no code behavior changes.

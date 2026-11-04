@@ -21,7 +21,7 @@
 --  * Undo (only if #872 is rejected after this ran): re-run the exact 499 and
 --    502 file bytes from #813's history as the same role, then re-insert the
 --    two exported ledger rows exactly. Staging then equals the previous lock
---    again (catalog 6400 80f4ec20..., ledger 444 adcdf3e9...).
+--    again (catalog 6400 12ff1745..., ledger 444 adcdf3e9...).
 --  * Releases cannot pass the gate between this teardown and the merge of
 --    #872 (staging no longer matches main's lock), so do the two back to back.
 --  * Afterwards, a read-only reading of staging must equal the updated
