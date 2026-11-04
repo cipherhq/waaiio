@@ -85,6 +85,10 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     ["export const B = () => <p>Don't</p>;\nimport { x } from '@/lib/bot/x';", 'imports @/lib/bot/x'],
     ["import { x } /*\nexport type { A }\n*/ from '@/lib/bot/x';", 'imports @/lib/bot/x'],
     ["export type { A }\nfrom('@/lib/bot/x');", 'imports @/lib/bot/x'],
+    // Review 1, round 5: padding must not fake a line start.
+    [`import { x } //${' '.repeat(520)}export type { A }\nfrom '@/lib/bot/x';`, 'imports @/lib/bot/x'],
+    [`import { x } //${'\t'.repeat(520)}export type { A }\nfrom '@/lib/bot/x';`, 'imports @/lib/bot/x'],
+    [`import { x } /*${' '.repeat(3000)}*/\nfrom '@/lib/bot/x';`, 'imports @/lib/bot/x'],
     ["self[atob('ZmV0Y2g=')]('/x');", 'computed global access'],
     ["globalThis['fe' + 'tch']('/x');", 'environment or global access'],
   ])('an allowlisted file containing %j is full', (text, reason) => {
@@ -100,7 +104,7 @@ describe('Release V3 lane classifier: content (whole before and after versions)'
     expect(r.reasons.join('\n')).toContain('data client access');
   });
   it('genuine type-only imports and re-exports are ignored, whatever module they name', () => {
-    for (const text of ["import type { Metadata } from 'next';", "import type Stripe from 'stripe';", "export type { A, B } from '@/lib/payments/types';", "import type * as T from '@/lib/supabase/types';"])
+    for (const text of [`${'\n'.repeat(3)}${' '.repeat(600)}import type { Metadata } from 'next';`, "import type { Metadata } from 'next';", "import type Stripe from 'stripe';", "export type { A, B } from '@/lib/payments/types';", "import type * as T from '@/lib/supabase/types';"])
       expect(lane(change(page, `${text}\nexport const x = 1;`, 'A')).reasons.filter(r => r.includes('imports'))).toEqual([]);
   });
   it('a reviewer-style alias with .. never resolves', () => {

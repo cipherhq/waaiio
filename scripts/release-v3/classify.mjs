@@ -81,11 +81,12 @@ const TYPE_CLAUSE = /^\s+type\s+(\{[\s\w$,]*\}|[A-Za-z_$][\w$]*|\*\s+as\s+[A-Za-
 // can never pair with a real `from`; such imports are scanned as runtime.
 function isTypeOnly(text, match) {
   if (!/^from\s*['"]/.test(match[0])) return false;
-  const start = Math.max(0, match.index - 2000);
-  const keywords = [...text.slice(start, match.index).matchAll(/\b(import|export)\b/g)];
+  // No fixed windows: the whole text before `from`, and the real line start.
+  const keywords = [...text.slice(0, match.index).matchAll(/\b(import|export)\b/g)];
   if (!keywords.length) return false;
-  const last = keywords.at(-1), at = start + last.index;
-  if (!/(^|\n)[ \t]*$/.test(text.slice(Math.max(0, at - 500), at))) return false;
+  const last = keywords.at(-1), at = last.index;
+  const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+  if (!/^[ \t]*$/.test(text.slice(lineStart, at))) return false;
   return TYPE_CLAUSE.test(text.slice(at + last[0].length, match.index));
 }
 
