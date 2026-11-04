@@ -91,7 +91,8 @@ describe('#730: Table Reservation capability definition', () => {
     const { CAPABILITIES } = await import('@/shared/capabilities');
     const cap = CAPABILITIES.find(c => c.id === 'table_reservation');
     expect(cap).toBeDefined();
-    expect(cap!.label).toBe('Table Reservations');
+    // Owner decision 2026-11-04: renamed from 'Table Reservations' (id unchanged)
+    expect(cap!.label).toBe('Tables & Sections');
   });
 
   it('table_reservation tier is free', async () => {
@@ -99,7 +100,10 @@ describe('#730: Table Reservation capability definition', () => {
     expect(CAPABILITY_TIER_REQUIREMENTS.table_reservation).toBe('free');
   });
 
-  it('FOOD_DINING categories default to table_reservation', async () => {
+  // CATEGORY_DEFAULT_CAPABILITIES is the zero-row fallback existing businesses run on, so it
+  // still includes table_reservation. New-business defaults (bar/lounge only) are covered in
+  // tables-and-sections.test.ts (Owner decision 2026-11-04).
+  it('FOOD_DINING legacy fallback still includes table_reservation (existing businesses untouched)', async () => {
     const { CATEGORY_DEFAULT_CAPABILITIES } = await import('@/lib/capabilities/types');
     expect(CATEGORY_DEFAULT_CAPABILITIES.restaurant).toContain('table_reservation');
     expect(CATEGORY_DEFAULT_CAPABILITIES.cafe).toContain('table_reservation');

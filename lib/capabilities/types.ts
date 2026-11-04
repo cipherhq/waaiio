@@ -30,15 +30,37 @@ export function getRequiredTier(capId: CapabilityId): SubscriptionTier {
 }
 
 /**
+ * Owner decision 2026-11-04: Tables & Sections (table_reservation) is switched on
+ * by default only for NEW bar and lounge businesses. Every other business can
+ * still switch it on during signup or later from the dashboard.
+ */
+const NEW_BUSINESS_TABLE_RESERVATION_CATEGORIES: readonly string[] = ['bar', 'lounge'];
+
+/**
+ * Default capabilities for a NEW business of this category.
+ *
+ * CATEGORY_DEFAULT_CAPABILITIES is also the zero-row fallback that existing
+ * (legacy) businesses run on, so it is left unchanged — editing it would switch
+ * features off for businesses that already exist. New-business defaults apply
+ * the Owner's table_reservation rule on top of it.
+ */
+export function getNewBusinessDefaultCapabilities(category: string): CapabilityId[] | undefined {
+  const defaults = CATEGORY_DEFAULT_CAPABILITIES[category];
+  if (!defaults) return undefined;
+  if (NEW_BUSINESS_TABLE_RESERVATION_CATEGORIES.includes(category)) return defaults;
+  return defaults.filter(id => id !== 'table_reservation');
+}
+
+/**
  * Onboarding-only default resolver.
- * Returns the free-tier subset of CATEGORY_DEFAULT_CAPABILITIES for a given category.
+ * Returns the free-tier subset of the new-business defaults for a given category.
  * Preserves original order; falls back to ['chat'] if no free capabilities remain.
  *
  * Does NOT modify the global CATEGORY_DEFAULT_CAPABILITIES.
  * Paid capabilities remain visible and manually selectable during onboarding.
  */
 export function getOnboardingDefaultCapabilities(category: string): CapabilityId[] {
-  const defaults = CATEGORY_DEFAULT_CAPABILITIES[category];
+  const defaults = getNewBusinessDefaultCapabilities(category);
   if (!defaults) return ['chat'];
   const freeOnly = defaults.filter(id => CAPABILITY_TIER_REQUIREMENTS[id] === 'free');
   return freeOnly.length > 0 ? freeOnly : ['chat'];
@@ -65,7 +87,12 @@ export const TIER_LABELS: Record<SubscriptionTier, string> = {
 
 /** Default capabilities for each business category.
  * loyalty and referral are OPT-IN — businesses enable them manually from dashboard.
- * They are NOT included in category defaults. */
+ * They are NOT included in category defaults.
+ *
+ * This map is also the zero-row fallback for existing businesses (dashboard
+ * layout, bot, legacy-defaults). New businesses use
+ * getNewBusinessDefaultCapabilities(), which turns table_reservation off for
+ * food categories other than bar and lounge (Owner decision 2026-11-04). */
 // ── Group-based capability defaults ──
 // Each category maps to its industry group's default capabilities.
 // loyalty and referral are OPT-IN only — never in defaults.

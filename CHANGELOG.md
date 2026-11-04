@@ -1,3 +1,40 @@
+## 2026-11-04 — Tables & Sections: rename, new-business defaults, setup nudge, same-day tables, whole-word "table" keyword
+
+Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashboard/seating` URL are unchanged.
+
+- **Rename.**
+  - Bot menu (`lib/bot/flows/flow-localization.ts`): en `Reserve a Table/Section`, pcm `Reserve Table / Section`, fr `Réserver table / espace`, es `Reservar mesa / zona`. The Owner's wording `Reserve a Table / Section` is 25 characters; WhatsApp list rows stop at 24 and `slice-561g` enforces that, so the spaces around `/` are dropped (Owner to confirm). yo/ig/ha/tw keep their existing "make a reservation" text and are listed in `OWNER_REVIEW_ITEMS` for a native translation. Those four locales are not certified, so customers see English.
+  - `app/dashboard/translations/message-presentation.ts`: same en label.
+  - `shared/capabilities.ts`: label `Tables & Sections`, new description.
+  - `components/dashboard/Sidebar.tsx` and `app/dashboard/seating/page.tsx`: title `Tables & Sections`.
+  - Restaurants' `appointment` label "Book a Table" is unchanged.
+- **New-business defaults** (`lib/capabilities/types.ts`, `lib/capabilities/service.ts`). New `getNewBusinessDefaultCapabilities()`: `table_reservation` is on only for `bar` and `lounge`, and off for restaurant, cafe, bakery, catering and food_truck. `getOnboardingDefaultCapabilities()` (signup) and the static fallback in `initCapabilities()` (new businesses only) use it. `CATEGORY_DEFAULT_CAPABILITIES` is **unchanged** because it is also the zero-row fallback that existing businesses run on (dashboard layout, bot, legacy-defaults). No data migration: existing businesses keep exactly what they have.
+- **Signup** (`app/get-started/steps/StepFeatures.tsx`). The option, already shown for every business type, is renamed "Reserve tables & sections", with new copy. It is free tier and needs no logic change.
+- **Setup nudge** (`components/dashboard/OnboardingChecklist.tsx`). "Add your tables & sections" links to `/dashboard/seating`. It shows when `table_reservation` is on and the business has no active `seating_resources` row (RLS owner-select, own `business_id`, `is_active = true`; a query error counts as "none"). Once one exists it disappears rather than being ticked off, and it is excluded from the step count.
+- **Same-day tables** (`lib/bot/flows/shared/table-same-day.ts` new; `lib/bot/flows/scheduling.flow.ts` select_date/select_time). For table reservations only, and only when `businesses.timezone` can be read:
+  - the date list starts at today (local calendar) when a slot after the current local time is still free on that table;
+  - a "Today" shortcut appears (Today / Tomorrow / Pick a Date);
+  - typed "today"/"tomorrow" use the local date;
+  - today's time list and typed times exclude times at or before now;
+  - a pre-filled past time is cleared.
+  - Slot interval, duration and `available_to` trimming are as before. There is no lead time; none exists elsewhere.
+  - If the timezone is unknown, tables keep the tomorrow-first rule. Appointments, classes and other scheduling are untouched and never read the timezone.
+  - `book_table_atomic` (M476) does not reject past dates or times. A new disposable-PG case proves it accepts 00:00 today, so the bot guard is what stops past slots.
+- **Keyword** (`supabase/migrations/509_table_keyword_whole_word.sql`, data-only, idempotent, self-check, NOT applied). The seeded category `table` keyword (041/164, `contains`) becomes the regex `\btables?\b`, so "vegetable"/"comfortable"/"timetable" no longer start a reservation while "table for 4"/"tables" do. Scoped to category rows (restaurant/cafe/bar/lounge, `start_capability`). `dine-in` is unchanged. keyword-service `contains` semantics are unchanged.
+- **Tests:**
+  - `lib/__tests__/tables-and-sections.test.ts` (27): labels, menu, defaults, same-day select_date/select_time on the real steps with a frozen clock and business timezone, plus appointment controls;
+  - `lib/__tests__/tables-and-sections-ui.test.tsx` (7): rendered checklist nudge, and the signup option for every business type;
+  - `lib/__tests__/table-keyword-whole-word.test.ts` (18);
+  - `lib/__tests__/table-keyword-whole-word-509.pg.test.ts` (5): real PG, 041 seed + 164 + 509 twice;
+  - `lib/__tests__/table-reservation-730-db.test.ts` (+1 same-day RPC case);
+  - `lib/__tests__/table-reservation-730.test.ts`: label assertion updated to the rename, and the legacy-defaults test renamed (assertion unchanged).
+- **Could break:**
+  - a restaurant/cafe/bakery/catering/food_truck signing up no longer gets Tables & Sections pre-selected (by design);
+  - the en menu label can still be cut to 20 characters when a business has 3 or fewer menu options (WhatsApp buttons);
+  - after M509, a merchant's own business-scope `table` keyword no longer shadows the category row by text (the keys now differ), so the category regex can win on priority;
+  - same-day depends on `businesses.timezone` being correct (default `Africa/Lagos`);
+  - the confirm step does not re-check the time, so a slot that passes between choosing and confirming can still be booked (same as before for pre-filled times).
+
 ## 2026-11-03 — Release Process V3: reusable release gate (schema 8)
 
 - Owner-approved plan (Issue #843, `RELEASE_GATE_V2.md` §9). One reusable gate replaces a new gate profile per release. Docs: `docs/RELEASE_V3_GATE.md`.

@@ -155,8 +155,8 @@ export const MESSAGE_PRESENTATION: Record<string, MessagePresentation> = {
     context: 'Menu option for booking accommodation.',
   },
   'cap.table_reservation': {
-    label: 'Make a Reservation',
-    context: 'Menu option for making a reservation.',
+    label: 'Reserve a Table/Section',
+    context: 'Menu option for reserving a table, booth or section.',
   },
   'cap.crowdfunding': {
     label: 'Support a Campaign',
