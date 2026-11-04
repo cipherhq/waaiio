@@ -7,6 +7,26 @@
 - Runs no SQL and changes no setting.
 - Could break: nothing. A replica more than 65 minutes behind stops the gate, as intended.
 
+## 2026-11-04 — Tables & Sections: reminder for food & drink only; reservations tab renamed
+
+Owner decisions (2026-11-04), following the #854 reviews.
+
+- `components/dashboard/OnboardingChecklist.tsx`: the "Add your tables & sections" reminder now shows only when both of these are true:
+  - Tables & Sections is on;
+  - the business is restaurant, cafe, bar, lounge, bakery, catering or food_truck.
+
+  Other businesses with the feature on no longer see the reminder, and their checklist no longer queries tables. A read-only production query on 2026-11-04 found 9 such businesses (a church, 5 shops, a tailor, an events business and a spa), none of which has tables. 2 restaurants keep the reminder.
+- `app/dashboard/reservations/page.tsx` and `components/dashboard/BookingPresentation.tsx`: the "Table Reservations" tab is now "Tables & Sections". The tab id is unchanged.
+- The welcome button "Book a Table" is NOT changed here. Its default list (`getDefaultWelcomeButtons` in `app/api/onboarding/register/route.ts`) has had no caller since #553: onboarding now goes through `lib/onboarding/provision-business.ts`, which saves no welcome buttons. So editing it would have had no effect. Customers already see "Book Table / Section" in the bot menu. Older businesses may still have "Book a Table" saved as a welcome button. A read-only production query on 2026-11-04 found 1 restaurant, and its welcome buttons are not sent today because it has several features. Changing saved buttons would be a separate, Owner-approved data change.
+- Notes the #854 reviews asked to record:
+  - For tables at a business whose stored timezone doesn't fit its country, a pre-filled "today" is now dropped and the tomorrow-first date picker is shown.
+  - While the tables reminder is open, the checklist does not auto-dismiss.
+- Tests:
+  - New checklist cases: a non-food business, a food_delivery business and a business with no category see no reminder, and their checklists send no tables query; each food & drink category sees the reminder.
+  - The dashboard tab tests now expect the new label.
+  - 10 cases fail on the previous code.
+- Could break: nothing in data or the bot. Text, and who sees the reminder, only.
+
 ## 2026-11-04 — Tables & Sections: rename, setup nudge, same-day tables (app only)
 
 Owner decisions (2026-11-04). Capability id `table_reservation` and the `/dashboard/seating` URL are unchanged. This PR has no migration: the whole-word "table" keyword fix (M509) is its own PR, and this code works with or without it.

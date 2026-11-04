@@ -98,7 +98,7 @@ export function isLodgingTab(bookingType: BookingType): boolean {
 
 // ── Tab filter predicates ──
 
-/** Count/filter bookings for the Table Reservations tab badge and row set.
+/** Count/filter bookings for the Tables & Sections tab badge and row set.
  *  When Appointments tab is absent (no scheduling), includes ALL non-reservation
  *  bookings to preserve access to legacy scheduling/payment/ticketing rows. */
 export function isTableReservationsTabRow(b: BookingSummary, hasScheduling: boolean): boolean {
@@ -127,7 +127,7 @@ interface BookingTabBarProps {
 export function BookingTabBar({ hasScheduling, hasReservation, hasTableReservation, activeTab, onSwitch }: BookingTabBarProps) {
   const tabs: Array<{ id: BookingType; label: string }> = [
     ...(hasScheduling ? [{ id: 'bookings' as const, label: 'Appointments' }] : []),
-    ...(hasTableReservation ? [{ id: 'table_reservations' as const, label: 'Table Reservations' }] : []),
+    ...(hasTableReservation ? [{ id: 'table_reservations' as const, label: 'Tables & Sections' }] : []),
     ...(hasReservation ? [{ id: 'reservations' as const, label: 'Stays' }] : []),
   ];
 
