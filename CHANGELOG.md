@@ -1,3 +1,15 @@
+## 2026-11-04 — Dashboard calendar: show bookings for businesses open past midnight
+
+- Bug: the calendar's week and day grids ran from the earliest opening hour to the latest closing hour. A closing time after midnight (e.g. 02:00) counted as "earlier", so a business open 18:00–02:00 got a one-row grid (6pm) and bookings from 7pm onwards were invisible. A read-only production query on 2026-11-04 found 2 businesses with such hours: an events business (16:00–00:00, 18:00–04:00, 20:00–06:00) and a restaurant (22:00–06:00).
+- `lib/calendar/hour-range.ts` (new) `calendarHourRange()`:
+  - If any day closes at or before it opens (including a 00:00 close), the grid covers the whole day, 00:00–24:00.
+  - A part-hour close keeps its hour row; for example, 17:30 keeps the 17:00 row.
+  - Daytime-only hours give the same rows as before.
+- `app/dashboard/calendar/page.tsx`: uses the helper. The calculation inside the page is removed.
+- Owner decision (2026-11-04): fix this now, as its own display-only PR, ahead of the late table bookings work.
+- Tests: `lib/calendar/__tests__/hour-range.test.ts` (7), including the two production shapes. Existing calendar tests still pass.
+- Could break: nothing in data. Calendars for businesses open past midnight now show all 24 hours.
+
 ## 2026-11-04 — Tables & Sections: reminder for food & drink only; reservations tab renamed
 
 Owner decisions (2026-11-04), following the #854 reviews.
