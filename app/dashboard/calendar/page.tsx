@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
-import { calendarHourRange } from '@/lib/calendar/hour-range';
+import { calendarHourRange, hoursIncludingEntries } from '@/lib/calendar/hour-range';
 
 interface Booking {
   id: string;
@@ -132,7 +132,7 @@ const nextActions: Record<string, { label: string; next: string; color: string; 
   ],
 };
 
-// HOUR_START, HOUR_END, and HOURS are now derived per-business inside the component via useMemo
+// Calendar hour rows are derived per-business inside the component (see lib/calendar/hour-range.ts)
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -205,10 +205,9 @@ export default function CalendarPage() {
   const hasEvents = hasCapability('ticketing');
 
   // Calendar rows from operating_hours; open-past-midnight days show the whole day
-  const { HOUR_START, HOUR_END, HOURS } = useMemo(() => {
-    const range = calendarHourRange(business.operating_hours);
-    return { HOUR_START: range.start, HOUR_END: range.end, HOURS: range.hours };
-  }, [business.operating_hours]);
+  const hourRange = useMemo(() => calendarHourRange(business.operating_hours), [business.operating_hours]);
+  const weekScrollRef = useRef<HTMLDivElement>(null);
+  const dayScrollRef = useRef<HTMLDivElement>(null);
 
   // Load staff list for filter
   useEffect(() => {
@@ -587,6 +586,26 @@ export default function CalendarPage() {
       return d;
     });
   }, [view, currentDate]);
+
+  // Owner decision 2026-11-04: rows stretch so every timed entry in the view
+  // is shown, even outside business hours.
+  const weekHours = useMemo(
+    () => hoursIncludingEntries(hourRange, weekDays.flatMap((d) => (entriesByDate[formatDateKey(d)] || []).map((e) => e.time))),
+    [hourRange, weekDays, entriesByDate],
+  );
+  const dayHours = useMemo(
+    () => hoursIncludingEntries(hourRange, (entriesByDate[formatDateKey(currentDate)] || []).map((e) => e.time)),
+    [hourRange, entriesByDate, currentDate],
+  );
+
+  // Owner decision 2026-11-04: a full-day grid (business open past midnight)
+  // opens scrolled to the earliest opening hour, not 12AM.
+  useEffect(() => {
+    if (!hourRange.overnight || hourRange.openHour === null) return;
+    const box = view === 'week' ? weekScrollRef.current : view === 'day' ? dayScrollRef.current : null;
+    const row = box?.querySelector<HTMLElement>(`[data-hour="${hourRange.openHour}"]`);
+    if (box && row) box.scrollTop = row.offsetTop;
+  }, [view, currentDate, hourRange, loading]);
 
   const today = formatDateKey(new Date());
   const currentMonth = currentDate.getMonth();
@@ -1231,9 +1250,9 @@ export default function CalendarPage() {
                 })}
               </div>
               {/* Time slots */}
-              <div className="max-h-[600px] overflow-y-auto">
-                {HOURS.map((hour) => (
-                  <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-50 last:border-b-0 dark:border-gray-700">
+              <div ref={weekScrollRef} className="relative max-h-[600px] overflow-y-auto">
+                {weekHours.map((hour) => (
+                  <div key={hour} data-hour={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-50 last:border-b-0 dark:border-gray-700">
                     <div className="flex items-start justify-end border-r border-gray-100 px-2 py-1 dark:border-gray-700">
                       <span className="text-[10px] text-gray-400 dark:text-gray-500">
                         {hour % 12 || 12}{hour >= 12 ? 'PM' : 'AM'}
@@ -1298,8 +1317,8 @@ export default function CalendarPage() {
                   </div>
                 );
               })()}
-              <div className="max-h-[700px] overflow-y-auto">
-                {HOURS.map((hour) => {
+              <div ref={dayScrollRef} className="relative max-h-[700px] overflow-y-auto">
+                {dayHours.map((hour) => {
                   const key = formatDateKey(currentDate);
                   const dayEntries = entriesByDate[key] || [];
                   const hourEntries = dayEntries.filter((e) => {
@@ -1310,6 +1329,7 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={hour}
+                      data-hour={hour}
                       className="grid grid-cols-[72px_1fr] border-b border-gray-50 last:border-b-0 dark:border-gray-700"
                     >
                       <div className="flex items-start justify-end border-r border-gray-100 px-3 py-2 dark:border-gray-700">

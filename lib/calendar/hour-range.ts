@@ -5,6 +5,7 @@
  * - Default 08:00–20:00 when no usable hours exist.
  * - The grid runs from the earliest opening hour to the latest closing hour,
  *   rounding a part-hour close up (17:30 keeps the 17:00 row).
+ * - Days marked closed (closed: true or is_open: false) are skipped.
  * - If any day closes at or before it opens (e.g. 18:00–02:00, or a 00:00
  *   close), the business is open past midnight. The grid then covers the
  *   whole day (00:00–24:00), so late-evening and after-midnight bookings
@@ -14,6 +15,10 @@ export interface CalendarHourRange {
   start: number;
   end: number;
   hours: number[];
+  /** Earliest opening hour across days, or null when no usable hours exist. */
+  openHour: number | null;
+  /** True when some day runs past midnight, so the grid covers the whole day. */
+  overnight: boolean;
 }
 
 function toMinutes(value: unknown): number | null {
@@ -35,7 +40,9 @@ export function calendarHourRange(operatingHours: unknown): CalendarHourRange {
   if (operatingHours && typeof operatingHours === 'object') {
     for (const slot of Object.values(operatingHours as Record<string, unknown>)) {
       if (!slot || typeof slot !== 'object') continue;
-      const { open, close } = slot as { open?: unknown; close?: unknown };
+      const { open, close, closed, is_open: isOpen } = slot as { open?: unknown; close?: unknown; closed?: unknown; is_open?: unknown };
+      // A closed day's stored times (often 00:00–00:00) are not opening hours.
+      if (closed === true || isOpen === false) continue;
       const openMin = toMinutes(open);
       const closeMin = toMinutes(close);
       if (openMin === null || closeMin === null) continue;
@@ -53,11 +60,33 @@ export function calendarHourRange(operatingHours: unknown): CalendarHourRange {
     }
   }
 
+  const firstOpenHour = found ? earliest : null;
   if (overnight) {
     earliest = 0;
     latest = 24;
   }
   earliest = Math.max(0, Math.min(23, earliest));
   latest = Math.max(earliest + 1, Math.min(24, latest));
-  return { start: earliest, end: latest, hours: Array.from({ length: latest - earliest }, (_, i) => earliest + i) };
+  return { start: earliest, end: latest, hours: Array.from({ length: latest - earliest }, (_, i) => earliest + i), openHour: firstOpenHour, overnight };
+}
+
+/**
+ * Hour rows for a view: the business-hours rows, stretched so that every
+ * timed entry in the view (e.g. a 06:00 or 20:00 booking outside the set
+ * hours) has a row. Owner decision 2026-11-04: show all bookings.
+ * Entry times are "HH:MM" (or "HH:MM:SS"); anything else is ignored.
+ */
+export function hoursIncludingEntries(range: CalendarHourRange, entryTimes: Array<string | undefined | null>): number[] {
+  let first = range.start;
+  let last = range.end - 1;
+  for (const t of entryTimes) {
+    if (typeof t !== 'string') continue;
+    const m = /^(\d{1,2}):\d{2}/.exec(t);
+    if (!m) continue;
+    const h = Number(m[1]);
+    if (h < 0 || h > 23) continue;
+    if (h < first) first = h;
+    if (h > last) last = h;
+  }
+  return Array.from({ length: last - first + 1 }, (_, i) => first + i);
 }
