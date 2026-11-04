@@ -13,6 +13,21 @@
   - the ordering flow, which uses its own cart add-on keys.
 - Could break: a customer who taps the saved-card "Menu" button and books again must re-pick add-ons. They were for the earlier booking.
 
+## 2026-11-04 — M509: the restaurant "table" keyword matches whole words only
+
+- Owner decision (2026-11-04). Release V3 rule: a migration ships in its own PR with its catalog delta. This PR was split out of #854, which is now app-only and works with or without M509.
+- `supabase/migrations/509_table_keyword_whole_word.sql` (data-only, idempotent, self-check, NOT applied):
+  - The problem: 041/164 seeded the category keyword `table` with `contains` matching. keyword-service checks `contains` with a substring test, so "vegetable", "comfortable" and "timetable" started a table reservation.
+  - The fix: only those seeded category rows (restaurant/cafe/bar/lounge, `start_capability`) become the regex `\btables?\b`. "table", "tables" and "table for 4" still match.
+  - Unchanged: `dine-in`, every business-scope keyword, and the generic `contains` semantics.
+  - The pattern is written as an `E''` string, so the stored value does not depend on `standard_conforming_strings`.
+- `supabase/catalog-deltas/509_table_keyword_whole_word.json`: `changes: []`, because only row data changes.
+- Tests:
+  - `lib/__tests__/table-keyword-whole-word.test.ts` (18): the real keyword-service matcher with the exact stored pattern.
+  - `lib/__tests__/table-keyword-whole-word-509.pg.test.ts` (5, real PostgreSQL): applies the 041 restaurant seed and 164, then 509 twice. Proves "vegetable soup" no longer matches while "table for 4" and "tables" still do, the other rows are untouched, and the self-check fails when it should.
+- CI (`.github/workflows/ci.yml`): the 509 PostgreSQL test gets a `test -f` guard in the PostgreSQL job and is excluded from the unit job, the same as M503–M508.
+- Could break: until #854's keyword-service change is merged, a merchant's own business-scope `table` keyword would no longer override the category row, because the keyword texts now differ. #854 restores that precedence (Owner decision 2026-11-04: the merchant keyword wins). Production has 0 such rows today.
+
 ## 2026-11-04 — Release V3: production observer reads a read replica
 
 - Owner decision (2026-11-04): the production read-only login (`release_observer`) connects to a Supabase read replica instead of narrowing pg_net's PUBLIC grants (Supabase owns those objects; two active cron jobs rely on them; details in a private advisory).
