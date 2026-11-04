@@ -1572,8 +1572,18 @@ export const schedulingFlow: FlowDefinition = {
         if (required.length === addons.length) return true;
         return false;
       },
+      nextAfterPrompt(ctx: FlowContext) {
+        return ctx.session.session_data._is_table_reservation === true ? 'select_quantity' : undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number; is_required: boolean }>;
+        // "Back" re-shows this prompt without running skipIf. A table never gets
+        // add-ons, so clear any carried-over state and show party size instead.
+        if (ctx.session.session_data._is_table_reservation === true) {
+          delete ctx.session.session_data._available_addons;
+          delete ctx.session.session_data._selected_addons;
+          return schedulingFlow.steps.find(step => step.id === 'select_quantity')!.prompt(ctx);
+        }
+        const addons = (ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number; is_required: boolean }> | undefined) ?? [];
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const optional = addons.filter(a => !a.is_required);
         const items = optional.map(a => buildListItem({
@@ -1591,6 +1601,8 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Reached for a table only via a 'require' override after "back": move on, never loop.
+        if (ctx.session.session_data._is_table_reservation === true) return { valid: true };
         if (input === 'skip_addons') return { valid: true };
         const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number }>;
         const found = addons?.find(a => a.id === input);
