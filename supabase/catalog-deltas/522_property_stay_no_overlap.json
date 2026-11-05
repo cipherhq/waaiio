@@ -1,0 +1,34 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "EXCLUDE USING gist (business_id WITH =, property_id WITH =, daterange(check_in, check_out, '[)'::text) WITH &&) WHERE (property_id IS NOT NULL AND (status <> ALL (ARRAY['cancelled'::reservation_status, 'no_show'::reservation_status, 'checked_out'::reservation_status, 'completed'::reservation_status])))",
+    "validated": true
+   },
+   "after_sha256": "46faeab6c0a4077fb8cacc1779e6a2f5c435b99e3298fdc6dc8092e9e869ba5d",
+   "identity": "constraint:public.reservations.reservations_no_overlapping_stay",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX reservations_no_overlapping_stay ON public.reservations USING gist (business_id, property_id, daterange(check_in, check_out, '[)'::text)) WHERE ((property_id IS NOT NULL) AND (status <> ALL (ARRAY['cancelled'::reservation_status, 'no_show'::reservation_status, 'checked_out'::reservation_status, 'completed'::reservation_status])))",
+    "predicate": "((property_id IS NOT NULL) AND (status <> ALL (ARRAY['cancelled'::reservation_status, 'no_show'::reservation_status, 'checked_out'::reservation_status, 'completed'::reservation_status])))",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "94b73eb6002db3875ac58ba02822fc30f6e6e31224c09fcbf3c7b12295fb6091",
+   "identity": "index:public.reservations.reservations_no_overlapping_stay",
+   "operation": "add"
+  }
+ ],
+ "migration": "522_property_stay_no_overlap.sql",
+ "migration_sha256": "8e8b6f38e06f1becf098200c1e2c9c3594c4a3229a5a0a367bf252e510b51af2",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}
