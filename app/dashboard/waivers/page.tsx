@@ -80,6 +80,8 @@ export default function WaiversPage() {
   // Signed waivers state
   const [signedWaivers, setSignedWaivers] = useState<SignedWaiver[]>([]);
   const [signedLoading, setSignedLoading] = useState(false);
+  const [signedError, setSignedError] = useState('');
+  const signedRequest = useRef(0);
   const [search, setSearch] = useState('');
   const [filterTemplateId, setFilterTemplateId] = useState('');
   const [selectedSigned, setSelectedSigned] = useState<SignedWaiver | null>(null);
@@ -141,20 +143,25 @@ export default function WaiversPage() {
 
   // Fetch signed waivers via API (supports search + filter)
   const fetchSigned = useCallback(async () => {
+    const requestId = ++signedRequest.current;
     setSignedLoading(true);
+    setSignedError('');
     try {
       const params = new URLSearchParams({ business_id: business.id });
       if (search) params.set('search', search);
       if (filterTemplateId) params.set('template_id', filterTemplateId);
       const res = await fetch(`/api/waivers/signed?${params}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSignedWaivers(data);
-      }
+      if (!res.ok) throw new Error('Signed waiver read failed');
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('Invalid signed waiver response');
+      if (requestId === signedRequest.current) setSignedWaivers(data);
     } catch {
-      // silent
+      if (requestId === signedRequest.current) {
+        setSignedWaivers([]);
+        setSignedError('Unable to load signed waivers. Please try again.');
+      }
     } finally {
-      setSignedLoading(false);
+      if (requestId === signedRequest.current) setSignedLoading(false);
     }
   }, [business.id, search, filterTemplateId]);
 
@@ -165,6 +172,7 @@ export default function WaiversPage() {
 
   useEffect(() => {
     if (tab === 'signed') fetchSigned();
+    return () => { signedRequest.current += 1; };
   }, [tab, fetchSigned]);
 
   function resetForm() {
@@ -804,8 +812,13 @@ export default function WaiversPage() {
           </div>
 
           {signedLoading ? (
-            <div className="flex items-center justify-center py-16">
+            <div role="status" aria-label="Loading signed waivers" className="flex items-center justify-center py-16">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-brand" />
+            </div>
+          ) : signedError ? (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {signedError}{' '}
+              <button onClick={fetchSigned} className="font-medium underline">Retry</button>
             </div>
           ) : signedWaivers.length === 0 ? (
             <EmptyState

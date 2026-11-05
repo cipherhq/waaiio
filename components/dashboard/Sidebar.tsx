@@ -112,7 +112,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/seating',
-    label: 'Seating',
+    label: 'Tables & Sections',
     icon: 'M3 10h18M3 14h18M12 3v18M7 3v4M17 3v4M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z',
     capabilities: ['table_reservation'],
     section: 'manage',

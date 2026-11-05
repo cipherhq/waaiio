@@ -105,6 +105,48 @@ describe('Real deliverTicketsWhatsApp wiring', () => {
     }));
   });
 
+  it('passes organiser name and logo from the businesses row (ticket redesign 2026-11-04)', async () => {
+    const mockSender = {
+      sendDocument: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-document' }),
+      sendImage: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-image' }),
+      sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-text' }),
+    };
+    const select = vi.fn().mockReturnThis();
+    const mockSupabase = {
+      rpc: ticketEmissionRpc(),
+      from: vi.fn().mockReturnValue({
+        select,
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { subscription_tier: 'growth', name: 'Citadel of Grace', logo_url: 'https://proj.supabase.co/storage/v1/object/public/business-documents/biz-1/logos/1.png' },
+          error: null,
+        }),
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: vi.fn().mockResolvedValue({ error: null }),
+          createSignedUrl: vi.fn().mockResolvedValue({ data: { signedUrl: 'https://signed.url/test.pdf' }, error: null }),
+        }),
+      },
+    };
+
+    const { deliverTicketsWhatsApp } = await import('@/lib/bot/flows/shared/send-tickets');
+    await deliverTicketsWhatsApp({
+      supabase: mockSupabase as any, sender: mockSender as any,
+      businessId: 'biz-1', bookingId: 'book-2', eventId: 'evt-1',
+      eventName: 'Test Event', eventDate: 'Jan 1 2026', venue: 'Test Venue',
+      guestName: 'Guest', guestPhone: '+2348012345678', referenceCode: 'REF-2', quantity: 1,
+      tickets: [{ ticketCode: 'TK-XYZ', ticketNumber: 1, totalTickets: 1 }],
+    } as any);
+
+    expect(select).toHaveBeenCalledWith('subscription_tier, name, logo_url');
+    expect(mockGenerateTicketsPdf).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionTier: 'growth',
+      businessName: 'Citadel of Grace',
+      businessLogoUrl: 'https://proj.supabase.co/storage/v1/object/public/business-documents/biz-1/logos/1.png',
+    }));
+  });
+
   it('omitted presentation fields pass through as undefined', async () => {
     const mockSender = {
       sendDocument: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.fixture-document' }),

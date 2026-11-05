@@ -14,12 +14,25 @@ function query(result: { data?: unknown; error?: unknown }) {
   return q;
 }
 
-function serviceFor(options: { consent?: boolean; owner?: string } = {}) {
+// The live profiles table (M515): consent lives in consent_preferences; profiles.metadata never existed (#878).
+function profileQuery(consent: Record<string, string> | null) {
+  let columns = '';
+  const q: Record<string, unknown> = {};
+  q.select = vi.fn((selected: string) => { columns = selected; return q; });
+  q.eq = vi.fn(() => q);
+  q.maybeSingle = vi.fn(async () => columns === 'consent_preferences'
+    ? { data: { consent_preferences: consent }, error: null }
+    : { data: null, error: { code: '42703', message: `column profiles.${columns} does not exist` } });
+  return q;
+}
+
+function serviceFor(options: { consent?: boolean | Record<string, string>; owner?: string } = {}) {
+  const consent = options.consent === true ? { consented_at: 'now', terms_accepted_at: 'now' } : options.consent || null;
   const audits: Array<Record<string, unknown>> = [];
   const service = {
     from: vi.fn((table: string) => {
       if (table === 'admin_onboarding_invites') return query({ data: { id: 'onboarding-1', target_user_id: 'user-1', target_email: 'owner@test.dev', business_id: 'business-1', intended_plan: 'growth', whatsapp_method: 'shared' }, error: null });
-      if (table === 'profiles') return query({ data: { metadata: options.consent ? { consent_preferences: { consented_at: 'now', terms_accepted_at: 'now' } } : {} }, error: null });
+      if (table === 'profiles') return profileQuery(consent);
       if (table === 'businesses') return query({ data: { id: 'business-1', owner_id: options.owner || 'user-1', status: 'pending', subscription_tier: 'free' }, error: null });
       if (table === 'admin_audit_logs') return { insert: vi.fn(async (row: Record<string, unknown>) => { audits.push(row); return { error: null }; }) };
       throw new Error(`unexpected table ${table}`);
@@ -54,5 +67,13 @@ describe('#551 customer-owned activation gate', () => {
     expect(audits).toHaveLength(1);
     expect(audits[0].action).toBe('admin_onboarding_customer_accepted');
     expect(service.from('businesses')).not.toHaveProperty('update');
+  });
+
+  it('#878: still refuses when privacy consent exists but terms were never accepted', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'user-1', email_confirmed_at: 'now' } } });
+    const { service, audits } = serviceFor({ consent: { consented_at: 'now' } }); mocks.service.mockReturnValue(service);
+    const response = await POST(new NextRequest('http://localhost/api/onboarding/activate-admin-invite', { method: 'POST' }));
+    expect(response.status).toBe(409);
+    expect(audits).toHaveLength(0);
   });
 });

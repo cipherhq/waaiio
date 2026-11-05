@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
-import { fmtDate, fmtDateTime } from '@/lib/formatters';
+import { fmtCalendarDate, fmtDateTime } from '@/lib/formatters';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -143,7 +143,7 @@ export default function ClassSessions() {
                   <tr key={s.id} onClick={() => openDetail(s)} className="cursor-pointer hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm">{s.business_name}</td>
                     <td className="px-4 py-3 text-sm font-medium">{s.service_name}</td>
-                    <td className="px-4 py-3 text-sm">{fmtDate(s.date)}</td>
+                    <td className="px-4 py-3 text-sm">{fmtCalendarDate(s.date)}</td>
                     <td className="px-4 py-3 text-sm">{s.start_time?.slice(0, 5)}</td>
                     <td className="px-4 py-3 text-sm">{s.instructor_name || '—'}</td>
                     <td className="px-4 py-3 text-sm">{s.attendee_count}/{s.capacity}</td>
@@ -161,7 +161,7 @@ export default function ClassSessions() {
         <DetailModal title="Class Session Detail" onClose={() => setSelectedSession(null)}>
           <DetailRow label="Business">{selectedSession.business_name}</DetailRow>
           <DetailRow label="Class">{selectedSession.service_name}</DetailRow>
-          <DetailRow label="Date">{fmtDate(selectedSession.date)}</DetailRow>
+          <DetailRow label="Date">{fmtCalendarDate(selectedSession.date)}</DetailRow>
           <DetailRow label="Time">{selectedSession.start_time?.slice(0, 5)} — {selectedSession.end_time?.slice(0, 5)}</DetailRow>
           <DetailRow label="Instructor">{selectedSession.instructor_name || '—'}</DetailRow>
           <DetailRow label="Capacity">{selectedSession.attendee_count}/{selectedSession.capacity}</DetailRow>

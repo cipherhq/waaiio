@@ -116,7 +116,18 @@ describe('URL safety guard', () => {
     expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
   });
 
+  it('accepts the short Waaiio link (/m/BOT_CODE)', () => {
+    render(<StepSuccess {...props} waLink="https://www.waaiio.com/m/CITADEL" />);
+    expect(screen.getByRole('link', { name: 'Test on WhatsApp' })).toBeTruthy();
+    expect(screen.queryByText(/link is being set up/i)).toBeNull();
+  });
+
   it.each([
+    ['https://www.waaiio.com/m/CITADEL/book', 'short link with action suffix'],
+    ['https://www.waaiio.com/m/CITADEL?x=1', 'short link with query string'],
+    ['https://evil.example.com/m/CITADEL', 'short link on unknown host'],
+    ['https://www.waaiio.com/m/' + 'A'.repeat(31), 'over-long code'],
+    ['https://www.waaiio.com/m/---', 'code without letters or digits'],
     ['https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000/book', 'action suffix not accepted by StepSuccess'],
     ['https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000?redirect=x', 'query string'],
     ['https://www.waaiio.com/m/550e8400-e29b-41d4-a716-446655440000#frag', 'hash fragment'],

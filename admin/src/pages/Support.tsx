@@ -31,7 +31,7 @@ interface TicketMessage {
   ticket_id: string;
   sender_id: string;
   sender_name?: string;
-  body: string;
+  message: string;
   is_internal: boolean;
   created_at: string;
 }
@@ -317,7 +317,7 @@ export default function Support() {
       const { error } = await adminDb.from('support_ticket_messages').insert({
         ticket_id: selected.id,
         sender_id: senderId,
-        body: newMessage.trim(),
+        message: newMessage.trim(),
         is_internal: isInternal,
       });
 
@@ -618,7 +618,7 @@ export default function Support() {
                           {fmtRelative(m.created_at)}
                         </span>
                       </div>
-                      <p className="text-gray-700 whitespace-pre-wrap">{m.body}</p>
+                      <p className="text-gray-700 whitespace-pre-wrap">{m.message}</p>
                     </div>
                   ))}
                   <div ref={messagesEndRef} />

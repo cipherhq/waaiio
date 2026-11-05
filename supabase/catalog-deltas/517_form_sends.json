@@ -1,0 +1,523 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.form_sends.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.form_sends.completed_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.form_sends.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.form_sends.created_by",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.form_sends.error_message",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.form_sends.failed_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.form_sends.form_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.form_sends.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text[]"
+   },
+   "after_sha256": "504c7407881c490a35b03aaa542219a43b860f0c27495d7e1b6e651cf916e7c4",
+   "identity": "column:public.form_sends.recipients",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'[]'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "b2c79171ba6b50b1c1297b811e2753641e3b32f9bb9e8e410e3d3f65929f4fa5",
+   "identity": "column:public.form_sends.results",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "802a37c53cc07fe448a9c9e6b3bc47b6e15da4242d7db169dbe19c00e7f771a0",
+   "identity": "column:public.form_sends.scheduled_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.form_sends.sent_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.form_sends.skipped_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.form_sends.started_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'scheduled'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "0f180ceb23f6f70ecd27940a480f9f2164eb722620c1a350673ced745b3d6faa",
+   "identity": "column:public.form_sends.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.form_sends.template_name",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.form_sends.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.form_sends.form_sends_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (sent_count >= 0 AND failed_count >= 0 AND skipped_count >= 0)",
+    "validated": true
+   },
+   "after_sha256": "deec182b99f34bdea9244d3762a2d13a644e106bb579e251dec66e2a2387d728",
+   "identity": "constraint:public.form_sends.form_sends_counts_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL",
+    "validated": true
+   },
+   "after_sha256": "d8b45cdf7ede468725b7cc5fa822ee8b6b2fce413fb74aaf982e0d5763200d20",
+   "identity": "constraint:public.form_sends.form_sends_created_by_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (error_message IS NULL OR length(error_message) <= 500)",
+    "validated": true
+   },
+   "after_sha256": "814aadbbdee4d1e1a47cb98f4f7ce8fe634334b680d4d5931e694a20acdcf018",
+   "identity": "constraint:public.form_sends.form_sends_error_message_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (form_id, business_id) REFERENCES forms(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "deec9072463b76f87810f79fdf4983a9b6df6282fb7d7c3974a4b52221dd5c83",
+   "identity": "constraint:public.form_sends.form_sends_form_business_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.form_sends.form_sends_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (cardinality(recipients) >= 1 AND cardinality(recipients) <= 500)",
+    "validated": true
+   },
+   "after_sha256": "05eab5e5a735283d5e8cdeb0bae59304b5a42c785d88f6f31f88bcbeba7766c8",
+   "identity": "constraint:public.form_sends.form_sends_recipients_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(results) = 'array'::text)",
+    "validated": true
+   },
+   "after_sha256": "7c92255f8bcabcf9716c04cf9d5cc065ce46583482d817026a9d64811a4c34be",
+   "identity": "constraint:public.form_sends.form_sends_results_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['scheduled'::text, 'sending'::text, 'sent'::text, 'failed'::text, 'cancelled'::text]))",
+    "validated": true
+   },
+   "after_sha256": "ab19a4d43b081323c2b175fffe866525a39da2580d268b0383645456caf59661",
+   "identity": "constraint:public.form_sends.form_sends_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (template_name IS NULL OR template_name ~ '^[a-z0-9_]+$'::text AND length(template_name) <= 512)",
+    "validated": true
+   },
+   "after_sha256": "cf61fd50b4612430a4884beb9cfdcc18e9a9206da493946dbbeb7824d4e5f549",
+   "identity": "constraint:public.form_sends.form_sends_template_name_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX form_sends_due_517 ON public.form_sends USING btree (scheduled_at) WHERE (status = 'scheduled'::text)",
+    "predicate": "(status = 'scheduled'::text)",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "598c2b66d7772de12b97c2e913f7ee3ca79487dd81bb97d783afdbcadecd09db",
+   "identity": "index:public.form_sends.form_sends_due_517",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX form_sends_form_517 ON public.form_sends USING btree (business_id, form_id, created_at DESC)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "5fa53c9c2af378e312de8cd32b175f344ec5b96eb92b89c16e43da6f823e0f93",
+   "identity": "index:public.form_sends.form_sends_form_517",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX form_sends_pkey ON public.form_sends USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "be08c306ec8d29ee1114ce106694f7db5b77a964b8dd158b9ef1c3e3999e110d",
+   "identity": "index:public.form_sends.form_sends_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX forms_id_business_id_517 ON public.forms USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "976365118881144483c68cdc9cf9c5a0ac81fd84fd37ab3f5dde87426c53a5d9",
+   "identity": "index:public.forms.forms_id_business_id_517",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT b.id\n   FROM businesses b\n  WHERE (b.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "445e80bf2d4db13450315254ffc8e8aa8f3df4490c75cf3b1dfb69cdbc50fa7b",
+   "identity": "policy:public.form_sends.form_sends_owner_select",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.form_sends",
+   "operation": "add"
+  }
+ ],
+ "migration": "517_form_sends.sql",
+ "migration_sha256": "c9a00ea183d038fca13e079eb77b005902b415024019906ea667a3b1bb0730ed",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}

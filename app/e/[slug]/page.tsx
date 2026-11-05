@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import type { Metadata } from 'next';
 import EventPurchaseForm from './EventPurchaseForm';
+import { serializeJsonLd } from '@/lib/utils/json-ld';
 
 export const revalidate = 30; // ISR: regenerate every 30 seconds
 
@@ -167,7 +168,7 @@ export default async function EventPage(
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <EventPurchaseForm
         event={{

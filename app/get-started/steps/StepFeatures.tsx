@@ -46,10 +46,10 @@ export function StepFeatures({
           },
           {
             id: 'table_reservation' as CapabilityId,
-            title: 'Make Reservations',
-            desc: 'Customers reserve tables or spots with date, time, and party size.',
-            tip: 'For restaurants, cafes, bars, lounges, and any business where customers reserve a table or spot for dining.',
-            example: 'e.g. "Reserve a table for 4 on Friday at 7pm"',
+            title: 'Reserve tables & sections',
+            desc: 'Customers reserve a table, booth, VIP area or section with date, time, and party size.',
+            tip: 'For bars, lounges, restaurants, cafes, and any business where customers reserve a table, booth, or section.',
+            example: 'e.g. "Reserve the VIP section for 6 on Friday at 9pm"',
           },
           {
             id: 'reservation' as CapabilityId,

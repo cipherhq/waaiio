@@ -1,0 +1,108 @@
+{
+ "bootstrap_migration": "508_business_control_columns_guard.sql",
+ "catalog_query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "certified": {
+  "admin": "bdc007a8f93febeee8ce054d075d48894afd37bb",
+  "merchant": "2b578c5bef4411aaf35bc6b60f61237620915c3a"
+ },
+ "environments": {
+  "production": {
+   "catalog": {
+    "count": 6288,
+    "sha256": "21d2db2a7c68ddcd6027b4a6bf142685b001b136e248aa9aa0e7fe5ae36ee72c"
+   },
+   "catalog_map": "scripts/release-v3/lock-catalog-production.json",
+   "ledger": {
+    "count": 406,
+    "sha256": "e310d352abe48988c500472532e2ec3690e4d7b16caf160e35eae09868aa31d0"
+   },
+   "project_ref": "cxcmiqotkowhxinjbytg"
+  },
+  "staging": {
+   "catalog": {
+    "count": 6309,
+    "sha256": "feeb53c0fdfa155aa3bf3453925c8c2f67d3c1f03cfb62176710006ece524180"
+   },
+   "catalog_map": "scripts/release-v3/lock-catalog-staging.json",
+   "ledger": {
+    "count": 442,
+    "sha256": "dca1b4e090e9876be8f73d210771c905234c2d473f4b98fa15aa7966e74fe5b6"
+   },
+   "project_ref": "tqjvrzopvtczxfxiwmnz"
+  }
+ },
+ "ledger_query_sha256": "342b70fe7982e7ee22f7a5858aea8f721ddc35edf477e332aa3869417ba0292b",
+ "observed": {
+  "at": "2026-11-04T01:20:00Z (V3 aggregates); re-read and per-object maps 2026-11-04T02:30Z",
+  "bootstrap_release": {
+   "deploy_run_id": 41749354633,
+   "manifest_sha256": "efd245eba525d00d561621d43b0be513e984e7626e95498b365f97ac46206a50",
+   "policy": "postlaunch-bot-code-lock-v1",
+   "report_sha256": "f220ec749a14271d5b836044c1023dd584171bbf6e95494b4bcaaa42175aa40f"
+  },
+  "method": "authorized Supabase connector, read-only SELECT",
+  "staging_813_teardown": {
+   "decision": "Owner 2026-11-04: #813 option A (renumber above the lock to 511-513), staging plan S1 (undo and re-apply)",
+   "method": "staging lock = previous lock (after #875's schema:public update) minus #813 objects and ledger rows; prediction re-verified read-only 2026-11-04 against live staging minus the same objects (catalog 6309 45bb39fc... after the 509 and 510 deltas; ledger baseline 442 dca1b4e0...)",
+   "previous": {
+    "catalog": {
+     "count": 6400,
+     "sha256": "12ff1745a19c0fda57d11971782d58cca353c0fd9f73b438786de899d69df463"
+    },
+    "ledger": {
+     "count": 444,
+     "sha256": "adcdf3e9893b6ea4fd5940a66375af4a96ba963ba4efaad9f1ad38fe17ab9be5"
+    }
+   },
+   "removed": {
+    "catalog_objects": 91,
+    "ledger_rows": [
+     "20261101181612 499_merchant_notifications",
+     "20261102002152 502_merchant_notification_invitation_lifetime"
+    ]
+   },
+   "teardown_file": "scripts/release-v3/staging-813-teardown.sql"
+  },
+  "staging_public_usage": {
+   "changed_identity": "schema:public",
+   "decision": "Owner 2026-11-04: option A. Staging revoked PUBLIC USAGE on schema public (production keeps it), so release_observer saw public types schema-qualified and ~928 digests differed. Fix: GRANT USAGE ON SCHEMA public TO release_observer on staging only.",
+   "new_digest": "a895bb3ae86a9e04638d702d3b81c31efe1cb633fc434372a367cf3037a59f2f",
+   "previous_catalog": {
+    "count": 6400,
+    "sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f"
+   },
+   "previous_digest": "070c88e2814f7ad1e4866a6498450d699904a0ba6fc4dcf9808f521beda0fe62",
+   "verified": "2026-11-04 read-only: live staging as postgres and as release_observer both read 6400 c0d2774c..., equal to this lock plus the 509 and 510 deltas"
+  },
+  "state": "Owner-approved schema 9 bot-code-lock release state (M508 applied; production serves bdc007a8)",
+  "tie_out": {
+   "note": "Re-read live with the schema 9 query and ledger recipe: both environments equal the approved schema 9 values exactly, so the V3 digests above describe that approved state.",
+   "production": {
+    "schema9_catalog": {
+     "count": 2346,
+     "sha256": "644792dfef9e8771b3fb00c9e0f379eb02d5ecbbf082bbaecd91fea12fb2d6c6"
+    },
+    "schema9_ledger": {
+     "count": 406,
+     "sha256": "9115c8326020021d5e27ff7f71102a1c58d990f8e3342e8e3f6c0374599279e3"
+    }
+   },
+   "staging": {
+    "schema9_catalog": {
+     "count": 2367,
+     "sha256": "f8ca08989d36022d2e82f98fbc491de2a0ea60c673c132c9b8e8b0f17064ff1d"
+    },
+    "schema9_ledger": {
+     "count": 444,
+     "sha256": "cc4aae699e16cf19ab120bbe667343f55572ef75cd9d467130c49b34290fd0a3"
+    }
+   }
+  }
+ },
+ "reviewed_prs": {
+  "844": "2a91ec57404aac66144ac209da122fdfaaeee883",
+  "846": "6b3488b95895d57c31a961b8cecdb57b8b21ec6c",
+  "847": "682a4a56f20a34b4b3a2e88685a6421343cfe1e9"
+ },
+ "schema_version": 1
+}

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -22,7 +23,11 @@ interface SeatingResource {
   available_days: string[] | null;
   available_from: string | null;
   available_to: string | null;
+  gallery_urls?: string[];
 }
+
+/** Optional photos per table or section (#892; the database allows at most 3, M516). */
+const MAX_PHOTOS = 3;
 
 type ViewMode = 'list' | 'add' | 'edit';
 
@@ -37,20 +42,40 @@ const RESOURCE_TYPES = [
 
 const DAYS_OF_WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
+// A table's own window stays within one day (seating_no_overnight, M476/M510).
+// Late-night bookings come from the business opening hours instead.
+const OVERNIGHT_MESSAGE = (
+  <>
+    A table&apos;s own hours can&apos;t run past midnight. To take late-night bookings, leave <strong>Available From</strong> and{' '}
+    <strong>Available Until</strong> empty so this table follows your business opening hours (Settings → Business → Operating Hours).
+    Tables can&apos;t be booked outside your opening hours.
+  </>
+);
+
+/** Empty text saves as `fallback`; anything that is not a whole number returns null. */
+function parseWholeNumber(value: string, fallback: number): number | null {
+  if (value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+// Number fields hold the text being typed, so a merchant can clear and retype them.
+// They are parsed and checked on save.
 const defaultForm = {
   name: '',
   resource_type: 'table',
-  capacity: 4,
-  min_party_size: 1,
+  capacity: '4',
+  min_party_size: '1',
   section: '',
-  reservation_duration_minutes: 90,
-  deposit_amount: 0,
+  reservation_duration_minutes: '90',
+  deposit_amount: '0',
   is_active: true,
   sort_order: 0,
   description: '',
   available_days: [] as string[],
   available_from: '',
   available_to: '',
+  gallery_urls: [] as string[],
 };
 
 export default function SeatingPage() {
@@ -63,7 +88,9 @@ export default function SeatingPage() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ReactNode>('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const loadResources = useCallback(async () => {
     setLoading(true);
@@ -95,17 +122,18 @@ export default function SeatingPage() {
     setForm({
       name: r.name,
       resource_type: r.resource_type,
-      capacity: r.capacity,
-      min_party_size: r.min_party_size,
+      capacity: String(r.capacity),
+      min_party_size: String(r.min_party_size),
       section: r.section || '',
-      reservation_duration_minutes: r.reservation_duration_minutes,
-      deposit_amount: r.deposit_amount,
+      reservation_duration_minutes: String(r.reservation_duration_minutes),
+      deposit_amount: String(r.deposit_amount),
       is_active: r.is_active,
       sort_order: r.sort_order,
       description: r.description || '',
       available_days: r.available_days || [],
       available_from: r.available_from || '',
       available_to: r.available_to || '',
+      gallery_urls: r.gallery_urls || [],
     });
     setEditId(r.id);
     setView('edit');
@@ -113,7 +141,20 @@ export default function SeatingPage() {
 
   const handleSave = async () => {
     if (!form.name.trim()) { setError('Name is required'); return; }
-    if (form.min_party_size > form.capacity) { setError('Minimum party size cannot exceed capacity'); return; }
+    // Empty fields keep the values they used to snap back to: 1, 1, 90 and 0.
+    const capacity = parseWholeNumber(form.capacity, 1);
+    const minPartySize = parseWholeNumber(form.min_party_size, 1);
+    const duration = parseWholeNumber(form.reservation_duration_minutes, 90);
+    const deposit = parseWholeNumber(form.deposit_amount, 0);
+    if (capacity === null || capacity < 1 || capacity > 500) { setError('Max capacity must be a whole number from 1 to 500'); return; }
+    if (minPartySize === null || minPartySize < 1) { setError('Min party size must be a whole number of at least 1'); return; }
+    if (minPartySize > capacity) { setError('Minimum party size cannot exceed capacity'); return; }
+    if (duration === null || duration < 1 || duration > 480) { setError('Duration must be a whole number of minutes from 1 to 480'); return; }
+    if (deposit === null || deposit < 0) { setError('Deposit must be a whole number of 0 or more'); return; }
+    if (form.available_from && form.available_to && form.available_to.slice(0, 5) <= form.available_from.slice(0, 5)) {
+      setError(OVERNIGHT_MESSAGE);
+      return;
+    }
     setSaving(true);
     setError('');
 
@@ -122,31 +163,56 @@ export default function SeatingPage() {
       business_id: business.id,
       name: form.name.trim(),
       resource_type: form.resource_type,
-      capacity: form.capacity,
-      min_party_size: form.min_party_size,
+      capacity,
+      min_party_size: minPartySize,
       section: form.section.trim() || null,
-      reservation_duration_minutes: form.reservation_duration_minutes,
-      deposit_amount: form.deposit_amount,
+      reservation_duration_minutes: duration,
+      deposit_amount: deposit,
       is_active: form.is_active,
       sort_order: form.sort_order,
       description: form.description.trim() || null,
       available_days: form.available_days.length > 0 ? form.available_days : null,
       available_from: form.available_from || null,
       available_to: form.available_to || null,
+      gallery_urls: form.gallery_urls,
     };
 
-    if (editId) {
-      const { error: err } = await supabase.from('seating_resources').update(payload).eq('id', editId);
-      if (err) { setError(err.message); setSaving(false); return; }
-    } else {
-      const { error: err } = await supabase.from('seating_resources').insert(payload);
-      if (err) { setError(err.message); setSaving(false); return; }
+    const { error: err } = editId
+      ? await supabase.from('seating_resources').update(payload).eq('id', editId)
+      : await supabase.from('seating_resources').insert(payload);
+    if (err) {
+      // The database check still guards a bypassed client check; show the same guidance, not the raw error.
+      setError(err.message?.includes('seating_no_overnight') ? OVERNIGHT_MESSAGE : err.message);
+      setSaving(false);
+      return;
     }
 
     setSaving(false);
     setView('list');
     resetForm();
     loadResources();
+  };
+
+  const handlePhotoUpload = async (file: File) => {
+    if (form.gallery_urls.length >= MAX_PHOTOS) return;
+    setUploadingPhoto(true);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('business_id', business.id);
+      const res = await fetch('/api/seating-resources/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success && json.url) {
+        setForm(f => ({ ...f, gallery_urls: [...f.gallery_urls, json.url].slice(0, MAX_PHOTOS) }));
+      } else {
+        setError(json.error || 'Photo upload failed. Please try again.');
+      }
+    } catch {
+      setError('Photo upload failed. Please try again.');
+    }
+    setUploadingPhoto(false);
+    if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
   const handleArchive = async (id: string) => {
@@ -205,12 +271,12 @@ export default function SeatingPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Max Capacity</label>
-              <input type="number" min={1} max={500} value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: parseInt(e.target.value) || 1 }))}
+              <input type="number" min={1} max={500} value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Min Party Size</label>
-              <input type="number" min={1} max={form.capacity} value={form.min_party_size} onChange={e => setForm(f => ({ ...f, min_party_size: parseInt(e.target.value) || 1 }))}
+              <input type="number" min={1} max={form.capacity} value={form.min_party_size} onChange={e => setForm(f => ({ ...f, min_party_size: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
             </div>
           </div>
@@ -219,15 +285,15 @@ export default function SeatingPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Duration (minutes)</label>
               <input type="number" min={15} max={480} step={15} value={form.reservation_duration_minutes}
-                onChange={e => setForm(f => ({ ...f, reservation_duration_minutes: parseInt(e.target.value) || 90 }))}
+                onChange={e => setForm(f => ({ ...f, reservation_duration_minutes: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Deposit ({country})</label>
               <input type="number" min={0} step={100} value={form.deposit_amount}
-                onChange={e => setForm(f => ({ ...f, deposit_amount: parseInt(e.target.value) || 0 }))}
+                onChange={e => setForm(f => ({ ...f, deposit_amount: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
-              {form.deposit_amount > 0 && <p className="text-xs text-gray-500 mt-1">{formatCurrency(form.deposit_amount, country)}</p>}
+              {Number(form.deposit_amount) > 0 && <p className="text-xs text-gray-500 mt-1">{formatCurrency(Number(form.deposit_amount), country)}</p>}
             </div>
           </div>
 
@@ -274,6 +340,29 @@ export default function SeatingPage() {
               className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium mb-1">Photos (optional)</label>
+            <p className="text-xs text-gray-500 mb-2">Up to {MAX_PHOTOS} photos. Customers see them on WhatsApp after they pick this seating.</p>
+            <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Upload seating photo"
+              onChange={e => { const file = e.target.files?.[0]; if (file) handlePhotoUpload(file); }} />
+            <div className="flex gap-2">
+              {form.gallery_urls.map((url, i) => (
+                <div key={url} className="relative">
+                  <Image src={url} alt={`Seating photo ${i + 1}`} width={80} height={80} className="h-20 w-20 rounded-lg border border-gray-200 dark:border-gray-700 object-cover" />
+                  <button type="button" aria-label={`Remove photo ${i + 1}`}
+                    onClick={() => setForm(f => ({ ...f, gallery_urls: f.gallery_urls.filter((_, j) => j !== i) }))}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow">&times;</button>
+                </div>
+              ))}
+              {form.gallery_urls.length < MAX_PHOTOS && (
+                <button type="button" aria-label="Add photo" onClick={() => photoInputRef.current?.click()} disabled={uploadingPhoto}
+                  className="flex h-20 w-20 items-center justify-center rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 text-gray-400 hover:border-purple-500 hover:text-purple-600 disabled:opacity-50">
+                  {uploadingPhoto ? '...' : '+'}
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="flex items-center gap-2">
             <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))}
               className="rounded border-gray-300 dark:border-gray-600" />
@@ -300,12 +389,12 @@ export default function SeatingPage() {
     <div className="p-6">
       <PageHelp
         pageKey="seating"
-        title="Seating & Tables"
-        description="Part of Table Reservations for restaurants and lounges. Configure tables, booths, and seating areas customers can reserve via WhatsApp, with capacity, timing, and availability for each."
+        title="Tables & Sections"
+        description="Configure the tables, booths, VIP areas and sections customers can reserve via WhatsApp, with capacity, timing, and availability for each."
       />
 
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Seating & Tables</h1>
+        <h1 className="text-2xl font-bold">Tables & Sections</h1>
         <button onClick={openAdd}
           className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium">
           + Add Seating

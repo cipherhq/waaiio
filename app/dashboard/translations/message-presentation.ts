@@ -107,8 +107,8 @@ export const MESSAGE_PRESENTATION: Record<string, MessagePresentation> = {
     context: 'Menu option for booking an appointment.',
   },
   'cap.appointment.restaurant': {
-    label: 'Book a Table',
-    context: 'Menu option for restaurant table booking.',
+    label: 'Book Appointment (restaurants)',
+    context: 'Menu option for restaurant appointments. Tables are booked through Tables & Sections.',
   },
   'cap.appointment.event_services': {
     label: 'Book a Service (events)',
@@ -155,8 +155,8 @@ export const MESSAGE_PRESENTATION: Record<string, MessagePresentation> = {
     context: 'Menu option for booking accommodation.',
   },
   'cap.table_reservation': {
-    label: 'Make a Reservation',
-    context: 'Menu option for making a reservation.',
+    label: 'Book Table / Section',
+    context: 'Menu option for reserving a table, booth or section.',
   },
   'cap.crowdfunding': {
     label: 'Support a Campaign',

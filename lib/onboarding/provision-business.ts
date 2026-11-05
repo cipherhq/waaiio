@@ -1,9 +1,9 @@
-import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
+import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { CATEGORY_FLOW_MAP, generateBotCode, generateSlug, getPayoutLimit, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 import { initCapabilities } from '@/lib/capabilities/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
-import { allocateSharedChannelWithFallback } from '@/lib/onboarding/whatsapp-readiness';
+import { allocateSharedChannelForNewBusiness } from '@/lib/onboarding/whatsapp-readiness';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
 export class OnboardingProvisionError extends Error {
@@ -44,7 +44,7 @@ async function allocateUnique(service: SupabaseClient, column: 'slug' | 'bot_cod
 }
 
 export async function provisionPendingBusiness(service: SupabaseClient, input: ProvisionBusinessInput) {
-  if (!channelOperationsEnabled()) throw new OnboardingProvisionError(CHANNEL_OPERATIONS_UNAVAILABLE.message, 503);
+  if (!channelOperationsEnabled() && !firstSharedAssignmentEnabled()) throw new OnboardingProvisionError(CHANNEL_OPERATIONS_UNAVAILABLE.message, 503);
   const requested = input.customBotCode
     ? input.customBotCode.trim().toUpperCase().replace(/\s+/g, '-').replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').slice(0, 30)
     : generateBotCode(input.name);
@@ -89,7 +89,7 @@ export async function provisionPendingBusiness(service: SupabaseClient, input: P
 
   // #266 R7: Allocate shared channel (with explicit regional fallback for GH -> NG)
   if (input.countryCode) {
-    const { data: allocation, error: allocError } = await allocateSharedChannelWithFallback(
+    const { data: allocation, error: allocError } = await allocateSharedChannelForNewBusiness(
       service,
       business.id,
       input.countryCode,
