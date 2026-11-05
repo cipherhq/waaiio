@@ -1,6 +1,6 @@
 {
  "environment": "staging",
- "lock_catalog_sha256": "80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f",
+ "lock_catalog_sha256": "12ff1745a19c0fda57d11971782d58cca353c0fd9f73b438786de899d69df463",
  "objects": {
   "column:public.admin_audit_logs.action": "383131652a456d5c6979b552f66d992cdb29081cd94fe097a57a0637f4ed8e17",
   "column:public.admin_audit_logs.actor_id": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
@@ -6006,7 +6006,7 @@
   "publication:supabase_realtime.public.queue_entries": "9d783079a5f7ac60db49b3dd98e7961c4a581aa641da1a6490957df1338bce9c",
   "schema:accounting_private": "426dde8263cfc90f5b53da2f31e077a540d9f658e63fe9207cbdbfcf62970930",
   "schema:private": "58f8d6b79a094945a1876ed4376041ad74c602f32775a23db42fe4653a91da7d",
-  "schema:public": "070c88e2814f7ad1e4866a6498450d699904a0ba6fc4dcf9808f521beda0fe62",
+  "schema:public": "a895bb3ae86a9e04638d702d3b81c31efe1cb633fc434372a367cf3037a59f2f",
   "schema:subscription_private": "58f8d6b79a094945a1876ed4376041ad74c602f32775a23db42fe4653a91da7d",
   "table:public.admin_audit_logs": "eb9ddd8095d02cc59b1a42a728b84c5cfa449657e0f6f3fac5601f41ffc048fa",
   "table:public.admin_broadcasts": "121285d737c0309d3b5ac9afa3429d2d580235a27233b8a9c3633025564e0611",
