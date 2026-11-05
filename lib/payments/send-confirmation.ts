@@ -1607,7 +1607,7 @@ export async function sendProactiveConfirmation(
             await supabase
               .from('bot_sessions')
               .update({ is_active: false, current_step: 'complete' })
-              .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+              .or(`whatsapp_number.eq.${sanitizeFilterValue(stripPlus(customerPhone))},whatsapp_number.eq.+${sanitizeFilterValue(stripPlus(customerPhone))}`)
               .eq('business_id', businessId)
               .eq('is_active', true)
               .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
@@ -1620,7 +1620,7 @@ export async function sendProactiveConfirmation(
         await supabase
           .from('bot_sessions')
           .update({ is_active: false, current_step: 'complete' })
-          .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+          .or(`whatsapp_number.eq.${sanitizeFilterValue(stripPlus(customerPhone))},whatsapp_number.eq.+${sanitizeFilterValue(stripPlus(customerPhone))}`)
           .eq('business_id', businessId)
           .eq('is_active', true)
           .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
