@@ -1,0 +1,21 @@
+## 2026-11-05 — Tables & Sections photos in the dashboard and the WhatsApp table booking (#892, app PR)
+
+- **What changed:**
+  - **Dashboard:** merchants can add up to 3 optional photos to each table or section in the Add/Edit Seating form.
+  - **Bot:** when a customer taps a seat, the WhatsApp table booking sends that seat's photos (the first captioned with the seat name), then asks for the date. If the date was already given, the photos come before the time list.
+  - **Once per seat:** photos are sent once per seat per conversation. Going back to the same seat does not repeat them; a different seat shows its own.
+  - **Owner decisions 2026-11-05 (#892):** shown after the tap; stored in their own column (M516).
+- **Files:**
+  - `app/dashboard/seating/page.tsx`: Photos section; saves `gallery_urls` with the rest of the form.
+  - `app/api/seating-resources/upload-image/route.ts` (new): the same checks as the services upload (owner, type, 5 MB, magic bytes, re-encode). It stores under `<business_id>/seating/`.
+  - `lib/bot/flows/table-reservation.flow.ts`: new `seatingGalleryMessages`, guarded by `_seating_gallery_sent_ids`.
+  - `lib/bot/flows/scheduling.flow.ts`: calls the helper in `select_date` and before the `select_time` list. It does nothing for non-table bookings.
+  - Tests:
+    - `lib/bot/flows/__tests__/table-reservation-seating-photos.test.ts`: 10 tests, 7 fail on the old code.
+    - `lib/__tests__/seating-form-photos-892.test.tsx`: 5 rendered tests, all fail on the old form.
+    - `lib/__tests__/business-upload-paths-878.pg.test.ts`: 3 new cases for the upload route on the real storage policy.
+- **What it affects:** table bookings and the Tables & Sections form. Services keep their own gallery unchanged. The photo lookup is scoped to the business.
+- **What could break:**
+  - **Needs M516 applied first.** Without it, saving the form fails because the column is missing. The bot copes: it logs the error and continues without photos.
+  - **Cost:** each photo is a separate WhatsApp message, so up to 3 more messages per seat a customer opens.
+  - **Pre-filled date and time:** if the customer's first message gives both the date and the time, no photos are shown.

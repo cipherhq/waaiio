@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -22,7 +23,11 @@ interface SeatingResource {
   available_days: string[] | null;
   available_from: string | null;
   available_to: string | null;
+  gallery_urls?: string[];
 }
+
+/** Optional photos per table or section (#892; the database allows at most 3, M516). */
+const MAX_PHOTOS = 3;
 
 type ViewMode = 'list' | 'add' | 'edit';
 
@@ -70,6 +75,7 @@ const defaultForm = {
   available_days: [] as string[],
   available_from: '',
   available_to: '',
+  gallery_urls: [] as string[],
 };
 
 export default function SeatingPage() {
@@ -83,6 +89,8 @@ export default function SeatingPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [error, setError] = useState<ReactNode>('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const loadResources = useCallback(async () => {
     setLoading(true);
@@ -125,6 +133,7 @@ export default function SeatingPage() {
       available_days: r.available_days || [],
       available_from: r.available_from || '',
       available_to: r.available_to || '',
+      gallery_urls: r.gallery_urls || [],
     });
     setEditId(r.id);
     setView('edit');
@@ -165,6 +174,7 @@ export default function SeatingPage() {
       available_days: form.available_days.length > 0 ? form.available_days : null,
       available_from: form.available_from || null,
       available_to: form.available_to || null,
+      gallery_urls: form.gallery_urls,
     };
 
     const { error: err } = editId
@@ -181,6 +191,28 @@ export default function SeatingPage() {
     setView('list');
     resetForm();
     loadResources();
+  };
+
+  const handlePhotoUpload = async (file: File) => {
+    if (form.gallery_urls.length >= MAX_PHOTOS) return;
+    setUploadingPhoto(true);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('business_id', business.id);
+      const res = await fetch('/api/seating-resources/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success && json.url) {
+        setForm(f => ({ ...f, gallery_urls: [...f.gallery_urls, json.url].slice(0, MAX_PHOTOS) }));
+      } else {
+        setError(json.error || 'Photo upload failed. Please try again.');
+      }
+    } catch {
+      setError('Photo upload failed. Please try again.');
+    }
+    setUploadingPhoto(false);
+    if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
   const handleArchive = async (id: string) => {
@@ -306,6 +338,29 @@ export default function SeatingPage() {
             <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               rows={2} placeholder="Optional notes about this seating area"
               className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Photos (optional)</label>
+            <p className="text-xs text-gray-500 mb-2">Up to {MAX_PHOTOS} photos. Customers see them on WhatsApp after they pick this seating.</p>
+            <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Upload seating photo"
+              onChange={e => { const file = e.target.files?.[0]; if (file) handlePhotoUpload(file); }} />
+            <div className="flex gap-2">
+              {form.gallery_urls.map((url, i) => (
+                <div key={url} className="relative">
+                  <Image src={url} alt={`Seating photo ${i + 1}`} width={80} height={80} className="h-20 w-20 rounded-lg border border-gray-200 dark:border-gray-700 object-cover" />
+                  <button type="button" aria-label={`Remove photo ${i + 1}`}
+                    onClick={() => setForm(f => ({ ...f, gallery_urls: f.gallery_urls.filter((_, j) => j !== i) }))}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow">&times;</button>
+                </div>
+              ))}
+              {form.gallery_urls.length < MAX_PHOTOS && (
+                <button type="button" aria-label="Add photo" onClick={() => photoInputRef.current?.click()} disabled={uploadingPhoto}
+                  className="flex h-20 w-20 items-center justify-center rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 text-gray-400 hover:border-purple-500 hover:text-purple-600 disabled:opacity-50">
+                  {uploadingPhoto ? '...' : '+'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">

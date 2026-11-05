@@ -127,6 +127,7 @@ vi.mock('@/lib/supabase/service', () => ({
 import { POST as uploadLogo } from '@/app/api/business/upload-logo/route';
 import { POST as uploadStaffPhoto } from '@/app/api/staff/upload-photo/route';
 import { POST as uploadChatAudio } from '@/app/api/chat/upload-audio/route';
+import { POST as uploadSeatingPhoto } from '@/app/api/seating-resources/upload-image/route';
 
 function request(route: string, fields: Record<string, string | File>) {
   const body = new FormData();
@@ -282,6 +283,35 @@ suite('#878 dashboard uploads under the real business-documents policies', () =>
       await expect(directOwnerInsert(OTHER, name)).rejects.toMatchObject({ code: '42501' });
     },
   );
+
+  // #892: table/section photos use the same business-first path shape.
+  it('#892 B2: an owner uploads a table photo; it lands under <business_id>/seating/ with a public URL', async () => {
+    const response = await uploadSeatingPhoto(request('/api/seating-resources/upload-image', { file: await pngFile(), business_id: BUSINESS }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    const names = await objectNames();
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(new RegExp(`^${BUSINESS}/seating/\\d+\\.(png|jpg|webp)$`));
+    expect(body.url).toBe(`${STORAGE_ORIGIN}/storage/v1/object/public/${BUCKET}/${names[0]}`);
+  });
+
+  it('#892 B2: another tenant cannot upload a table photo for the business (403, nothing stored)', async () => {
+    h.userId = OTHER;
+    const response = await uploadSeatingPhoto(request('/api/seating-resources/upload-image', { file: await pngFile(), business_id: BUSINESS }));
+    expect(response.status).toBe(403);
+    expect(await objectNames()).toEqual([]);
+  });
+
+  it('#892 B2: a non-image or an oversized file is rejected (400, nothing stored)', async () => {
+    const fake = new File([new Uint8Array([1, 2, 3, 4])], 'x.png', { type: 'image/png' });
+    expect((await uploadSeatingPhoto(request('/api/seating-resources/upload-image', { file: fake, business_id: BUSINESS }))).status).toBe(400);
+    const pdf = new File([new Uint8Array([37, 80, 68, 70])], 'x.pdf', { type: 'application/pdf' });
+    expect((await uploadSeatingPhoto(request('/api/seating-resources/upload-image', { file: pdf, business_id: BUSINESS }))).status).toBe(400);
+    const big = new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' });
+    expect((await uploadSeatingPhoto(request('/api/seating-resources/upload-image', { file: big, business_id: BUSINESS }))).status).toBe(400);
+    expect(await objectNames()).toEqual([]);
+  });
 
   it('M492 guard still holds: the owner cannot write public verification objects', async () => {
     await expect(directOwnerInsert(OWNER, `${BUSINESS}/verification/id.pdf`)).rejects.toMatchObject({ code: '42501' });
