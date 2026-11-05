@@ -135,6 +135,15 @@ The lock is tied to the Owner-approved schema 9 bot-code-lock release (manifest 
 
 `lock.json` records this under `observed`.
 
+**Staging lock update for #813 (Owner decision 2026-11-04: option A, staging plan S1).**
+- **Why:** staging applied #813's M499 and M502 before the lock was taken, and #813 now moves them above the lock as 511 and 512 (its unapplied 510 becomes 513).
+- **What changed:** the staging entry now leaves out those 91 catalog objects and their 2 ledger rows. The new values are 6309 objects, `feeb53c0…`, and 442 rows, `dca1b4e0…`. Production is unchanged.
+- **Staging step:** `scripts/release-v3/staging-813-teardown.sql` removes the same objects and rows. It needs its own Owner approval, runs on staging only, and refuses to run anywhere else.
+- **Verification:**
+  - before the update, live staging minus those objects already read exactly the predicted values (read-only);
+  - after the teardown, a read-only reading must equal this lock plus the 509 and 510 deltas.
+- **Merge order:** the update merges only after both checks pass. Between the teardown and the merge no release can pass the gate (staging matches neither lock), so the two happen back to back. To undo the teardown, re-run #813's 499 and 502 bytes and re-insert the two ledger rows exported beforehand.
+
 To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `mode: lock-map`. It writes fresh maps only while the live catalog still equals the lock.
 
 **Staging `public` schema access (Owner decision 2026-11-04, option A).**
