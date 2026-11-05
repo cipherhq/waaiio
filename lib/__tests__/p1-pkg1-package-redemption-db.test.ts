@@ -81,8 +81,18 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
         bot_session_id UUID, cancelled_at TIMESTAMPTZ, cancelled_by TEXT,
         payment_source payment_source DEFAULT 'whatsapp'
       );
+      -- Retry until unused, like the real generator (M064), so two bookings never share a code
       CREATE OR REPLACE FUNCTION generate_booking_reference() RETURNS TRIGGER AS $t$
-      BEGIN IF NEW.reference_code IS NULL THEN NEW.reference_code := 'BW-T' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0'); END IF; RETURN NEW; END; $t$ LANGUAGE plpgsql;
+      DECLARE new_code TEXT; BEGIN
+        IF NEW.reference_code IS NULL THEN
+          LOOP
+            new_code := 'BW-T' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0');
+            EXIT WHEN NOT EXISTS (SELECT 1 FROM bookings WHERE reference_code = new_code);
+          END LOOP;
+          NEW.reference_code := new_code;
+        END IF;
+        RETURN NEW;
+      END; $t$ LANGUAGE plpgsql;
       DROP TRIGGER IF EXISTS trg_booking_ref ON bookings;
       CREATE TRIGGER trg_booking_ref BEFORE INSERT ON bookings FOR EACH ROW EXECUTE FUNCTION generate_booking_reference();
       INSERT INTO businesses (id) VALUES ('${BIZ}') ON CONFLICT DO NOTHING;
