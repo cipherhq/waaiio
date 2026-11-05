@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 type Contact = { phone: string; name: string | null };
 type Segment = { id: string; name: string };
@@ -19,6 +19,13 @@ const REASON_TEXT: Record<string, string> = {
 };
 
 type Mode = 'contacts' | 'audience' | 'numbers';
+type SendRow = {
+  id: string; status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled'; scheduled_at: string;
+  sent_count: number; failed_count: number; skipped_count: number; error_message: string | null;
+};
+const STATUS_TEXT: Record<SendRow['status'], string> = {
+  scheduled: 'Scheduled', sending: 'Sending', sent: 'Sent', failed: 'Not sent', cancelled: 'Cancelled',
+};
 
 /**
  * Send one form on WhatsApp. Only opted-in people receive it; everyone else is
@@ -38,6 +45,24 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState<{ sent: number; failed: number; skipped: number; results: Result[] } | null>(null);
+  const [later, setLater] = useState(false);
+  const [when, setWhen] = useState('');
+  const [scheduled, setScheduled] = useState<{ at: string; recipients: number; skipped: number; results: Result[] } | null>(null);
+  const [history, setHistory] = useState<SendRow[]>([]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/forms/sends?businessId=${encodeURIComponent(businessId)}&formId=${encodeURIComponent(formId)}`, { cache: 'no-store' });
+      if (r.ok) setHistory((await r.json()).sends || []);
+    } catch { /* history is informational */ }
+  }, [businessId, formId]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  async function cancelSend(id: string) {
+    const r = await fetch('/api/forms/sends', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, businessId }) });
+    if (!r.ok) setError((await r.json().catch(() => ({}))).error || 'Could not cancel');
+    loadHistory();
+  }
 
   useEffect(() => {
     let live = true;
@@ -69,10 +94,10 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   }
 
   const typedNumbers = numbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
-  const canSend = !sending && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
+  const canSend = !sending && (!later || !!when) && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
 
   async function send() {
-    setSending(true); setError(''); setResults(null);
+    setSending(true); setError(''); setResults(null); setScheduled(null);
     try {
       const res = await fetch('/api/forms/send', {
         method: 'POST',
@@ -83,11 +108,14 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
           ...(mode === 'numbers' ? { phones: typedNumbers } : {}),
           ...(mode === 'audience' ? { segmentId } : {}),
           ...(templateName ? { templateName } : {}),
+          ...(later && when ? { scheduledAt: new Date(when).toISOString() } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) setError(data.error || 'Could not send the form');
+      else if (data.scheduled) setScheduled({ at: data.scheduledAt, recipients: data.recipients, skipped: data.skipped, results: data.results || [] });
       else setResults(data);
+      loadHistory();
     } catch {
       setError('Network error. Please try again.');
     }
@@ -171,12 +199,44 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         <p className="mt-1 text-xs text-gray-400">WhatsApp needs an approved template to reach people who haven’t messaged you in the last 24 hours.</p>
       </div>
 
+      <fieldset className="space-y-1">
+        <legend className="mb-1 text-xs font-medium text-gray-700">When</legend>
+        <label className="mr-4 inline-flex items-center gap-1 text-xs text-gray-700">
+          <input type="radio" name={`when-${formId}`} checked={!later} onChange={() => setLater(false)} /> Now
+        </label>
+        <label className="inline-flex items-center gap-1 text-xs text-gray-700">
+          <input type="radio" name={`when-${formId}`} checked={later} onChange={() => setLater(true)} /> Later
+        </label>
+        {later && (
+          <div>
+            <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} aria-label="Send at"
+              className="mt-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+            <p className="mt-1 text-xs text-gray-400">Goes out within 15 minutes of this time. Opt-ins are checked again when it sends.</p>
+          </div>
+        )}
+      </fieldset>
+
       {error && <p role="alert" className="rounded bg-red-50 p-2 text-xs text-red-700">{error}</p>}
 
       <button type="button" onClick={send} disabled={!canSend}
         className="rounded-lg bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50">
-        {sending ? 'Sending…' : 'Send now'}
+        {sending ? 'Working…' : later ? 'Schedule' : 'Send now'}
       </button>
+
+      {scheduled && (
+        <div role="status" className="rounded-lg border border-gray-200 bg-white p-3 text-xs">
+          <p className="font-medium text-gray-900">
+            Scheduled for {new Date(scheduled.at).toLocaleString()}: {scheduled.recipients} {scheduled.recipients === 1 ? 'person' : 'people'} · Skipped {scheduled.skipped}
+          </p>
+          {scheduled.results.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {scheduled.results.map(r => (
+                <li key={r.phone} className="text-gray-600">{r.phone}: Skipped — {'reason' in r ? REASON_TEXT[r.reason] || r.reason : ''}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {results && (
         <div role="status" className="rounded-lg border border-gray-200 bg-white p-3 text-xs">
@@ -192,6 +252,28 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
               ))}
             </ul>
           )}
+        </div>
+      )}
+      {history.length > 0 && (
+        <div>
+          <h5 className="mb-1 text-xs font-semibold text-gray-700">Sends</h5>
+          <ul className="divide-y divide-gray-100 rounded border border-gray-200 bg-white text-xs" aria-label="Sends">
+            {history.map(h => (
+              <li key={h.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                <span>
+                  <span className="font-medium text-gray-900">{STATUS_TEXT[h.status]}</span>{' '}
+                  <span className="text-gray-500">{new Date(h.scheduled_at).toLocaleString()}</span>
+                  {h.status !== 'scheduled' && h.status !== 'cancelled' && (
+                    <span className="text-gray-500"> · Sent {h.sent_count} · Failed {h.failed_count} · Skipped {h.skipped_count}</span>
+                  )}
+                  {h.error_message && <span className="block text-gray-400">{h.error_message}</span>}
+                </span>
+                {h.status === 'scheduled' && (
+                  <button type="button" onClick={() => cancelSend(h.id)} className="text-red-500 hover:text-red-700">Cancel</button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
