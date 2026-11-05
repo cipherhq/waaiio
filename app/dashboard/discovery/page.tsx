@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -65,6 +66,7 @@ function calculateCompleteness(config: DiscoveryConfig): { score: number; missin
 
 export default function DiscoveryPage() {
   const business = useBusiness();
+  const router = useRouter();
   const supabase = createClient();
 
   const [config, setConfig] = useState<DiscoveryConfig>(DEFAULTS);
@@ -158,6 +160,8 @@ export default function DiscoveryPage() {
     }
     setSaveError('');
     setSaved(true);
+    // Reload the dashboard's business data so Settings → Business opens with what was just saved here.
+    router.refresh();
     setConfig(prev => ({ ...prev, discovery_keywords: keywords }));
     setTimeout(() => setSaved(false), 3000);
   }

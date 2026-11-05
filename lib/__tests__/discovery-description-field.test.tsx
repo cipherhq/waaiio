@@ -6,8 +6,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import DiscoveryPage from '@/app/dashboard/discovery/page';
 
-const mocks = vi.hoisted(() => ({ client: vi.fn(), update: vi.fn() }));
+const mocks = vi.hoisted(() => ({ client: vi.fn(), update: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/lib/supabase/client', () => ({ createClient: mocks.client }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock('@/components/dashboard/DashboardProvider', () => ({ useBusiness: () => ({ id: 'biz-1', name: 'TestBiz', category: 'salon', country_code: 'NG' }) }));
 vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
 vi.mock('@/components/ui/AddressAutocomplete', () => ({ default: () => null }));
@@ -48,6 +49,17 @@ describe('Discovery Profile description', () => {
     expect(payload.description).toBe('Braids, locs and cuts in Lagos');
     // The Short Listing Summary is still saved separately.
     expect(payload.discovery_description).toBe('We are the best');
+    // Dashboard data is reloaded, so Settings → Business opens with the saved description.
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not reload dashboard data when the save fails', async () => {
+    mocks.update.mockReturnValue({ eq: () => Promise.resolve({ error: { message: 'denied' } }) });
+    render(<DiscoveryPage />);
+    fireEvent.change(await screen.findByLabelText('Description'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Profile' }));
+    expect(await screen.findByText('Failed to save profile. Please try again.')).toBeTruthy();
+    expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
   it('loads an existing description into the field', async () => {
