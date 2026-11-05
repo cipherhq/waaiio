@@ -53,20 +53,28 @@ it('renders recurring controls for a payment-only business', async () => {
   expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
   expect(screen.getByText(/Enable automatic recurring payments/)).toBeTruthy();
 });
-// Owner request 2026-11-04: the Giving recurring-settings link always opens
-// Settings > Payments > Recurring, whatever blocks recurring for the business.
+it('renders recurring controls for a Giving-only business', async () => {
+  // Owner decision 2026-11-05: Giving businesses can switch recurring on here.
+  const props = { business: state.business, capabilities: ['giving'], country: 'NG', curr: '₦', saving: false, saved: false, setSaving: vi.fn(), setSaved: vi.fn(), openSections: ['recurring'], toggleSection: vi.fn() } as unknown as SettingsTabProps;
+  render(<PaymentsTab {...props} />);
+  expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Enable automatic recurring payments/)).toBeTruthy();
+});
+// Owner decision 2026-11-05: the Giving link opens the page that can clear the
+// block it names: Plan & Upgrade, Capabilities, or Payments > Recurring.
 it.each([
-  ['recurring available but switched off', ['payment', 'giving', 'recurring'], ['payment', 'giving', 'recurring']],
-  ['recurring paused by plan', ['payment', 'giving'], ['payment', 'giving', 'recurring']],
-  ['recurring not selected', ['payment', 'giving'], ['payment', 'giving']],
-])('giving links to Payments > Recurring settings when %s', async (_label, capabilities, selected) => {
+  ['recurring available but switched off', ['payment', 'giving', 'recurring'], ['payment', 'giving', 'recurring'], 'Enable Recurring Payments in Settings > Payments first.', '/dashboard/settings?tab=payments&section=recurring'],
+  ['recurring paused by plan', ['payment', 'giving'], ['payment', 'giving', 'recurring'], 'Recurring is paused due to your current plan. Upgrade to activate.', '/dashboard/settings?tab=account'],
+  ['recurring not selected', ['payment', 'giving'], ['payment', 'giving'], 'Enable Recurring on the Capabilities page first.', '/dashboard/capabilities'],
+])('giving shows the fix link when %s', async (_label, capabilities, selected, reason, href) => {
   state.business.capabilities = capabilities; state.business.selectedCapabilities = selected;
   render(<Giving />);
   const buttons = await screen.findAllByRole('button', { name: /Add.*Category/i });
   fireEvent.click(buttons[0]);
+  expect(screen.getByText(reason)).toBeTruthy();
   const links = await screen.findAllByRole('link', { name: 'Open recurring settings' });
   expect(links).toHaveLength(1);
-  expect(links[0].getAttribute('href')).toBe('/dashboard/settings?tab=payments&section=recurring');
+  expect(links[0].getAttribute('href')).toBe(href);
 });
 it('settings opens Payments with the Recurring section expanded from that link', async () => {
   // In-app <Link> click: the router already has the new query, but Next has not
@@ -77,6 +85,16 @@ it('settings opens Payments with the Recurring section expanded from that link',
     render(<Settings />);
     expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
     expect(screen.getByText(/Enable automatic recurring payments/)).toBeTruthy();
+  } finally {
+    window.history.pushState({}, '', '/');
+  }
+});
+it('settings opens Account with Plan & Upgrade expanded from the plan-paused link', async () => {
+  window.history.pushState({}, '', '/dashboard/giving');
+  state.query = 'tab=account';
+  try {
+    render(<Settings />);
+    expect(await screen.findByRole('heading', { name: 'Plan & Upgrade' })).toBeTruthy();
   } finally {
     window.history.pushState({}, '', '/');
   }
