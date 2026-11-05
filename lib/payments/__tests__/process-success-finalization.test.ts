@@ -295,7 +295,7 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
   });
 });
 
-describe('M497 required booking promo finalization', () => {
+describe('M518 required booking promo finalization', () => {
   it('fails before downstream effects when promo finalization is not confirmed', async () => {
     const { processSuccessfulPayment } = await import('../process-success');
     const supabase = buildSupabase({ bookingPromo: true, bookingPromoError: true });

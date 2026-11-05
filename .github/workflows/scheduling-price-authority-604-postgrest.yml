@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'supabase/migrations/497_scheduling_price_authority_core.sql'
+      - 'supabase/migrations/518_scheduling_price_authority_core.sql'
       - 'lib/__tests__/scheduling-price-authority-604*'
       - 'scripts/test-scheduling-price-authority-604-postgrest.sh'
       - '.github/workflows/scheduling-price-authority-604-postgrest.yml'

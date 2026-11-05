@@ -7,7 +7,7 @@ const suite=base&&oldBase?describe:describe.skip;
 const business='00000000-0000-4000-a604-000000000101';
 const user='00000000-0000-4000-a604-000000000102';
 const service='00000000-0000-4000-a604-000000000103';
-suite('M497 real PostgREST old/new payload and schema compatibility',()=>{
+suite('M518 real PostgREST old/new payload and schema compatibility',()=>{
  let db:pg.Pool, oldDb:pg.Pool;
  const payload={p_business_id:business,p_user_id:user,p_service_id:service,p_staff_id:null,
    p_date:'2027-12-01',p_time:'10:00',p_party_size:1,p_max_capacity:1,p_flow_type:'scheduling',
@@ -59,7 +59,7 @@ suite('M497 real PostgREST old/new payload and schema compatibility',()=>{
    const permitted=await call('book_slot_authoritative_604',{...payload,p_expected_terms:terms});
    expect(permitted.status).toBe(200);
  });
- it('fails closed for new-app payload against the actual pre-M497 schema',async()=>{
+ it('fails closed for new-app payload against the actual pre-M518 schema',async()=>{
    const response=await call('book_slot_authoritative_604',{...payload,p_expected_terms:terms},'service_role',oldBase!);
    expect(response.status).toBe(404);
    expect((await response.json()).code).toBe('PGRST202');

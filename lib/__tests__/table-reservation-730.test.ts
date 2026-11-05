@@ -1449,7 +1449,7 @@ describe('#731: table selection and flat-deposit promo boundaries', () => {
         p_service_id: 'service-a', p_promo_code_id: 'promo-a',
         p_deposit_amount: 4000, p_total_amount: 4000,
       }));
-      // M497 reserves atomically; payment finalization consumes the reservation.
+      // M518 reserves atomically; payment finalization consumes the reservation.
       expect(ctx.supabase.rpc).not.toHaveBeenCalledWith('increment_promo_usage', expect.anything());
       const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
       expect(initializePayment).toHaveBeenCalledWith(ctx.supabase, expect.objectContaining({ amount: 4000 }));

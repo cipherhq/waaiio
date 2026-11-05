@@ -8,7 +8,7 @@ if (process.env.REQUIRE_PG_TESTS === 'true' && !url) throw new Error('Disposable
 const suite = url ? describe : describe.skip;
 const id = (n: number) => '00000000-0000-4000-a604-' + n.toString(16).padStart(12, '0');
 const business=id(1), user=id(2), service=id(3), promo=id(4), addon=id(5);
-suite('M497 final-state scheduling authority', () => {
+suite('M518 final-state scheduling authority', () => {
  let pool: pg.Pool;
  let admin: pg.Pool;
  const databaseName = 'core604_' + randomUUID().replaceAll('-', '');

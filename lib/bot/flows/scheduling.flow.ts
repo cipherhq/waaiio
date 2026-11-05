@@ -106,7 +106,7 @@ function getStaffPrompt(category: string, lang?: string): string {
 // Removed hardcoded category defaults — businesses configure their own options in dashboard
 
 
-/** Expected customer terms only; monetary authority remains in M497. */
+/** Expected customer terms only; monetary authority remains in M518. */
 function schedulingExpectedTerms604(d: Record<string, unknown>, country: string) {
   return {
     price: Number(d.service_price ?? 0), deposit: Number(d.service_deposit ?? 0),
@@ -3158,7 +3158,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (isNewBooking) {
-          // M497 owns promo reservation and exactly-once finalization.
+          // M518 owns promo reservation and exactly-once finalization.
 
           // Convert referral if applied
           if (d.referral_id) {

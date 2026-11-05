@@ -1,4 +1,4 @@
--- M497: Core scheduling price authority (#604).
+-- M518: Core scheduling price authority (#604). Renumbered from M497 (draft PR #806) above the Release V3 lock.
 -- Forward-only; configurable promo/package modes are excluded.
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS scheduling_private_604;
@@ -413,14 +413,14 @@ BEGIN
  LOOP
    IF f.prosecdef AND f.proname<>'book_slot_atomic'
       AND NOT ('search_path=public, extensions'=ANY(f.proconfig)) THEN
-     RAISE EXCEPTION 'M497 invalid helper search_path';
+     RAISE EXCEPTION 'M518 invalid helper search_path';
    END IF;
    IF has_function_privilege('anon',f.oid,'EXECUTE') OR has_function_privilege('authenticated',f.oid,'EXECUTE') THEN
-     RAISE EXCEPTION 'M497 unexpected helper execute grant';
+     RAISE EXCEPTION 'M518 unexpected helper execute grant';
    END IF;
  END LOOP;
  IF (SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='book_slot_atomic')<>1 THEN
-   RAISE EXCEPTION 'M497 legacy signature ambiguity';
+   RAISE EXCEPTION 'M518 legacy signature ambiguity';
  END IF;
 END;
 $$;
