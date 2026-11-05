@@ -12,6 +12,7 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
 import { seatingRequest } from '@/lib/parties/table-assignment';
+import { neutralizeFormulaPrefix } from '@/lib/utils/csv-export';
 import type { SeatingSnapshot, SeatingPreview, SeatingGroup } from '@/lib/parties/seating-planner';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
@@ -740,13 +741,14 @@ export default function PartiesPage() {
             <button
               onClick={() => {
                 const headers = ['Name', 'Phone', 'Status', 'Plus Ones', 'Tags', 'Dietary Notes', 'Responded At'];
+                // Free-text cells are exported as plain text so a spreadsheet never runs them as formulas.
                 const rows = filteredInvites.map(inv => [
-                  inv.guest_name || '',
+                  neutralizeFormulaPrefix(inv.guest_name || ''),
                   inv.guest_phone,
                   inv.status,
                   inv.status === 'accepted' ? String(inv.plus_ones) : '0',
-                  (inv.tags || []).join('; '),
-                  inv.dietary_notes || '',
+                  neutralizeFormulaPrefix((inv.tags || []).join('; ')),
+                  neutralizeFormulaPrefix(inv.dietary_notes || ''),
                   inv.responded_at ? new Date(inv.responded_at).toLocaleString('en-GB') : '',
                 ]);
                 const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n');
