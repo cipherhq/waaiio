@@ -40,7 +40,7 @@ function mockChain(overrides: Record<string, unknown> = {}): any {
 }
 
 function buildSupabase(opts: {
-  paymentRow?: typeof PAYMENT_ROW | null;
+  paymentRow?: (Omit<typeof PAYMENT_ROW, 'finalization_completed_at' | 'payment_authority_version'> & { finalization_completed_at: string | null; payment_authority_version: number | null }) | null;
   paymentError?: unknown;
   updateError?: unknown;
   claimResult?: unknown;

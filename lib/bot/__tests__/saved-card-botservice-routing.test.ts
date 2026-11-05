@@ -203,10 +203,10 @@ describe('E1+E2: BotService saved-card routing', () => {
     mockSessionResult = null; // no active session
     const supabase = createSupabase();
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
-    await bot.handleMessage(PHONE, 'save card', { type: 'text' });
+    await bot.handleMessage(PHONE, 'save card', 'text');
 
     expect(mockHandleSaveCard).toHaveBeenCalledTimes(1);
     // Greeting path should NOT have sent cloud messages
@@ -218,10 +218,10 @@ describe('E1+E2: BotService saved-card routing', () => {
     mockSessionResult = null;
     const supabase = createSupabase();
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
-    await bot.handleMessage(PHONE, 'save my card', { type: 'text' });
+    await bot.handleMessage(PHONE, 'save my card', 'text');
 
     expect(mockHandleSaveCard).toHaveBeenCalledTimes(1);
   });
@@ -238,10 +238,10 @@ describe('E1+E2: BotService saved-card routing', () => {
     };
     const supabase = createSupabase();
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
-    await bot.handleMessage(PHONE, 'save card', { type: 'text' });
+    await bot.handleMessage(PHONE, 'save card', 'text');
 
     // PIN step takes precedence: handleSaveCard must NOT be called
     expect(mockHandleSaveCard).not.toHaveBeenCalled();
@@ -260,10 +260,10 @@ describe('E1+E2: BotService saved-card routing', () => {
     };
     const supabase = createSupabase();
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
-    await bot.handleMessage(PHONE, 'save card', { type: 'text' });
+    await bot.handleMessage(PHONE, 'save card', 'text');
 
     expect(mockHandleSaveCard).not.toHaveBeenCalled();
     // Replacement PIN handler wins: cloud.sendText called (PIN response), not greeting/buttons
@@ -289,7 +289,7 @@ describe('E1+E2: BotService saved-card routing', () => {
 
     const supabase = createSupabase(true);
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
     await bot.handleMessage(PHONE, 'i_paid', 'button');
@@ -320,7 +320,7 @@ describe('E1+E2: BotService saved-card routing', () => {
 
     const supabase = createSupabase(true);
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const sender = new MetaCloudSender(cloud as any, supabase as any);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
     await bot.handleMessage(PHONE, 'i_paid', 'button');

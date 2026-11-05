@@ -55,9 +55,9 @@ function buildCronSb(opts: {
   quarantineMode?: CasMode;
 } = {}) {
   const dispatched = opts.dispatched || [];
-  const casWrites: unknown[] = [];
-  const terminalWrites: unknown[] = [];
-  const quarantineWrites: unknown[] = [];
+  const casWrites: Record<string, unknown>[] = [];
+  const terminalWrites: Record<string, unknown>[] = [];
+  const quarantineWrites: Record<string, unknown>[] = [];
   let limitCallCount = 0;
 
   const postUpdate = (mode: CasMode): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {

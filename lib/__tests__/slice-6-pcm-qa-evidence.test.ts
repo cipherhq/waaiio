@@ -187,7 +187,7 @@ async function generateEvidence(): Promise<QAEvidenceArtifact> {
     authoritativeValuesPreserved: ['WA-BK-QA-001', 'FacesByKoph', '5,000'],
     subjectLine: bookingEmail.subject,
     translatedLabels: Object.fromEntries(Object.entries(bookingLabels).filter(([, v]) => typeof v === 'string')),
-    bodyExcerpt: bookingEmail.text || bookingEmail.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800),
+    bodyExcerpt: bookingEmail.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800),
   });
 
   // Ticket email
@@ -207,7 +207,7 @@ async function generateEvidence(): Promise<QAEvidenceArtifact> {
     authoritativeValuesPreserved: ['WA-TK-QA-002', 'TK-QA-001', 'TK-QA-002', '₦10,000', 'ShowHub'],
     subjectLine: ticketEmail.subject,
     translatedLabels: Object.fromEntries(Object.entries(ticketLabels).filter(([, v]) => typeof v === 'string')),
-    bodyExcerpt: ticketEmail.text || ticketEmail.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800),
+    bodyExcerpt: ticketEmail.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800),
   });
 
   // Invoice email
@@ -227,7 +227,7 @@ async function generateEvidence(): Promise<QAEvidenceArtifact> {
     authoritativeValuesPreserved: ['INV-QA-003', '₦15,000', 'https://waaiio.com/invoice/token-qa', 'TestBiz Salon'],
     subjectLine: invEmail.subject,
     translatedLabels: Object.fromEntries(Object.entries(invoiceLabels).filter(([, v]) => typeof v === 'string')),
-    bodyExcerpt: invEmail.text || invEmail.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800),
+    bodyExcerpt: invEmail.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800),
   });
 
   // ── 3. PDF via real deterministic bundles + real generators ──
@@ -262,6 +262,7 @@ async function generateEvidence(): Promise<QAEvidenceArtifact> {
   });
 
   const invoiceBuf = await generateInvoicePdf({
+    customerEmail: null, customerAddress: null, currency: 'NGN', notes: null, terms: null,
     businessName: 'TestBiz', referenceCode: 'INV-QA-PDF', issueDate: '2026-12-01', dueDate: '2026-12-31',
     customerName: 'Emeka Johnson', customerPhone: '+234',
     items: [{ description: 'Service', quantity: 1, unitPrice: 5000, amount: 5000 }],

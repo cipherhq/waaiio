@@ -15,7 +15,7 @@
  * - Duplicate replay of later refund event is idempotent
  * - Cumulative totals remain exact
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { createHmac } from 'crypto';
 

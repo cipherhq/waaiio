@@ -12,18 +12,35 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 **Decision:** Continue sequential naming. Use an explicit reservation process to prevent collisions.
 
+## Merchant notifications renumbered above the Release V3 lock (PR #813)
+
+Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan S1 (undo and re-apply). The old numbers 499, 502 and 510 are no longer used by #813.
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 511 | `merchant_notifications` | Reserved by PR #813 (was 499) | Staging's earlier 499 is removed by `scripts/release-v3/staging-813-teardown.sql` (#872) before release. |
+| 512 | `merchant_notification_invitation_lifetime` | Reserved by PR #813 (was 502) | Staging's earlier 502 is removed the same way. |
+| 513 | `merchant_notification_pre_emission_recovery` | Reserved by PR #813 (was 510, earlier 507) | Never applied to a hosted environment. |
+
+## Merchant notification invitation lifetime (superseded: now 512, see above)
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 502 | `merchant_notification_invitation_lifetime` | Superseded by 512 (PR #813) | Owner-approved 48-hour expiry for newly issued email/WhatsApp invitations. Existing invitation expiry and consent protections unchanged. Requires M499. |
+
 ## Accounting compatibility packaging reservations
 
 | Version | Name | Status | Notes |
 |---------|------|--------|-------|
 | 501 | `accounting_cutover_installer` | Reserved; source only, not applied | Installs an Owner-only private activation procedure. Never invokes activation during migration. Operational activation requires separate approval and receipt. |
 | 500 | `accounting_hold_preparation` | Reserved; source only, not applied | Inert tables/private implementations only; no enrollment, public refund replacement, or financial guard activation. |
-| 499 | `merchant_notifications` | Reserved by PR #813 | Separate work; reservation preserved. |
+| 499 | `merchant_notifications` | Superseded by 511 (PR #813) | Old number; no longer used by #813. |
 
 ## Reduced payout compatibility reservations
 
 | Version | Name | Status | Notes |
 |---------|------|--------|-------|
+| 499 | `merchant_notifications` | Superseded by 511 (PR #813) | Verified multi-recipient enrollment and durable merchant alert dispatch. |
 | 498 | `manual_settlement_rejection_guard` | Reserved; source only, not applied | Locks and rejects already-approved manual payouts before rejection or adjustment release. Requires M440/M444 final state. |
 | 497 | `scheduling_price_authority_core` | Reserved by PR #806 | Separate work; reservation preserved. |
 
@@ -192,7 +209,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 **Batch 8 repair summary:** 15 versions (227-241) now tracked in remote schema_migrations. Remote count 209 -> 224 (+15). 101-246 tracked count 113 -> 128 (+15). 120 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-08-production-verification.json` (V3 SHA: `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`). Repair evidence: `docs/migrations/evidence/batch-08-repair.json` (SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`). No migration SQL executed. History-only operation.
 **Batch 9 repair summary:** 4 versions (242, 243, 245, 246) now tracked in remote schema_migrations. Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4). 124 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-09-production-verification.json` (V3 SHA: `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`). Repair evidence: `docs/migrations/evidence/batch-09-repair.json` (SHA: `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`). No migration SQL executed. History-only operation.
 
-**Next available version:** 507 (recheck main and open PR reservations before use)
+**Next available version:** 518 (recheck main and open PR reservations before use)
 
 ## Storage security repair reservations — 2026-10-31
 
@@ -305,7 +322,7 @@ Verified against main e62199d2124719f470306aa85aa8310960939ee6, all ten open PR 
 
 | Version | Description | Branch | Status |
 |---------|-------------|--------|--------|
-| 502 | Reserved by open PR #813 | Existing PR reservation | Not available |
+| 502 | Superseded by 512 (PR #813) | Old PR #813 number | Not available |
 | 503 | recurring_cancellation_compatibility | codex/full-release-2026-11-02 | Reserved; not applied |
 
 One cumulative cancellation concern; preserves authoritative recurring fee payment linkage. No historical migration replay or ledger repair.
@@ -326,3 +343,11 @@ Nullable slug and uniqueness only; preserves historical rows and existing slug g
 | 506 | full_release_additive_foundation | codex/full-release-2026-11-02 | Reserved; not applied |
 
 M505 moves the existing owner-requested local downgrade into a service-authorized atomic operation. M506 prepares compatible form and account-service dependencies; complete M437/M446 permission contracts remain a later rollout phase. Neither installation authorizes business operations.
+
+### Reservation — PR #813 pre-emission recovery
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 507 | merchant_notification_pre_emission_recovery | codex/merchant-notifications | Superseded by 513 (PR #813; was briefly 510) |
+
+Checked current main and all 15 open PR migration file lists on 2026-11-02; no collision.

@@ -316,7 +316,7 @@ describe('R7/R8: promote-to-gallery saves correct database values', () => {
     expect(result.current.galleryUrls).toEqual(['gallery1.jpg', 'primary.jpg']);
 
     // R8: Use the production buildSaveImagePayload, not a test copy
-    let payload: { image_url: string | null; gallery_urls: string[] };
+    let payload!: { image_url: string | null; gallery_urls: string[] };
     await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
     // The DB payload must have null primary — NOT the old 'primary.jpg'
@@ -337,7 +337,7 @@ describe('R7/R8: promote-to-gallery saves correct database values', () => {
     // Swap g2.jpg to primary
     await act(async () => { await result.current.handleSetPrimary(1); });
 
-    let payload: { image_url: string | null; gallery_urls: string[] };
+    let payload!: { image_url: string | null; gallery_urls: string[] };
     await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
     expect(payload!.image_url).toBe('g2.jpg');
@@ -348,7 +348,7 @@ describe('R7/R8: promote-to-gallery saves correct database values', () => {
     const uploadFn = vi.fn(async () => null as string | null);
     const { result } = renderHook(() => useProductGallery(uploadFn));
 
-    let payload: { image_url: string | null; gallery_urls: string[] };
+    let payload!: { image_url: string | null; gallery_urls: string[] };
     await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
     expect(payload!.image_url).toBeNull();
@@ -365,7 +365,7 @@ describe('R7/R8: promote-to-gallery saves correct database values', () => {
       result.current.setGalleryUrls(['g1.jpg']);
     });
 
-    let payload: { image_url: string | null; gallery_urls: string[] };
+    let payload!: { image_url: string | null; gallery_urls: string[] };
     await act(async () => { payload = await result.current.buildSaveImagePayload(); });
 
     expect(payload!.image_url).toBe('https://storage/uploaded.jpg');

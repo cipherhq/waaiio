@@ -1293,12 +1293,12 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         controllerChild = spawn('psql', [r90url, '-tAXq'], { stdio: ['pipe', 'pipe', 'pipe'] });
         await new Promise<void>((resolve) => {
           let buf = '';
-          controllerChild!.stdout.on('data', (d: Buffer) => {
+          controllerChild!.stdout!.on('data', (d: Buffer) => {
             buf += d.toString();
             if (buf.includes('locked')) resolve();
           });
           // pg_advisory_lock returns void (empty in -tAX mode), so chain a SELECT to confirm
-          controllerChild!.stdin.write(`SELECT pg_advisory_lock(${GATE_LOCK_ID}); SELECT 'locked';\n`);
+          controllerChild!.stdin!.write(`SELECT pg_advisory_lock(${GATE_LOCK_ID}); SELECT 'locked';\n`);
         });
         // Controller now holds advisory lock 99383. It will NOT release until we tell it to.
 
@@ -1400,16 +1400,16 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
 
         // ── Step 9: Release the gate — migration finishes, racer proceeds ──
         await new Promise<void>((resolve) => {
-          controllerChild!.stdout.removeAllListeners('data');
+          controllerChild!.stdout!.removeAllListeners('data');
           let buf = '';
-          controllerChild!.stdout.on('data', (d: Buffer) => {
+          controllerChild!.stdout!.on('data', (d: Buffer) => {
             buf += d.toString();
             if (buf.includes('t') || buf.length > 0) resolve();
           });
-          controllerChild!.stdin.write(`SELECT pg_advisory_unlock(${GATE_LOCK_ID});\n`);
+          controllerChild!.stdin!.write(`SELECT pg_advisory_unlock(${GATE_LOCK_ID});\n`);
         });
         // Close controller cleanly
-        controllerChild!.stdin.end();
+        controllerChild!.stdin!.end();
         controllerChild = null;
 
         // Wait for migration and racer to complete
