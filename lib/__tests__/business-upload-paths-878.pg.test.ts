@@ -164,9 +164,6 @@ suite('#878 dashboard uploads under the real business-documents policies', () =>
     await control.query(`CREATE DATABASE ${database}`);
     const target = new URL(url!); target.pathname = `/${database}`;
     h.pool = new pg.Pool({ connectionString: target.toString() });
-    // DROP DATABASE ... WITH (FORCE) in afterAll can end an idle pooled connection
-    // (57P01) during teardown; that is expected. Any other idle-client error still fails the run.
-    h.pool.on('error', err => { if ((err as { code?: string }).code !== '57P01') throw err; });
 
     // Supabase's own auth/storage helpers, as the platform defines them.
     await h.pool.query(`
