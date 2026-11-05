@@ -1182,6 +1182,8 @@ export const schedulingFlow: FlowDefinition = {
 
         // Handle quick date shortcut buttons (date_YYYY-MM-DD)
         let dateStr = input;
+        // A typed date without a year whose day this year has passed ("4 Nov" on 5 Nov)
+        let typedRolledOver = false;
         const quickDateMatch = /^date_(\d{4}-\d{2}-\d{2})$/.exec(input);
         if (quickDateMatch) {
           dateStr = quickDateMatch[1];
@@ -1210,6 +1212,7 @@ export const schedulingFlow: FlowDefinition = {
               return fail(notARealDate);
             }
             dateStr = typed.date;
+            typedRolledOver = typed.rolledOver === true;
           } else if (/^(mon|tue|wed|thu|fri|sat|sun)/i.test(lower) || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower)) {
             const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
             const dayMatch = lower.match(/\b(sun|mon|tue|wed|thu|fri|sat)\w*/i);
@@ -1239,7 +1242,10 @@ export const schedulingFlow: FlowDefinition = {
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxAdvanceDays = (meta.max_advance_days as number) || BOOKING_DEFAULTS.maxAdvanceDays;
-        const tooFarMessage = `Bookings open up to ${maxAdvanceDays} days ahead. Please pick an earlier date.`;
+        // "4 Nov" typed on 5 Nov means next year's, which is too far ahead; say it has passed instead
+        const tooFarMessage = typedRolledOver
+          ? 'That date has passed. Try *tomorrow* or pick a future date.'
+          : `Bookings open up to ${maxAdvanceDays} days ahead. Please pick an earlier date.`;
 
         if (tableLocalNow) {
           // Tables: today onwards in the business's local calendar

@@ -260,9 +260,19 @@ describe('A2 select_date — typed dates', () => {
 
   it('text that is not a date gets help instead of a wrong year', async () => {
     const step = await dateStep();
-    const r = await step.validate('whenever works', ctxFor({}));
-    expect(r.valid).toBe(false);
-    expect(r.errorMessage).toContain('*20 Dec*');
+    for (const input of ['whenever works', '1.5', '20.30']) {
+      const r = await step.validate(input, ctxFor({}));
+      expect(r.valid).toBe(false);
+      expect(r.errorMessage).toContain('Try typing a date like *20 Dec*');
+    }
+  });
+
+  it('a day that just passed, typed without a year, says it has passed (review r1 P3-1)', async () => {
+    const step = await dateStep();
+    const r = await step.validate('4 Nov', ctxFor({}));
+    expect(r.errorMessage).toBe('That date has passed. Try *tomorrow* or pick a future date.');
+    // With the year typed it is simply in the past too
+    expect((await step.validate('4 Nov 2026', ctxFor({}))).errorMessage).toContain('That date has passed');
   });
 });
 
@@ -284,10 +294,12 @@ describe('A8 select_date — US businesses read slash dates as month/day', () =>
     }
   });
 
-  it('04/12 means 4 December in NG and 12 April (too far ahead) in the US', async () => {
+  it('04/12 means 4 December in NG and 12 April (already passed this year) in the US', async () => {
     const step = await dateStep();
     expect(await step.validate('04/12', ctxFor({ country: 'NG' }))).toEqual({ valid: true, data: { date: '2026-12-04' } });
-    expect((await step.validate('04/12', ctxFor({ country: 'US' }))).errorMessage).toContain('Bookings open up to 30 days ahead');
+    expect((await step.validate('04/12', ctxFor({ country: 'US' }))).errorMessage).toContain('That date has passed');
+    // Not yet passed this year, but too far ahead
+    expect(await step.validate('12/20', ctxFor({ country: 'US' }))).toEqual({ valid: false, errorMessage: 'Bookings open up to 30 days ahead. Please pick an earlier date.' });
   });
 });
 
@@ -302,10 +314,10 @@ describe('A3 select_date — December rollover', () => {
     expect(await step.validate('05/01', ctxFor({}))).toEqual({ valid: true, data: { date: '2027-01-05' } });
   });
 
-  it('on 20 Dec, "Dec 10" means next December (too far ahead), and a past explicit year has passed', async () => {
+  it('on 20 Dec, "Dec 10" has passed (not "too far ahead"), and so has a past explicit year', async () => {
     vi.setSystemTime(new Date('2026-12-20T12:00:00Z'));
     const step = await dateStep();
-    expect((await step.validate('Dec 10', ctxFor({}))).errorMessage).toContain('Bookings open up to 30 days ahead');
+    expect((await step.validate('Dec 10', ctxFor({}))).errorMessage).toContain('That date has passed');
     expect((await step.validate('10/12/2026', ctxFor({}))).errorMessage).toContain('That date has passed');
   });
 
@@ -402,11 +414,11 @@ describe('A7 select_date — typed dates keep the table same-day rule', () => {
   });
 
   it('a table without a readable timezone keeps tomorrow-first', async () => {
-    vi.setSystemTime(LAGOS_1830);
+    // Midday UTC: the same calendar day for every server timezone (review r1 P3-5)
     const step = await dateStep();
-    const r = await step.validate('4 Nov', ctxFor({ table: true, db: mockDb({ timezone: null }) }));
+    const r = await step.validate('5 Nov', ctxFor({ table: true, db: mockDb({ timezone: null }) }));
     expect(r.errorMessage).toContain('That date has passed');
-    expect(await step.validate('5 Nov', ctxFor({ table: true, db: mockDb({ timezone: null }) }))).toEqual({ valid: true, data: { date: '2026-11-05' } });
+    expect(await step.validate('6 Nov', ctxFor({ table: true, db: mockDb({ timezone: null }) }))).toEqual({ valid: true, data: { date: '2026-11-06' } });
   });
 });
 

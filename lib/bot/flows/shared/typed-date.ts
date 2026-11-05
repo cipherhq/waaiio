@@ -28,14 +28,15 @@ const ORDINAL = '(?:st|nd|rd|th)?';
 const MONTH_FIRST = new RegExp(`\\b(${MONTH_RE})\\.?\\s+(\\d{1,2})${ORDINAL}(?!\\d)(?:\\s+(\\d{4}))?\\b`);
 // "20 Dec", "20th of December", "20 December 2026"
 const DAY_FIRST = new RegExp(`\\b(\\d{1,2})${ORDINAL}\\s+(?:of\\s+)?(${MONTH_RE})\\b\\.?(?:\\s+(\\d{4})\\b)?`);
-// "20/12", "20-12", "20.12", "20/12/2026", "20/12/26" (whole input only)
-const NUMERIC = new RegExp(`^(?:on\\s+)?${WEEKDAY_PREFIX}(\\d{1,2})[/.-](\\d{1,2})(?:[/.-](\\d{4}|\\d{2}))?$`);
+// "20/12", "20-12", "20/12/2026", "20/12/26", "20.12.2026" (whole input only).
+// A dot needs a year: "1.5" or "20.30" is a number or a time, not a date.
+const NUMERIC = new RegExp(`^(?:on\\s+)?${WEEKDAY_PREFIX}(\\d{1,2})([/.-])(\\d{1,2})(?:[/.-](\\d{4}|\\d{2}))?$`);
 // "2026/12/20" (whole input only; "2026-12-20" is handled by the caller)
 const YEAR_FIRST = /^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/;
 
 export type TypedDateResult =
-  /** A real calendar date */
-  | { kind: 'date'; date: string }
+  /** A real calendar date. `rolledOver`: no year was typed and this year's date had passed. */
+  | { kind: 'date'; date: string; rolledOver?: true }
   /** Looks like a date but does not exist (31 Feb, 13/13) */
   | { kind: 'invalid' };
 
@@ -52,14 +53,17 @@ function toDateStr(year: number, month: number, day: number): string | null {
 }
 
 /** Next occurrence of month/day on or after `today` (YYYY-MM-DD). */
-function nextOccurrence(month: number, day: number, today: string): string | null {
+function nextOccurrence(month: number, day: number, today: string): TypedDateResult {
   const thisYear = Number(today.slice(0, 4));
+  const thisYearDate = toDateStr(thisYear, month, day);
   // Up to 8 years ahead covers 29 February; the caller's booking window rejects far dates.
   for (let year = thisYear; year <= thisYear + 8; year++) {
     const candidate = toDateStr(year, month, day);
-    if (candidate && candidate >= today) return candidate;
+    if (candidate && candidate >= today) {
+      return thisYearDate && thisYearDate < today ? { kind: 'date', date: candidate, rolledOver: true } : { kind: 'date', date: candidate };
+    }
   }
-  return null;
+  return { kind: 'invalid' };
 }
 
 function resolve(day: number, month: number, yearText: string | undefined, today: string): TypedDateResult {
@@ -68,8 +72,7 @@ function resolve(day: number, month: number, yearText: string | undefined, today
     const date = toDateStr(year, month, day);
     return date ? { kind: 'date', date } : { kind: 'invalid' };
   }
-  const date = nextOccurrence(month, day, today);
-  return date ? { kind: 'date', date } : { kind: 'invalid' };
+  return nextOccurrence(month, day, today);
 }
 
 /**
@@ -94,10 +97,11 @@ export function parseTypedDate(
 
   const numeric = NUMERIC.exec(text);
   if (numeric) {
+    if (numeric[2] === '.' && !numeric[4]) return null;
     const first = Number(numeric[1]);
-    const second = Number(numeric[2]);
+    const second = Number(numeric[3]);
     const [day, month] = opts.monthFirst ? [second, first] : [first, second];
-    return resolve(day, month, numeric[3], opts.today);
+    return resolve(day, month, numeric[4], opts.today);
   }
 
   const monthFirst = MONTH_FIRST.exec(text);

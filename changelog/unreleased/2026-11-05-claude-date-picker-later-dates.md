@@ -6,9 +6,10 @@
   - 10 or fewer open dates: the list is unchanged.
   - More: page 1 shows 9 dates and "Later dates ▸". Later pages show "◂ Earlier dates", 8 dates and "Later dates ▸"; the last page shows "◂ Earlier dates" and up to 9 dates (WhatsApp's 10-row limit).
   - Page rows are tapped as `dates_page_<n>`; the page is kept in the new `session_data._date_page`. No existing key was renamed.
-- **Typed dates** (new `lib/bot/flows/shared/typed-date.ts`). The bot now reads "Dec 20", "December 20", "Dec 20th", "20 Dec", "20th December", "20th of December", "20/12", "20/12/2026", "20/12/26", "2026/12/20", with or without a weekday in front ("Sat, 20 Dec").
+- **Typed dates** (new `lib/bot/flows/shared/typed-date.ts`). The bot now reads "Dec 20", "December 20", "Dec 20th", "20 Dec", "20th December", "20th of December", "20/12", "20/12/2026", "20/12/26", "20.12.2026", "2026/12/20", with or without a weekday in front ("Sat, 20 Dec").
   - No year: the next 20 December that is not before today, in the business's local calendar (its timezone when it fits its country, else the server date).
-  - Slash dates are day/month; month/day only for businesses with country `US`.
+  - Slash dates are day/month; month/day only for businesses with country `US`. A dot works only with a year ("20.12.2026"), so "1.5" or "20.30" is not read as a date.
+  - A day typed without a year that has already passed this year ("4 Nov" on 5 Nov) is answered "That date has passed", not "too far ahead".
   - The old `new Date(input)` fallback is gone. It read "Dec 20" as 2001-12-20 and rejected it as passed.
 - **Same rules for every date input.** After the existing past, `max_advance_days` and table same-day checks, a date must be one the list would show: not a closed day, a day the service runs, and not fully booked. Before, a typed "Sunday" was accepted for a business closed on Sundays and the time list fell back to default hours.
 - **Hint**: "Or type a date, like *20 Dec*." under the date prompt (buttons and list). New copy keys `booking.type_date_hint`, `booking.later_dates`, `booking.earlier_dates` in all 8 locales (`lib/bot/flows/flow-localization.ts`). en and pcm are certified; the other six are best-effort and listed in `OWNER_REVIEW_ITEMS`.
