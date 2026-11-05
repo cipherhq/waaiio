@@ -3,7 +3,7 @@
  *
  * Behavioural tests of reservation.flow.ts `create_reservation` with a
  * table-aware Supabase fake. The database side (M522 exclusion constraint,
- * two parallel claims) is proved in lib/__tests__/property-stay-no-overlap-522.pg.test.ts.
+ * two parallel claims) is proved by the M522 PR (#924)'s real-PostgreSQL test.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockContext, getStep } from './helpers';
@@ -33,6 +33,8 @@ type Result = { data: unknown; error: unknown };
 /** What each query returns, plus a record of what the flow asked for. */
 function fakeSupabase(opts: {
   stays?: Result;
+  /** Results for successive stay checks (overrides `stays`). */
+  staysSeq?: Result[];
   blocked?: Result;
   insert?: Result;
   existing?: Result;
@@ -49,7 +51,11 @@ function fakeSupabase(opts: {
     }
     c.insert = vi.fn((payload: unknown) => { inserting = true; calls.inserts.push(payload); return c; });
     c.limit = vi.fn(async () => {
-      if (table === 'reservations') { calls.stayChecks.push(filters); return opts.stays ?? { data: [], error: null }; }
+      if (table === 'reservations') {
+        calls.stayChecks.push(filters);
+        if (opts.staysSeq) return opts.staysSeq[Math.min(calls.stayChecks.length - 1, opts.staysSeq.length - 1)];
+        return opts.stays ?? { data: [], error: null };
+      }
       if (table === 'property_blocked_dates') { calls.blockedChecks.push(filters); return opts.blocked ?? { data: [], error: null }; }
       return { data: [], error: null };
     });
@@ -181,6 +187,30 @@ describe('#922 create_reservation never creates a stay over taken nights', () =>
     expect(messages).toEqual([{ type: 'text', text: 'Use saved card?' }]);
   });
 
+  it('a deadlock (40P01) on insert is "dates taken" only when the nights are now held', async () => {
+    // Check before insert: free. Re-read after the deadlock: the race winner holds the nights.
+    const { client, calls } = fakeSupabase({
+      staysSeq: [{ data: [], error: null }, { data: [{ id: 'winner' }], error: null }],
+      insert: { data: null, error: { code: '40P01', message: 'deadlock detected' } },
+    });
+    const ctx = ctxFor(client, { _terms_accepted: true });
+
+    const messages = await step.prompt(ctx);
+
+    expect(calls.inserts).toHaveLength(1);
+    expect(calls.stayChecks).toHaveLength(2);
+    expectNotAvailable(messages, ctx.session.session_data);
+    expect(initializePayment).not.toHaveBeenCalled();
+  });
+
+  it('a deadlock (40P01) with the nights still free → generic message, dates kept', async () => {
+    const { client } = fakeSupabase({ insert: { data: null, error: { code: '40P01', message: 'deadlock detected' } } });
+    const ctx = ctxFor(client, { _terms_accepted: true });
+    const messages = await step.prompt(ctx);
+    expect(messages).toEqual([{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }]);
+    expect(ctx.session.session_data.check_in).toBe('2026-12-10');
+  });
+
   it('only the exact 23P01 code is read as "dates taken"', async () => {
     const { client } = fakeSupabase({ insert: { data: null, error: { code: '23P01x', message: 'x' } } });
     const ctx = ctxFor(client, { _terms_accepted: true });
@@ -240,6 +270,7 @@ describe('#922 create_reservation never creates a stay over taken nights', () =>
     // Blocked nights are date_from..date_to inclusive; the stay's nights are [check_in, check_out).
     // So a block that starts on the check-out day (date_from = check_out) does not match.
     expect(calls.blockedChecks[0]).toMatchObject({
+      'eq:business_id': 'b1',
       'eq:property_id': 'prop-1',
       'lt:date_from': '2026-12-13',
       'gte:date_to': '2026-12-10',
@@ -280,6 +311,22 @@ describe('#922 create_reservation never creates a stay over taken nights', () =>
     expect(calls.stayChecks).toHaveLength(0);
     expect(calls.inserts).toHaveLength(0);
     expect(messages).toEqual([{ type: 'text', text: 'Use saved card?' }]);
+  });
+
+  it('stray input after "not available" (text or a stale Confirm) → ask again, never end the session', async () => {
+    const { client, calls } = fakeSupabase({});
+    const ctx = ctxFor(client, {});
+    const d = ctx.session.session_data;
+    for (const k of ['check_in', 'check_out', 'nights']) delete d[k];
+
+    for (const input of ['hello', 'confirm']) {
+      await expect(step.validate!(input, ctx)).resolves.toEqual({ valid: false, errorMessage: 'Please tap *Choose New Dates* or *Cancel*.' });
+    }
+    // The executor re-runs the prompt after an invalid answer: it offers the same two buttons.
+    const again = await step.prompt(ctx);
+    expect((again[0] as any).buttons.map((b: any) => b.id)).toEqual(['recovery_change_dates', 'recovery_exit']);
+    expect(calls.inserts).toHaveLength(0);
+    expect(calls.stayChecks).toHaveLength(0);
   });
 
   it('A8: Choose New Dates → back to check-in with the property kept', async () => {

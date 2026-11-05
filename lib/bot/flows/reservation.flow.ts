@@ -54,6 +54,7 @@ async function findStayConflict(
     ctx.supabase
       .from('property_blocked_dates')
       .select('id')
+      .eq('business_id', ctx.business!.id)
       .eq('property_id', propertyId)
       .lt('date_from', checkOut)
       .gte('date_to', checkIn)
@@ -812,6 +813,8 @@ export const reservationFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         // #393: Suppress re-prompt while awaiting saved-card PIN entry
         if (d._awaiting_card_pin) return [];
+        // #922: dates were cleared by a "not available" answer — offer the same choice again.
+        if (!d.reservation_id && (!d.check_in || !d.check_out)) return datesTakenPrompt(d);
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         // Ensure user exists
@@ -935,8 +938,15 @@ export const reservationFlow: FlowDefinition = {
             .single();
           if (existing) {
             reservation = existing;
-          } else if (insertError?.code === '23P01') {
-            // M522 exclusion constraint: another active stay took these nights first.
+          } else if (
+            insertError?.code === '23P01'
+            // A claim that loses a simultaneous race can also be aborted as a deadlock;
+            // it means "taken" only if the nights are now held by someone else.
+            || (insertError?.code === '40P01'
+              && propertyId !== null
+              && await findStayConflict(ctx, propertyId, d.check_in as string, d.check_out as string) === 'taken')
+          ) {
+            // M522 exclusion constraint: another stay took these nights first.
             return datesTakenPrompt(d);
           } else {
             logger.withContext({ op: 'reservation.create', ...safeLogErrorContext(insertError) }).error('[RESERVATION] Failed to create reservation');
@@ -1262,6 +1272,10 @@ export const reservationFlow: FlowDefinition = {
         }
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
+        }
+        // #922: after "not available" the dates are cleared; only the two buttons move on.
+        if (!ctx.session.session_data.reservation_id && (!ctx.session.session_data.check_in || !ctx.session.session_data.check_out)) {
+          return { valid: false, errorMessage: 'Please tap *Choose New Dates* or *Cancel*.' };
         }
         // #268: Handle saved-card input
         const d = ctx.session.session_data;
