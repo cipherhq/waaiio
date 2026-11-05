@@ -23,6 +23,7 @@ interface FormData {
   business_name: string;
   business_phone: string | null;
   business_logo: string | null;
+  marketing_opt_in?: boolean;
 }
 
 type PageState = 'loading' | 'ready' | 'submitting' | 'submitted' | 'error';
@@ -34,6 +35,8 @@ export default function PublicFormPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  // "Yes, send me updates" is always unticked until the customer ticks it.
+  const [wantsUpdates, setWantsUpdates] = useState(false);
 
   useEffect(() => {
     async function loadForm() {
@@ -99,6 +102,13 @@ export default function PublicFormPage() {
       }
     }
 
+    const phoneField = form.fields.find(f => f.type === 'phone');
+    const typedPhone = phoneField ? String(answers[phoneField.id] || '').trim() : '';
+    if (form.marketing_opt_in && wantsUpdates && !typedPhone) {
+      setErrorMsg('Add your WhatsApp number to get updates');
+      return;
+    }
+
     setState('submitting');
     setErrorMsg('');
 
@@ -122,6 +132,7 @@ export default function PublicFormPage() {
             const emailField = form.fields.find(f => f.type === 'email');
             return emailField ? String(answers[emailField.id] || '') : '';
           })() || null,
+          marketing_opt_in: form.marketing_opt_in ? wantsUpdates : undefined,
         }),
       });
 
@@ -306,6 +317,17 @@ export default function PublicFormPage() {
               </div>
             ))}
           </div>
+
+          {form.marketing_opt_in && (
+            <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+              <input type="checkbox" checked={wantsUpdates} onChange={e => setWantsUpdates(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300" data-testid="marketing-opt-in" />
+              <span>
+                Yes, send me updates{form.business_name ? ` from ${form.business_name}` : ''} on WhatsApp.
+                <span className="block text-xs text-gray-500">Optional. You can reply STOP at any time.</span>
+              </span>
+            </label>
+          )}
 
           {errorMsg && <p className="text-sm text-red-600">{errorMsg}</p>}
 
