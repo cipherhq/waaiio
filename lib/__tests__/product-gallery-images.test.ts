@@ -124,13 +124,16 @@ describe('variant image independence', () => {
   });
 });
 
-// ── Bot presentation: primary image only ────────────────────────────────────
+// ── Bot presentation: primary image plus gallery (#879) ─────────────────────
+// Owner decision 2026-11-04 (#879) reversed "primary image only": the bot now
+// also sends up to 3 gallery photos. Behaviour is tested in
+// lib/bot/flows/__tests__/ordering-product-gallery.test.ts.
 
-describe('WhatsApp bot: uses primary image only', () => {
-  it('ordering flow reads image_url not gallery_urls', () => {
+describe('WhatsApp bot: primary image plus gallery', () => {
+  it('ordering flow reads image_url as the main image and gallery_urls for extra photos', () => {
     const botSrc = readFileSync('lib/bot/flows/ordering.flow.ts', 'utf8');
     expect(botSrc).toContain('product.image_url');
-    expect(botSrc).not.toContain('gallery_urls');
+    expect(botSrc).toContain(".select('gallery_urls')");
   });
 
   it('ordering flow stores current_product_image_url from image_url', () => {
