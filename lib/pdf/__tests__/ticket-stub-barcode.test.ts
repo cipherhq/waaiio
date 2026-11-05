@@ -30,7 +30,8 @@ const whiteLabel = vi.hoisted(() => ({ on: false }));
 vi.mock('@/lib/whitelabel', () => ({ isWhiteLabel: () => whiteLabel.on }));
 
 import { encodeCode128B } from '../code128';
-import { generateTicketsPdf, allowedBusinessLogoUrl } from '../ticket-generator';
+import { generateTicketsPdf } from '../ticket-generator';
+import { allowedBusinessLogoUrl } from '../merchant-image';
 
 /** Draw the module list as a 1-pixel-per-unit bitmap and decode it with the scanner's Code 128 reader. */
 function decodeModules(modules: number[], unit = 2): string {
@@ -148,10 +149,10 @@ describe('generateTicketsPdf: ticket layout', () => {
     expect(size).toEqual([780, 300]);
     const p1 = text[0];
     for (const s of [
-      'Praise Night 2026', 'VIP', 'CITADEL OF GRACE', 'Citadel of Grace',
+      'Praise Night 2026', 'VIP', 'CITADEL OF GRACE',
       'Adebayo Olumide', 'NGN', '15,000', 'Section A · Row 3 · Seat 15',
       'Sat, 20 Sep 2026', '7:00 PM', 'Citadel Arena, Lagos',
-      'TK-A3F8X2C91', 'REF WA-TK-7742', 'Ticket 1 / 2', 'Scan to verify', 'Powered by Waaiio',
+      'TK-A3F8X2C91', 'REF WA-TK-7742', 'Ticket 1 / 2', 'Scan to verify', 'Powered by Waaiio · waaiio.com',
     ]) expectText(p1, s);
     expect(text[1]).toContain('TK-0B77E1D24');
     expect(text[1]).toContain('Ticket 2 / 2');
@@ -170,9 +171,9 @@ describe('generateTicketsPdf: ticket layout', () => {
     const withLogo = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
     const without = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]] });
     expect(fetchMock).toHaveBeenCalledWith(LOGO_URL, expect.objectContaining({ redirect: 'error' }));
-    // The QR is an image plus a transparency mask; the opaque logo adds one image.
-    expect(imageCount(without)).toBe(2);
-    expect(imageCount(withLogo)).toBe(3);
+    // QR and Waaiio wordmark are each an image plus a transparency mask; the opaque logo adds one image.
+    expect(imageCount(without)).toBe(4);
+    expect(imageCount(withLogo)).toBe(5);
   });
 
   it('a 4096² transparent logo is downscaled and embedded once across many tickets', async () => {
@@ -190,10 +191,10 @@ describe('generateTicketsPdf: ticket layout', () => {
   it('logo responses over 5 MB are not used', async () => {
     responses.set(LOGO_URL, () => asResponse(logoWebp, { 'content-length': String(10 * 1024 * 1024) }));
     const declared = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
-    expect(imageCount(declared)).toBe(2); // QR only
+    expect(imageCount(declared)).toBe(4); // QR + wordmark only
     responses.set(LOGO_URL, () => asResponse(Buffer.alloc(5 * 1024 * 1024 + 1)));
     const actual = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
-    expect(imageCount(actual)).toBe(2);
+    expect(imageCount(actual)).toBe(4);
   });
 
   it('logo URLs outside the business-documents bucket are never fetched', async () => {
@@ -218,8 +219,24 @@ describe('generateTicketsPdf: ticket layout', () => {
     const flyer = await sharp({ create: { width: 3000, height: 1500, channels: 3, background: '#22c55e' } }).webp().toBuffer();
     responses.set(flyerUrl, () => asResponse(flyer));
     const withFlyer = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], flyerUrl });
-    expect(imageCount(withFlyer)).toBe(3); // QR + mask + flyer (JPEG, no mask)
+    expect(imageCount(withFlyer)).toBe(5); // QR + wordmark (each with mask) + flyer (JPEG, no mask)
     expect((await pdfText(withFlyer)).pages).toBe(1);
+  });
+
+  it('Waaiio wordmark is on every ticket, embedded once (Owner decision 2026-11-05)', async () => {
+    const tickets = Array.from({ length: 5 }, (_, i) => ({ ticketCode: `TK-00000000${i}`, ticketNumber: i + 1, totalTickets: 5 }));
+    const branded = await generateTicketsPdf({ ...BASE, tickets });
+    whiteLabel.on = true;
+    const plain = await generateTicketsPdf({ ...BASE, tickets });
+    expect(imageCount(branded) - imageCount(plain)).toBe(2); // one wordmark image + mask for all 5 pages
+  });
+
+  it('white-label: no Waaiio wordmark; the business logo moves to the stub', async () => {
+    whiteLabel.on = true;
+    const withLogo = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
+    const { text } = await pdfText(withLogo);
+    expectText(text[0], 'Citadel of Grace'); // stub name, mixed case, white-label only
+    expect(imageCount(withLogo)).toBe(3); // QR + mask + business logo
   });
 
   it('white-label tiers hide the Waaiio footer', async () => {
