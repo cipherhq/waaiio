@@ -1,0 +1,220 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.promo_reservations.booking_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.promo_reservations.order_id",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "4dbc16a98ce5a2645b9217c1015fed4707c5eaf987540e3d2bc786cb5a0e1cc2",
+   "identity": "constraint:public.promo_reservations.promo_reservations_booking_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (num_nonnulls(order_id, booking_id) = 1)",
+    "validated": true
+   },
+   "after_sha256": "f5fd48404e3075a8b7be3ae87ab2f1121fee09d3d9f35cff2ee4d2b720d82e50",
+   "identity": "constraint:public.promo_reservations.promo_reservations_entity_xor",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount integer, p_staff_name text, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_appointment_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_terms jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "b3d6022720dae269845c8a4903c4784987a2c6f698de2d951e2ce8873b32629d",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean, committed_total integer, committed_deposit integer)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "febdcd3edc32306a11a3f4aa8333aff15d8ca1e9ab4ea4ca1df74d719ef56b91",
+   "identity": "function:public.book_manual_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount integer, p_staff_name text, p_buffer_minutes integer, p_duration integer, p_appointment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_price integer DEFAULT NULL::integer, p_expected_deposit integer DEFAULT NULL::integer, p_expected_terms jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "a90d385c155503f095c8a9f21ce7a392e74b65ce92d14f6871ef90750d1fcea6",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean, committed_total integer, committed_deposit integer)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b69ca9f0e8c4e6b7a149bb86ede47ca2f2a360865776d2148535f62adc6410c3",
+   "identity": "function:public.book_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer, p_expected_terms jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_enrollment_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_terms jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "c12ab1a7e1561e21d7a02239909cd69b59b8a720ab0f1ddefc2561d87d86abb8",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "22db527fd2081f6245c5aad35549a3d33dab761f92b0d226674c5f6ac82fffaa",
+   "identity": "function:public.book_with_package_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_enrollment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_booking_id uuid, p_payment_id uuid",
+    "body_sha256": "a068aa2abd77cb45375fbdaccaaa95a831bdc37f91efb2f18eeeb30808222e0b",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "fba15da311f30fc93114cd07cf67e69a68db7084765767fc01ecf3d66d0d7d97",
+   "identity": "function:public.finalize_booking_promo_reservation(p_booking_id uuid, p_payment_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX promo_reservations_booking_604 ON public.promo_reservations USING btree (booking_id) WHERE (booking_id IS NOT NULL)",
+    "predicate": "(booking_id IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "424254378625830d5d871cdb95d47c0a2bcbbbefdd76dd926f9e3d3736e71b17",
+   "identity": "index:public.promo_reservations.promo_reservations_booking_604",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER booking_promo_transition_604 AFTER UPDATE OF status, deposit_status ON bookings FOR EACH ROW EXECUTE FUNCTION scheduling_private_604.booking_promo_transition()",
+    "enabled": "O"
+   },
+   "after_sha256": "7a4585b966c07167baf64cb79db954028421726c60f5e4fe34c12221b2d96fce",
+   "identity": "trigger:public.bookings.booking_promo_transition_604",
+   "operation": "add"
+  }
+ ],
+ "migration": "518_scheduling_price_authority_core.sql",
+ "migration_sha256": "d3340d41b79a59b29580c7c2a1f42141213f0832be3c62a9f47865234436401d",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}
