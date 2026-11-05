@@ -3,11 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 const state = vi.hoisted(() => ({
   business: { id: 'biz', country_code: 'NG', timezone: 'Africa/Lagos', subscription_tier: 'growth', capabilities: ['payment', 'giving', 'recurring'], selectedCapabilities: ['payment', 'giving', 'recurring'], recurring_enabled: false, metadata: {}, slug: 'test' },
+  query: '',
   subscription: { status: 'active', current_period_end: '2000-01-01T00:00:00Z', amount: 100, currency: 'NGN', gateway: 'paystack' },
 }));
 vi.mock('@/components/dashboard/DashboardProvider', () => ({ useDashboard: () => ({ isImpersonating: false }), useBusiness: () => state.business, useCapabilities: () => ({ capabilities: state.business.capabilities }) }));
 vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
-vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ replace: vi.fn() }) }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(state.query), useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ from: (table: string) => {
   const result = { data: table === 'subscriptions' ? state.subscription : [], error: null, count: 0 };
   const chain: Record<string, unknown> = {};
@@ -24,6 +25,7 @@ import type { SettingsTabProps } from '@/app/dashboard/settings/tabs/types';
 beforeEach(() => {
   state.business.capabilities = ['payment', 'giving', 'recurring'];
   state.business.selectedCapabilities = [...state.business.capabilities];
+  state.query = '';
   state.subscription.status = 'active'; state.subscription.current_period_end = '2000-01-01T00:00:00Z';
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ purchases: [], accounts: [], credentials: [] }) })));
 });
@@ -67,7 +69,10 @@ it.each([
   expect(links[0].getAttribute('href')).toBe('/dashboard/settings?tab=payments&section=recurring');
 });
 it('settings opens Payments with the Recurring section expanded from that link', async () => {
-  window.history.pushState({}, '', '/dashboard/settings?tab=payments&section=recurring');
+  // In-app <Link> click: the router already has the new query, but Next has not
+  // yet updated window.location, so the address still shows the Giving page.
+  window.history.pushState({}, '', '/dashboard/giving');
+  state.query = 'tab=payments&section=recurring';
   try {
     render(<Settings />);
     expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
