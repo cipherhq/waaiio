@@ -29,7 +29,7 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: (options: any) =
         is: (k: string, v: any) => { filters.push(r => (r[k] ?? null) === v); return query; },
         not: (k: string, _op: string, v: any) => { filters.push(r => (r[k] ?? null) !== v); return query; },
         gt: (k: string, v: any) => { filters.push(r => r[k] > v); return query; },
-        gte: () => query, lt: () => query, lte: () => query, in: () => query,
+        gte: () => query, lt: () => query, lte: () => query, in: () => query, limit: () => query,
         single: () => { single = true; return query; },
         maybeSingle: () => { single = true; return query; },
         then: (resolve: any, reject: any) => {

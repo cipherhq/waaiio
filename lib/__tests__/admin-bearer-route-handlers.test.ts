@@ -12,6 +12,18 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { getPrecedingCompletedWeek } from '@/lib/payouts/period';
+
+/**
+ * Cron fee fixtures need a created_at inside the week the cron pays (M521: the cron
+ * keeps only fee rows inside each business's own range). Midweek of the Lagos week
+ * the route computes from the real clock.
+ */
+const CRON_FEE_CREATED_AT = (() => {
+  const r = getPrecedingCompletedWeek(new Date(), 'Africa/Lagos');
+  if (!r.success) throw new Error(r.error);
+  return new Date(Date.parse(r.period.queryStart) + 3.5 * 86400000).toISOString();
+})();
 
 // Mock verification limit helper — always allow in these route handler tests
 vi.mock('@/lib/payouts/verification-limit', () => ({
@@ -96,6 +108,16 @@ function makeRequest(url: string, body: Record<string, unknown>) {
     body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer test-token' },
   });
+}
+
+/**
+ * business_payouts .gte(): the M521 recent-payout read (.gte('period_end').limit())
+ * gets `recent` rows; any other .gte() (monthly payout limit) resolves empty as before.
+ */
+function payoutGteMock(recent: unknown[] = [], error: unknown = null) {
+  return vi.fn().mockImplementation((column: string) => column === 'period_end'
+    ? { limit: vi.fn().mockResolvedValue({ data: error ? null : recent, error }) }
+    : Promise.resolve({ data: [], error: null }));
 }
 
 /** Build a chainable mock for a Supabase .from(table) call */
@@ -650,7 +672,8 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
           ? Promise.resolve({ data: cfg.existingPayout ? [{ ...(cfg.existingPayout as Record<string, unknown>), currency: 'NGN' }] : [], error: cfg.existingError })
           : chain);
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        // M521: the dedup check is now the recent-payout read (.gte('period_end').limit()).
+        chain.gte = payoutGteMock([], cfg.existingError);
         chain.insert = vi.fn().mockReturnValue({
           select: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue(cfg.insertResult),
@@ -743,7 +766,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
           // Monthly limit check
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           // INSERT as held + pending flag
           chain.insert = vi.fn().mockReturnValue({
@@ -838,7 +861,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
@@ -931,7 +954,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
@@ -1022,7 +1045,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           // INSERT
           chain.insert = vi.fn().mockReturnValue({
@@ -1126,7 +1149,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           // INSERT — capture payload
           chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
@@ -1242,7 +1265,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
           // Monthly limit check
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           // INSERT — capture the payload
           chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
@@ -1313,7 +1336,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         } else if (idx === 2) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+          chain.gte = payoutGteMock();
         } else if (idx === 3) {
           // INSERT returns unique violation
           chain.insert = vi.fn().mockReturnValue({
@@ -1950,7 +1973,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         }
       } else if (table === 'platform_fees') {
         chain.limit = vi.fn().mockResolvedValue({
-          data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
+          data: [{ business_id: 'biz-ok', created_at: CRON_FEE_CREATED_AT, transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
           error: null,
         });
       } else if (table === 'payout_adjustments') {
@@ -2087,7 +2110,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         }
       } else if (table === 'platform_fees') {
         chain.limit = vi.fn().mockResolvedValue({
-          data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
+          data: [{ business_id: 'biz-adj', created_at: CRON_FEE_CREATED_AT, transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
           error: null,
         });
       } else if (table === 'payout_adjustments') {
@@ -2204,7 +2227,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         }
       } else if (table === 'platform_fees') {
         chain.limit = vi.fn().mockResolvedValue({
-          data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
+          data: [{ business_id: 'biz-pf', created_at: CRON_FEE_CREATED_AT, transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
           error: null,
         });
       } else if (table === 'payout_adjustments') {
@@ -2311,7 +2334,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         }
       } else if (table === 'platform_fees') {
         chain.limit = vi.fn().mockResolvedValue({
-          data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
+          data: [{ business_id: 'biz-0row', created_at: CRON_FEE_CREATED_AT, transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
           error: null,
         });
       } else if (table === 'payout_adjustments') {
@@ -2414,7 +2437,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         }
       } else if (table === 'platform_fees') {
         chain.limit = vi.fn().mockResolvedValue({
-          data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
+          data: [{ business_id: 'biz-noAdj', created_at: CRON_FEE_CREATED_AT, transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }],
           error: null,
         });
       } else if (table === 'payout_adjustments') {

@@ -135,6 +135,76 @@ export function createPrecedingWeekResolver(
   };
 }
 
+/** A payout row as needed to anchor the next range (M521 columns may be NULL on older rows). */
+export interface CoveredPayoutRow {
+  period_start: string;
+  period_end: string;
+  covered_from: string | null;
+  covered_to: string | null;
+}
+
+export type CoveredRangeResult =
+  | { success: true; coveredFrom: string; coveredTo: string }
+  | { success: false; error: string };
+
+/** Lower bound (DATE label) for the payout rows anchorCoveredRange needs to see. */
+export function recentPayoutRowsFrom(period: PayoutPeriod): string {
+  return shiftDateLabel(period.periodStart, -8);
+}
+
+/**
+ * Exact half-open UTC range of platform_fees.created_at a payout for `period`
+ * may count, given the business's recent payout rows (period_end on or after
+ * recentPayoutRowsFrom(period)). Owner decision 2026-11-05 (#796, Option A):
+ *   - a week that already has a payout row (another currency) reuses that range;
+ *   - otherwise, when the immediately preceding week recorded where it ended
+ *     (covered_to), the new range starts exactly there, so a timezone change
+ *     can neither double-count nor skip fees between consecutive weeks;
+ *   - otherwise it starts at local Monday 00:00 (period.queryStart).
+ * It always ends at the next local Monday 00:00 (period.queryEnd). Fails
+ * closed when the range would be empty or overlap any other recorded payout.
+ */
+export function anchorCoveredRange(period: PayoutPeriod, rows: CoveredPayoutRow[]): CoveredRangeResult {
+  const recorded = rows.filter(r => r.covered_from && r.covered_to);
+  const sameWeek = recorded.filter(r => r.period_start === period.periodStart && r.period_end === period.periodEnd);
+  const others = recorded.filter(r => !(r.period_start === period.periodStart && r.period_end === period.periodEnd));
+
+  let fromMs: number;
+  let toMs: number;
+  if (sameWeek.length > 0) {
+    fromMs = Date.parse(sameWeek[0].covered_from!);
+    toMs = Date.parse(sameWeek[0].covered_to!);
+    if (sameWeek.some(r => Date.parse(r.covered_from!) !== fromMs || Date.parse(r.covered_to!) !== toMs)) {
+      return { success: false, error: `Payout rows for ${period.periodStart}..${period.periodEnd} record different ranges` };
+    }
+  } else {
+    const previousWeekEnd = shiftDateLabel(period.periodStart, -1);
+    const previous = others.filter(r => r.period_end === previousWeekEnd);
+    fromMs = previous.length > 0
+      ? Math.max(...previous.map(r => Date.parse(r.covered_to!)))
+      : Date.parse(period.queryStart);
+    toMs = Date.parse(period.queryEnd);
+  }
+
+  if (!(Number.isFinite(fromMs) && Number.isFinite(toMs) && fromMs < toMs)) {
+    return { success: false, error: `Empty or invalid payout range for ${period.periodStart}..${period.periodEnd}` };
+  }
+  const overlap = others.find(r => Date.parse(r.covered_from!) < toMs && Date.parse(r.covered_to!) > fromMs);
+  if (overlap) {
+    return {
+      success: false,
+      error: `Payout range for ${period.periodStart}..${period.periodEnd} overlaps the payout for ${overlap.period_start}..${overlap.period_end}`,
+    };
+  }
+  return { success: true, coveredFrom: new Date(fromMs).toISOString(), coveredTo: new Date(toMs).toISOString() };
+}
+
+/** Shift a 'YYYY-MM-DD' label by whole days (pure calendar arithmetic). */
+function shiftDateLabel(label: string, days: number): string {
+  const [y, m, d] = label.split('-').map(Number);
+  return formatDate(addDays(y, m, d, days));
+}
+
 // ── Internal helpers ──
 
 /** Day of week: 0=Sunday, 1=Monday, ..., 6=Saturday (Tomohiko Sakamoto) */

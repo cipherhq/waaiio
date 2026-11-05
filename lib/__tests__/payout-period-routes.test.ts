@@ -10,6 +10,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// The first test in each block imports a payout route cold (~3 s locally); under
+// parallel CI load that can pass the 5 s default and fail at random (review r2-796 P2-3).
+vi.setConfig({ testTimeout: 30_000 });
 import { NextRequest } from 'next/server';
 
 // ── Fixed clock ──
@@ -24,6 +28,8 @@ const PAGO_START = '2026-10-19';
 const PAGO_END = '2026-10-25';
 const PAGO_Q_START = '2026-10-19T11:00:00.000Z'; // Mon 00:00 SST = Mon 11:00 UTC
 const PAGO_Q_END = '2026-10-26T11:00:00.000Z';
+const LAGOS_RECENT_FROM = '2026-10-18'; // LAGOS_START - 8 days (M521 recent-payout read)
+const PAGO_RECENT_FROM = '2026-10-11';  // PAGO_START - 8 days
 
 // ── Shared mock infrastructure ──
 
@@ -114,20 +120,16 @@ describe('payouts/generate: merchant-local period', () => {
         c.gte = vi.fn().mockImplementation((_: string, v: string) => { velGteArg = v; return c; });
         c.lt = vi.fn().mockImplementation((_: string, v: string) => { velLtArg = v; return Promise.resolve({ data: [], error: null }); });
       } else if (table === 'business_payouts') {
-        // Dedup: .select().eq(biz).eq(start).eq(end) → last eq resolves
-        let eqCount = 0;
-        c.eq = vi.fn().mockImplementation(() => {
-          eqCount++;
-          if (eqCount >= 3) return Promise.resolve({ data: [], error: null });
-          return c;
-        });
+        // Dedup + M521 anchor: .select().eq(biz).gte('period_end').limit() → no earlier payouts
         c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         c.is = vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) });
         c.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           capturedInsert = payload;
           return { select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'p1' }, error: null }) }) };
         });
-        c.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        c.gte = vi.fn().mockImplementation((column: string) => column === 'period_end'
+          ? { limit: vi.fn().mockResolvedValue({ data: [], error: null }) }
+          : Promise.resolve({ data: [], error: null }));
       } else if (table === 'payout_adjustments') {
         c.is = vi.fn().mockResolvedValue({ data: [], error: null });
       } else if (table === 'payout_accounts') {
@@ -159,6 +161,75 @@ describe('payouts/generate: merchant-local period', () => {
     expect(capturedInsert!.business_id).toBe('b1');
     expect(capturedInsert!.period_start).toBe(LAGOS_START);
     expect(capturedInsert!.period_end).toBe(LAGOS_END);
+    // M521: the payout records the exact range it counted
+    expect(capturedInsert!.covered_from).toBe(LAGOS_Q_START);
+    expect(capturedInsert!.covered_to).toBe(LAGOS_Q_END);
+  });
+
+  /** Generate-route mock whose recent-payout read returns `recent`; captures fee bounds and inserts. */
+  function mockGenerateWithRecent(recent: unknown[]) {
+    const seen = { feesGte: null as string | null, feesLt: null as string | null, velGte: null as string | null, inserts: [] as Record<string, unknown>[] };
+    mockFromImpl = (table: string) => {
+      const c = chainMock();
+      if (table === 'businesses') {
+        c.eq = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: [{ id: 'b1', created_at: '2025-01-01', verification_level: 'basic', payout_limit_monthly: 500000, country_code: 'NG', timezone: 'Africa/Lagos' }], error: null }) });
+      } else if (table === 'platform_fees') {
+        c.gte = vi.fn().mockImplementation((_: string, v: string) => { seen.feesGte = v; return c; });
+        c.lt = vi.fn().mockImplementation((_: string, v: string) => { seen.feesLt = v; return Promise.resolve({ data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } }], error: null }); });
+      } else if (table === 'payments') {
+        c.gte = vi.fn().mockImplementation((_: string, v: string) => { seen.velGte = v; return c; });
+        c.lt = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'business_payouts') {
+        c.is = vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) });
+        c.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          seen.inserts.push(payload);
+          return { select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'p1' }, error: null }) }) };
+        });
+        c.gte = vi.fn().mockImplementation((column: string) => column === 'period_end'
+          ? { limit: vi.fn().mockResolvedValue({ data: recent, error: null }) }
+          : Promise.resolve({ data: [], error: null }));
+      } else if (table === 'payout_adjustments') {
+        c.is = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_accounts') {
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa-1' }, error: null });
+      }
+      return c;
+    };
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    return seen;
+  }
+
+  it('M521: after a timezone change, counts from where last week\'s payout ended (no double count)', async () => {
+    // Last week (2026-10-19..25) was paid while the business was on Pacific/Pago_Pago:
+    // it counted up to Mon 2026-10-26 11:00 UTC, 12h after this Lagos week starts.
+    const seen = mockGenerateWithRecent([
+      { id: 'prev', currency: 'NGN', period_start: '2026-10-19', period_end: '2026-10-25', covered_from: '2026-10-19T11:00:00.000Z', covered_to: '2026-10-26T11:00:00.000Z' },
+    ]);
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(makePostRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.created).toBe(1);
+    expect(seen.feesGte).toBe('2026-10-26T11:00:00.000Z');
+    expect(seen.feesLt).toBe(LAGOS_Q_END);
+    expect(seen.velGte).toBe('2026-10-26T11:00:00.000Z');
+    expect(seen.inserts).toHaveLength(1);
+    expect(seen.inserts[0].covered_from).toBe('2026-10-26T11:00:00.000Z');
+    expect(seen.inserts[0].covered_to).toBe(LAGOS_Q_END);
+  });
+
+  it('M521: a range overlapping another recorded payout fails closed (HTTP 207, no insert, no fee read)', async () => {
+    const seen = mockGenerateWithRecent([
+      { id: 'later', currency: 'NGN', period_start: '2026-11-02', period_end: '2026-11-08', covered_from: '2026-11-01T10:00:00.000Z', covered_to: '2026-11-08T10:00:00.000Z' },
+    ]);
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(makePostRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }));
+    const body = await res.json();
+    expect(res.status).toBe(207);
+    expect(body.failed).toBe(1);
+    expect(body.created).toBe(0);
+    expect(seen.inserts).toHaveLength(0);
+    expect(seen.feesGte).toBeNull();
   });
 });
 
@@ -219,7 +290,7 @@ describe('cron/auto-payout: merchant-local period', () => {
 
   it('mixed timezones: exact two periods, no single period field; per-group bounds; held once; dedup', async () => {
     // Track per-group query shapes
-    const dedupCalls: { bizIds: string[]; periodStart: string; periodEnd: string }[] = [];
+    const dedupCalls: { bizIds: string[]; recentFrom: string }[] = [];
     const feeCalls: { bizIds: string[]; gteArg: string; ltArg: string }[] = [];
     const insertPayloads: Record<string, unknown>[] = [];
     let heldQueryCount = 0;
@@ -248,21 +319,19 @@ describe('cron/auto-payout: merchant-local period', () => {
           // Legacy payouts (period-independent)
           c.limit = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx <= 2) {
-          // Per-group dedup: track .eq('period_start',...).eq('period_end',...)
+          // Per-group dedup + M521 anchor read: .in(ids).gte('period_end', week start - 8 days).limit()
           let capturedBizIds: string[] = [];
-          let capturedPeriodStart = '';
-          let capturedPeriodEnd = '';
+          let capturedRecentFrom = '';
           c.in = vi.fn().mockImplementation((_col: string, ids: string[]) => { capturedBizIds = ids; return c; });
-          c.eq = vi.fn().mockImplementation((_col: string, val: string) => {
-            if (_col === 'period_start') capturedPeriodStart = val;
-            if (_col === 'period_end') capturedPeriodEnd = val;
+          c.gte = vi.fn().mockImplementation((_col: string, val: string) => {
+            if (_col === 'period_end') capturedRecentFrom = val;
             return c;
           });
           c.limit = vi.fn().mockImplementation(() => {
-            dedupCalls.push({ bizIds: capturedBizIds, periodStart: capturedPeriodStart, periodEnd: capturedPeriodEnd });
-            // Seed: lagos-biz already has NGN payout for its period
-            const seeded = capturedBizIds.includes('lagos-biz') && capturedPeriodStart === LAGOS_START
-              ? [{ business_id: 'lagos-biz', currency: 'NGN' }] : [];
+            dedupCalls.push({ bizIds: capturedBizIds, recentFrom: capturedRecentFrom });
+            // Seed: lagos-biz already has an NGN payout (with its recorded range) for its period
+            const seeded = capturedBizIds.includes('lagos-biz') && capturedRecentFrom === LAGOS_RECENT_FROM
+              ? [{ business_id: 'lagos-biz', currency: 'NGN', period_start: LAGOS_START, period_end: LAGOS_END, covered_from: LAGOS_Q_START, covered_to: LAGOS_Q_END }] : [];
             return Promise.resolve({ data: seeded, error: null });
           });
         } else if (idx <= 4) {
@@ -291,13 +360,15 @@ describe('cron/auto-payout: merchant-local period', () => {
           const isPago = capturedBizIds.includes('pago-biz') && !capturedBizIds.includes('lagos-biz');
           if (isLagos) {
             return Promise.resolve({ data: [
-              { business_id: 'lagos-biz', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } },
-              { business_id: 'lagos-biz', transaction_amount: 100, fee_total: 5, gateway_fee: 1, waived: false, is_direct_transfer: false, payments: { currency: 'USD' } },
+              { business_id: 'lagos-biz', created_at: '2026-10-29T12:00:00.000Z', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } },
+              { business_id: 'lagos-biz', created_at: '2026-10-29T12:00:00.000Z', transaction_amount: 100, fee_total: 5, gateway_fee: 1, waived: false, is_direct_transfer: false, payments: { currency: 'USD' } },
+              // At the exclusive end of the range: must not be counted (M521 per-business filter)
+              { business_id: 'lagos-biz', created_at: LAGOS_Q_END, transaction_amount: 999999, fee_total: 5, gateway_fee: 1, waived: false, is_direct_transfer: false, payments: { currency: 'USD' } },
             ], error: null });
           }
           if (isPago) {
             return Promise.resolve({ data: [
-              { business_id: 'pago-biz', transaction_amount: 5000, fee_total: 250, gateway_fee: 50, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } },
+              { business_id: 'pago-biz', created_at: '2026-10-22T12:00:00.000Z', transaction_amount: 5000, fee_total: 250, gateway_fee: 50, waived: false, is_direct_transfer: false, payments: { currency: 'NGN' } },
             ], error: null });
           }
           return Promise.resolve({ data: [], error: null });
@@ -328,14 +399,13 @@ describe('cron/auto-payout: merchant-local period', () => {
 
     // ── Per-group dedup used correct DATE labels ──
     expect(dedupCalls.length).toBe(2);
-    const lagosDedup = dedupCalls.find(d => d.periodStart === LAGOS_START);
-    const pagoDedup = dedupCalls.find(d => d.periodStart === PAGO_START);
+    // (one read per group covers this week and the previous week; labels are matched in code)
+    const lagosDedup = dedupCalls.find(d => d.recentFrom === LAGOS_RECENT_FROM);
+    const pagoDedup = dedupCalls.find(d => d.recentFrom === PAGO_RECENT_FROM);
     expect(lagosDedup).toBeDefined();
-    expect(lagosDedup!.periodEnd).toBe(LAGOS_END);
-    expect(lagosDedup!.bizIds).toContain('lagos-biz');
+    expect(lagosDedup!.bizIds).toEqual(['lagos-biz']);
     expect(pagoDedup).toBeDefined();
-    expect(pagoDedup!.periodEnd).toBe(PAGO_END);
-    expect(pagoDedup!.bizIds).toContain('pago-biz');
+    expect(pagoDedup!.bizIds).toEqual(['pago-biz']);
 
     // ── Per-group fee queries used correct UTC bounds ──
     expect(feeCalls.length).toBe(2);
@@ -355,10 +425,16 @@ describe('cron/auto-payout: merchant-local period', () => {
     expect(lagosInserts[0].currency).toBe('USD');
     expect(lagosInserts[0].period_start).toBe(LAGOS_START);
     expect(lagosInserts[0].period_end).toBe(LAGOS_END);
+    // M521: USD reuses the week's recorded range; the fee at the exclusive end is not counted
+    expect(lagosInserts[0].covered_from).toBe(LAGOS_Q_START);
+    expect(lagosInserts[0].covered_to).toBe(LAGOS_Q_END);
+    expect(Number(lagosInserts[0].gross_amount)).toBeLessThan(999999);
     expect(pagoInserts.length).toBe(1);
     expect(pagoInserts[0].currency).toBe('NGN');
     expect(pagoInserts[0].period_start).toBe(PAGO_START);
     expect(pagoInserts[0].period_end).toBe(PAGO_END);
+    expect(pagoInserts[0].covered_from).toBe(PAGO_Q_START);
+    expect(pagoInserts[0].covered_to).toBe(PAGO_Q_END);
 
     // ── Held-release queried exactly once across all groups, zero release writes ──
     expect(heldQueryCount).toBe(1);
@@ -371,6 +447,78 @@ describe('cron/auto-payout: merchant-local period', () => {
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));
     expect(res.status).toBe(503);
+  });
+
+  it('M521: a business whose range overlaps a recorded payout is excluded from fees and release; paired control released', async () => {
+    let heldPayoutsQueried = false;
+    let heldAccountLookupReached = false;
+    const releaseUpdatedIds: string[] = [];
+    const feeBizIds: string[][] = [];
+    let bpCallIdx = 0;
+    let bizCallIdx = 0;
+
+    mockFromImpl = (table: string) => {
+      const c = chainMock();
+      if (table === 'businesses') {
+        if (bizCallIdx++ === 0) {
+          c.eq = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'ok-biz', name: 'OK', created_at: '2025-01-01', country_code: 'NG', verification_level: 'basic', timezone: 'Africa/Lagos' },
+              { id: 'conflict-biz', name: 'Conflict', created_at: '2025-01-01', country_code: 'NG', verification_level: 'basic', timezone: 'Africa/Lagos' },
+            ], error: null,
+          }) });
+        } else {
+          c.limit = vi.fn().mockResolvedValue({ data: [
+            { id: 'ok-biz', created_at: '2025-01-01', verification_level: 'basic' },
+            { id: 'conflict-biz', created_at: '2025-01-01', verification_level: 'basic' },
+          ], error: null });
+        }
+      } else if (table === 'business_payouts') {
+        const idx = bpCallIdx++;
+        if (idx === 0) {
+          c.limit = vi.fn().mockResolvedValue({ data: [], error: null }); // legacy preflight
+        } else if (idx === 1) {
+          // Per-group dedup + anchor read: conflict-biz has a later-labelled payout whose
+          // recorded range starts inside this Lagos week.
+          c.limit = vi.fn().mockResolvedValue({ data: [
+            { business_id: 'conflict-biz', currency: 'NGN', period_start: '2026-11-02', period_end: '2026-11-08', covered_from: '2026-11-01T10:00:00.000Z', covered_to: '2026-11-08T10:00:00.000Z' },
+          ], error: null });
+        } else if (!heldPayoutsQueried) {
+          heldPayoutsQueried = true;
+          c.eq = vi.fn().mockResolvedValue({ data: [
+            { id: 'held-ok', business_id: 'ok-biz', currency: 'NGN', flags: [] },
+            { id: 'held-conflict', business_id: 'conflict-biz', currency: 'NGN', flags: [] },
+          ], error: null });
+        } else {
+          c.update = vi.fn().mockImplementation(() => ({
+            eq: vi.fn().mockImplementation((_col: string, val: string) => { releaseUpdatedIds.push(val); return Promise.resolve({ error: null }); }),
+          }));
+        }
+      } else if (table === 'platform_fees') {
+        c.in = vi.fn().mockImplementation((_col: string, ids: string[]) => { feeBizIds.push(ids); return c; });
+        c.limit = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_adjustments') {
+        c.limit = vi.fn().mockResolvedValue({ data: [], error: null });
+      } else if (table === 'payout_accounts') {
+        c.limit = vi.fn().mockResolvedValue(heldAccountLookupReached
+          ? { data: [{ business_id: 'ok-biz' }, { business_id: 'conflict-biz' }], error: null }
+          : { data: [], error: null });
+        heldAccountLookupReached = true;
+      }
+      return c;
+    };
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+
+    cronModule = await import('@/app/api/cron/auto-payout/route');
+    const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.generated).toBe(0);
+    // Fee read covers only the business with a safe range
+    expect(feeBizIds).toEqual([['ok-biz']]);
+    // Conflict logged; held payout of the conflicted business is not released, the control is
+    expect(mockLoggerError).toHaveBeenCalledWith(expect.stringContaining('Payout range conflict'), expect.objectContaining({ business_id: 'conflict-biz' }));
+    expect(releaseUpdatedIds).toEqual(['held-ok']);
   });
 
   it('held-release: invalid-tz blocked, valid-tz released; paired positive/negative', async () => {

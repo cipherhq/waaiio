@@ -11,7 +11,7 @@ import { logAdminAudit } from '@/lib/admin-audit';
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
-import { createPrecedingWeekResolver } from '@/lib/payouts/period';
+import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom } from '@/lib/payouts/period';
 
 interface Flag {
   type: string;
@@ -86,23 +86,25 @@ export async function POST(request: NextRequest) {
         failed++;
         continue;
       }
-      const { periodStart: periodStartStr, periodEnd: periodEndStr, queryStart, queryEnd } = periodResult.period;
+      const { periodStart: periodStartStr, periodEnd: periodEndStr } = periodResult.period;
       processedPeriods.add(`${periodStartStr}:${periodEndStr}`);
 
-      // Check if payout already exists for this period
-      const { data: existing, error: existingError } = await supabase
+      // One read gives this week's payout rows (dedup) and the previous week's
+      // covered range (M521 anchor, used below).
+      const { data: recentPayouts, error: existingError } = await supabase
         .from('business_payouts')
-        .select('id, currency')
+        .select('id, currency, period_start, period_end, covered_from, covered_to')
         .eq('business_id', biz.id)
-        .eq('period_start', periodStartStr)
-        .eq('period_end', periodEndStr);
+        .gte('period_end', recentPayoutRowsFrom(periodResult.period))
+        .limit(1000);
 
       // Fail closed: if we can't check for duplicates, count as failed
-      if (existingError) {
-        logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError.message });
+      if (existingError || (recentPayouts || []).length >= 1000) {
+        logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError?.message });
         failed++;
         continue;
       }
+      const existing = (recentPayouts || []).filter(row => row.period_start === periodStartStr && row.period_end === periodEndStr);
       // Never generate for a merchant with unresolved historical currency.
       const { data: legacyPayouts, error: legacyPayoutError } = await supabase
         .from('business_payouts').select('id')
@@ -113,17 +115,27 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      // M521 (#796 Option A): count exactly from where the previous week's payout
+      // ended, so a timezone change cannot double-count or skip fees. Fail closed.
+      const range = anchorCoveredRange(periodResult.period, recentPayouts || []);
+      if (!range.success) {
+        logger.error('[PAYOUT] Payout range conflict — business skipped', { business_id: biz.id, error: range.error });
+        failed++;
+        continue;
+      }
+      const { coveredFrom, coveredTo } = range;
+
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
       // M466: Join platform_fees → payments to get authoritative currency
-      // Half-open [queryStart, queryEnd) uses merchant-local week boundaries converted to UTC
+      // Half-open [coveredFrom, coveredTo): merchant-local week, anchored to the previous payout (M521)
       const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
-        .gte('created_at', queryStart)
-        .lt('created_at', queryEnd);
+        .gte('created_at', coveredFrom)
+        .lt('created_at', coveredTo);
 
       // Flatten the joined currency into the fee row for payable-fees.ts
       const feesWithCurrency = (fees || []).map(f => ({
@@ -200,8 +212,8 @@ export async function POST(request: NextRequest) {
         .select('created_at')
         .eq('business_id', biz.id)
         .eq('status', 'success')
-        .gte('created_at', queryStart)
-        .lt('created_at', queryEnd);
+        .gte('created_at', coveredFrom)
+        .lt('created_at', coveredTo);
 
       if (paymentsError) {
         logger.error('[PAYOUT] Payments query failed for business', { business_id: biz.id, error: paymentsError.message });
@@ -332,6 +344,8 @@ export async function POST(request: NextRequest) {
           payout_account_id: payoutAccount?.id || null,
           period_start: periodStartStr,
           period_end: periodEndStr,
+          covered_from: coveredFrom,
+          covered_to: coveredTo,
           gross_amount: gross,
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
@@ -441,6 +455,8 @@ export async function POST(request: NextRequest) {
           payout_account_id: payoutAccount?.id || null,
           period_start: periodStartStr,
           period_end: periodEndStr,
+          covered_from: coveredFrom,
+          covered_to: coveredTo,
           gross_amount: gross,
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
@@ -471,7 +487,9 @@ export async function POST(request: NextRequest) {
     const periodsArray = [...processedPeriods];
     const periodMeta = periodsArray.length === 1
       ? { period: { start: periodsArray[0].split(':')[0], end: periodsArray[0].split(':')[1] } }
-      : { periods: periodsArray.map(p => ({ start: p.split(':')[0], end: p.split(':')[1] })) };
+      : periodsArray.length > 1
+        ? { periods: periodsArray.map(p => ({ start: p.split(':')[0], end: p.split(':')[1] })) }
+        : {};
 
     // Audit log — uses service client (INSERT revoked from authenticated)
     await logAdminAudit({

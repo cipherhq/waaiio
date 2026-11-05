@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { getPrecedingCompletedWeek, createPrecedingWeekResolver } from '@/lib/payouts/period';
+import { getPrecedingCompletedWeek, createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom, type CoveredPayoutRow } from '@/lib/payouts/period';
 
 describe('getPrecedingCompletedWeek', () => {
   // ── Basic Monday invocation ──
@@ -297,5 +297,92 @@ describe('createPrecedingWeekResolver', () => {
     expect(periodFor('Not/AZone').success).toBe(false);
     expect(periodFor('').success).toBe(false);
     expect(periodFor(undefined as unknown as string).success).toBe(false);
+  });
+});
+
+// ── M521 (#796 Option A): each payout starts where the previous week's payout ended ──
+describe('anchorCoveredRange', () => {
+  const week = (iso: string, tz: string) => {
+    const r = getPrecedingCompletedWeek(new Date(iso), tz);
+    if (!r.success) throw new Error(r.error);
+    return r.period;
+  };
+  // Monday 2026-11-09 12:00 UTC run → Lagos week 2026-11-02..08
+  const lagos = week('2026-11-09T12:00:00Z', 'Africa/Lagos');
+  const row = (p: { periodStart: string; periodEnd: string }, from: string | null, to: string | null): CoveredPayoutRow =>
+    ({ period_start: p.periodStart, period_end: p.periodEnd, covered_from: from, covered_to: to });
+  const prevLabels = { periodStart: '2026-10-26', periodEnd: '2026-11-01' };
+
+  it('reads rows from 8 days before the week start', () => {
+    expect(recentPayoutRowsFrom(lagos)).toBe('2026-10-25');
+  });
+
+  it('with no earlier payouts, covers the local week exactly', () => {
+    expect(anchorCoveredRange(lagos, [])).toEqual({ success: true, coveredFrom: lagos.queryStart, coveredTo: lagos.queryEnd });
+  });
+
+  it('ignores rows written before M521 (no recorded range)', () => {
+    expect(anchorCoveredRange(lagos, [row(prevLabels, null, null)])).toEqual({ success: true, coveredFrom: lagos.queryStart, coveredTo: lagos.queryEnd });
+  });
+
+  it('timezone unchanged: starts exactly where last week ended, which is local Monday 00:00', () => {
+    const r = anchorCoveredRange(lagos, [row(prevLabels, '2026-10-25T23:00:00.000Z', lagos.queryStart)]);
+    expect(r).toEqual({ success: true, coveredFrom: lagos.queryStart, coveredTo: lagos.queryEnd });
+  });
+
+  it('timezone moved east since last payout: starts at last week\'s end, so nothing is counted twice', () => {
+    // Last week was counted in Pacific/Pago_Pago (UTC-11): it ended Mon 2026-11-02 11:00 UTC,
+    // 12 hours after the Lagos week start.
+    const r = anchorCoveredRange(lagos, [row(prevLabels, '2026-10-26T11:00:00.000Z', '2026-11-02T11:00:00.000Z')]);
+    expect(r).toEqual({ success: true, coveredFrom: '2026-11-02T11:00:00.000Z', coveredTo: lagos.queryEnd });
+  });
+
+  it('timezone moved west since last payout: starts at last week\'s end, so nothing is skipped', () => {
+    // Last week was counted in Pacific/Kiritimati (UTC+14): it ended Sun 2026-11-01 10:00 UTC.
+    const r = anchorCoveredRange(lagos, [row(prevLabels, '2026-10-25T10:00:00.000Z', '2026-11-01T10:00:00.000Z')]);
+    expect(r).toEqual({ success: true, coveredFrom: '2026-11-01T10:00:00.000Z', coveredTo: lagos.queryEnd });
+  });
+
+  it('a second currency in the same week reuses that week\'s recorded range', () => {
+    const r = anchorCoveredRange(lagos, [row(lagos, '2026-11-01T10:00:00.000Z', '2026-11-08T23:00:00.000Z')]);
+    expect(r).toEqual({ success: true, coveredFrom: '2026-11-01T10:00:00.000Z', coveredTo: '2026-11-08T23:00:00.000Z' });
+  });
+
+  it('fails closed when one week has payout rows with different ranges', () => {
+    const r = anchorCoveredRange(lagos, [
+      row(lagos, lagos.queryStart, lagos.queryEnd),
+      row(lagos, '2026-11-01T10:00:00.000Z', lagos.queryEnd),
+    ]);
+    expect(r.success).toBe(false);
+  });
+
+  it('fails closed when the range would overlap another recorded payout', () => {
+    // A payout for the *next* week labels already recorded a range starting inside this week.
+    const r = anchorCoveredRange(lagos, [row({ periodStart: '2026-11-09', periodEnd: '2026-11-15' }, '2026-11-08T10:00:00.000Z', '2026-11-15T10:00:00.000Z')]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toContain('overlaps');
+  });
+
+  it('fails closed when the previous payout already reaches past this week\'s end', () => {
+    const r = anchorCoveredRange(lagos, [row(prevLabels, '2026-10-26T00:00:00.000Z', '2026-11-09T00:00:00.000Z')]);
+    expect(r.success).toBe(false);
+  });
+
+  it('a merchant switching between far-west and far-east timezones every week is never counted twice or skipped', () => {
+    // The reviewers' scenario: Etc/GMT+12 one week, Pacific/Kiritimati the next, repeatedly.
+    const zones = ['Etc/GMT+12', 'Pacific/Kiritimati', 'Etc/GMT+12', 'Pacific/Kiritimati', 'Africa/Lagos', 'Pacific/Pago_Pago'];
+    const rows: CoveredPayoutRow[] = [];
+    for (let i = 0; i < zones.length; i++) {
+      const p = week(new Date(Date.parse('2026-11-09T12:00:00Z') + i * 7 * 86400000).toISOString(), zones[i]);
+      const r = anchorCoveredRange(p, rows.filter(x => x.period_end >= recentPayoutRowsFrom(p)));
+      expect(r.success).toBe(true);
+      if (!r.success) return;
+      rows.push(row(p, r.coveredFrom, r.coveredTo));
+    }
+    // Every range starts exactly where the previous one ended: no overlap, no gap.
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].covered_from).toBe(rows[i - 1].covered_to);
+      expect(Date.parse(rows[i].covered_from!)).toBeLessThan(Date.parse(rows[i].covered_to!));
+    }
   });
 });
