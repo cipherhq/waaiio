@@ -68,7 +68,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'File is not a valid image. Upload rejected.' }, { status: 400 });
   }
 
-  const path = `logos/${businessId}/${Date.now()}.${cleanExt}`;
+  // Path must start with business_id — storage RLS checks (foldername(name))[1] = business_id
+  const path = `${businessId}/logos/${Date.now()}.${cleanExt}`;
 
   const { error: uploadError } = await supabase.storage
     .from('business-documents')

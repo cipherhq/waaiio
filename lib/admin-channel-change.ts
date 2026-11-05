@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePlatformAdmin, type PlatformAdmin } from '@/lib/admin-auth';
 import { hashOperationParams, stableStringify } from '@/lib/admin-step-up';
@@ -45,6 +46,7 @@ export function channelChangeFailure(request: NextRequest, error: unknown) {
 }
 
 export async function channelChangeDescriptor(admin: PlatformAdmin, value: unknown) {
+  if (!channelOperationsEnabled()) throw new ChannelChangeError(CHANNEL_OPERATIONS_UNAVAILABLE.message, 503);
   const input = object(value);
   const action = input.action as ChannelChangeAction;
   if (!['create', 'approve', 'refresh', 'execute'].includes(action)) throw new ChannelChangeError('Invalid action', 400);
@@ -77,6 +79,7 @@ export async function mutateChannelChange(request: NextRequest, action: ChannelC
   if (!admin) return channelChangeResponse(request, { error: 'Forbidden' }, 403);
   try {
     const body = object(await request.json());
+    if (!channelOperationsEnabled()) throw new ChannelChangeError(CHANNEL_OPERATIONS_UNAVAILABLE.message, 503);
     if (typeof body.stepUpId !== 'string' || !body.stepUpId) throw new ChannelChangeError('Step-up MFA required', 403);
     if (typeof body.previewHash !== 'string') throw new ChannelChangeError('Review a fresh preview first', 400);
     const bound = await channelChangeDescriptor(admin, {

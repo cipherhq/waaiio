@@ -27,6 +27,19 @@ export function isValidUUID(id: string): boolean {
   return UUID_RE.test(id);
 }
 
+// Short links (/m/CITADEL): a business's bot code, the same code customers
+// already type in WhatsApp. Bot codes are unique, upper-case A-Z/0-9/hyphen,
+// at most 30 characters (see generateBotCode / onboarding register).
+const BOT_CODE_RE = /^(?=.*[A-Za-z0-9])[A-Za-z0-9-]{1,30}$/;
+
+/** A merchant link key is either the permanent business UUID or its bot code. */
+export function parseMerchantKey(key: string): { column: 'id' | 'bot_code'; value: string } | null {
+  if (!key) return null;
+  if (UUID_RE.test(key)) return { column: 'id', value: key };
+  if (BOT_CODE_RE.test(key)) return { column: 'bot_code', value: key.toUpperCase() };
+  return null;
+}
+
 /** Return 429 with no-store if rate-limited, else null. */
 export async function rateLimit(request: NextRequest): Promise<NextResponse | null> {
   const key = getRateLimitKey(request, 'merchant-link');
@@ -70,13 +83,15 @@ export interface ResolvedChannel {
 
 /**
  * Resolve business + channel or return an error NextResponse.
- * Checks: UUID format, business exists & active, messaging not suspended,
- * explicit channel assignment (no arbitrary fallback), channel readiness.
+ * Checks: key format (UUID or bot code), business exists & active, messaging
+ * not suspended, explicit channel assignment (no arbitrary fallback), channel
+ * readiness. Callers must use result.business.id, never the raw key.
  */
 export async function resolveBusinessChannel(
-  businessId: string,
+  businessKey: string,
 ): Promise<ResolvedChannel | NextResponse> {
-  if (!businessId || !isValidUUID(businessId)) {
+  const key = parseMerchantKey(businessKey);
+  if (!key) {
     return errorResponse(400, 'Invalid Link', 'This link is not valid.');
   }
 
@@ -86,7 +101,7 @@ export async function resolveBusinessChannel(
   const { data: biz, error: bizErr } = await service
     .from('businesses')
     .select('id, country_code, status, messaging_suspended, bot_code, assigned_channel_id, whatsapp_channel_id')
-    .eq('id', businessId)
+    .eq(key.column, key.value)
     .maybeSingle();
 
   if (bizErr) return errorResponse(500, 'Service Error', 'Unable to load business information. Please try again later.');

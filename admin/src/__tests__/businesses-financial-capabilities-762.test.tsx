@@ -57,6 +57,13 @@ vi.mock('@/lib/supabase', () => {
 });
 vi.mock('@/components/AdminLayout', () => ({ useAdminSession: () => ({ role: f.role }) }));
 vi.mock('@/lib/auditLog', () => ({ logAudit: vi.fn() }));
+// Keep the independent owner-email read out of the capability request queue.
+vi.mock('@/lib/adminApi', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/adminApi')>(),
+  adminApiGet: async (path: string) => new Response(JSON.stringify({
+    businessId: path.split('/')[4], ownerEmail: null,
+  }), { status: 200 }),
+}));
 vi.mock('@/lib/verification', () => ({ getCurrencyCode: () => 'NGN' }));
 vi.mock('@/lib/formatters', () => ({
   fmtCurrency: (value: number) => 'M ' + value,

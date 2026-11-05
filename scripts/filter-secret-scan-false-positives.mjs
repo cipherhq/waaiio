@@ -32,7 +32,7 @@ const secretRegex = new RegExp(combinedPattern, 'i');
 const exemptKeyRegex = /^\+\s*"(checksum|local_checksum|evidence_digest|production_evidence_digest|repair_evidence_digest|migration_checksum|expected_object_digest|previous_evidence_sha256|original_evidence_sha256|migration_file_sha256|migration_evidence_digest|superseded_temporary_evidence_sha256|def_hash|def_sha256|using_hash|using_sha256|body_hash|batch_\d+_evidence_sha256|\d{3})"\s*:\s*"[0-9a-f]{64}"\s*,?\s*$/;
 const migrationJsonPath = /^docs\/migrations\/(evidence\/)?[^/]+\.json$/;
 // Files that legitimately contain SHA-256 values in prose text (evidence summaries, runbooks, registries, validators, changelogs, engineering status)
-const shaProseFileRegex = /^(docs\/(migrations\/(evidence\/)?[^/]+\.(json|md)|MIGRATION_REGISTRY\.md|ENGINEERING_STATUS\.md|engineering-status\.json|migrations\/101-246-repair-runbook\.md)|scripts\/validate-migration-repair-allowlist\.mjs|CHANGELOG\.md)$/;
+const shaProseFileRegex = /^(docs\/(migrations\/(evidence\/)?[^/]+\.(json|md)|MIGRATION_REGISTRY\.md|ENGINEERING_STATUS\.md|engineering-status\.json|migrations\/101-246-repair-runbook\.md)|scripts\/validate-migration-repair-allowlist\.mjs|CHANGELOG\.md|changelog\/unreleased\/[^/]+\.md)$/;
 // A line containing a 64-char hex string that looks like a SHA-256 hash (not a key=value secret pattern)
 const sha256InlineRegex = /\b[0-9a-f]{64}\b/;
 

@@ -228,7 +228,7 @@ export default function MessagingCredits() {
           <SummaryCard label="Total Purchases" value={purchaseTotalCount} icon={CreditCard} />
           <SummaryCard label="Pending (this page)" value={pageStatusCounts.pending} icon={Clock} color={pageStatusCounts.pending > 0 ? 'yellow' : 'blue'} />
           <SummaryCard label="Needs Review (this page)" value={pageStatusCounts.review} icon={AlertTriangle} color={pageStatusCounts.review > 0 ? 'red' : 'blue'} />
-          <SummaryCard label="Completed (this page)" value={pageStatusCounts.completed} icon={CheckCircle} color="green" />
+          <SummaryCard label="Completed (this page)" value={pageStatusCounts.completed} icon={CheckCircle} />
         </>)}
       </div>
 

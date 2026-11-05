@@ -76,7 +76,7 @@ Waaiio is a no-code platform that automates bookings, payments, orders, donation
 - **Web Booking**: Public pages at waaiio.com/e/[event] and waaiio.com/b/[business] for customers without WhatsApp
 - **Rich Tickets**: Event tickets generated as images with QR codes and event flyer backgrounds
 - **5 Payment Gateways**: Paystack, Stripe, Flutterwave, Square, PayPal
-- **5 Countries**: United States, Canada, Nigeria, Ghana, United Kingdom
+- **4 Countries**: United States, Canada, Nigeria, United Kingdom
 - **WhatsApp Catalog Sync**: Sync products to WhatsApp's native catalog (Premium)
 - **Email OTP Verification**: Secure web purchases with email verification
 - **Group Bookings**: Book for multiple guests with name collection
