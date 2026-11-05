@@ -4,10 +4,11 @@
  *
  * Fixture is the live final state read on 2026-11-05 (read-only): party_tables with its
  * 8 columns (M457 + M514 reserved_tag), RLS on, owner policy for PUBLIC, admin read policy
- * for authenticated. Table ACLs differ by environment: production gives anon, authenticated
- * and service_role every privilege; staging gives authenticated arwd only. M519 is applied
- * from disk as one whole-file statement over both starting states and must give the same
- * exact grants. seating_resources is out of scope (Owner decision 2026-11-05) and must be
+ * for authenticated. Table ACLs differ by environment, so M519 is applied from disk as one
+ * whole-file statement over two starting states, a broad one (every privilege for every API
+ * role, as Supabase default privileges give a new table) and a narrow one (the grants in
+ * migration history), and must give the same exact grants from both.
+ * seating_resources is out of scope (Owner decision 2026-11-05) and must be
  * left exactly as it was.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -145,7 +146,7 @@ suite('M519 party_tables grants (real PostgreSQL)', () => {
     await control?.end();
   });
 
-  it('from the production grants: 519 sets exactly the contract (self-check passes); seating_resources untouched', async () => {
+  it('from a broad starting state: 519 sets exactly the contract (self-check passes); seating_resources untouched', async () => {
     await q(`GRANT ${ALL} ON public.party_tables TO anon, authenticated, service_role; GRANT SELECT ON public.party_tables TO PUBLIC;`);
     expect(await grants('party_tables')).toContain('anon:TRUNCATE');
     const seatingBefore = await grants('seating_resources');
@@ -154,7 +155,7 @@ suite('M519 party_tables grants (real PostgreSQL)', () => {
     expect(await grants('seating_resources')).toEqual(seatingBefore);
   });
 
-  it('from the staging grants: 519 gives the same result, and re-applies cleanly', async () => {
+  it('from the narrow starting state: 519 gives the same result, and re-applies cleanly', async () => {
     await q(`
       REVOKE ALL ON public.party_tables FROM PUBLIC, anon, authenticated, service_role;
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.party_tables TO authenticated;`);
