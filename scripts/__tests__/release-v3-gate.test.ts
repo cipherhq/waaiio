@@ -183,22 +183,28 @@ const stagingRows = [...prodRows, { version: '3', name: '430_shared_number_tenan
 const prodCatalog = () => catalogMap([{ identity: 'table:public.t', digest: sha('t') }]);
 const stagingCatalog = () => catalogMap([{ identity: 'table:public.t', digest: sha('t') }, { identity: M430_ID, digest: sha('m') }]);
 
-interface Repo { dir: string; B: string; T: string; G: string; }
-function buildRepo(targetFiles: Record<string, string>): Repo {
+interface Repo { dir: string; B: string; T: string; G: string; M?: string; S?: string; }
+// `mid` adds a commit (#899) between baseline and target; `side` adds a commit S off the baseline that is merged
+// after `mid`, so S and M are not on one line of history. `certified` overrides the lock's certified SHAs.
+function buildRepo(targetFiles: Record<string, string>, opts: { mid?: Record<string, string>; side?: Record<string, string>; certified?: (r: { B: string; M?: string; S?: string }) => { merchant: string; admin: string } } = {}): Repo {
   const dir = mkdtempSync(join(tmpdir(), 'v3-e2e-'));
   const g = (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
   const write = (files: Record<string, string>) => { for (const [p, c] of Object.entries(files)) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), c); } };
   g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
   write(B_FILES); g('add', '-A'); g('commit', '-qm', 'baseline'); const B = g('rev-parse', 'HEAD');
+  let M: string | undefined, S: string | undefined;
+  if (opts.side) { g('checkout', '-qb', 'side'); write(opts.side); g('add', '-A'); g('commit', '-qm', 'side'); S = g('rev-parse', 'HEAD'); g('checkout', '-q', 'main'); }
+  if (opts.mid) { write(opts.mid); g('add', '-A'); g('commit', '-qm', 'mid (#899)'); M = g('rev-parse', 'HEAD'); }
+  if (opts.side) g('merge', '-q', '--no-ff', 'side', '-m', 'merge side');
   write(targetFiles); g('add', '-A'); g('commit', '-qm', 'target (#900)'); const T = g('rev-parse', 'HEAD');
-  const lock = { schema_version: 1, bootstrap_migration: '508_business_control_columns_guard.sql', certified: { merchant: B, admin: B }, catalog_query_sha256: CATALOG_QUERY_SHA256, ledger_query_sha256: LEDGER_QUERY_SHA256,
+  const lock = { schema_version: 1, bootstrap_migration: '508_business_control_columns_guard.sql', certified: opts.certified ? opts.certified({ B, M, S }) : { merchant: B, admin: B }, catalog_query_sha256: CATALOG_QUERY_SHA256, ledger_query_sha256: LEDGER_QUERY_SHA256,
     environments: { production: { project_ref: 'cxcmiqotkowhxinjbytg', catalog: { count: 1, sha256: catalogAggregate(prodCatalog()) }, ledger: ledgerSnapshot(prodRows), catalog_map: null },
       staging: { project_ref: 'tqjvrzopvtczxfxiwmnz', catalog: { count: 2, sha256: catalogAggregate(stagingCatalog()) }, ledger: ledgerSnapshot(stagingRows), catalog_map: null } },
     observed: {}, reviewed_prs: {} };
   write({ 'scripts/release-v3/lock.json': canonicalJson(lock), 'scripts/release-v3/m430-identities.json': readFileSync('scripts/release-v3/m430-identities.json', 'utf8') });
   g('add', '-A'); g('commit', '-qm', 'gate (#901)'); const G = g('rev-parse', 'HEAD');
   g('update-ref', 'refs/remotes/origin/main', G);
-  return { dir, B, T, G };
+  return { dir, B, T, G, M, S };
 }
 function clone(repo: Repo, sha: string) {
   const dir = mkdtempSync(join(tmpdir(), 'v3-src-'));
@@ -207,12 +213,12 @@ function clone(repo: Repo, sha: string) {
 }
 
 // A stateful fake of GitHub, Vercel and the public endpoints.
-function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: string; adminTargetCreated: number; holdFlag: boolean; ciConclusion: string; deployRuns: Json[] }> = {}) {
+function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: string; adminTargetCreated: number; holdFlag: boolean; ciConclusion: string; deployRuns: Json[]; skipDomainMovesTarget: boolean; adminServingSha: string }> = {}) {
   const state = {
     merchant: { serving: 'dpl_m1', target: 'dpl_m1' }, admin: { serving: 'dpl_a1', target: 'dpl_a0' },
     deployments: {
       dpl_m1: { id: 'dpl_m1', projectId: P.merchant.project, meta: { githubCommitSha: over.prodServingSha ?? repo.B }, readyState: 'READY', source: 'cli', target: 'production', createdAt: 100 },
-      dpl_a1: { id: 'dpl_a1', projectId: P.admin.project, meta: { githubCommitSha: repo.B }, readyState: 'READY', source: 'cli', target: 'production', createdAt: 200 },
+      dpl_a1: { id: 'dpl_a1', projectId: P.admin.project, meta: { githubCommitSha: over.adminServingSha ?? repo.B }, readyState: 'READY', source: 'cli', target: 'production', createdAt: 200 },
       dpl_a0: { id: 'dpl_a0', projectId: P.admin.project, meta: { githubCommitSha: '0'.repeat(40) }, readyState: 'READY', source: 'cli', target: 'production', createdAt: over.adminTargetCreated ?? 50 },
       dpl_s1: { id: 'dpl_s1', projectId: S.merchant.project, meta: { githubCommitSha: repo.T }, readyState: 'READY', source: 'git', target: 'production', createdAt: 10 },
       dpl_s2: { id: 'dpl_s2', projectId: S.admin.project, meta: { githubCommitSha: repo.T }, readyState: 'READY', source: 'git', target: 'production', createdAt: 10 },
@@ -246,7 +252,9 @@ function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: st
       if (p === '/actions/runs/11/attempts/1/jobs') return response(200, { total_count: REQUIRED_CI_JOBS.length, jobs: REQUIRED_CI_JOBS.map(name => ({ name, conclusion: 'success' })) });
       if (p === '/actions/workflows/release-deploy.yml/runs') return response(200, q.includes('status=success') ? { total_count: 0, workflow_runs: [] } : { total_count: (over.deployRuns ?? []).length, workflow_runs: over.deployRuns ?? [] });
       if (p === `/commits/${repo.T}/pulls`) return response(200, [{ number: 900, merge_commit_sha: repo.T, base: { ref: 'main' }, merged_at: 'x', head: { sha: '9'.repeat(40) } }]);
+      if (repo.M && p === `/commits/${repo.M}/pulls`) return response(200, [{ number: 899, merge_commit_sha: repo.M, base: { ref: 'main' }, merged_at: 'x', head: { sha: '8'.repeat(40) } }]);
       if (p === '/issues/900/comments') return response(200, reviewers.map(r => ({ user: { login: 'cipherhq' }, body: `Release-Review-Record: v1 verdict=APPROVED head=${'9'.repeat(40)} reviewer=${r}` })));
+      if (p === '/issues/899/comments') return response(200, reviewers.map(r => ({ user: { login: 'cipherhq' }, body: `Release-Review-Record: v1 verdict=APPROVED head=${'8'.repeat(40)} reviewer=${r}` })));
       if (p === '/actions/runs/55') return response(200, { id: 55, run_attempt: 1, repository: { full_name: 'cipherhq/waaiio' }, path: '.github/workflows/release-prepare.yml', event: 'workflow_dispatch', head_branch: 'main', actor: { login: 'cipherhq' }, triggering_actor: { login: 'cipherhq' }, status: 'completed', conclusion: 'success', head_sha: repo.G });
       if (p === '/actions/runs/55/artifacts') return response(200, { total_count: state.artifactMeta.length, artifacts: state.artifactMeta });
       const art = /^\/actions\/artifacts\/([0-9]+)\/zip$/.exec(p);
@@ -266,12 +274,14 @@ function world(repo: Repo, over: Partial<{ reviews: string[]; prodServingSha: st
     if (k) return response(200, 'ok');
     throw new Error(`unexpected ${url}`);
   };
-  // Simulates `vercel deploy --prod`: merchant moves its domain; admin (--skip-domain) only moves its production target.
+  // Simulates `vercel deploy --prod`: merchant moves its domain and production target. Admin (--skip-domain)
+  // leaves its production target on the old pin, as Vercel did in run 41937185420, unless the test says otherwise.
   const run = (cmd: string, args: string[], opts: { cwd: string }) => {
     if (cmd !== 'vercel') throw new Error('unexpected command');
     const kind = args.includes('--skip-domain') ? 'admin' : 'merchant', id = `dpl_${kind}New`, host = `${kind}-new.vercel.app`;
     state.deployments[id] = { id, projectId: P[kind].project, meta: { githubCommitSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: opts.cwd, encoding: 'utf8' }).trim() }, readyState: 'READY', source: 'cli', target: 'production', createdAt: 1000 };
-    state.hostnames[host] = id; state[kind].target = id;
+    state.hostnames[host] = id;
+    if (kind === 'merchant' || over.skipDomainMovesTarget) state[kind].target = id;
     if (kind === 'merchant') state.merchant.serving = id;
     return `Production: https://${host}\n`;
   };
@@ -286,7 +296,7 @@ const NOW = Date.parse('2026-11-04T01:00:00Z');
 
 describe('prepare (end to end, faked platforms)', { timeout: 60_000 }, () => {
   const repos: Repo[] = [];
-  const make = (files: Record<string, string>) => { const r = buildRepo(files); repos.push(r); return r; };
+  const make = (files: Record<string, string>, opts: Parameters<typeof buildRepo>[1] = {}) => { const r = buildRepo(files, opts); repos.push(r); return r; };
   afterAll(() => { for (const r of repos) rmSync(r.dir, { recursive: true, force: true }); });
 
   it('derives a standard-lane packet from facts: baseline, target, lane, PRs, database, staging, holds', async () => {
@@ -315,6 +325,21 @@ describe('prepare (end to end, faked platforms)', { timeout: 60_000 }, () => {
   it('fails on a stale baseline: production serves something other than the certified release', async () => {
     const repo = make({ 'components/ui/A.tsx': 'export const A = 3;\n' });
     await expect(prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: world(repo, { prodServingSha: repo.T }).fetchImpl as never, observe: observeWith() as never })).rejects.toThrow('stale or uncertified baseline');
+  });
+  it('after a partial deploy, a lock re-certification (merchant newer, admin older) counts every change since the older baseline', async () => {
+    const repo = make({ 'components/ui/A.tsx': 'export const A = 7;\n' }, { mid: { 'components/ui/B.tsx': 'export const B = 1;\n' }, certified: ({ B, M }) => ({ merchant: M!, admin: B }) });
+    const packet = await prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: world(repo, { prodServingSha: repo.M }).fetchImpl as never, observe: observeWith() as never });
+    expect(packet.baseline).toMatchObject({ merchant: { sha: repo.M, certified_by: 'lock' }, admin: { sha: repo.B, certified_by: 'lock' } });
+    expect(packet.changes.files).toEqual(['components/ui/A.tsx', 'components/ui/B.tsx']);
+    expect(packet.pull_requests.map((p: Json) => p.number)).toEqual([899, 900]);
+  });
+  it('mixed baselines certified by the lock but not on one line of history fail closed', async () => {
+    const repo = make({ 'components/ui/A.tsx': 'export const A = 6;\n' }, { mid: { 'components/ui/B.tsx': 'export const B = 3;\n' }, side: { 'components/ui/C.tsx': 'export const C = 1;\n' }, certified: ({ M, S }) => ({ merchant: M!, admin: S! }) });
+    await expect(prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: world(repo, { prodServingSha: repo.M, adminServingSha: repo.S }).fetchImpl as never, observe: observeWith() as never })).rejects.toThrow('not on one line of history');
+  });
+  it('mixed baselines that the lock does not certify still fail as a stale baseline', async () => {
+    const repo = make({ 'components/ui/A.tsx': 'export const A = 8;\n' }, { mid: { 'components/ui/B.tsx': 'export const B = 2;\n' } });
+    await expect(prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: world(repo, { prodServingSha: repo.M }).fetchImpl as never, observe: observeWith() as never })).rejects.toThrow('stale or uncertified baseline');
   });
   it('fails when the admin production target is newer than what admin serves', async () => {
     const repo = make({ 'components/ui/A.tsx': 'export const A = 4;\n' });
@@ -360,8 +385,8 @@ describe('deploy (end to end, faked platforms)', { timeout: 60_000 }, () => {
   beforeAll(() => { repo = buildRepo({ 'components/ui/A.tsx': 'export const A = 9;\n' }); sources = { merchant: clone(repo, repo.T), admin: clone(repo, repo.T) }; });
   afterAll(() => { for (const d of [repo.dir, sources.merchant, sources.admin]) rmSync(d, { recursive: true, force: true }); });
 
-  async function approved(w: ReturnType<typeof world>) {
-    const packet = await prepare({ env: baseEnv(repo), control: repo.dir, now: NOW, fetchImpl: w.fetchImpl as never, observe: observeWith() as never });
+  async function approved(w: ReturnType<typeof world>, r: Repo = repo) {
+    const packet = await prepare({ env: baseEnv(r), control: r.dir, now: NOW, fetchImpl: w.fetchImpl as never, observe: observeWith() as never });
     const dir = mkdtempSync(join(tmpdir(), 'v3-zip-'));
     writeFileSync(join(dir, 'packet.json'), packetBytes(packet));
     execFileSync('zip', ['-q', '-X', 'a.zip', 'packet.json'], { cwd: dir });
@@ -372,7 +397,7 @@ describe('deploy (end to end, faked platforms)', { timeout: 60_000 }, () => {
     w.state.comments['123'] = { id: 123, user: { login: 'cipherhq' }, created_at: '2026-11-04T01:30:00Z', body: `Owner approval, verbatim: "approve".\nRelease-Approval: v1 packet=${digest} decision=APPROVED` };
     return { packet, digest };
   }
-  const deployEnv = (digest: string, over: Json = {}) => baseEnv(repo, { GITHUB_RUN_ID: '77', PREPARE_RUN_ID: '55', PACKET_SHA256: digest, APPROVAL_COMMENT_URL: 'https://github.com/cipherhq/waaiio/issues/221#issuecomment-123', ...over });
+  const deployEnv = (digest: string, over: Json = {}, r: Repo = repo) => baseEnv(r, { GITHUB_RUN_ID: '77', PREPARE_RUN_ID: '55', PACKET_SHA256: digest, APPROVAL_COMMENT_URL: 'https://github.com/cipherhq/waaiio/issues/221#issuecomment-123', ...over });
 
   it('re-checks, deploys merchant then admin, assigns the admin alias once and returns a record', async () => {
     const w = world(repo);
@@ -381,6 +406,35 @@ describe('deploy (end to end, faked platforms)', { timeout: 60_000 }, () => {
     expect(record).toMatchObject({ packet_sha256: digest, target_sha: repo.T, merchant_deployment_sha256: hashId('dpl_merchantNew'), admin_deployment_sha256: hashId('dpl_adminNew') });
     expect(w.state.aliasPosts).toBe(1);
     expect(w.state.admin.serving).toBe('dpl_adminNew');
+  });
+  it('deploys from a mixed-baseline packet (lock re-certification after a partial deploy), per-project baselines', async () => {
+    const mixed = buildRepo({ 'components/ui/A.tsx': 'export const A = 10;\n' }, { mid: { 'components/ui/B.tsx': 'export const B = 4;\n' }, certified: ({ B, M }) => ({ merchant: M!, admin: B }) });
+    const src = { merchant: clone(mixed, mixed.T), admin: clone(mixed, mixed.T) };
+    try {
+      const w = world(mixed, { prodServingSha: mixed.M });
+      const { packet, digest } = await approved(w, mixed);
+      expect(packet.baseline).toMatchObject({ merchant: { sha: mixed.M }, admin: { sha: mixed.B } });
+      const record = await deploy({ env: deployEnv(digest, {}, mixed), control: mixed.dir, sources: src, now: NOW + 3600_000, fetchImpl: w.fetchImpl as never, observe: observeWith() as never, run: w.run as never, pause: async () => {} });
+      expect(record).toMatchObject({ target_sha: mixed.T, merchant_deployment_sha256: hashId('dpl_merchantNew'), admin_deployment_sha256: hashId('dpl_adminNew') });
+      expect(w.state.merchant.serving).toBe('dpl_merchantNew');
+      expect(w.state.admin.serving).toBe('dpl_adminNew');
+      expect(w.state.aliasPosts).toBe(1);
+    } finally { for (const d of [mixed.dir, src.merchant, src.admin]) rmSync(d, { recursive: true, force: true }); }
+  });
+  it('REGRESSION (run 41937185420): admin --skip-domain leaves the production target on the approved pin, and the deploy completes', async () => {
+    const w = world(repo);
+    const { digest } = await approved(w);
+    await deploy({ env: deployEnv(digest), control: repo.dir, sources, now: NOW + 3600_000, fetchImpl: w.fetchImpl as never, observe: observeWith() as never, run: w.run as never, pause: async () => {} });
+    expect(w.state.admin.target).toBe('dpl_a0');
+    expect(w.state.admin.serving).toBe('dpl_adminNew');
+    expect(w.state.aliasPosts).toBe(1);
+  });
+  it('also completes if the admin production target moves to the new candidate itself', async () => {
+    const w = world(repo, { skipDomainMovesTarget: true });
+    const { digest } = await approved(w);
+    await deploy({ env: deployEnv(digest), control: repo.dir, sources, now: NOW + 3600_000, fetchImpl: w.fetchImpl as never, observe: observeWith() as never, run: w.run as never, pause: async () => {} });
+    expect(w.state.admin.target).toBe('dpl_adminNew');
+    expect(w.state.aliasPosts).toBe(1);
   });
   it('stops before any deployment when production changed after approval', async () => {
     const w = world(repo);
