@@ -19,6 +19,7 @@ const REASON_TEXT: Record<string, string> = {
   no_consent: 'Has not opted in to updates',
   check_failed: 'Consent could not be checked',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
+  stopped: 'Not sent: the send stopped early',
   no_template: 'Hasn’t messaged you in 24 hours and no template was chosen',
   provider_error: 'WhatsApp did not confirm it accepted the message',
   blocked: 'Sending is paused for this account',

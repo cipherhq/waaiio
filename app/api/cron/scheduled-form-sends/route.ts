@@ -46,14 +46,20 @@ function takeTurns(rows: Due[]): Due[] {
 
 /**
  * Close a send that stops before everyone was reached. If some people already got
- * it in an earlier run, say so instead of claiming nothing was sent.
+ * it in an earlier run, say so instead of claiming nothing was sent, and list the
+ * people it never reached so the merchant can see exactly who they are.
  */
 function endedEarly(send: Due, status: 'failed' | 'cancelled', reason: string): Record<string, unknown> {
   const already = send.sent_count || 0;
-  if (already > 0) {
-    return { status: 'sent', error_message: `Sent to ${already}; the other ${send.recipients.length} were not sent because ${reason}.` };
-  }
-  return { status, error_message: `Nothing was sent because ${reason}.` };
+  const notReached: RecipientOutcome[] = send.recipients.map(phone => ({ phone, status: 'skipped', reason: 'stopped' }));
+  return {
+    status: already > 0 ? 'sent' : status,
+    error_message: already > 0
+      ? `Sent to ${already}; the other ${send.recipients.length} were not sent because ${reason}.`
+      : `Nothing was sent because ${reason}.`,
+    results: [...(Array.isArray(send.results) ? send.results : []), ...notReached],
+    skipped_count: (send.skipped_count || 0) + notReached.length,
+  };
 }
 
 const INTERRUPTED_MESSAGE = 'Interrupted while sending. Some messages may have gone out, so check before sending again.';
@@ -104,6 +110,9 @@ export async function GET(request: NextRequest) {
       .update({ status: 'sending', started_at: nowIso(), updated_at: nowIso() })
       .eq('id', send.id).eq('status', 'scheduled').select('id');
     if (claimErr || !claimed || claimed.length === 0) continue; // another run has it
+    // This business has had its turn: its other waiting sends go to the back of the queue.
+    await db.from('form_sends').update({ updated_at: nowIso() })
+      .eq('business_id', send.business_id).eq('status', 'scheduled');
 
     const finish = (fields: Record<string, unknown>) => db.from('form_sends')
       .update({ ...fields, completed_at: nowIso(), updated_at: nowIso() })
@@ -173,7 +182,7 @@ export async function GET(request: NextRequest) {
         const progressed = done.length > 0;
         if (!progressed && Date.now() - Date.parse(send.scheduled_at) > TEMPLATE_RETRY_WINDOW_MS) {
           // Never got going for 2 hours: close it honestly rather than retrying for ever.
-          await finish({ ...totals, ...endedEarly(send, 'failed', 'it could not be started within 2 hours of the send time') });
+          await finish({ ...totals, ...endedEarly({ ...send, ...totals, recipients: remaining }, 'failed', 'it could not be started within 2 hours of the send time') });
           continue;
         }
         // Out of time: the rest go back in the queue for the next run, with results so far kept.
