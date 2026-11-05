@@ -77,8 +77,13 @@ function makeChain(result: { data: unknown; error: unknown }) {
   return c;
 }
 
-function buildFlowSupabase(rpcResult: { data: unknown; error: unknown }, opts?: { rpcUseSingle?: boolean }) {
+function buildFlowSupabase(rpcResult: { data: unknown; error: unknown }, opts?: { rpcUseSingle?: boolean; bookingDate?: string }) {
   const fromMock = vi.fn((table: string) => {
+    if (table === 'bookings' && opts?.rpcUseSingle) return makeChain({ data: {
+      id: 'booking-sched-001', service_id: 'svc-001', appointment_id: null,
+      party_size: 1, date: opts.bookingDate, time: '10:00:00',
+      class_session_id: null, staff_id: null, total_amount: 5000, deposit_amount: 2000,
+    }, error: null });
     if (table === 'whatsapp_users') return makeChain({ data: { id: 'user-001', phone: '+2348012345678' }, error: null });
     if (table === 'businesses') return makeChain({
       data: { id: 'biz-001', status: 'active', subscription_tier: 'growth', trial_ends_at: '2027-01-01T00:00:00Z', deposit_per_guest: null, category: 'health_beauty' },
@@ -122,7 +127,7 @@ describe('(6a) scheduling create_booking → initializePayment caller contract',
     const supabase = buildFlowSupabase({
       data: { booking_id: 'booking-sched-001', reference_code: 'WAA-SCHED-001', slot_available: true },
       error: null,
-    }, { rpcUseSingle: true });
+    }, { rpcUseSingle: true, bookingDate: dateStr });
 
     const ctx = {
       supabase,
