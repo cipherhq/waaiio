@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { createClient } from '@/lib/supabase/client';
@@ -438,6 +439,7 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
 }
 
 export function PaymentsTab({ business, capabilities, country, curr, saving, setSaving, saved, setSaved, openSections, toggleSection }: SettingsTabProps) {
+  const router = useRouter();
   const meta = (business.metadata || {}) as Record<string, unknown>;
 
   const [recurringEnabled, setRecurringEnabled] = useState(business.recurring_enabled ?? false);
@@ -1369,6 +1371,8 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                   .eq('id', business.id);
                 setSaving(false);
                 if (error) return;
+                // Reload the dashboard's business so Giving sees the new setting.
+                router.refresh();
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}

@@ -1,18 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 const state = vi.hoisted(() => ({
   business: { id: 'biz', country_code: 'NG', timezone: 'Africa/Lagos', subscription_tier: 'growth', capabilities: ['payment', 'giving', 'recurring'], selectedCapabilities: ['payment', 'giving', 'recurring'], recurring_enabled: false, metadata: {}, slug: 'test' },
   query: '',
+  refresh: vi.fn(),
+  updates: [] as unknown[],
   subscription: { status: 'active', current_period_end: '2000-01-01T00:00:00Z', amount: 100, currency: 'NGN', gateway: 'paystack' },
 }));
 vi.mock('@/components/dashboard/DashboardProvider', () => ({ useDashboard: () => ({ isImpersonating: false }), useBusiness: () => state.business, useCapabilities: () => ({ capabilities: state.business.capabilities }) }));
 vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
-vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(state.query), useRouter: () => ({ replace: vi.fn() }) }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(state.query), useRouter: () => ({ replace: vi.fn(), refresh: state.refresh }) }));
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ from: (table: string) => {
   const result = { data: table === 'subscriptions' ? state.subscription : [], error: null, count: 0 };
   const chain: Record<string, unknown> = {};
   for (const method of ['select', 'eq', 'is', 'gte', 'in', 'order', 'limit']) chain[method] = () => chain;
+  chain.update = (values: unknown) => { state.updates.push(values); return chain; };
   chain.maybeSingle = async () => result;
   chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve);
   return chain;
@@ -26,6 +29,7 @@ beforeEach(() => {
   state.business.capabilities = ['payment', 'giving', 'recurring'];
   state.business.selectedCapabilities = [...state.business.capabilities];
   state.query = '';
+  state.refresh.mockClear(); state.updates = [];
   state.subscription.status = 'active'; state.subscription.current_period_end = '2000-01-01T00:00:00Z';
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ purchases: [], accounts: [], credentials: [] }) })));
 });
@@ -59,6 +63,11 @@ it('renders recurring controls for a Giving-only business', async () => {
   render(<PaymentsTab {...props} />);
   expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
   expect(screen.getByText(/Enable automatic recurring payments/)).toBeTruthy();
+  // Saving must reload the dashboard's business, or Giving stays blocked until a full reload.
+  fireEvent.click(screen.getByText('Enable Recurring Payments').parentElement!.nextElementSibling as HTMLElement);
+  fireEvent.click(screen.getByRole('button', { name: 'Save Setting' }));
+  await waitFor(() => expect(state.refresh).toHaveBeenCalledTimes(1));
+  expect(state.updates).toEqual([{ recurring_enabled: true }]);
 });
 // Owner decision 2026-11-05: the Giving link opens the page that can clear the
 // block it names: Plan & Upgrade, Capabilities, or Payments > Recurring.
@@ -95,6 +104,8 @@ it('settings opens Account with Plan & Upgrade expanded from the plan-paused lin
   try {
     render(<Settings />);
     expect(await screen.findByRole('heading', { name: 'Plan & Upgrade' })).toBeTruthy();
+    // The heading is always there; the Subscription panel shows only when the section is open.
+    expect(screen.getByRole('heading', { name: 'Subscription' })).toBeTruthy();
   } finally {
     window.history.pushState({}, '', '/');
   }
