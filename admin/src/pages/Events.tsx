@@ -5,7 +5,7 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
-import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
+import { fmtCalendarDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { adminApiGet, adminApiPut } from '@/lib/adminApi';
 import { loadCountries, getCountryCurrencyMap } from '@/lib/countries';
 
@@ -342,7 +342,7 @@ export default function Events() {
                   <td className="px-4 py-3 font-medium text-gray-900">{ev.name}</td>
                   <td className="px-4 py-3 text-gray-600">{ev.business_name}</td>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {ev.date ? fmtDate(ev.date) : '—'}
+                    {ev.date ? fmtCalendarDate(ev.date) : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-600">{ev.venue || '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-600">{ev.total_tickets ?? '—'}</td>
@@ -390,8 +390,8 @@ export default function Events() {
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Event Details</p>
               <div className="space-y-2">
-                <DetailRow label="Date" value={selected.date ? fmtDateTime(selected.date) : '—'} />
-                <DetailRow label="End Date" value={selected.end_date ? fmtDateTime(selected.end_date) : '—'} />
+                <DetailRow label="Date" value={selected.date ? fmtCalendarDate(selected.date) : '—'} />
+                <DetailRow label="End Date" value={selected.end_date ? fmtCalendarDate(selected.end_date) : '—'} />
                 <DetailRow label="Venue" value={selected.venue} />
                 <DetailRow
                   label="Price"

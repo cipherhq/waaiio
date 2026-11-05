@@ -120,7 +120,7 @@ export default function PendingTransfers() {
   }
   const pendingDisplay = Object.entries(pendingAmount)
     .filter(([, a]) => a > 0)
-    .map(([c, a]) => fmtCurrency(a, c))
+    .map(([c, a]) => fmtCurrency(a / 100, c))
     .join(' · ') || '0';
 
   const today = new Date().toISOString().slice(0, 10);
@@ -314,7 +314,8 @@ export default function PendingTransfers() {
   }
 
   function formatAmount(amount: number, currency: string) {
-    return fmtCurrency(amount, currency || 'NGN');
+    // expected_amount is stored in minor units, matching the merchant transfer view.
+    return fmtCurrency(amount / 100, currency || 'NGN');
   }
 
   if (loading) {

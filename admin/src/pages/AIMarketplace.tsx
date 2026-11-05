@@ -18,7 +18,6 @@ interface ClassificationRecord {
 
 interface ReviewItem {
   id: string;
-  input_hash: string | null;
   intent: string;
   confidence: number;
   business_id: string;
@@ -207,7 +206,7 @@ export default function AIMarketplace() {
     try {
       const { data, error: qErr } = await adminDb
         .from('ai_classification_log')
-        .select('id, input_hash, intent, confidence, business_id, created_at')
+        .select('id, intent, confidence, business_id, created_at')
         .or('confidence.lt.0.60,intent.eq.unknown')
         .order('created_at', { ascending: false })
         .range(0, 99);
@@ -470,7 +469,7 @@ export default function AIMarketplace() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Input Hash</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Record ID</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Intent</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Confidence</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
@@ -485,7 +484,7 @@ export default function AIMarketplace() {
                   <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No items in review queue.</td></tr>
                 ) : reviewPaginated.map(r => (
                   <tr key={r.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{r.input_hash ? r.input_hash.slice(0, 12) + '...' : '-'}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{r.id}</td>
                     <td className="px-4 py-3 text-gray-600">{r.intent}</td>
                     <td className="px-4 py-3">
                       <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
