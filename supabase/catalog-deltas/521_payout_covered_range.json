@@ -1,0 +1,47 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.business_payouts.covered_from",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.business_payouts.covered_to",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (covered_from IS NULL AND covered_to IS NULL OR covered_from IS NOT NULL AND covered_to IS NOT NULL AND covered_from < covered_to)",
+    "validated": true
+   },
+   "after_sha256": "2df5e3e0bc204e78adcf7ede4ae4ce21e99468d02b6acfe0d035d2aeb40a5516",
+   "identity": "constraint:public.business_payouts.business_payouts_covered_range_check",
+   "operation": "add"
+  }
+ ],
+ "migration": "521_payout_covered_range.sql",
+ "migration_sha256": "b4a5e6b75a283a3b20a5184de82e12966b59415bd5f416229503bd38a9c764da",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}
