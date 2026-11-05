@@ -815,7 +815,7 @@
      }
     ],
     "arguments": "",
-    "body_sha256": "de54edf3c97cd527cc700cc18393941f2b5cf603865cc2f9f5b5b2c78cd134ce",
+    "body_sha256": "1f389268642b504786ce97e3766693361a003cc3b8e0b0b6a7a4b438a371bffd",
     "config": [
      "search_path=public, extensions"
     ],
@@ -829,7 +829,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "a6320e7cd1de45b80580cde27e8bee2e1088f217cda27da720558919f124425a",
+   "after_sha256": "c93222f568c7e8a923922e4d71a637f37a125518a3b9df6b0e6ddf187457995e",
    "identity": "function:public.capture_merchant_notification()",
    "operation": "add"
   },
@@ -1625,7 +1625,7 @@
   }
  ],
  "migration": "511_merchant_notifications.sql",
- "migration_sha256": "2e7166aee580f3aedda2ca3b90c8f5f04ef7e995c36f336fad2858ff2e2da3e2",
+ "migration_sha256": "2c3fb980c117171d62cf0e4774a376072634e0938dea562f16a3c41b208fd4d9",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1
