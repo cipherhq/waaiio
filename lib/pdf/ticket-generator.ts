@@ -3,6 +3,8 @@ import QRCode from 'qrcode';
 import { isWhiteLabel } from '@/lib/whitelabel';
 import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
 import { encodeCode128B } from './code128';
+import { WAAIIO_WORDMARK_PNG, WAAIIO_WORDMARK_ASPECT } from './brand-assets';
+import { fetchImageBuffer, loadBusinessLogo, toPdfImage } from './merchant-image';
 
 export interface TicketPdfOptions {
   eventName: string;
@@ -62,57 +64,6 @@ function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
   });
-}
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
-async function fetchImageBuffer(url: string, init: RequestInit = {}): Promise<Buffer | null> {
-  try {
-    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const declared = Number(res.headers?.get?.('content-length') || 0);
-    if (declared > MAX_IMAGE_BYTES) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length > MAX_IMAGE_BYTES ? null : buf;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Only fetch logos uploaded through /api/business/upload-logo (public business-documents bucket),
- * so a hand-edited logo_url can't make the server fetch an arbitrary address.
- * Returns the normalised URL to fetch, or null. Parsing resolves `..` and `%2e%2e` before the check.
- */
-export function allowedBusinessLogoUrl(url: string | undefined): string | null {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url || !base) return null;
-  try {
-    const u = new URL(url);
-    const b = new URL(base);
-    const prefix = `${b.pathname.replace(/\/+$/, '')}/storage/v1/object/public/business-documents/`;
-    if (u.origin !== b.origin || u.username || u.password || !u.pathname.startsWith(prefix)) return null;
-    return u.href;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Re-encode an image for PDFKit: it draws only PNG and JPEG (uploads may be WebP), and a full-size
- * merchant image would make generation slow and the PDF huge, so cap its dimensions too.
- */
-async function toPdfImage(buf: Buffer, maxPx: number, format: 'png' | 'jpeg'): Promise<Buffer | null> {
-  try {
-    const sharp = (await import('sharp')).default;
-    const img = sharp(buf, { limitInputPixels: 40_000_000 })
-      .resize({ width: maxPx, height: maxPx, fit: 'inside', withoutEnlargement: true });
-    return format === 'png'
-      ? await img.png().toBuffer()
-      : await img.flatten({ background: '#ffffff' }).jpeg({ quality: 80 }).toBuffer();
-  } catch {
-    return null;
-  }
 }
 
 /** Embed an image once so every page reuses the same PDF object. */
@@ -193,12 +144,9 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     if (raw) flyerImage = openPdfImage(doc, await toPdfImage(raw, 1200, 'jpeg'));
   }
 
-  let logoImage: unknown = null;
-  const logoUrl = allowedBusinessLogoUrl(opts.businessLogoUrl);
-  if (logoUrl) {
-    const raw = await fetchImageBuffer(logoUrl, { redirect: 'error' });
-    if (raw) logoImage = openPdfImage(doc, await toPdfImage(raw, 256, 'png'));
-  }
+  const wordmarkImage = whiteLabel ? null : openPdfImage(doc, WAAIIO_WORDMARK_PNG);
+
+  const logoImage = openPdfImage(doc, await loadBusinessLogo(opts.businessLogoUrl));
 
   const businessName = (opts.businessName || '').trim();
   let priceStr: string | null = null;
@@ -265,28 +213,35 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     doc.font('Helvetica-Bold').fontSize(9).fillColor(STUB_TEXT);
     verticalText(doc, ticket.ticketCode, CARD_X + 88, barTop, barBottom);
 
-    const markSize = 26;
-    const markX = CARD_X + (STUB_W - markSize) / 2;
-    const markY = stubFooterTop + 2;
-    let markDrawn = false;
-    if (logoImage) {
-      try {
-        doc.image(logoImage, markX, markY, { fit: [markSize, markSize], align: 'center', valign: 'center' });
-        markDrawn = true;
-      } catch { /* fall back to monogram */ }
-    }
-    if (!markDrawn && businessName) {
-      doc.circle(markX + markSize / 2, markY + markSize / 2, markSize / 2).fillColor(BRAND_PURPLE).fill();
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#FFFFFF')
-        .text((Array.from(businessName)[0] || '').toUpperCase(), markX, markY + 7, { width: markSize, align: 'center', lineBreak: false });
-    }
-    if (businessName) {
-      doc.font('Helvetica-Bold').fontSize(7).fillColor(STUB_TEXT)
-        .text(businessName, CARD_X + 8, markY + markSize + 4, { width: STUB_W - 16, align: 'center', height: 9, ellipsis: true });
-    }
-    if (!whiteLabel) {
-      doc.font('Helvetica').fontSize(5.5).fillColor(STUB_MUTED)
-        .text(`${TL.footer} · waaiio.com`, CARD_X + 8, CARD_Y + CARD_H - 13, { width: STUB_W - 16, align: 'center', lineBreak: false });
+    if (wordmarkImage) {
+      // Owner decision 2026-11-05: the stub carries the Waaiio logo; the business's own logo
+      // (if uploaded) sits beside its name in the purple body.
+      const wmH = 20;
+      const wmW = wmH * WAAIIO_WORDMARK_ASPECT;
+      doc.image(wordmarkImage, CARD_X + (STUB_W - wmW) / 2, stubFooterTop + 14, { width: wmW, height: wmH });
+      doc.font('Helvetica').fontSize(6).fillColor(STUB_MUTED)
+        .text(`${TL.footer} · waaiio.com`, CARD_X + 8, CARD_Y + CARD_H - 15, { width: STUB_W - 16, align: 'center', lineBreak: false });
+    } else {
+      // White-label: no Waaiio branding; the stub shows the business logo (or initial) and name.
+      const markSize = 26;
+      const markX = CARD_X + (STUB_W - markSize) / 2;
+      const markY = stubFooterTop + 2;
+      let markDrawn = false;
+      if (logoImage) {
+        try {
+          doc.image(logoImage, markX, markY, { fit: [markSize, markSize], align: 'center', valign: 'center' });
+          markDrawn = true;
+        } catch { /* fall back to monogram */ }
+      }
+      if (!markDrawn && businessName) {
+        doc.circle(markX + markSize / 2, markY + markSize / 2, markSize / 2).fillColor(BRAND_PURPLE).fill();
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#FFFFFF')
+          .text((Array.from(businessName)[0] || '').toUpperCase(), markX, markY + 7, { width: markSize, align: 'center', lineBreak: false });
+      }
+      if (businessName) {
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(STUB_TEXT)
+          .text(businessName, CARD_X + 8, markY + markSize + 4, { width: STUB_W - 16, align: 'center', height: 9, ellipsis: true });
+      }
     }
 
     // ── Main body ──
@@ -296,8 +251,16 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     doc.rect(contentX, CARD_Y, contentW, CARD_H).clip();
     let y = CARD_Y + 28;
     if (businessName) {
+      // Business's own logo, small, before its name (only when not shown on a white-label stub).
+      let nameX = contentX;
+      if (logoImage && wordmarkImage) {
+        try {
+          doc.image(logoImage, contentX, y - 4, { fit: [18, 18], align: 'center', valign: 'center' });
+          nameX += 24;
+        } catch { /* name only */ }
+      }
       doc.font('Helvetica-Bold').fontSize(10).fillColor('#FFFFFF').fillOpacity(0.85)
-        .text(businessName.toUpperCase(), contentX, y, { width: contentW, characterSpacing: 1.5, height: 13, ellipsis: true });
+        .text(businessName.toUpperCase(), nameX, y, { width: contentW - (nameX - contentX), characterSpacing: 1.5, height: 13, ellipsis: true });
       doc.fillOpacity(1);
       y += 18;
     }

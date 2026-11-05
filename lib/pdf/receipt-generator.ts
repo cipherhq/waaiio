@@ -1,5 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
+import { WAAIIO_WORDMARK_PNG, WAAIIO_WORDMARK_ASPECT } from './brand-assets';
+import { loadBusinessLogo } from './merchant-image';
 
 // ── Types ──
 
@@ -109,17 +111,23 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   doc.rect(pageWidth * 0.6, 0, pageWidth * 0.4, 5).fillColor(BRAND_PURPLE_LIGHT).fill();
 
   let headerY = margin + 8;
-  if (data.logoUrl) {
+  // Same limits as tickets: bucket-only URL, 5 MB cap, re-encoded (WebP works) and downscaled.
+  let businessLogo = await loadBusinessLogo(data.logoUrl);
+
+  if (!data.whitelabel) {
+    // Owner decision 2026-11-05: Waaiio logo at the top, "Powered by Waaiio" at the bottom.
+    const wmH = 24;
+    const wmW = wmH * WAAIIO_WORDMARK_ASPECT;
+    doc.image(WAAIIO_WORDMARK_PNG, (pageWidth - wmW) / 2, headerY, { width: wmW, height: wmH });
+    headerY += wmH + 14;
+  } else if (businessLogo) {
+    // White-label: no Waaiio branding; the business logo leads the receipt as before.
     try {
-      const logoRes = await fetch(data.logoUrl, { signal: AbortSignal.timeout(5000) });
-      if (logoRes.ok) {
-        const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
-        const logoSize = 44;
-        const logoX = (pageWidth - logoSize) / 2;
-        doc.image(logoBuffer, logoX, headerY, { width: logoSize, height: logoSize, fit: [logoSize, logoSize] });
-        headerY += logoSize + 6;
-      }
+      const logoSize = 44;
+      doc.image(businessLogo, (pageWidth - logoSize) / 2, headerY, { width: logoSize, height: logoSize, fit: [logoSize, logoSize] });
+      headerY += logoSize + 6;
     } catch { /* skip */ }
+    businessLogo = null;
   }
 
   const { DEFAULT_RECEIPT_LABELS } = await import('./localize-pdf');
@@ -129,8 +137,20 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     .text(L.title, margin, headerY, { width: contentWidth, align: 'center' });
   headerY += 22;
 
-  doc.fontSize(11).font('Helvetica').fillColor(TEXT_SECONDARY)
-    .text(data.businessName, margin, headerY, { width: contentWidth, align: 'center' });
+  doc.fontSize(11).font('Helvetica').fillColor(TEXT_SECONDARY);
+  let nameDrawn = false;
+  if (businessLogo) {
+    // Business's own logo, small, beside its name; the pair is centred.
+    try {
+      const size = 18;
+      const nameW = Math.min(doc.widthOfString(data.businessName), contentWidth - size - 6);
+      const startX = (pageWidth - (size + 6 + nameW)) / 2;
+      doc.image(businessLogo, startX, headerY - 4, { fit: [size, size], align: 'center', valign: 'center' });
+      doc.text(data.businessName, startX + size + 6, headerY, { width: nameW + 1, lineBreak: false });
+      nameDrawn = true;
+    } catch { /* name only */ }
+  }
+  if (!nameDrawn) doc.text(data.businessName, margin, headerY, { width: contentWidth, align: 'center' });
   headerY += 18;
 
   const sColor = statusColor(data.paymentStatus);
