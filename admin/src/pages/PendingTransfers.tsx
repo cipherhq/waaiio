@@ -131,138 +131,6 @@ export default function PendingTransfers() {
   const expiredCount = transfers.filter(t => t.status === 'expired').length;
   const ocrVerifiedCount = transfers.filter(t => t.verified_by_ocr).length;
 
-  async function handleConfirm() {
-    if (!selected || !adminSession) return;
-    setActionLoading(true);
-    setActionError('');
-    setActionSuccess('');
-
-    try {
-      const { error } = await adminDb
-        .from('pending_transfers')
-        .update({
-          status: 'confirmed',
-          confirmed_at: new Date().toISOString(),
-          confirmed_by: adminSession.userId,
-        })
-        .eq('id', selected.id)
-        .eq('status', 'pending');
-
-      if (error) {
-        setActionError(error.message || 'Failed to confirm transfer');
-        setActionLoading(false);
-        return;
-      }
-
-      // Update related booking/order/invoice status
-      if (selected.booking_id) {
-        await adminDb.from('bookings').update({
-          deposit_status: 'paid',
-          status: 'confirmed',
-          confirmed_at: new Date().toISOString(),
-        }).eq('id', selected.booking_id);
-      }
-      if (selected.order_id) {
-        await adminDb.from('orders').update({
-          status: 'confirmed',
-          paid_at: new Date().toISOString(),
-        }).eq('id', selected.order_id);
-      }
-      if (selected.invoice_id) {
-        await adminDb.from('invoices').update({
-          status: 'paid',
-          paid_at: new Date().toISOString(),
-        }).eq('id', selected.invoice_id);
-      }
-
-      // Insert payment record (matches dashboard pending-transfers API behavior)
-      await adminDb.from('payments').insert({
-        business_id: selected.business_id,
-        amount: selected.expected_amount,
-        currency: selected.currency || 'NGN',
-        status: 'success',
-        payment_method: 'bank_transfer',
-        gateway: 'direct',
-        booking_id: selected.booking_id || null,
-        order_id: selected.order_id || null,
-        invoice_id: selected.invoice_id || null,
-        customer_phone: selected.customer_phone || null,
-        customer_name: selected.customer_name || null,
-        reference: selected.reference_code || null,
-        metadata: {
-          pending_transfer_id: selected.id,
-          confirmed_by: adminSession.userId,
-          confirmed_by_admin: true,
-          proof_type: selected.proof_type,
-        },
-      });
-
-      // Insert platform fee record for analytics (zero fee for direct transfers)
-      const { data: bizTier } = await adminDb
-        .from('businesses')
-        .select('subscription_tier')
-        .eq('id', selected.business_id)
-        .single();
-
-      await adminDb.from('platform_fees').insert({
-        business_id: selected.business_id,
-        booking_id: selected.booking_id || null,
-        invoice_id: selected.invoice_id || null,
-        order_id: selected.order_id || null,
-        transaction_amount: selected.expected_amount,
-        fee_percentage: 0,
-        fee_flat: 0,
-        fee_total: 0,
-        gateway_fee: 0,
-        tier: bizTier?.subscription_tier || 'free',
-        is_direct_transfer: true,
-      });
-
-      // Best-effort WhatsApp notification to customer
-      if (selected.customer_phone) {
-        try {
-          const apiUrl = import.meta.env.VITE_API_URL || '';
-          if (apiUrl) {
-            await fetch(`${apiUrl}/api/admin/notify-transfer-confirmed`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                business_id: selected.business_id,
-                customer_phone: selected.customer_phone,
-                amount: selected.expected_amount,
-                currency: selected.currency || 'NGN',
-                reference_code: selected.reference_code,
-              }),
-            }).catch(() => { /* best-effort — ignore failures */ });
-          }
-        } catch {
-          // Best-effort — notification failure should not block confirmation
-        }
-      }
-
-      await logAudit({
-        action: 'confirm_transfer',
-        entity_type: 'pending_transfer',
-        entity_id: selected.id,
-        details: {
-          business_id: selected.business_id,
-          amount: selected.expected_amount,
-          currency: selected.currency,
-          reference_code: selected.reference_code,
-        },
-      });
-
-      setActionSuccess('Transfer confirmed successfully');
-      loadData();
-      // Update selected record locally
-      setSelected(prev => prev ? { ...prev, status: 'confirmed', confirmed_at: new Date().toISOString(), confirmed_by: adminSession.userId } : null);
-    } catch {
-      setActionError('Network error — please try again');
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
   async function handleReject() {
     if (!selected || !adminSession) return;
     if (!rejectReason.trim()) {
@@ -584,14 +452,12 @@ export default function PendingTransfers() {
               <>
                 <div className="my-3 border-t border-gray-100" />
                 <div className="space-y-3">
-                  {/* Confirm button */}
-                  <button
-                    onClick={handleConfirm}
-                    disabled={actionLoading}
-                    className="w-full rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
-                  >
-                    {actionLoading ? 'Processing...' : 'Confirm Transfer'}
-                  </button>
+                  {/* #907 (Owner decision C): admins cannot confirm. The money goes to the
+                      business's own bank account, and only the merchant dashboard confirms
+                      through the database confirm functions (amount, stock and payment checks). */}
+                  <p className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+                    Only the business can confirm this transfer, from its own dashboard, once the money is in its bank account.
+                  </p>
 
                   {/* Reject section */}
                   <div className="rounded-lg border border-red-100 bg-red-50 p-4">
