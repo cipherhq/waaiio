@@ -389,4 +389,42 @@ suite('M511 merchant notification transaction and tenant boundaries',()=>{
   } finally {await first.c.end();await second.c.end();}
   expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(50);
  });
+ // Owner decision 2026-11-05: an alert that cannot be captured is skipped; the merchant's write always succeeds.
+ it('a capture failure never aborts the merchant write (alert skipped with a warning)',async()=>{
+  await verify(await recipient());
+  await sql('ALTER TABLE merchant_notification_deliveries ADD CONSTRAINT test_reject_capture CHECK (false) NOT VALID');
+  try {
+   const id=await order();
+   expect((await sql('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status).toBe('confirmed');
+   expect((await sql('SELECT count(*)::int n FROM merchant_notification_deliveries')).rows[0].n).toBe(0);
+  } finally {await sql('ALTER TABLE merchant_notification_deliveries DROP CONSTRAINT test_reject_capture');}
+  await order();
+  expect((await sql('SELECT count(*)::int n FROM merchant_notification_deliveries')).rows[0].n).toBe(1);
+ });
+ // Review r2-813-sync P2-1: the fence must not wait on a recipient that a merchant capture already references.
+ it('a WhatsApp fence never deadlocks a merchant that captures and then updates its business row',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));
+  await sql("INSERT INTO whatsapp_config VALUES($1,0,date_trunc('month',now())::date)",[B]);
+  await order();const d=await claim();const next=await order('draft');
+  const fencer=await session('5s'),merchant=await session('50ms');
+  try {
+   // Capture first: the delivery insert's FK check holds the recipient FOR KEY SHARE until COMMIT.
+   await merchant.c.query('BEGIN');await merchant.c.query("UPDATE orders SET status='confirmed' WHERE id=$1",[next]);
+   await fencer.c.query('BEGIN');
+   const fenceRun=track(fencer.c.query('SELECT fence_merchant_notification($1,$2) ok',[d.id,d.claim_token]));
+   await blockedOrDone(fencer.pid,fenceRun);
+   const writeRun=track(merchant.c.query("UPDATE businesses SET name='Shop 2' WHERE id=$1",[B]));
+   await blockedOrDone(merchant.pid,writeRun);
+   if(fenceRun.done){
+    await fencer.c.query(fenceRun.ok?'COMMIT':'ROLLBACK');await writeRun.promise;await merchant.c.query(writeRun.ok?'COMMIT':'ROLLBACK');
+   } else {
+    await writeRun.promise;await merchant.c.query(writeRun.ok?'COMMIT':'ROLLBACK');await fenceRun.promise;await fencer.c.query(fenceRun.ok?'COMMIT':'ROLLBACK');
+   }
+   expect(writeRun.error?.code).toBeUndefined();
+   expect(fenceRun.error?.code).toBeUndefined();
+   expect(fenceRun.value?.rows[0].ok).toBe(true);
+  } finally {await fencer.c.end();await merchant.c.end();}
+  expect((await sql('SELECT name FROM businesses WHERE id=$1',[B])).rows[0].name).toBe('Shop 2');
+  expect((await sql('SELECT state FROM merchant_notification_deliveries ORDER BY state')).rows.map(r=>r.state)).toEqual(['dispatched','pending']);
+ });
 });

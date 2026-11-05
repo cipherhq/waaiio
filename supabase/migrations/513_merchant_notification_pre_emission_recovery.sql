@@ -8,7 +8,8 @@ BEGIN
  IF NOT FOUND OR d.state<>'claimed' OR d.claim_token IS DISTINCT FROM p_claim_token OR d.lease_until<now() THEN RETURN false; END IF;
  -- Businesses before recipients, the order capture's FK checks use; NO KEY UPDATE never blocks their FOR KEY SHARE.
  IF d.channel='whatsapp' THEN PERFORM 1 FROM public.businesses WHERE id=d.business_id FOR NO KEY UPDATE; END IF;
- SELECT * INTO r FROM public.merchant_notification_recipients WHERE id=d.recipient_id FOR UPDATE;
+ -- FOR SHARE: blocks consent changes (revoke/consume/PATCH update the row) during the fence, but never waits behind capture's FOR KEY SHARE.
+ SELECT * INTO r FROM public.merchant_notification_recipients WHERE id=d.recipient_id FOR SHARE;
  IF NOT FOUND OR NOT r.enabled OR r.revoked_at IS NOT NULL OR r.verified_at IS DISTINCT FROM d.consent_verified_at OR r.consent_version IS DISTINCT FROM 'merchant-alerts-v1' OR r.address<>d.address OR r.channel<>d.channel OR r.whatsapp_channel_id IS DISTINCT FROM d.whatsapp_channel_id OR NOT d.event=ANY(r.events) THEN
   UPDATE public.merchant_notification_deliveries SET state='suppressed',reason='recipient_changed' WHERE id=d.id; RETURN false;
  END IF;
@@ -30,7 +31,7 @@ BEGIN
  IF NOT FOUND OR p_claim_token IS NULL OR d.claim_token IS DISTINCT FROM p_claim_token
    OR d.state<>'dispatched' OR d.channel<>'whatsapp' OR d.allowance_reserved_month IS NULL THEN RETURN false; END IF;
  -- Match the business/config lock order used by allowance reservation.
- PERFORM 1 FROM public.businesses WHERE id=d.business_id FOR UPDATE;
+ PERFORM 1 FROM public.businesses WHERE id=d.business_id FOR NO KEY UPDATE;
  SELECT notify_month_reset,notify_monthly_count INTO current_month,current_count
  FROM public.whatsapp_config WHERE business_id=d.business_id FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Notification allowance configuration unavailable'; END IF;

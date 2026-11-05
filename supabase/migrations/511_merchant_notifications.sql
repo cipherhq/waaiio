@@ -121,10 +121,17 @@ BEGIN
    detail:='View your dashboard for the schedule and customer details.';
   END IF;
  END IF;
- INSERT INTO public.merchant_notification_deliveries(business_id,recipient_id,channel,address,whatsapp_channel_id,consent_verified_at,event,source_table,source_id,payload)
- SELECT biz,r.id,r.channel,r.address,r.whatsapp_channel_id,r.verified_at,kind,TG_TABLE_NAME,(n->>'id')::uuid,jsonb_build_object('title',title,'reference',COALESCE(n->>'reference_code',n->>'gateway_reference',n->>'id'),'detail',detail)
- FROM public.merchant_notification_recipients r WHERE r.business_id=biz AND r.enabled AND r.revoked_at IS NULL AND r.verified_at IS NOT NULL AND r.consent_version='merchant-alerts-v1' AND kind=ANY(r.events)
- ON CONFLICT DO NOTHING;
+ -- No eligible recipient: nothing to capture, and no subtransaction for the common case.
+ IF NOT EXISTS(SELECT 1 FROM public.merchant_notification_recipients r WHERE r.business_id=biz AND r.enabled AND r.revoked_at IS NULL AND r.verified_at IS NOT NULL AND r.consent_version='merchant-alerts-v1' AND kind=ANY(r.events)) THEN RETURN NEW; END IF;
+ -- Owner decision 2026-11-05: the merchant's write always succeeds. If an alert cannot be captured, it is skipped with a warning.
+ BEGIN
+  INSERT INTO public.merchant_notification_deliveries(business_id,recipient_id,channel,address,whatsapp_channel_id,consent_verified_at,event,source_table,source_id,payload)
+  SELECT biz,r.id,r.channel,r.address,r.whatsapp_channel_id,r.verified_at,kind,TG_TABLE_NAME,(n->>'id')::uuid,jsonb_build_object('title',title,'reference',COALESCE(n->>'reference_code',n->>'gateway_reference',n->>'id'),'detail',detail)
+  FROM public.merchant_notification_recipients r WHERE r.business_id=biz AND r.enabled AND r.revoked_at IS NULL AND r.verified_at IS NOT NULL AND r.consent_version='merchant-alerts-v1' AND kind=ANY(r.events)
+  ON CONFLICT DO NOTHING;
+ EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'merchant notification capture skipped for %.%: %',TG_TABLE_NAME,n->>'id',SQLSTATE;
+ END;
  RETURN NEW;
 END $$;
 CREATE TRIGGER merchant_order_alert AFTER INSERT OR UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION public.capture_merchant_notification();
