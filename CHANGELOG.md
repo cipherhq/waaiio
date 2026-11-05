@@ -1,3 +1,335 @@
+## 2026-11-05 — Signed waiver list read errors
+
+- `app/dashboard/waivers/page.tsx`: Show a persistent error and Retry when the signed-list request fails, instead of a false empty list or stale results. Keep the current search/template scope on retry and ignore older request completions.
+- `app/dashboard/waivers/__tests__/signed-list-read-errors.test.tsx`: rendered regressions cover HTTP 401/500, transport failure, valid empty results, filtered failure/retry, stale success/failure ordering and malformed payloads.
+- **Affects / could break**: Signed-list loading, error and retry presentation. Template/count reads, signing, signature storage, routes and authorization are unchanged.
+
+## 2026-11-05 — Scheduled broadcast consent and honest sent/failed status
+
+- `app/api/broadcasts/schedule/route.ts`: Validate that the audience is an array and reject the whole schedule (403, the standard cold-messaging policy text) when any recipient lacks recorded WhatsApp marketing consent (`hasRecipientPermission`). Ownership, capability and quota checks are unchanged. Consent checks run five at a time and fail closed.
+- `app/api/cron/scheduled-broadcasts/route.ts`: Recheck marketing permission for each recipient at send time (consent may be revoked after scheduling). Look up the template's real WhatsApp billing category; tag the text fallback `service`, as the immediate-send route does. Mark the broadcast `failed` with no `sent_at` and an `error_message` when no message was accepted; `sent` now means at least one message was accepted.
+- `lib/__tests__/scheduled-broadcast-consent.test.ts`: route tests using the real consent helper with synthetic database and provider boundaries and blocked network egress. They cover denial, revocation, global opt-out, read failures, template categories, mixed audiences and accepted/failed outcomes.
+- **Affects**: Scheduled broadcasts only. No consent creation, schema, quota policy or immediate-send changes. **Could break**: scheduling now rejects a mixed eligible/ineligible audience (the caller keeps the list to correct it); a due broadcast whose recipients have all lost consent is now marked `failed` instead of `sent`.
+
+## 2026-11-05 — Merchant and admin read/display repairs
+
+**Flow Analytics (merchant dashboard)**
+- `app/dashboard/analytics/dropoffs/page.tsx`: select `step_id`, the column `flow_dropoffs` actually has (migration 225). The page asked for `step_name`, which does not exist, so the query failed and the page showed zero drop-offs. A failed load now shows an error instead of false zero summaries. Business scope, 30-day range and 500-row limit are unchanged.
+- `lib/__tests__/flow-dropoffs-page.test.tsx`: populated, empty and error results, and the tenant query scope.
+
+**Pending bank transfers (admin) — money display**
+- `admin/src/pages/PendingTransfers.tsx`: `expected_amount` is stored in minor units (kobo/cents; written as `Math.round(amount * 100)` by `lib/bot/flows/shared/bank-transfer.ts`). The admin summary, list and detail now divide by 100, as the merchant view and the server confirmation messages already do. Display only: the confirm/reject writes, the payment and fee rows they insert, and the raw CSV export are unchanged.
+- `admin/src/__tests__/pending-transfers-display.test.tsx`: NGN and fractional USD amounts in summary, list and detail, with no database writes.
+
+**Calendar dates (admin)**
+- `admin/src/lib/formatters.ts`: new SQL `DATE` formatter that keeps the stored calendar day in every viewer timezone and rejects invalid or date-time input. Existing timestamp formatters are unchanged.
+- `admin/src/pages/Events.tsx`, `admin/src/pages/ClassSessions.tsx`: use it for five calendar-date displays only.
+- `admin/src/__tests__/calendar-date.test.ts`.
+
+**Bot session history (admin)**
+- `admin/src/pages/ChatHistory.tsx`: read the existing `session_data`, derive the flow label with the established active-capability/category fallback, and show a load error instead of claiming zero sessions.
+- `admin/src/__tests__/chat-history-bot-read.test.tsx`.
+
+**AI Intent Review (admin)**
+- `admin/src/pages/AIMarketplace.tsx`: show the existing record ID in place of an unsupported input-hash column. No raw message text is shown.
+- `admin/src/__tests__/ai-review-record-id.test.tsx`.
+
+The Messaging Credits fix that was in this PR is already on main (#831) and has been dropped here.
+
+- **Affects**: read and display paths on the pages above. No schema, write, authorization or payment-logic changes.
+- **Could break**: drop-off step labels; admin transfer amounts (they show 100x smaller than before, which is the correct value); admin event/class date text; bot history labels and error display; intent review record column.
+
+## 2026-11-05 — Admin step-up PG test no longer times out at teardown (#904)
+
+- **What happened:** CI run 41979490812, attempt 1 (PR #897), job "P0 security ACL tests (disposable PG)", failed although all 4 tests in `lib/__tests__/admin-step-up-concurrency.pg.test.ts` passed. Its `afterAll` hit Vitest's default 10 s hook timeout. In passing runs of the same SHA the same teardown took about 4 s.
+- **Cause:** the CI step clones 46 databases from `pg_template_clean` before the tests start. `CREATE DATABASE` (default `WAL_LOG` strategy) does not checkpoint, so the clones leave a large flush backlog. `DROP DATABASE` always waits for a forced, server-wide checkpoint, with or without `WITH (FORCE)`. This file is the only one in the first parallel batch that drops a database, so its drop pays for the whole backlog. Reproduced locally on PostgreSQL 16: that checkpoint fsynced 14,652 files; on a second run right after, it fsynced 7. It is not the #896 problem: this file uses plain `pg.Client`, whose `end()` waits for the server to close the socket (0 leftover sessions in 200 local rounds).
+- **Change:** `lib/__tests__/admin-step-up-concurrency.pg.test.ts` only. `afterAll` now has an explicit 60 s timeout and a comment explaining why. No test, assertion, setup step, DROP statement, CI step or zero-skip guard changed.
+- **Could break:** nothing at runtime. If the teardown ever hangs for real, the failure now arrives after 60 s instead of 10 s.
+
+## 2026-11-05 — Staging email sign-up needs an invite code; release gate can reach a login-protected staging admin
+
+**What changed** (Owner approval, 2026-11-05)
+
+- **Staging sign-up** (`app/api/auth/staging-signup/route.ts`, staging only):
+  - a new account needs the invite code set in the staging-only server variable `STAGING_SIGNUP_INVITE_CODE`;
+  - the code is compared in constant time. Wrong guesses count toward the existing 20-per-hour limit (per IP; shared across server instances only when Upstash is configured), because the limit is checked first;
+  - if the variable is missing or shorter than 16 characters, sign-up stays closed (403). Use a randomly generated code (e.g. `openssl rand -hex 16`). Existing staging accounts can still sign in;
+  - this covers the email sign-up route only. Other ways of creating staging accounts are not changed by this PR.
+- **Sign-up screen** (`OnboardingWizard.tsx`, `steps/StepAuth.tsx`, `steps/types.ts`): on staging only, the form shows a required "Staging invite code" field and sends it with the sign-up. Production shows no new field and its sign-up path is unchanged.
+- **Release gate** (`scripts/release-v3/platform.mjs`, `scripts/release-gate-v3.mjs`, `release-prepare.yml`, `release-deploy.yml`):
+  - the staging admin health check sends Vercel's automation bypass header from the `VERCEL_ADMIN_STAGING_BYPASS` secret, so it keeps working once staging admin is behind Vercel's login;
+  - production and the merchant sites never receive the header;
+  - Vercel's login redirect or a 401 fails with a message that names the secret: missing, or rejected (wrong or rotated). Other network errors are reported as they are;
+  - `docs/RELEASE_V3_GATE.md` says where the secret is stored (the `release-observer` environment).
+
+**Tests:**
+- `lib/__tests__/staging-signup-invite.test.ts`: the real route with the right code, a wrong code, no code, missing or short configuration, rate limit order, and production.
+- `lib/__tests__/staging-signup-invite-wizard.test.tsx`: the real wizard on staging and production.
+- `scripts/__tests__/release-v3-admin-staging-bypass.test.ts`: the header goes only to staging admin; the missing- and rejected-secret messages; other network errors unchanged.
+- Red check: on `main` (`b8c54467`), 13 of these 21 tests fail and 8 pass.
+
+**Could break:**
+- After deploy, staging sign-up is closed until the Owner sets `STAGING_SIGNUP_INVITE_CODE` on the staging Vercel project. Testers and release rehearsals need the code.
+- If Vercel's login is turned on for staging admin before the `VERCEL_ADMIN_STAGING_BYPASS` secret exists in the `release-observer` environment, release prepare and deploy stop at the staging admin check. They fail closed with a clear message.
+
+## 2026-11-05 — Tables & Sections photos in the dashboard and the WhatsApp table booking (#892, app PR)
+
+- **What changed:**
+  - **Dashboard:** merchants can add up to 3 optional photos to each table or section in the Add/Edit Seating form.
+  - **Bot:** when a customer taps a seat, the WhatsApp table booking sends that seat's photos (the first captioned with the seat name), then asks for the date. If the date was already given, the photos come before the time list. If both the date and the time were given, they come before the party-size question (Owner decision D3).
+  - **Once per seat:** photos are sent once per seat per conversation. Going back to the same seat does not repeat them; a different seat shows its own.
+  - **Owner decisions 2026-11-05 (#892):** shown after the tap; stored in their own column (M516).
+- **Files:**
+  - `app/dashboard/seating/page.tsx`: Photos section; saves `gallery_urls` with the rest of the form.
+  - `app/api/seating-resources/upload-image/route.ts` (new): the same checks as the services upload (owner, type, 5 MB, magic bytes, re-encode). It stores under `<business_id>/seating/`.
+  - `lib/bot/flows/table-reservation.flow.ts`: new `seatingGalleryMessages`, guarded by `_seating_gallery_sent_ids`.
+  - `lib/bot/flows/scheduling.flow.ts`: calls the helper in `select_date`, before the `select_time` list and before the table party-size buttons. It does nothing for non-table bookings.
+  - Tests:
+    - `lib/bot/flows/__tests__/table-reservation-seating-photos.test.ts`: 12 tests, 8 fail on the old code.
+    - `lib/__tests__/seating-form-photos-892.test.tsx`: 5 rendered tests, all fail on the old form.
+    - `lib/__tests__/business-upload-paths-878.pg.test.ts`: 3 new cases for the upload route on the real storage policy.
+- **What it affects:** table bookings and the Tables & Sections form. Services keep their own gallery unchanged. The photo lookup is scoped to the business.
+- **What could break:**
+  - **Needs M516 applied first.** Without it, saving the form fails because the column is missing. The bot copes: it logs the error and continues without photos.
+  - **Cost:** each photo is a separate WhatsApp message, so up to 3 more messages per seat a customer opens.
+  - **Everything pre-filled:** photos are skipped only if the date, the time and the party size are all already known (or the table has a fixed size), so all three steps are skipped.
+
+## 2026-11-05 — "Powered by Waaiio.com" under the bot's next-steps menu
+
+- **What changed:** When a customer finishes a transaction in the chat, the "What would you like to do next?" menu now shows a small grey footer, "Powered by Waaiio.com". It is hidden for white-label businesses, using the same rule as the greeting: the business's own `is_whitelabel` switch wins, otherwise the plan's white-label setting. The footer is added after translation, so the brand text is never translated. Owner decision 2026-11-05.
+- **Files:**
+  - `lib/whitelabel.ts`: new `getPoweredByInteractiveFooter()`
+  - `lib/bot/flows/types.ts`: `FlowContext.business.is_whitelabel` (already on the loaded business row)
+  - `lib/bot/flows/executor.ts`: `showPostCompletionMenu` passes `footer` for both the button and list layouts
+  - tests in `lib/bot/__tests__/navigation-repeat.test.ts`; `lib/bot/__tests__/session-resilience.test.ts` source pin updated
+- **Affects:** every in-chat completion menu (bookings, orders, tickets, giving, payments, invoices), on shared and dedicated numbers.
+- **What could break:** nothing expected. WhatsApp footers allow 60 characters and this one is 21, and the sender already cuts footers at 60.
+- **Not included:** link payments confirmed by the payment provider still end with a text message and no buttons. Adding the menu there touches the payment confirmation path and needs a guard against two menus, so it comes in a separate PR.
+
+## 2026-11-05 — Keep staging and the admin panels out of search engines
+
+**What changed** (Owner request and approval, 2026-11-05)
+
+- **Staging merchant site** (staging.waaiio.com and its `waaiio.vercel.app` alias), only when `isStagingTestMode()` is true:
+  - every response the middleware handles carries `X-Robots-Tag: noindex, nofollow`;
+  - `/robots.txt` is `User-agent: *` / `Disallow: /`;
+  - `/sitemap.xml` returns 404;
+  - the root layout adds `<meta name="robots" content="noindex, nofollow">`.
+- **Both admin panels** (admin.waaiio.com and admin-staging.waaiio.com, same `admin/` code):
+  - `X-Robots-Tag: noindex, nofollow` on every path (`admin/vercel.json`);
+  - a new `admin/public/robots.txt` blocks everything. Before this, `/robots.txt` fell through to the single-page-app rewrite and returned `index.html`;
+  - a robots meta tag in `admin/index.html`.
+- **Production merchant site (www.waaiio.com) is unchanged.** It never matches `isStagingTestMode()`, which needs both the staging Vercel project ID and the staging Supabase URL. Its `app/robots.ts`, `app/sitemap.ts` and page metadata are untouched.
+- **Files:** `middleware.ts`, `app/layout.tsx`, `admin/vercel.json`, `admin/index.html`, `admin/public/robots.txt` (new).
+
+**Tests:** `lib/__tests__/search-noindex-staging-admin.test.ts` (new, 18 tests, runs in the full unit suite):
+- real middleware on staging: robots.txt, sitemap 404, header on pages, API routes and redirects;
+- real middleware on production: robots.txt and sitemap pass through, no header; a half-matching identity is treated as production;
+- root layout metadata on staging and production;
+- admin config: header rule, robots.txt and meta tag.
+- Red check: on `main`, the 11 staging and admin tests fail and the 7 production tests pass.
+
+**Could break:**
+- The layout meta tag is computed when the page is built. If a staging build ever runs without `VERCEL_PROJECT_ID`, the tag is left out. The middleware header (checked on every request) still applies.
+- The middleware does not run for `/_next/static`, `/_next/image`, `favicon.ico` or image files, so staging images and scripts get no header. They are also blocked by the staging robots.txt.
+- Google can't read a noindex label on pages that robots.txt blocks it from crawling. Any staging page already in Google has to be removed in Search Console (an Owner action).
+- Nothing changes for the release tool, CI or webhooks: they still reach staging, with one extra response header.
+
+## 2026-11-05 — Next-steps menu after link payments, one menu per payment
+
+- **What changed:**
+  - When the payment confirmation sends a customer's "✅ Confirmed!" message for a payment confirmed by the provider, a dashboard transfer approval or a cron job, it now follows it with a "What would you like to do next?" button menu with the footer "Powered by Waaiio.com". The footer is hidden for white-label businesses.
+  - The menu is sent only after this payment's single claimed confirmation has been accepted by Meta, so a retry never repeats it. If the menu fails to send, the logs record it, but the confirmation is never marked failed.
+  - Buttons use the same words the confirmation already tells the customer to type: `my bookings`, `my orders`, `my giving` or `history`, then `menu`, plus `directory` on shared numbers. So they work whatever state the chat is in.
+  - When a customer's "I've Paid" tap itself triggers the confirmation (Stage 3 runs during that same chat request), the chat now ends the session instead of sending a second menu. If the confirmation went out earlier (the webhook got there first), a later "I've Paid" tap still gets the chat's own menu, so the customer always gets a reply. Ending the session is version-checked, so a session that has already moved on (for example to the save-card PIN step) is left alone. The payment lookup is always scoped to the business. If that check fails for any reason, the chat menu still shows: two menus at worst, never none.
+  - Owner rule 2026-11-05.
+- **Files:**
+  - `lib/payments/next-steps-menu.ts` (new)
+  - `lib/payments/send-confirmation.ts`: menu send; reads `is_whitelabel` together with `subscription_tier`; customer language captured for the menu copy
+  - `lib/bot/flows/executor.ts`: duplicate-menu guard
+  - tests `lib/payments/__tests__/next-steps-menu.test.ts`, `lib/__tests__/link-payment-next-steps-menu.test.ts` and `lib/__tests__/executor-payment-menu-dedupe.test.ts`
+- **Affects:** every customer WhatsApp payment confirmation from Stage 3, and the completion of paid chat flows.
+- **Product note:** a customer whose "I've Paid" tap triggers the confirmation now sees the confirmation's menu (history, view options, directory) instead of the chat's menu, which also had "Book/Order/Give again".
+- **What could break:**
+  - Payments confirmed before this deploy got the confirmation text without a menu. A later "I've Paid" tap for one of them still gets the chat menu, because only a confirmation sent during that same tap counts.
+  - If WhatsApp delivers the two messages out of order, the menu could appear above the confirmation.
+
+## 2026-11-05 — Migration 517: table for scheduled form sends (#591, PR B)
+
+**What changed**
+- New table `public.form_sends` (`supabase/migrations/517_form_sends.sql`). It holds one row per form send: business, form, who created it, optional template, recipients (1–500), status (`scheduled` / `sending` / `sent` / `failed` / `cancelled`), schedule time, counts, per-recipient results and an error message.
+- A new unique index `forms (id, business_id)` lets `form_sends` reference the form and its business in one foreign key. The database therefore refuses a send that pairs one business with another business's form. Deleting a form deletes its sends.
+- RLS is on with one policy: owners can read their own sends.
+  - `anon`: no privileges.
+  - `authenticated`: SELECT only.
+  - `service_role`: read and write.
+  - Supabase's default "ALL" grants are revoked explicitly.
+- A self-check fails the migration if RLS, the policy set, the grants or the tenant foreign key drift.
+- Proved on real PostgreSQL (`lib/__tests__/form-sends-517.pg.test.ts`, run by CI's `.pg.test.ts` job). The fixture uses production's default privileges.
+- Registry row added in `docs/MIGRATION_REGISTRY.md`. CI wiring is in `.github/workflows/ci.yml`. The catalog delta is in `supabase/catalog-deltas/517_form_sends.json`.
+
+**What it affects:** nothing at runtime yet. The scheduled-sending app (PR C) uses this table, and it ships only after M517 is applied to staging and then production, each with Owner approval.
+
+**What could break:** none for the live app, which doesn't read the table. Building the new index on `forms` takes a brief lock; production has a handful of forms.
+
+## 2026-11-05 — Forms: schedule a send for later, and see past sends (#591, PR C)
+
+**What changed**
+- **Send now or later** (`components/dashboard/forms/FormSendPanel.tsx`). The merchant picks a time between 1 minute and 90 days ahead.
+  - `/api/forms/send` with `scheduledAt` saves a `form_sends` row (M517). The row stores only the people who have opted in at that moment; everyone else is reported as skipped straight away.
+  - Sending a template needs an approved template, checked when the send is scheduled.
+- **New cron `/api/cron/scheduled-form-sends`** (every 5 minutes, `vercel.json`):
+  - takes turns fairly: it reads up to 200 due sends and goes round-robin between businesses (every business's next send before any business's second), runs at most one send per business per run, least recently tried first, and up to 10 sends per run while time remains; once a business's send starts, its other waiting sends move to the back of the queue;
+  - claims each send with a status-guarded update that must return the row, so overlapping runs send it once;
+  - checks consent and opt-outs **again for every recipient at send time**;
+  - a form that was switched off or removed means the send is cancelled, never sent;
+  - if the chosen template is no longer approved, nothing is sent (same as an immediate send);
+  - a template-check outage puts the send back in the queue, for up to 2 hours, then it fails with a clear message;
+  - one 40-second budget per run, and no new send starts with less than 20 seconds left; people not reached in time go back in the queue (never dropped), with results so far kept;
+  - a send left "sending" by a killed run is marked "Interrupted… check before sending again" after 10 minutes, and is never re-sent;
+  - a send that never gets going (out of time on every run) is closed after 2 hours with "Nothing was sent because…";
+  - a send that stops early after earlier runs already reached some people says so ("Sent to N; the other M were not sent because…"), never "nothing was sent", and lists the people it never reached;
+  - final status is `sent` if at least one message was accepted, otherwise `failed`, with the reason ("Nobody was eligible…" or "No messages were accepted").
+- **Send history and cancel** (new `app/api/forms/sends/route.ts`):
+  - owner only; ids must be UUIDs;
+  - lists a form's last 20 sends, immediate ones included; the panel shows who wasn't sent and why;
+  - cancels a send that has not started (409 once it has).
+- **Interim cap:** at most 20 sends waiting per business (Owner decision pending on limits).
+- Immediate sends are now also saved to `form_sends`, so they appear in the history. This is best effort: the messages have already gone.
+
+**What it affects:** the Forms page send panel, `/api/forms/send`, a new cron route, and a new `vercel.json` cron entry.
+
+**What could break / dependency:**
+- **Requires migration 517 in production first.** Without it, scheduling returns 500 and immediate sends work but have no history.
+
+## 2026-11-05 — Forms: send to opted-in groups, honest results, optional "send me updates" box (#591, PR A)
+
+**What changed** (Owner chose "Build into Forms", 2026-11-05)
+
+- **Send on WhatsApp from the Forms page** (`components/dashboard/forms/FormSendPanel.tsx`, `app/dashboard/forms/page.tsx`). The merchant picks recipients in one of three ways:
+  - opted-in contacts;
+  - a saved Audience (resolved by `lib/engage`);
+  - typed numbers.
+
+  An approved template can be chosen. The panel shows Sent / Failed / Skipped, with a reason for each recipient who was not sent.
+- **`/api/forms/send` rewritten** (`app/api/forms/send/route.ts`, new `lib/forms/form-send.ts`):
+  - every recipient is checked with `hasRecipientPermission(…, 'marketing')`, and opt-outs are honoured; a failed check means skip;
+  - inside a verified 24-hour window (inbound receipts on the sending channel) the invite goes as text; outside it, only an approved two-parameter `en_US` template from the sending WABA is used;
+  - each recipient gets an honest result (`blocked` when sending is paused for the account); one provider attempt per recipient; every attempt is logged in `notifications`;
+  - a 40-second time budget: people not reached in time are reported as "not attempted", never silently dropped; a template-lookup outage returns 503 with nothing sent;
+  - sending no longer writes an empty `status: 'sent'` row to `form_responses`.
+- **Opted-in contacts list** (new `app/api/forms/recipients/route.ts`, `lib/forms/opted-in-contacts.ts`). Owner only. It lists people whose latest WhatsApp marketing consent for this business is granted and who have not opted out.
+- **Optional "Yes, send me updates" box**:
+  - the merchant turns it on per form (`forms.settings.marketing_opt_in`); it needs a Phone field;
+  - it is shown unticked on the public form (`app/form/[token]/page.tsx`, `app/api/forms/public/[token]/route.ts`);
+  - when ticked, `/api/forms/submit` appends a **pending** row to `customer_consents` (whatsapp / marketing / source `website`) and sets `form_responses.consent_given`;
+  - nobody has proved they own the typed number, so pending is never sendable (`hasRecipientPermission` needs `granted`), and a tick never replaces a newer `granted` record. How a tick becomes confirmed is an open Owner decision (#591). Production has no consent records today, so nobody is sendable until a confirmed consent source exists.
+- **View Responses** hides the old empty "sent" rows and marks responses that ticked the box as "not yet confirmed".
+
+**What it affects**
+- The Forms page and public forms.
+- `/api/forms/send` request shape: `phones[]`, `segmentId` and `templateName` are added; the old single `phone` still works.
+- The response is now `{ success, sent, failed, skipped, results }`. `success` is true only if at least one message was accepted.
+
+**What could break**
+- People without recorded marketing consent no longer receive forms. This is intended (`RECIPIENT_POLICY`).
+- Recipients outside the 24-hour window fail unless the merchant chooses a compatible template.
+- Interim limit of 100 recipients per send (500 typed entries), 5 sends per minute per business, and the send is refused once the monthly conversation limit is reached (Owner decision pending).
+
+**Not in this PR:** scheduled sends (PR B adds migration 517, PR C adds the app). Schema drift was found but not fixed: production has `form_responses.status`, `channel` and `business_notes`, but no migration creates them.
+
+## 2026-11-05 — Waaiio logo on the event ticket and the payment receipt
+
+**What changed** (Owner request with the logo files, design approved from previews on 2026-11-05)
+
+- **Receipt:**
+  - the Waaiio logo is at the top;
+  - "RECEIPT" and the business name follow;
+  - "Powered by Waaiio · waaiio.com" is at the bottom.
+- **Event ticket:** the Waaiio logo is at the bottom of the tear-off stub, with "Powered by Waaiio · waaiio.com" under it.
+- **A business's own logo** (when uploaded) now sits small beside its name: on the receipt under "RECEIPT", and on the ticket before the organiser name in the purple body. It no longer takes the top or stub position.
+- **White-label tiers** (none today) show no Waaiio logo or text; the business logo takes the old position.
+- **Files:**
+  - `lib/pdf/brand-assets.ts` (new): the Owner-supplied wordmark (identical to `public/logo.png`), embedded as a small PNG so no PDF needs a network fetch for it.
+  - `lib/pdf/receipt-generator.ts`: the single receipt only. The history and annual statements are unchanged.
+  - `lib/pdf/ticket-generator.ts`.
+  - `lib/pdf/merchant-image.ts` (new): the logo and flyer loading from #891, moved out of the ticket generator so the receipt uses it too.
+
+**Receipt business logo now uses the ticket's safer loader** (`loadBusinessLogo`):
+- only URLs in this project's public `business-documents` bucket (where `/api/business/upload-logo` stores logos);
+- redirects refused;
+- 5 MB cap;
+- re-encoded to a PNG of at most 256 px.
+
+This fixes receipt Bug D from #889 (WebP logos silently missing). Logos stored anywhere else are no longer drawn on receipts. In production none are (0 of 51 businesses have a logo yet).
+
+**Tests:**
+- `lib/pdf/__tests__/receipt-brand-logo.test.ts` (new):
+  - wordmark and footer text;
+  - WebP business logo drawn beside the name, with `redirect: 'error'`;
+  - white-label;
+  - URLs outside the bucket are never fetched.
+- `lib/pdf/__tests__/ticket-stub-barcode.test.ts`:
+  - the wordmark is on every ticket and embedded once;
+  - white-label stub;
+  - image counts updated.
+- Red check: against `main`'s generators, 8 of these tests fail.
+
+**Could break:**
+- Every non-white-label ticket and receipt PDF grows by about 18 KB: the 10.7 KB wordmark PNG becomes an image plus a transparency mask, embedded once per PDF.
+- On the receipt, the business name is now a single line; very long names (over about 55 characters) end in "…" instead of wrapping into the status badge (reviewers 901-a and 901-b, P2).
+- A receipt whose `logo_url` points outside the bucket no longer shows that logo.
+- The website's browser-tab and app icons (still the green bubble) are not changed here.
+
+## 2026-11-05 — Admin panel no longer confirms bank transfers (#907)
+
+**What changed:** Removed the **Confirm Transfer** button and its handler from the admin Pending Transfers page (`admin/src/pages/PendingTransfers.tsx`). A pending transfer's detail now explains that only the business can confirm it from its own dashboard. Reject is unchanged. Owner decision C on #907.
+
+**Why:** The admin confirm wrote `payments.amount = expected_amount`, which is minor units (100× too large). It also skipped `confirm_order_transfer_atomic` / `confirm_nonorder_transfer_atomic` and their checks: status lock, business match, amount, duplicate-payment fence, stock and promo. In production, RLS allows admins to update only `pending_transfers`. So the button just flipped the transfer to `confirmed`, wrote no payment, fee, booking, order or invoice change, and still showed success. The merchant could then no longer confirm. It also called `/api/admin/notify-transfer-confirmed`, which does not exist. No ×100 payment rows exist in production.
+
+**Affects:** Admin Pending Transfers detail view only. The merchant confirm route (`app/api/dashboard/pending-transfers/[id]`) and the database functions are untouched. Both custody routes, fees, refunds and payouts are unchanged.
+
+**What could break:** An admin can no longer confirm a transfer for a merchant; the merchant must do it. Three transfers confirmed from the admin panel on 2026-06-26 still have no payment record. Any correction is a separate, Owner-approved data task.
+
+**Tests:** `admin/src/__tests__/pending-transfers-no-admin-confirm-907.test.tsx` (rendered).
+
+## 2026-11-04 — Release V3: staging lock update and teardown script for #813 renumbering
+
+- Owner decisions 2026-11-04: #813 option A (renumber its migrations above the V3 lock to 511-513) and staging plan S1 (undo and re-apply).
+- `scripts/release-v3/lock.json` and `lock-catalog-staging.json`: the staging entry leaves out #813's 91 catalog objects and 2 ledger rows (6309 objects `feeb53c0…`, 442 rows `dca1b4e0…`). The production entry is unchanged.
+- `scripts/release-v3/staging-813-teardown.sql`: a one-time staging script that removes #813's 3 tables, 9 functions, 4 triggers and 2 ledger rows. It runs in one transaction and checks the reviewed statement bytes first, so it refuses to run on production or on a second attempt.
+- `docs/RELEASE_V3_GATE.md`: documents the update and the merge order.
+- Tests: the release-v3 admission tests pin the new staging values. The teardown was run locally on a disposable PostgreSQL by the author and both reviewers (tamper, dependency, success and re-run cases); no committed test runs it. The read-only staging prediction matched exactly.
+- Could break: until the teardown runs on staging, a staging admission against this lock fails closed (catalog and ledger differ). After the teardown, main's old lock fails the same way until this merges. Releases cannot pass the gate in between, so the teardown and the merge happen back to back.
+
+## 2026-11-04 — Settings opens the tab a link names; Recurring Payments for Giving businesses
+
+- **What changed:**
+  1. The Settings page now reads `tab` and `section` with `useSearchParams()` instead of `window.location`. On an in-app link click, Next.js updates the address bar only after the new page first renders, so Settings read the old address and opened the Business tab. A full page load already worked. As a result, the Giving form's "Open recurring settings" link now really opens the page it points to:
+     - Recurring switched off: Payments > Recurring Payments, expanded.
+     - Recurring paused by plan: Account > Plan & Upgrade, expanded.
+     - Recurring not selected: the Capabilities page.
+     These destinations are unchanged from #785, and the Giving page change only names that expression `recurringFixHref`. Owner decision 2026-11-05: keep a destination that can clear each block.
+  2. The Recurring Payments section on Settings > Payments now also shows for businesses with Giving. Before, it showed only for Payment or Crowdfunding, so a Giving-only business could not switch recurring on there (Owner decision 2026-11-05).
+  3. Saving that Recurring setting now refreshes the dashboard's business data. Before, the Giving checkbox stayed blocked, and the toggle showed off again, until a full page reload. This was also true for Payment and Crowdfunding businesses. Settings > Business already refreshes after its saves in the same way.
+- **Files:**
+  - `app/dashboard/settings/page.tsx`: query read.
+  - `app/dashboard/settings/tabs/PaymentsTab.tsx`: the Recurring section condition adds `giving`, and the save refreshes the business data.
+  - `app/dashboard/giving/page.tsx`: the existing link destinations moved into `recurringFixHref`, with no behaviour change.
+  - `lib/__tests__/merchant-settings-785.test.tsx`: rendered tests for:
+    - each blocked state (message and link);
+    - the Giving-only Recurring section and its save refresh;
+    - Settings opening Payments > Recurring and Account > Plan & Upgrade from an in-app click.
+  - `lib/__tests__/business-logo-753.test.tsx`: its `next/navigation` mock now provides `useSearchParams`.
+- **Affects:**
+  - Every in-app link to `/dashboard/settings?tab=...`. For example, Billing's "Manage renewal" now opens the Account tab on click.
+  - The Payments tab for Giving businesses.
+  - The Recurring save.
+  - Unchanged: message wording, eligibility rules, bot, payment routing. The Recurring toggle saves the same `recurring_enabled` field as before.
+- **Could break:**
+  - The link text stays "Open recurring settings" in all three states, including when it goes to Plan & Upgrade or Capabilities.
+  - Settings picks its tab when the page first opens. Changing only the query while already on Settings does not switch tabs, which was also true before.
+
 ## 2026-11-05 — Escape the property name in the check-in QR print view; sanitize the phone in the invoice session filter
 
 - **What changed:**
