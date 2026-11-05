@@ -1905,7 +1905,8 @@ export const schedulingFlow: FlowDefinition = {
             title: `${n} guest${n > 1 ? 's' : ''}`,
           }));
           const rangeLabel = minCap === maxCap ? `${minCap}` : `${minCap}-${maxCap}`;
-          return [{
+          // Date and time given up front skip select_date/select_time: show the seat's photos here (#892 D3)
+          return [...await seatingGalleryMessages(ctx), {
             type: 'buttons',
             body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
             buttons,

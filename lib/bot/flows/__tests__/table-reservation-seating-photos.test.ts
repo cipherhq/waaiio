@@ -201,6 +201,28 @@ describe('#892 table booking shows the tapped seat\'s photos', () => {
     expect(msgs[msgs.length - 1].type).not.toBe('image');
   });
 
+  it('D3 date and time already given (both skipped): the party-size question shows the photos first', async () => {
+    const { client } = makeSupabase({ seating_resources: seating(() => galleryOf([P1, P2])) });
+    const ctx = makeCtx({ ...tappedSeat(), date: '2099-01-06', time: '20:00', _seating_min_party: 2, _seating_capacity: 6 }, client);
+
+    const msgs = await getStep(schedulingFlow, 'select_quantity').prompt(ctx);
+
+    expect(urls(msgs)).toEqual([P1, P2]);
+    expect(imagesOf(msgs)[0].caption).toBe('VIP Area');
+    expect(msgs[msgs.length - 1].type).toBe('buttons');
+  });
+
+  it('D3 photos already shown at the date step are not repeated at party size', async () => {
+    const { client, calls } = makeSupabase({ seating_resources: seating(() => galleryOf([P1])) });
+    const ctx = makeCtx({ ...tappedSeat(), _seating_min_party: 2, _seating_capacity: 6 }, client);
+
+    expect(urls(await selectDate.prompt(ctx))).toEqual([P1]);
+    const msgs = await getStep(schedulingFlow, 'select_quantity').prompt(ctx);
+    expect(urls(msgs)).toEqual([]);
+    expect(msgs.map(m => m.type)).toEqual(['buttons']);
+    expect(seatLookups(calls)).toHaveLength(1);
+  });
+
   it('B11 services are unchanged: a service booking gets the service gallery and no seating lookup', async () => {
     const SVC = 'https://cdn.example/biz-1/services/cut.jpg';
     const { client, calls } = makeSupabase({
