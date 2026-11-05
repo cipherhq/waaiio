@@ -19,6 +19,16 @@ export function getPoweredByFooter(subscriptionTier: string | null | undefined):
 }
 
 /**
+ * Footer line for WhatsApp interactive messages (buttons/lists, max 60 chars)
+ * under a completed transaction's next-steps menu, or undefined for
+ * white-label accounts. Owner decision 2026-11-05.
+ */
+export function getPoweredByInteractiveFooter(subscriptionTier: string | null | undefined): string | undefined {
+  if (isWhiteLabel(subscriptionTier)) return undefined;
+  return 'Powered by Waaiio.com';
+}
+
+/**
  * Returns the "Powered by Waaiio" footer as HTML, or empty string for white-label accounts.
  */
 export function getPoweredByHtml(subscriptionTier: string | null | undefined): string {

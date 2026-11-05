@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
+import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
 import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
@@ -1255,11 +1256,14 @@ export class FlowExecutor {
       ? await localizeMessage(postCompletionMsg, lang, tCtx)
       : postCompletionMsg;
 
+    // Brand line under every completed transaction's menu. Added after
+    // localization so "Waaiio.com" is never translated; hidden for white-label plans.
+    const footer = getPoweredByInteractiveFooter(ctx.business?.subscription_tier);
     const s = sender || this.sender;
     if (localizedMsg.type === 'buttons') {
-      await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons });
+      await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons, footer });
     } else if (localizedMsg.type === 'list') {
-      await s.sendList({ to: from, ...localizedMsg });
+      await s.sendList({ to: from, ...localizedMsg, footer });
     }
   }
 
