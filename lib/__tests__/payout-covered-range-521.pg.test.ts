@@ -132,10 +132,20 @@ suite('M521 business_payouts covered range (real PostgreSQL)', () => {
 
   beforeAll(async () => {
     control = new pg.Client({ connectionString: url }); await control.connect();
-    await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$`);
-    await control.query(`ALTER ROLE service_role BYPASSRLS`);
-    for (const role of ['anon', 'authenticated']) {
-      await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role} NOLOGIN; END IF; END $$`);
+    // Roles are cluster-wide and other .pg.test.ts files create them in parallel. Only
+    // change service_role when needed, and retry once on a concurrent-update race
+    // ("tuple concurrently updated" / duplicate role) so this file adds no flakiness.
+    const roleSetup = `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS;
+        ELSIF NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role') THEN ALTER ROLE service_role BYPASSRLS; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+      END $$`;
+    try { await control.query(roleSetup); } catch (err) {
+      const code = (err as DbError).code;
+      if (code !== 'XX000' && code !== '23505' && code !== '42710') throw err;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      await control.query(roleSetup);
     }
     client = await freshDatabase(database);
     await buildFixture(client);
