@@ -11,6 +11,9 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { getEntityBalance } from '@/lib/payments/entity-balance';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
+import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
+import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -440,10 +443,14 @@ export async function sendProactiveConfirmation(
 
   // Fetch subscription tier for white-label checks on emails
   let isWl = false;
+  let subscriptionTier: string | null = null;
+  let businessIsWhitelabel: boolean | null = null;
   try {
-    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', businessId).single();
+    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier, is_whitelabel').eq('id', businessId).single();
     const { isWhiteLabel } = await import('@/lib/whitelabel');
-    isWl = isWhiteLabel(bizTier?.subscription_tier);
+    subscriptionTier = (bizTier?.subscription_tier as string | null | undefined) ?? null;
+    businessIsWhitelabel = (bizTier?.is_whitelabel as boolean | null | undefined) ?? null;
+    isWl = isWhiteLabel(subscriptionTier);
   } catch { /* non-critical */ }
 
   // For web channel bookings, we may not have a phone but should still send email
@@ -502,9 +509,11 @@ export async function sendProactiveConfirmation(
 
   // Slice 5A: Resolve proactive localization once for reuse in confirmation + post-completion
   let proactiveTranslate: ((text: string, pv?: string[]) => Promise<string>) | undefined;
+  let proactiveLanguage = 'en';
   if (customerPhone && businessId) {
     try {
       const proactiveL10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+      proactiveLanguage = proactiveL10n.language || 'en';
       if (proactiveL10n.language !== 'en') {
         proactiveTranslate = proactiveL10n.translate;
       }
@@ -696,9 +705,9 @@ export async function sendProactiveConfirmation(
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
   }
 
-  lines.push('', 'Type *receipt* to get your receipt', transactionNextSteps(
-    payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment',
-    resolved?.channel.channel_type === 'shared'));
+  const nextStepsKind = payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment';
+  const nextStepsShared = resolved?.channel.channel_type === 'shared';
+  lines.push('', 'Type *receipt* to get your receipt', transactionNextSteps(nextStepsKind, nextStepsShared));
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {
@@ -880,6 +889,23 @@ export async function sendProactiveConfirmation(
                     logger.info(`${logPrefix} WAMID recovery succeeded for payment ${payment.id} (already_attached=${recoveryResult.already_attached})`);
                   }
                 }
+              }
+
+              // Owner rule 2026-11-05: every completed transaction ends with a
+              // next-steps menu and "Powered by Waaiio.com". Sent only here, after
+              // this payment's one claimed confirmation was accepted, so a Stage-3
+              // retry never repeats it. Its own try/catch: a menu failure must not
+              // mark the already-accepted confirmation as failed.
+              try {
+                await resolved.sender.sendButtons({
+                  to: phone,
+                  body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
+                  buttons: buildPaymentNextStepsButtons(nextStepsKind, nextStepsShared, proactiveLanguage),
+                  footer: getPoweredByInteractiveFooter(subscriptionTier, businessIsWhitelabel),
+                  messageCategory: 'service',
+                });
+              } catch (menuErr) {
+                logSafeError(logPrefix, 'next-steps-menu', menuErr);
               }
             } else {
               // No WAMID returned but no error thrown — indeterminate
