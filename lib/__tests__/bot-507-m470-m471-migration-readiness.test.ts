@@ -611,7 +611,7 @@ describe('§6 Real process_tickets step caller tests (ticketing.flow.ts)', () =>
           first_name: 'John',
           last_name: 'Doe',
           _terms_accepted: true,
-        },
+        } as Record<string, unknown>,
         version: 1,
       },
       business: {

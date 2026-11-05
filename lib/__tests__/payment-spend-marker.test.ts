@@ -2,7 +2,7 @@
  * Migration 334 — Payment spend marker: real PostgreSQL tests.
  * Requires TEST_DATABASE_URL.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach} from 'vitest';
 import { execSync, spawn } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -383,10 +383,6 @@ describe.skipIf(!canRun)('Migration 334: Payment spend marker', () => {
   });
 
   it('19. malformed semantic result → critical failure', async () => {
-    // Test via processSuccessfulPayment mock — malformed applied value
-    const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
-    vi.doMock('@/lib/logger', () => { const l: Record<string, unknown> = { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
-
     // This is a source-level supplemental check since we can't easily mock the RPC return
     // to return { applied: 'true' } (string instead of boolean) through the Supabase client.
     // The production code checks `typeof spendResult.applied !== 'boolean'`.

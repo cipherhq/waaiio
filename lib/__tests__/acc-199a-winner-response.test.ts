@@ -719,9 +719,8 @@ describe('prize_instructions validation', () => {
   });
 
   it('accepts null prize_instructions', () => {
-    const instructions: string | null = null;
-    const isValid = instructions === null || (typeof instructions === 'string' && instructions.trim().length <= 500);
-    expect(isValid).toBe(true);
+    const validInstructions = (instructions: string | null) => instructions === null || (typeof instructions === 'string' && instructions.trim().length <= 500);
+    expect(validInstructions(null)).toBe(true);
   });
 
   it('rejects non-string prize_instructions', () => {

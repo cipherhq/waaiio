@@ -326,7 +326,7 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
       {
         claim_payment_confirmation: CLAIM_OK,
         renew_payment_confirmation_claim: RENEW_OK,
-        release_payment_confirmation: { released: true },
+        release_payment_confirmation: { data: { released: true } },
       },
       {
         payments: (c) => {
@@ -365,7 +365,7 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
         claim_payment_confirmation: CLAIM_OK,
         renew_payment_confirmation_claim: RENEW_OK,
         // #219: Missing channel should release claim, not finalize
-        release_payment_confirmation: { released: true },
+        release_payment_confirmation: { data: { released: true } },
       },
       {
         payments: (c) => {

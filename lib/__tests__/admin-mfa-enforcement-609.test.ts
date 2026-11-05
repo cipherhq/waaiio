@@ -207,7 +207,7 @@ describe('SEC-005 Layer 3: RLS migration', () => {
   it('replaces inline profiles.role admin policy on business_payouts', () => {
     expect(migration).toContain("DROP POLICY IF EXISTS \"Admins have full access to business_payouts\"");
     // New policy uses is_admin() which requires aal2
-    expect(migration).toMatch(/business_payouts.*is_admin\(\)/s);
+    expect(migration).toMatch(new RegExp("business_payouts.*is_admin\\(\\)", "s"));
   });
 
   it('replaces inline profiles.role admin policy on payout_accounts', () => {

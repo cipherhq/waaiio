@@ -121,7 +121,7 @@ describe('W22 Payments Received mounted page', () => {
     }]));
     render(<PaymentsReceivedPage />);
     await screen.findByRole('button', { name: /View payment from/ });
-    fireEvent.click(screen.getByRole('button', { name: button, exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: button }));
     await waitFor(() => {
       assertQuery(latest(), true);
       expect(latest()).toContainEqual({ method: 'eq', args: ['bookings.payment_source', source] });
@@ -132,7 +132,7 @@ describe('W22 Payments Received mounted page', () => {
   it.each([['Invoices', 'invoice_id'], ['Orders', 'order_id']])('keeps the left relationship for %s', async (button, column) => {
     render(<PaymentsReceivedPage />);
     await screen.findByText('Fixture Customer');
-    fireEvent.click(screen.getByRole('button', { name: button, exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: button }));
     await waitFor(() => {
       assertQuery(latest());
       expect(latest()).toContainEqual({ method: 'not', args: [column, 'is', null] });
@@ -210,9 +210,9 @@ describe('W22 Payments Received mounted page', () => {
     ]));
     render(<PaymentsReceivedPage />);
     await screen.findByText('Fixture Customer');
-    fireEvent.click(screen.getByRole('button', { name: 'Requests', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Requests' }));
     await waitFor(() => expect(state.respond).toHaveBeenCalledTimes(2));
-    fireEvent.click(screen.getByRole('button', { name: 'Orders', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Orders' }));
     await screen.findByRole('button', { name: /View payment from Customer.*Order/ });
     await act(async () => {
       if (mode === 'network rejection') fail(new Error('Late network failure'));

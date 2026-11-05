@@ -38,7 +38,7 @@ function buildServiceMock(config: MockConfig = {}) {
       get(_target, prop: string) {
         if (prop === 'then' || prop === 'catch' || prop === 'finally') {
           // Make the proxy thenable — resolves immediately
-          return resolved[prop as keyof typeof resolved].bind(resolved);
+          return resolved[prop].bind(resolved);
         }
         if (prop === 'maybeSingle') {
           return vi.fn(() => {
