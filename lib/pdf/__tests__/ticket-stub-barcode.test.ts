@@ -30,7 +30,7 @@ const whiteLabel = vi.hoisted(() => ({ on: false }));
 vi.mock('@/lib/whitelabel', () => ({ isWhiteLabel: () => whiteLabel.on }));
 
 import { encodeCode128B } from '../code128';
-import { generateTicketsPdf, isAllowedBusinessLogoUrl } from '../ticket-generator';
+import { generateTicketsPdf, allowedBusinessLogoUrl } from '../ticket-generator';
 
 /** Draw the module list as a 1-pixel-per-unit bitmap and decode it with the scanner's Code 128 reader. */
 function decodeModules(modules: number[], unit = 2): string {
@@ -71,6 +71,11 @@ const squash = (s: string) => s.replace(/\s+/g, '');
 const expectText = (text: string, needle: string) => expect(squash(text)).toContain(squash(needle));
 
 const imageCount = (buf: Buffer) => (buf.toString('latin1').match(/\/Subtype \/Image/g) || []).length;
+const asResponse = (b: Buffer, headers: Record<string, string> = {}) => ({
+  ok: true,
+  headers: new Headers(headers),
+  arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength),
+});
 
 const SUPABASE = 'https://proj.supabase.co';
 const LOGO_URL = `${SUPABASE}/storage/v1/object/public/business-documents/biz-1/logos/1.webp`;
@@ -124,15 +129,15 @@ describe('generateTicketsPdf: ticket layout', () => {
   const realFetch = globalThis.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
   let logoWebp: Buffer;
+  let responses: Map<string, () => unknown>;
 
   beforeEach(async () => {
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', SUPABASE);
     qrSpy.mockClear();
     whiteLabel.on = false;
     logoWebp = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#F59E0B' } }).webp().toBuffer();
-    fetchMock = vi.fn(async (url: string) => (url === LOGO_URL
-      ? { ok: true, arrayBuffer: async () => logoWebp.buffer.slice(logoWebp.byteOffset, logoWebp.byteOffset + logoWebp.byteLength) }
-      : { ok: false }));
+    responses = new Map([[LOGO_URL, () => asResponse(logoWebp)]]);
+    fetchMock = vi.fn(async (url: string) => (responses.get(url) ?? (() => ({ ok: false })))());
     globalThis.fetch = fetchMock as any;
   });
   afterEach(() => { globalThis.fetch = realFetch; vi.unstubAllEnvs(); });
@@ -161,13 +166,34 @@ describe('generateTicketsPdf: ticket layout', () => {
     ]);
   });
 
-  it('WebP business logo from the business-documents bucket is fetched and drawn', async () => {
+  it('WebP business logo from the business-documents bucket is fetched (no redirects) and drawn', async () => {
     const withLogo = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
     const without = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]] });
-    expect(fetchMock).toHaveBeenCalledWith(LOGO_URL, expect.anything());
-    // PNG images with transparency add a mask object, so compare rather than count exactly.
-    expect(imageCount(without)).toBeGreaterThan(0); // QR
-    expect(imageCount(withLogo)).toBeGreaterThan(imageCount(without)); // QR + logo (WebP converted to PNG)
+    expect(fetchMock).toHaveBeenCalledWith(LOGO_URL, expect.objectContaining({ redirect: 'error' }));
+    // The QR is an image plus a transparency mask; the opaque logo adds one image.
+    expect(imageCount(without)).toBe(2);
+    expect(imageCount(withLogo)).toBe(3);
+  });
+
+  it('a 4096² transparent logo is downscaled and embedded once across many tickets', async () => {
+    const big = await sharp({ create: { width: 4096, height: 4096, channels: 4, background: { r: 245, g: 158, b: 11, alpha: 0.5 } } })
+      .png().toBuffer();
+    responses.set(LOGO_URL, () => asResponse(big));
+    const tickets = Array.from({ length: 5 }, (_, i) => ({ ticketCode: `TK-00000000${i}`, ticketNumber: i + 1, totalTickets: 5 }));
+    const withLogo = await generateTicketsPdf({ ...BASE, tickets, businessLogoUrl: LOGO_URL });
+    const without = await generateTicketsPdf({ ...BASE, tickets });
+    expect((await pdfText(withLogo)).pages).toBe(5);
+    expect(imageCount(withLogo) - imageCount(without)).toBe(2); // one logo image + its mask, shared by all pages
+    expect(withLogo.length - without.length).toBeLessThan(100 * 1024);
+  });
+
+  it('logo responses over 5 MB are not used', async () => {
+    responses.set(LOGO_URL, () => asResponse(logoWebp, { 'content-length': String(10 * 1024 * 1024) }));
+    const declared = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
+    expect(imageCount(declared)).toBe(2); // QR only
+    responses.set(LOGO_URL, () => asResponse(Buffer.alloc(5 * 1024 * 1024 + 1)));
+    const actual = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: LOGO_URL });
+    expect(imageCount(actual)).toBe(2);
   });
 
   it('logo URLs outside the business-documents bucket are never fetched', async () => {
@@ -175,11 +201,25 @@ describe('generateTicketsPdf: ticket layout', () => {
       'http://169.254.169.254/latest/meta-data/',
       `${SUPABASE}/storage/v1/object/public/other-bucket/x.png`,
       `${SUPABASE}.evil.com/storage/v1/object/public/business-documents/x.png`,
+      `${SUPABASE}/storage/v1/object/public/business-documents/../../../../rest/v1/x`,
+      `${SUPABASE}/storage/v1/object/public/business-documents/%2e%2e/%2E%2E/%2e%2e/%2e%2e/rest/v1/x`,
+      'https://user:pw@proj.supabase.co/storage/v1/object/public/business-documents/x.png',
+      'not a url',
     ]) {
-      expect(isAllowedBusinessLogoUrl(url)).toBe(false);
+      expect(allowedBusinessLogoUrl(url)).toBeNull();
       await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], businessLogoUrl: url });
-      expect(fetchMock).not.toHaveBeenCalledWith(url, expect.anything());
     }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(allowedBusinessLogoUrl(LOGO_URL)).toBe(LOGO_URL);
+  });
+
+  it('a WebP event flyer is converted and drawn', async () => {
+    const flyerUrl = 'https://cdn.example.com/flyer.webp';
+    const flyer = await sharp({ create: { width: 3000, height: 1500, channels: 3, background: '#22c55e' } }).webp().toBuffer();
+    responses.set(flyerUrl, () => asResponse(flyer));
+    const withFlyer = await generateTicketsPdf({ ...BASE, tickets: [BASE.tickets[0]], flyerUrl });
+    expect(imageCount(withFlyer)).toBe(3); // QR + mask + flyer (JPEG, no mask)
+    expect((await pdfText(withFlyer)).pages).toBe(1);
   });
 
   it('white-label tiers hide the Waaiio footer', async () => {

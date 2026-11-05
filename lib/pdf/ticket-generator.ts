@@ -64,11 +64,16 @@ function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
   });
 }
 
-async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+async function fetchImageBuffer(url: string, init: RequestInit = {}): Promise<Buffer | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
-    return Buffer.from(await res.arrayBuffer());
+    const declared = Number(res.headers?.get?.('content-length') || 0);
+    if (declared > MAX_IMAGE_BYTES) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.length > MAX_IMAGE_BYTES ? null : buf;
   } catch {
     return null;
   }
@@ -77,21 +82,44 @@ async function fetchImageBuffer(url: string): Promise<Buffer | null> {
 /**
  * Only fetch logos uploaded through /api/business/upload-logo (public business-documents bucket),
  * so a hand-edited logo_url can't make the server fetch an arbitrary address.
+ * Returns the normalised URL to fetch, or null. Parsing resolves `..` and `%2e%2e` before the check.
  */
-export function isAllowedBusinessLogoUrl(url: string | undefined): url is string {
+export function allowedBusinessLogoUrl(url: string | undefined): string | null {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url || !base) return false;
-  return url.startsWith(`${base.replace(/\/+$/, '')}/storage/v1/object/public/business-documents/`);
+  if (!url || !base) return null;
+  try {
+    const u = new URL(url);
+    const b = new URL(base);
+    const prefix = `${b.pathname.replace(/\/+$/, '')}/storage/v1/object/public/business-documents/`;
+    if (u.origin !== b.origin || u.username || u.password || !u.pathname.startsWith(prefix)) return null;
+    return u.href;
+  } catch {
+    return null;
+  }
 }
 
-/** PDFKit draws only PNG and JPEG; uploads may be WebP, so convert anything else to PNG. */
-async function toPdfImage(buf: Buffer): Promise<Buffer | null> {
-  const isPng = buf.length > 8 && buf.readUInt32BE(0) === 0x89504e47;
-  const isJpeg = buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-  if (isPng || isJpeg) return buf;
+/**
+ * Re-encode an image for PDFKit: it draws only PNG and JPEG (uploads may be WebP), and a full-size
+ * merchant image would make generation slow and the PDF huge, so cap its dimensions too.
+ */
+async function toPdfImage(buf: Buffer, maxPx: number, format: 'png' | 'jpeg'): Promise<Buffer | null> {
   try {
     const sharp = (await import('sharp')).default;
-    return await sharp(buf).png().toBuffer();
+    const img = sharp(buf, { limitInputPixels: 40_000_000 })
+      .resize({ width: maxPx, height: maxPx, fit: 'inside', withoutEnlargement: true });
+    return format === 'png'
+      ? await img.png().toBuffer()
+      : await img.flatten({ background: '#ffffff' }).jpeg({ quality: 80 }).toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+/** Embed an image once so every page reuses the same PDF object. */
+function openPdfImage(doc: any, buf: Buffer | null): unknown | null {
+  if (!buf) return null;
+  try {
+    return doc.openImage(buf);
   } catch {
     return null;
   }
@@ -159,13 +187,17 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
   const doc: any = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0 });
   const bufferPromise = collectPdfBuffer(doc);
 
-  let flyerBuffer: Buffer | null = null;
-  if (opts.flyerUrl) flyerBuffer = await fetchImageBuffer(opts.flyerUrl);
+  let flyerImage: unknown = null;
+  if (opts.flyerUrl) {
+    const raw = await fetchImageBuffer(opts.flyerUrl);
+    if (raw) flyerImage = openPdfImage(doc, await toPdfImage(raw, 1200, 'jpeg'));
+  }
 
-  let logoBuffer: Buffer | null = null;
-  if (isAllowedBusinessLogoUrl(opts.businessLogoUrl)) {
-    const raw = await fetchImageBuffer(opts.businessLogoUrl);
-    if (raw) logoBuffer = await toPdfImage(raw);
+  let logoImage: unknown = null;
+  const logoUrl = allowedBusinessLogoUrl(opts.businessLogoUrl);
+  if (logoUrl) {
+    const raw = await fetchImageBuffer(logoUrl, { redirect: 'error' });
+    if (raw) logoImage = openPdfImage(doc, await toPdfImage(raw, 256, 'png'));
   }
 
   const businessName = (opts.businessName || '').trim();
@@ -201,14 +233,15 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     doc.roundedRect(CARD_X, CARD_Y, CARD_W, CARD_H, CARD_RADIUS).clip();
     doc.rect(CARD_X, CARD_Y, STUB_W, CARD_H).fillColor(STUB_BG).fill();
     doc.rect(bodyX, CARD_Y, bodyRight - bodyX, CARD_H).fillColor(BRAND_PURPLE).fill();
-    if (flyerBuffer) {
+    if (flyerImage) {
+      doc.save();
       try {
-        doc.save();
         doc.rect(bodyX, CARD_Y, bodyRight - bodyX, CARD_H).clip();
         doc.opacity(0.14);
-        doc.image(flyerBuffer, bodyX, CARD_Y, { cover: [bodyRight - bodyX, CARD_H], align: 'center', valign: 'center' });
+        doc.image(flyerImage, bodyX, CARD_Y, { cover: [bodyRight - bodyX, CARD_H], align: 'center', valign: 'center' });
+      } catch { /* continue without flyer */ } finally {
         doc.restore();
-      } catch { /* continue without flyer */ }
+      }
     }
     drawLineArt(doc, bodyX, bodyRight);
     doc.restore();
@@ -236,16 +269,16 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     const markX = CARD_X + (STUB_W - markSize) / 2;
     const markY = stubFooterTop + 2;
     let markDrawn = false;
-    if (logoBuffer) {
+    if (logoImage) {
       try {
-        doc.image(logoBuffer, markX, markY, { fit: [markSize, markSize], align: 'center', valign: 'center' });
+        doc.image(logoImage, markX, markY, { fit: [markSize, markSize], align: 'center', valign: 'center' });
         markDrawn = true;
       } catch { /* fall back to monogram */ }
     }
     if (!markDrawn && businessName) {
       doc.circle(markX + markSize / 2, markY + markSize / 2, markSize / 2).fillColor(BRAND_PURPLE).fill();
       doc.font('Helvetica-Bold').fontSize(12).fillColor('#FFFFFF')
-        .text(businessName.charAt(0).toUpperCase(), markX, markY + 7, { width: markSize, align: 'center', lineBreak: false });
+        .text((Array.from(businessName)[0] || '').toUpperCase(), markX, markY + 7, { width: markSize, align: 'center', lineBreak: false });
     }
     if (businessName) {
       doc.font('Helvetica-Bold').fontSize(7).fillColor(STUB_TEXT)
@@ -257,6 +290,10 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     }
 
     // ── Main body ──
+    // Clip the text column: Helvetica can't measure some non-Latin text correctly, so a long
+    // title must not spill under the QR or off the card.
+    doc.save();
+    doc.rect(contentX, CARD_Y, contentW, CARD_H).clip();
     let y = CARD_Y + 28;
     if (businessName) {
       doc.font('Helvetica-Bold').fontSize(10).fillColor('#FFFFFF').fillOpacity(0.85)
@@ -315,6 +352,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
         .text(value, colX, rowY + 12, { width, height: 30, lineGap: -1, ellipsis: true });
       colX += width + 16;
     }
+    doc.restore();
 
     // QR: same payload as before (verify URL), so phone-camera check-in is unchanged.
     const qrUrl = `${opts.verifyBaseUrl}/${ticket.ticketCode}`;
