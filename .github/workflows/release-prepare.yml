@@ -52,6 +52,7 @@ jobs:
           CONTROL_PATH: trusted
           GITHUB_TOKEN: ${{ github.token }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ADMIN_STAGING_BYPASS: ${{ secrets.VERCEL_ADMIN_STAGING_BYPASS }}
           RELEASE_OBSERVER_PRODUCTION_URL: ${{ secrets.RELEASE_OBSERVER_PRODUCTION_URL }}
           RELEASE_OBSERVER_STAGING_URL: ${{ secrets.RELEASE_OBSERVER_STAGING_URL }}
           RELEASE_OBSERVER_CA_PEM: ${{ secrets.RELEASE_OBSERVER_CA_PEM }}

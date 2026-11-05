@@ -175,7 +175,7 @@ export async function prepare({ env = process.env, control, now = Date.now(), fe
   for (const kind of KINDS) {
     const observed = await observeProject(vercel, 'staging', kind);
     if (observed.serving.sha !== target) fail(`Staging ${kind} does not serve the target`);
-    await checkServing('staging', kind, observed.serving, fetchImpl);
+    await checkServing('staging', kind, observed.serving, fetchImpl, env);
     staging[kind] = { sha: observed.serving.sha, deployment_sha256: hashId(observed.serving.id) };
   }
   const holds = await Promise.all(KINDS.map(kind => observeHoldFlags(vercel, kind)));
@@ -289,7 +289,7 @@ export async function deploy({ env = process.env, control, sources, now = Date.n
   for (const kind of KINDS) {
     const observed = await observeProject(vercel, 'staging', kind);
     if (observed.serving.sha !== packet.target.sha || hashId(observed.serving.id) !== packet.staging[kind].deployment_sha256) fail(`Staging ${kind} changed since the packet was approved`);
-    await checkServing('staging', kind, observed.serving, fetchImpl);
+    await checkServing('staging', kind, observed.serving, fetchImpl, env);
   }
   const stagingDb = admitDatabase({ observation: observe('staging', env), lock, migrations, lockMap: loadLockMap(lock.environments.staging, pathToFileURL(`${control}/`)), m430 });
   if (stagingDb.ledger.sha256 !== packet.database.staging.ledger.sha256 || stagingDb.catalog.sha256 !== packet.database.staging.catalog.sha256) fail('Staging database changed since the packet was approved');
