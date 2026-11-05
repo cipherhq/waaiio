@@ -597,6 +597,38 @@ describe('C through the real FlowExecutor', () => {
     const lists = sent.filter(m => m.kind === 'list');
     expect(lists).toHaveLength(1);
     expect((lists[0].payload.items as Array<{ postbackText: string }>).map(i => i.postbackText)).toContain('12:00');
+
+    // The next tap on that list is the new pick: 13:00 is kept and the summary shows it
+    sent.length = 0;
+    await executor.execute('+2348000000000', '13:00', session as never, business as never);
+    expect(session.session_data).toMatchObject({ time: '13:00' });
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_authoritative_604')).toEqual([]);
+    expect(JSON.stringify(sent)).toContain('1:00 PM');
+    expect(db.casCalls.at(-1)).toMatchObject({ p_current_step: 'confirmation' });
+  });
+
+  it('"Change date", then "back", then a date tap: the date is taken and the times for it follow', async () => {
+    const sent: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const db = mockDb({ bookings: [booking(SAT, '10:00')] });
+    const { FlowExecutor } = await import('@/lib/bot/flows/executor');
+    const executor = new FlowExecutor(db.client as never, sender(sent) as never, {} as never, { resetAbuse: vi.fn() } as never);
+    // After a refusal and "Change date", "back" left the session on create_booking with no date
+    const session = {
+      id: 'sess-cd', user_id: 'user-1', business_id: 'biz-919', current_step: 'create_booking', version: 1,
+      conversation_log: [],
+      session_data: {
+        ...ctxFor({ db }).session.session_data, capabilities: ['scheduling'],
+        email: 'ada@example.com', _slot_taken_return: true, _slot_taken_count: 1, _action: 'confirm',
+        _step_history: ['confirmation', 'create_booking'],
+      },
+    };
+    await executor.execute('+2348000000000', '2026-11-09', session as never, business as never);
+    expect(session.session_data).toMatchObject({ date: '2026-11-09', _slot_taken_return: true });
+    expect(session.session_data).not.toHaveProperty('_slot_taken_picker');
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_authoritative_604')).toEqual([]);
+    const lists = sent.filter(m => m.kind === 'list');
+    expect(lists.length).toBeGreaterThan(0);
+    expect(JSON.stringify(lists.at(-1)!.payload)).toMatch(/Pick a time on/);
   });
 });
 

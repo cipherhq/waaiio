@@ -318,13 +318,6 @@ async function dateHasRoom(ctx: FlowContext, dateStr: string, rows: SlotBookingR
 const MAX_SLOT_TAKEN_RETRIES = 2;
 
 /**
- * The time was taken after the customer picked it (#919): say so and send the
- * open times on the same date again (or "fully booked" with "Pick another
- * date"). After a new time, select_time goes back to the summary to confirm.
- * Null when it does not apply (drop-off, or refused too often); the caller then
- * keeps its old message.
- */
-/**
  * create_booking was reached while a new time is still to be picked and
  * confirmed after a taken one (#919), e.g. by "back" from the re-shown summary
  * or after "Change date". Never claim then: show the time list again (or the
@@ -338,6 +331,24 @@ async function reshowPickerAfterTakenTime(ctx: FlowContext): Promise<PromptMessa
   return stepId === 'select_time' ? messages.slice(-1) : messages;
 }
 
+/**
+ * A reply that reaches create_booking while that picker is showing ("back"
+ * keeps current_step on create_booking; the executor's BACK handler does not
+ * apply nextAfterPrompt): it is the customer's tap on the time (or date)
+ * list, so that step validates it and decides the next step (#919).
+ */
+function pickerAfterTakenTime(ctx: FlowContext) {
+  const stepId = ctx.session.session_data.date ? 'select_time' : 'select_date';
+  return { stepId, step: schedulingFlow.steps.find(s => s.id === stepId) };
+}
+
+/**
+ * The time was taken after the customer picked it (#919): say so and send the
+ * open times on the same date again (or "fully booked" with "Pick another
+ * date"). After a new time, select_time goes back to the summary to confirm.
+ * Null when it does not apply (drop-off, or refused too often); the caller then
+ * keeps its old message.
+ */
 async function backToTimeList(ctx: FlowContext): Promise<PromptMessage[] | null> {
   const d = ctx.session.session_data;
   if ((d._service_metadata as Record<string, unknown> | undefined)?.is_dropoff) return null;
@@ -3877,6 +3888,13 @@ export const schedulingFlow: FlowDefinition = {
         return [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (ctx.session.session_data._slot_taken_return) {
+          const { stepId, step } = pickerAfterTakenTime(ctx);
+          if (step) {
+            const result = await step.validate(input, ctx);
+            return result.valid ? { ...result, data: { ...(result.data || {}), _slot_taken_picker: stepId } } : result;
+          }
+        }
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
@@ -3918,10 +3936,16 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        // "back" landed here while a new time is still to be picked (#919): the
+        // picker step validated the reply above and decides the next step
+        if (d._slot_taken_return) {
+          const pickerId = d._slot_taken_picker as string | undefined;
+          delete d._slot_taken_picker;
+          const step = pickerId ? schedulingFlow.steps.find(s => s.id === pickerId) : undefined;
+          return step ? step.next(ctx) : (d.date ? 'select_time' : 'select_date');
+        }
         // Cancelled booking — end flow
         if (d._action === 'cancel') return 'select_capability';
-        // "back" landed here while a new time is still to be picked (#919): pick it, then confirm
-        if (d._slot_taken_return) return d.date ? 'select_time' : 'select_date';
         // After accepting/cancelling terms via fallback T&C gate, re-enter to proceed.
         // _terms_loop_consumed prevents infinite loop (matches ticketing/payment/ordering/reservation).
         if (d._terms_accepted || d._terms_cancelled) {
