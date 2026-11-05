@@ -31,7 +31,7 @@
      }
     ],
     "arguments": "p_id uuid, p_claim_token uuid",
-    "body_sha256": "e422cbabcf0ee2e37daaf9955bccdefc3bc37d65dac20b5570700fd116c4e12b",
+    "body_sha256": "f01a170d95bc0c8aef58c277a97f90b74afb11d384f0568be87f08a4ed6f7f61",
     "config": [
      "search_path=public, extensions"
     ],
@@ -45,7 +45,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "83cc98b6d2596cc73350ca161261bd80e71ae451a48351aafd2c9ce4dd086b2a",
+   "after_sha256": "877c9321472c5d0c432a8bbf0cd164c876a3c2b1f3b60cf0360aaa506219947c",
    "identity": "function:public.fence_merchant_notification(p_id uuid, p_claim_token uuid)",
    "operation": "modify"
   },
@@ -86,7 +86,7 @@
   }
  ],
  "migration": "513_merchant_notification_pre_emission_recovery.sql",
- "migration_sha256": "573230f0c3d19043e9889e4ae9e814330e3d48efe68494b9bc0e2cb40e6e8f4a",
+ "migration_sha256": "c943ed00ad3047af62ee01960731dba5ab1f23047018ee78bace0220c7d1d643",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1

@@ -1060,7 +1060,7 @@
      }
     ],
     "arguments": "p_business_id uuid",
-    "body_sha256": "5170b77776b28956036c5725da03ed16fe9333ae930e86e23ab6b875357742c2",
+    "body_sha256": "d103eeeb0825caf0973e6a21a2892c01ecf600a3bece9449581f4107581b2ac3",
     "config": [
      "search_path=public, extensions"
     ],
@@ -1074,7 +1074,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "2b92af98bdc58e2832de2be099787a7ff8fe7cf11b07f3c69830040bada2a7ea",
+   "after_sha256": "4111e60c449135bf970f6ab6f2520bbbfef30b9f8ae1acd42ad34558bf5bbf10",
    "identity": "function:public.reserve_merchant_notification_allowance(p_business_id uuid)",
    "operation": "add"
   },
@@ -1625,7 +1625,7 @@
   }
  ],
  "migration": "511_merchant_notifications.sql",
- "migration_sha256": "70c5657bed78836398aafed989eafffca629034a519a934264e522a6342cadbf",
+ "migration_sha256": "2e7166aee580f3aedda2ca3b90c8f5f04ef7e995c36f336fad2858ff2e2da3e2",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1
