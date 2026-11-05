@@ -29,6 +29,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow } from './shared/table-same-day';
+import { seatingGalleryMessages } from './table-reservation.flow';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
 function clearTablePromoState(ctx: FlowContext): boolean {
@@ -888,6 +889,8 @@ export const schedulingFlow: FlowDefinition = {
             ctx.session.session_data._gallery_sent = true;
           }
         }
+        // Table bookings: photos of the tapped table or section (#892)
+        messages.push(...await seatingGalleryMessages(ctx));
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const dateRange = (meta.date_range_days as number) || 7;
@@ -1404,7 +1407,8 @@ export const schedulingFlow: FlowDefinition = {
         // Add "Change Date" navigation option at the end
         items.push({ title: getFlowCopy(ctx.copyLang, 'booking.change_date'), description: getFlowCopy(ctx.copyLang, 'booking.change_date_desc'), postbackText: 'change_date' });
 
-        return [{
+        // Table bookings whose date was already given skip select_date: show the seat's photos here (#892)
+        return [...await seatingGalleryMessages(ctx), {
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'booking.select_time'),
           body: `Pick a${prefLabel} time on ${dateLabel}:`,
@@ -1901,7 +1905,8 @@ export const schedulingFlow: FlowDefinition = {
             title: `${n} guest${n > 1 ? 's' : ''}`,
           }));
           const rangeLabel = minCap === maxCap ? `${minCap}` : `${minCap}-${maxCap}`;
-          return [{
+          // Date and time given up front skip select_date/select_time: show the seat's photos here (#892 D3)
+          return [...await seatingGalleryMessages(ctx), {
             type: 'buttons',
             body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
             buttons,

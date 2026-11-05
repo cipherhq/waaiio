@@ -34,8 +34,8 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 |---|---|
 | Owner dispatch | `workflow_dispatch` by `cipherhq` on `refs/heads/main`, trusted clean checkout |
 | Target | protected-main commit; newest exact push-main CI run green, every job successful and the 15 required jobs present by name (they include the payment suites for both custody routes) (a random red from the flaky pg test, issue #845, stops prepare; re-run that CI run, never bypass it) |
-| Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`) |
-| Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate |
+| Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`). Only a lock re-certification after a partial deploy may certify two different SHAs on one line of history; the release then counts every change since the older one |
+| Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate. During deploy, `vercel deploy --prod --skip-domain` leaves the admin production target on the approved pin (run 41937185420). Before the admin build the re-checks accept only the pin; after it they accept exactly the pin or the gate's own new candidate, and stop on anything else |
 | Merchant target | equal to serving, or a newer canceled ignored-build-step Git attempt |
 | Runtime identity | merchant `/api/release-identity` must report the exact SHA, project, deployment and the environment's Supabase project (production `cxcmiqotkowhxinjbytg`, staging `tqjvrzopvtczxfxiwmnz`) |
 | Project policy | production framework, root and build settings unchanged |
@@ -107,7 +107,7 @@ The gate refuses a URL whose login or project does not match its environment, a 
 ## The lock and the catalog oracle
 
 Production cannot be rebuilt by replaying migrations (irregular ledger, historic ACL repairs; M419 even asserts an ACL production does not reach by replay). So the catalog check is differential:
-- `scripts/release-v3/lock.json` is the Owner-approved bootstrap: production and staging catalog and ledger digests read on 2026-11-03 after M508 (read-only connector), and the certified SHA `bdc007a8` for both projects. It bootstraps from the state of the schema 9 bot-code-lock release.
+- `scripts/release-v3/lock.json` is the Owner-approved bootstrap: production and staging catalog and ledger digests read on 2026-11-03 after M508 (read-only connector), and the certified SHA `bdc007a8` for both projects. It bootstraps from the state of the schema 9 bot-code-lock release. After the partial deploy of run 41937185420 (Owner decision R1, 2026-11-05) the lock certifies merchant `2b578c5b` and admin `bdc007a8`.
 - `scripts/release-v3/catalog-v3.sql` reads every app-owned object in `public`, `private`, `accounting_private` and `subscription_private`, app policies on `storage.objects` and realtime publication membership. Extension-owned objects are excluded. Each object's digest is the sha256 of its canonical jsonb text.
 - `scripts/release-v3/catalog-oracle.mjs` replays migrations in disposable PostgreSQL 17 exactly as CI does (no default privileges, M430 skipped). It then switches on production's default privileges and applies each migration from 508 onward as one whole-file statement, recording what it adds, modifies or removes. CI job **Catalog oracle (PostgreSQL 17)** regenerates every delta and the M430 list, and requires byte equality. It runs under the required "Migration validation" check.
 - `supabase/catalog-deltas/508_business_control_columns_guard.json` is the standing proof. It has exactly the 3 M508 changes, with values equal to those measured in production and digests equal to live production's.
@@ -173,6 +173,8 @@ Each successful deploy uploads a release record (kept 90 days). The next prepare
 ## Recovery
 
 The gate stops; it never rolls back. After a partial deploy (for example merchant deployed, admin failed), production no longer serves the certified release, so the next prepare fails until the Owner decides the recovery. Only the Owner authorizes a rollback (§6.3). A manual rollback or re-certification needs a reviewed lock update.
+
+Re-certification sets the lock's `certified` to what each project actually serves. If the two differ, one must be an ancestor of the other. Prepare then computes the change set, lane and included pull requests from the older SHA, so every change that either project lacks is classified and needs its review records. Each project's deploy still checks its own serving deployment. Mixed baselines are accepted only from the lock, never from a release record. First use: run 41937185420 deployed merchant and stopped before the admin alias, so the lock certifies merchant `2b578c5b` and admin `bdc007a8`.
 
 ## Retiring old profiles
 

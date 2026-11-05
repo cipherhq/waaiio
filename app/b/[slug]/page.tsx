@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { createClient } from '@/lib/supabase/server';
 import { queryBusinessesPublic } from '@/lib/supabase/safe-view-query';
 import BookingForm from './BookingForm';
+import { serializeJsonLd } from '@/lib/utils/json-ld';
 
 export const revalidate = 30; // ISR: regenerate every 30 seconds
 
@@ -113,7 +114,7 @@ export default async function PublicBookingPage({ params }: PageProps) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <BookingForm
         business={{

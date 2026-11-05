@@ -2,8 +2,14 @@
 export interface SeatingGuest {
   id: string; guest_name: string | null; status: string; plus_ones: number;
   table_id: string | null; seating_pinned: boolean; seating_group_id: string | null;
+  /** M514. Absent in older snapshots, which then plan exactly as before. */
+  tags?: string[];
 }
-export interface SeatingTable { id: string; name: string; capacity: number }
+export interface SeatingTable {
+  id: string; name: string; capacity: number;
+  /** M514: only guests with this tag may sit here. */
+  reserved_tag?: string | null;
+}
 export interface SeatingGroup { id: string; name: string; table_ids: string[] }
 export interface SeatingSnapshot {
   fingerprint: string;
@@ -13,12 +19,20 @@ export interface SeatingPlan {
   assignments: { invite_id: string; table_id: string | null }[];
   occupancy: { table_id: string; used: number; capacity: number }[];
   overflow: string[]; conflicts: string[];
+  /** Fixed guests left at a table reserved for a tag they do not have (D4). Confirm stays allowed. */
+  warnings: string[];
 }
 export interface SeatingPreview {
   snapshot: SeatingSnapshot; plan: SeatingPlan; seed: number; planHash: string;
 }
 export const seatingEligible = (guest: SeatingGuest) =>
   ['pending', 'accepted', 'maybe'].includes(guest.status);
+
+/** The guest's tags that have reserved tables, sorted. Empty: the guest uses unreserved tables. */
+export function reservedTagsFor(guest: Pick<SeatingGuest, 'tags'>, tables: Pick<SeatingTable, 'reserved_tag'>[]): string[] {
+  const reserved = new Set(tables.map(t => t.reserved_tag).filter((t): t is string => !!t));
+  return [...new Set((guest.tags || []).filter(t => reserved.has(t)))].sort();
+}
 
 export function planSeating(snapshot: SeatingSnapshot, seed: number): SeatingPlan {
   let state = seed >>> 0;
@@ -40,6 +54,8 @@ export function planSeating(snapshot: SeatingSnapshot, seed: number): SeatingPla
   const assignments = new Map<string, string | null>();
   const conflicts: string[] = [];
   const overflow: string[] = [];
+  const warnings: string[] = [];
+  const reservedTags = [...new Set(tables.map(t => t.reserved_tag).filter((t): t is string => !!t))].sort();
   const guests = [...snapshot.guests].sort((a, b) => a.id.localeCompare(b.id));
   const allowed = (g: SeatingGuest, table: string) =>
     !g.seating_group_id || groups.get(g.seating_group_id)?.has(table) === true;
@@ -49,16 +65,33 @@ export function planSeating(snapshot: SeatingSnapshot, seed: number): SeatingPla
     if (g.seating_pinned && !g.table_id) conflicts.push(g.id);
     if (g.table_id) {
       if (!used.has(g.table_id) || !allowed(g, g.table_id)) conflicts.push(g.id);
+      const reservedFor = tables.find(t => t.id === g.table_id)?.reserved_tag;
+      if (reservedFor && !(g.tags || []).includes(reservedFor)) warnings.push(g.id);
       used.set(g.table_id, (used.get(g.table_id) || 0) + 1 + g.plus_ones);
     }
   }
   const candidates = shuffle(guests.filter(g => !g.seating_pinned && seatingEligible(g)));
+  const ownTags = new Map(candidates.map(g => [g.id, reservedTagsFor(g, tables)]));
+  const tagged = (g: SeatingGuest) => ownTags.get(g.id)!.length > 0;
+  // Among guests with reserved tables, those with fewer reserved tags have fewer choices,
+  // so they go first: a guest who may use two tags' tables must not take the only seat a
+  // one-tag guest could use (D5). With no reserved tables these keys are constant and the
+  // order is exactly as before.
   candidates.sort((a, b) =>
+    Number(tagged(b)) - Number(tagged(a)) ||
+    ownTags.get(a.id)!.length - ownTags.get(b.id)!.length ||
     Number(!!b.seating_group_id) - Number(!!a.seating_group_id) ||
     b.plus_ones - a.plus_ones);
+  // Each tag's tables in one random order: a tag fills one table before the next (D6).
+  const tagOrder = new Map(reservedTags.map(tag => [tag, shuffle(tables.filter(t => t.reserved_tag === tag))]));
+  const fits = (g: SeatingGuest, t: SeatingTable) =>
+    allowed(g, t.id) && (used.get(t.id) || 0) + 1 + g.plus_ones <= t.capacity;
   for (const g of candidates) {
-    const table = shuffle(tables).find(t =>
-      allowed(g, t.id) && (used.get(t.id) || 0) + 1 + g.plus_ones <= t.capacity);
+    const own = ownTags.get(g.id)!;
+    // A guest with two reserved tags may use either tag's tables (D5).
+    const table = own.length
+      ? own.flatMap(tag => tagOrder.get(tag) || []).find(t => fits(g, t))
+      : shuffle(tables).find(t => !t.reserved_tag && fits(g, t));
     assignments.set(g.id, table?.id || null);
     if (table) used.set(table.id, (used.get(table.id) || 0) + 1 + g.plus_ones);
     else overflow.push(g.id);
@@ -67,6 +100,6 @@ export function planSeating(snapshot: SeatingSnapshot, seed: number): SeatingPla
   return {
     assignments: guests.map(g => ({ invite_id: g.id, table_id: assignments.get(g.id) ?? null })),
     occupancy: tables.map(t => ({ table_id: t.id, used: used.get(t.id) || 0, capacity: t.capacity })),
-    overflow, conflicts: [...new Set(conflicts)],
+    overflow, conflicts: [...new Set(conflicts)], warnings,
   };
 }

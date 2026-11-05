@@ -27,9 +27,9 @@ const m509 = { name: '509_add_b', path: 'supabase/migrations/509_add_b.sql', sha
 
 describe('committed lock, oracle outputs and the M508 spike regression', () => {
   const lock = loadLock();
-  it('the lock is the post-M508 bootstrap with the current queries and certified bdc007a8', () => {
+  it('the lock is the post-M508 bootstrap with the current queries; certified merchant 2b578c5b (deploy run 41937185420) and admin bdc007a8', () => {
     expect(lock.bootstrap_migration).toBe('508_business_control_columns_guard.sql');
-    expect(lock.certified).toEqual({ merchant: 'bdc007a8f93febeee8ce054d075d48894afd37bb', admin: 'bdc007a8f93febeee8ce054d075d48894afd37bb' });
+    expect(lock.certified).toEqual({ merchant: '2b578c5bef4411aaf35bc6b60f61237620915c3a', admin: 'bdc007a8f93febeee8ce054d075d48894afd37bb' });
     expect(lock.environments.production).toMatchObject({ project_ref: 'cxcmiqotkowhxinjbytg', catalog: { count: 6288 }, ledger: { count: 406 } });
     // Owner decision 2026-11-04 (option A): staging grants release_observer USAGE on schema public, so the
     // staging lock records the new schema:public ACL (#875).

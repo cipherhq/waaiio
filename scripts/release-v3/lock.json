@@ -3,7 +3,7 @@
  "catalog_query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "certified": {
   "admin": "bdc007a8f93febeee8ce054d075d48894afd37bb",
-  "merchant": "bdc007a8f93febeee8ce054d075d48894afd37bb"
+  "merchant": "2b578c5bef4411aaf35bc6b60f61237620915c3a"
  },
  "environments": {
   "production": {

@@ -1,6 +1,47 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { buildListItem } from '../utils/truncate';
+import { logger } from '@/lib/logger';
+
+/** Photos of a table or section, at most 3 (Owner decisions 2026-11-05, #892; DB check M516). */
+const MAX_SEATING_PHOTOS = 3;
+
+/**
+ * Photos of the seat the customer picked, sent once per seat per conversation.
+ * Called by the shared scheduling date and time steps; does nothing for other
+ * bookings. A failed lookup returns no photos and leaves the seat unmarked, so
+ * the booking step still works.
+ */
+export async function seatingGalleryMessages(ctx: FlowContext): Promise<PromptMessage[]> {
+  const d = ctx.session.session_data;
+  const seatId = d.seating_resource_id as string | undefined;
+  if (d._is_table_reservation !== true || !seatId || !ctx.business) return [];
+
+  const sentIds = Array.isArray(d._seating_gallery_sent_ids) ? (d._seating_gallery_sent_ids as string[]) : [];
+  if (sentIds.includes(seatId)) return [];
+
+  let galleryUrls: unknown[] = [];
+  try {
+    const { data, error } = await ctx.supabase
+      .from('seating_resources')
+      .select('gallery_urls')
+      .eq('id', seatId)
+      .eq('business_id', ctx.business.id)
+      .maybeSingle();
+    if (error) throw error;
+    galleryUrls = Array.isArray(data?.gallery_urls) ? data.gallery_urls : [];
+  } catch (err) {
+    logger.warn('[TABLE] Seating photo lookup failed, continuing without photos:', err);
+    return [];
+  }
+
+  d._seating_gallery_sent_ids = [...sentIds, seatId];
+
+  const photos = [...new Set(galleryUrls.filter((u): u is string => typeof u === 'string' && u.length > 0))]
+    .slice(0, MAX_SEATING_PHOTOS);
+  const seatName = d.seating_resource_name as string | undefined;
+  return photos.map((url, i) => ({ type: 'image' as const, imageUrl: url, caption: i === 0 ? seatName : undefined }));
+}
 
 /**
  * Table Reservation flow: seating-based bookings for restaurants/lounges.

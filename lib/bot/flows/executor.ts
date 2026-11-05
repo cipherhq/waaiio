@@ -4,6 +4,8 @@ import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
+import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
+import { paymentNextStepsMenuSent } from '@/lib/payments/next-steps-menu';
 import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
 import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
@@ -880,7 +882,20 @@ export class FlowExecutor {
       const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
-        await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
+        // The payment confirmation (Stage 3) sends its own next-steps menu once it
+        // is accepted. When that happened during this request (an "I've Paid" tap
+        // ran Stage 3 synchronously), end the session instead of sending a second
+        // menu. A confirmation sent earlier by the webhook does not count: this tap
+        // still gets the chat menu.
+        if (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd, new Date(_ft0).toISOString())) {
+          // Version-checked like the menu path: if another message already moved
+          // this session on (e.g. the save-card PIN step), leave it alone.
+          if (await this.casUpdateSession(session, { current_step: 'complete', session_data: sd })) {
+            await this.deactivateSession(session.id);
+          }
+        } else {
+          await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
+        }
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
         // State-neutral navigation also covers free cancellations and payment-pending exits.
@@ -1255,11 +1270,14 @@ export class FlowExecutor {
       ? await localizeMessage(postCompletionMsg, lang, tCtx)
       : postCompletionMsg;
 
+    // Brand line under every completed transaction's menu. Added after
+    // localization so "Waaiio.com" is never translated; hidden for white-label plans.
+    const footer = getPoweredByInteractiveFooter(ctx.business?.subscription_tier, ctx.business?.is_whitelabel);
     const s = sender || this.sender;
     if (localizedMsg.type === 'buttons') {
-      await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons });
+      await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons, footer });
     } else if (localizedMsg.type === 'list') {
-      await s.sendList({ to: from, ...localizedMsg });
+      await s.sendList({ to: from, ...localizedMsg, footer });
     }
   }
 
