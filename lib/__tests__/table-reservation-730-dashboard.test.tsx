@@ -158,7 +158,7 @@ describe('#730: Rendered production dashboard components', () => {
     expect(screen.queryByTestId('col-datetime')).toBeNull();
   });
 
-  it('BookingColumnHeaders: Table Reservations tab shows Table / Seating', () => {
+  it('BookingColumnHeaders: Tables & Sections tab shows Table / Seating', () => {
     render(<table><thead><BookingColumnHeaders bookingType="table_reservations" /></thead></table>);
     expect(screen.getByTestId('col-resource').textContent).toBe('Table / Seating');
     expect(screen.getByTestId('col-datetime')).toBeTruthy();
@@ -194,7 +194,7 @@ describe('#730: Rendered production dashboard components', () => {
     expect(screen.getByTestId('row-resource').textContent).toBe('\u2014');
   });
 
-  it('Full tab-switching regression: Stays ↔ Table Reservations', () => {
+  it('Full tab-switching regression: Stays ↔ Tables & Sections', () => {
     function TestHarness() {
       const [tab, setTab] = useState<BookingType>('reservations');
       return (
@@ -211,7 +211,7 @@ describe('#730: Rendered production dashboard components', () => {
     expect(screen.getByTestId('col-resource').textContent).toBe('Property');
     expect(screen.getByTestId('col-checkin')).toBeTruthy();
 
-    // Switch to Table Reservations
+    // Switch to Tables & Sections
     fireEvent.click(screen.getByTestId('tab-table_reservations'));
     expect(screen.getByTestId('col-resource').textContent).toBe('Table / Seating');
     expect(screen.queryByTestId('col-checkin')).toBeNull();
@@ -234,7 +234,7 @@ describe('#730: Rendered production dashboard components', () => {
 
     const hasScheduling = false;
 
-    // Table Reservations tab filter (production predicate)
+    // Tables & Sections tab filter (production predicate)
     const tableTabRows = bookings.filter(b => isTableReservationsTabRow(b as any, hasScheduling));
     expect(tableTabRows.length).toBe(2); // Both table + legacy
 
@@ -315,13 +315,13 @@ describe('#731: actual BookingsPage', () => {
   it('loads real scheduling, table and stay rows with matching tabs, headers, resources and badges', async () => {
     await mount();
     expect(tab('Appointments').textContent).toMatch(/Appointments\s*1/);
-    expect(tab('Table Reservations').textContent).toMatch(/Table Reservations\s*1/);
+    expect(tab('Tables & Sections').textContent).toMatch(/Tables & Sections\s*1/);
     expect(tab('Stays').textContent).toMatch(/Stays\s*1/);
     expect(screen.getByRole('columnheader', { name: 'Staff' })).toBeTruthy();
     expect(within(row('appointment-one')).getByText('Staff One')).toBeTruthy();
     expect(within(row('appointment-one')).getByRole('button', { name: 'Start' })).toBeTruthy();
     expect(within(screen.getByRole('table')).queryByText('table-one')).toBeNull();
-    fireEvent.click(tab('Table Reservations'));
+    fireEvent.click(tab('Tables & Sections'));
     expect(screen.getByRole('columnheader', { name: 'Table / Seating' })).toBeTruthy();
     expect(within(row('table-one')).getByText('Patio A')).toBeTruthy();
     expect(within(row('table-one')).getByRole('button', { name: 'Seat' })).toBeTruthy();
@@ -338,7 +338,7 @@ describe('#731: actual BookingsPage', () => {
 
   it.each([
     ['Appointments', 'appointment-one', 'Start', 'bookings', 'in_progress', 'seated_at'],
-    ['Table Reservations', 'table-one', 'Seat', 'bookings', 'in_progress', 'seated_at'],
+    ['Tables & Sections', 'table-one', 'Seat', 'bookings', 'in_progress', 'seated_at'],
     ['Stays', 'stay-one', 'Check In', 'reservations', 'checked_in', 'checked_in_at'],
   ])('%s action mutates the correct row and table', async (tabName, id, action, table, status, timestamp) => {
     await mount();
@@ -364,7 +364,7 @@ describe('#731: actual BookingsPage', () => {
     await mount();
     expect(row('table-one')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Appointments/ })).toBeNull();
-    expect(tab('Table Reservations').textContent).toMatch(/1$/);
+    expect(tab('Tables & Sections').textContent).toMatch(/1$/);
     fireEvent.click(tab('Stays'));
     expect(row('stay-one')).toBeTruthy();
     expect(pageFixture.reads.some(r => r.table === 'bookings')).toBe(true);
@@ -375,7 +375,7 @@ describe('#731: actual BookingsPage', () => {
     pageFixture.business.capabilities = ['table_reservation', 'reservation'];
     await mount();
     expect(screen.queryByRole('button', { name: /^Appointments/ })).toBeNull();
-    expect(tab('Table Reservations').textContent).toMatch(/2$/);
+    expect(tab('Tables & Sections').textContent).toMatch(/2$/);
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(3);
     expect(within(row('table-one')).getByRole('button', { name: 'Seat' })).toBeTruthy();
     expect(within(row('appointment-one')).getByRole('button', { name: 'Start' })).toBeTruthy();
@@ -387,7 +387,7 @@ describe('#731: actual BookingsPage', () => {
   it.each([{ relation: null }, { relation: [] }, { relation: [{ name: 'Archived Patio' }] }])('handles missing or retained archived seating relations: $relation', async ({ relation }) => {
     pageFixture.bookings = [booking('table-one', 'table_reservation', { seating_resources: relation })];
     await mount();
-    fireEvent.click(tab('Table Reservations'));
+    fireEvent.click(tab('Tables & Sections'));
     expect(within(row('table-one')).getAllByRole('cell')[2].textContent).toBe(relation && relation.length ? 'Archived Patio' : '—');
     expect(within(row('table-one')).getByRole('button', { name: 'Seat' })).toBeTruthy();
   });
@@ -398,7 +398,7 @@ describe('#731: actual BookingsPage', () => {
     expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeTruthy();
     cleanup();
     await mount();
-    fireEvent.click(tab('Table Reservations'));
+    fireEvent.click(tab('Tables & Sections'));
     fireEvent.click(row('table-one'));
     await waitFor(() => expect(pageFixture.reads.some(r => r.table === 'payments')).toBe(true));
     expect(screen.queryByRole('button', { name: 'Reschedule' })).toBeNull();
@@ -413,7 +413,7 @@ describe('#731: actual BookingsPage', () => {
     await mount();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('Page 2 of 2')).toBeTruthy();
-    fireEvent.click(tab('Table Reservations'));
+    fireEvent.click(tab('Tables & Sections'));
     expect(row('table-one')).toBeTruthy();
     expect(screen.queryByText('Page 2 of 2')).toBeNull();
   });

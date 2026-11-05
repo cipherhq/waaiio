@@ -224,8 +224,9 @@ describe('Privacy (R9 §7)', () => {
 
 describe('Dashboard safety', () => {
   it('main page uses permanent Waaiio link (no direct channel/credential read)', () => {
-    // Dashboard replaced channel query waterfall with buildMerchantLink (server-side resolver handles readiness)
-    expect(dashboardPageSource).toContain('buildMerchantLink');
+    // Dashboard replaced channel query waterfall with the /m/ merchant link (server-side resolver handles readiness);
+    // since the short-link change it uses buildShortMerchantLink (/m/BOT_CODE, falling back to /m/{uuid}).
+    expect(dashboardPageSource).toContain('buildShortMerchantLink(business.bot_code, business.id)');
     expect(dashboardPageSource).not.toContain('loadWhatsAppLink');
     expect(dashboardPageSource).not.toContain('queryChannelsPublic');
   });

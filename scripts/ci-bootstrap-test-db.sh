@@ -123,6 +123,13 @@ ON CONFLICT (id) DO NOTHING;
 EOSQL
 echo "✅ Supabase schema prerequisites created"
 
+# Release V3 catalog oracle (scripts/release-v3/catalog-oracle.mjs) reuses
+# these prerequisites, then replays migrations itself to emulate production.
+if [ "${CI_BOOTSTRAP_PREREQUISITES_ONLY:-}" = "1" ]; then
+  echo "Prerequisites only (CI_BOOTSTRAP_PREREQUISITES_ONLY=1); no migrations applied."
+  exit 0
+fi
+
 # ── 2. Apply all migrations (canonical semantics) ──
 echo "Applying migrations..."
 FAILED=0

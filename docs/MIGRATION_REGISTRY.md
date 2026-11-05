@@ -12,6 +12,21 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 
 **Decision:** Continue sequential naming. Use an explicit reservation process to prevent collisions.
 
+## Accounting compatibility packaging reservations
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 501 | `accounting_cutover_installer` | Reserved; source only, not applied | Installs an Owner-only private activation procedure. Never invokes activation during migration. Operational activation requires separate approval and receipt. |
+| 500 | `accounting_hold_preparation` | Reserved; source only, not applied | Inert tables/private implementations only; no enrollment, public refund replacement, or financial guard activation. |
+| 499 | `merchant_notifications` | Reserved by PR #813 | Separate work; reservation preserved. |
+
+## Reduced payout compatibility reservations
+
+| Version | Name | Status | Notes |
+|---------|------|--------|-------|
+| 498 | `manual_settlement_rejection_guard` | Reserved; source only, not applied | Locks and rejects already-approved manual payouts before rejection or adjustment release. Requires M440/M444 final state. |
+| 497 | `scheduling_price_authority_core` | Reserved by PR #806 | Separate work; reservation preserved. |
+
 ## Current State
 
 | Version | Name | Status | PR | Notes |
@@ -178,7 +193,7 @@ Supabase CLI generates timestamp-based filenames by default (e.g., `202607251234
 **Batch 8 repair summary:** 15 versions (227-241) now tracked in remote schema_migrations. Remote count 209 -> 224 (+15). 101-246 tracked count 113 -> 128 (+15). 120 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-08-production-verification.json` (V3 SHA: `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`). Repair evidence: `docs/migrations/evidence/batch-08-repair.json` (SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`). No migration SQL executed. History-only operation.
 **Batch 9 repair summary:** 4 versions (242, 243, 245, 246) now tracked in remote schema_migrations. Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4). 124 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-09-production-verification.json` (V3 SHA: `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`). Repair evidence: `docs/migrations/evidence/batch-09-repair.json` (SHA: `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`). No migration SQL executed. History-only operation.
 
-**Next available version:** 498 (recheck main and open PR reservations before use)
+**Next available version:** 507 (recheck main and open PR reservations before use)
 
 ## Storage security repair reservations — 2026-10-31
 
@@ -208,6 +223,10 @@ M494 `business_status_step_up` reserved by Codex on `codex/admin-merchant-save-t
 | 436 | scheduling_price_authority (#604) | fix/602-scheduling-price-authority | #604 | 2026-10-09 |
 | 437 | native_whatsapp_forms (#606) | feat/591-whatsapp-native-forms-phase2 | #606 | 2026-10-09 |
 | 438 | business_app_coexistence (#607) | feat/592-business-app-coexistence-phase2 | #607 | 2026-10-09 |
+| 514 | party_seating_by_tag (#874, PR #877) | claude/party-seating-by-tag-4918b2 | claude | 2026-11-04 |
+| 515 | profile_consent_preferences (#878 Bug 2) | claude/profile-consent-515 | claude | 2026-11-04 |
+| 516 | seating_resource_gallery (#892) | claude/seating-section-photos | claude | 2026-11-05 |
+| 517 | form_sends (#591 scheduled form sends) | claude/forms-send-m517 | claude | 2026-11-05 |
 
 ### Stranded Reservations (PR #21)
 
@@ -282,3 +301,29 @@ Of the 146 migrations in the 101-246 range:
 | 493 | shared_conversation_binding | codex/ayo-routing-directory | Codex | 2026-10-31 |
 
 Verified against main e62199d2124719f470306aa85aa8310960939ee6, all ten open PR file lists, and both environment migration histories. Not applied.
+
+### Reservation — cumulative recurring cancellation
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 502 | Reserved by open PR #813 | Existing PR reservation | Not available |
+| 503 | recurring_cancellation_compatibility | codex/full-release-2026-11-02 | Reserved; not applied |
+
+One cumulative cancellation concern; preserves authoritative recurring fee payment linkage. No historical migration replay or ledger repair.
+
+### Reservation — additive Party slug foundation
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 504 | party_slug_foundation | codex/full-release-2026-11-02 | Reserved; not applied |
+
+Nullable slug and uniqueness only; preserves historical rows and existing slug generators. No historical migration replay or backfill.
+
+### Reservations — full-release compatibility
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 505 | owner_subscription_downgrade | codex/full-release-2026-11-02 | Reserved; not applied |
+| 506 | full_release_additive_foundation | codex/full-release-2026-11-02 | Reserved; not applied |
+
+M505 moves the existing owner-requested local downgrade into a service-authorized atomic operation. M506 prepares compatible form and account-service dependencies; complete M437/M446 permission contracts remain a later rollout phase. Neither installation authorizes business operations.

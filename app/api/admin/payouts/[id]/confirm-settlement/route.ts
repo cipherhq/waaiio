@@ -1,9 +1,9 @@
+import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutPaidEmail } from '@/lib/email/templates';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { getCountry } from '@/lib/countries';
+import { formatPayoutAmount } from '@/lib/payouts/format-amount';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -66,13 +66,21 @@ export async function POST(
   // ── Fetch and validate payout ──
   const { data: payout } = await serviceClient
     .from('business_payouts')
-    .select('id, business_id, net_amount, status, transfer_method, payout_account_id, notes')
+    .select('id, business_id, net_amount, currency, status, transfer_method, payout_account_id, notes')
     .eq('id', id)
     .single();
 
   if (!payout) {
     return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
   }
+  try {
+    if (await getMerchantAccountingHold(serviceClient, payout.business_id)) {
+      return NextResponse.json({ error: 'Settlement is held pending accounting reconciliation', code: 'merchant_accounting_held' }, { status: 409 });
+    }
+  } catch {
+    return NextResponse.json({ error: 'Unable to verify accounting reconciliation state' }, { status: 503 });
+  }
+
 
   // Only approved manual_bank payouts can be confirmed
   if (payout.status !== 'approved') {
@@ -172,8 +180,7 @@ export async function POST(
     .single();
 
   if (biz) {
-    const cc = (biz.country_code || 'NG') as CountryCode;
-    const amountStr = formatCurrency(Number(payout.net_amount), cc);
+    const amountStr = formatPayoutAmount(Number(payout.net_amount), payout.currency);
 
     const { data: ownerProfile } = await serviceClient
       .from('profiles')

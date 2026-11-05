@@ -3,7 +3,6 @@
 import React from 'react';
 import {
   formatCurrency,
-  type SubscriptionTier,
 } from '@/lib/constants';
 import { CAPABILITY_TIER_REQUIREMENTS, getOnboardingDefaultCapabilities, type CapabilityId } from '@/lib/capabilities/types';
 import type { StepFeaturesProps } from './types';
@@ -12,7 +11,6 @@ export function StepFeatures({
   selectedCapabilities,
   setSelectedCapabilities,
   selectedPlan,
-  setSelectedPlan,
   selectedCountry,
   category,
   requiredPlan,
@@ -48,10 +46,10 @@ export function StepFeatures({
           },
           {
             id: 'table_reservation' as CapabilityId,
-            title: 'Make Reservations',
-            desc: 'Customers reserve tables or spots with date, time, and party size.',
-            tip: 'For restaurants, cafes, bars, lounges, and any business where customers reserve a table or spot for dining.',
-            example: 'e.g. "Reserve a table for 4 on Friday at 7pm"',
+            title: 'Reserve tables & sections',
+            desc: 'Customers reserve a table, booth, VIP area or section with date, time, and party size.',
+            tip: 'For bars, lounges, restaurants, cafes, and any business where customers reserve a table, booth, or section.',
+            example: 'e.g. "Reserve the VIP section for 6 on Friday at 9pm"',
           },
           {
             id: 'reservation' as CapabilityId,
@@ -332,23 +330,14 @@ export function StepFeatures({
       </div>
 
       <div className="mt-6">
-        <p className="text-center text-xs text-gray-500 mb-3">All features included free during your trial. No credit card required.</p>
+        <p className="text-center text-xs text-gray-500 mb-3">Review plans next. Start free or upgrade for lower transaction fees.</p>
         <button
           type="button"
-          onClick={() => {
-            // Auto-select plan based on features (for backend tier assignment)
-            const planOrder = ['free', 'growth', 'business'] as const;
-            const requiredIdx = planOrder.indexOf(requiredPlan);
-            const currentIdx = planOrder.indexOf(selectedPlan);
-            if (requiredIdx > currentIdx) {
-              setSelectedPlan(requiredPlan as SubscriptionTier);
-            }
-            setStep('details');
-          }}
+          onClick={() => setStep('plan')}
           disabled={selectedCapabilities.length === 0}
           className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
         >
-          Start Free Trial
+          Continue to plans
         </button>
         {selectedCapabilities.length === 0 && (
           <p className="text-center text-xs text-red-500 mt-2">Please select at least one feature to continue</p>

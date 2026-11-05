@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 
 /**
@@ -101,7 +102,9 @@ export async function POST(request: NextRequest) {
       .replace(/^-|-$/g, '')
       .slice(0, 60);
 
-    const { data: business, error: createError } = await supabase
+    // status is server-managed (M508): create through the service client after the
+    // reseller checks above; owner_id and reseller_id are set server-side here.
+    const { data: business, error: createError } = await createServiceClient()
       .from('businesses')
       .insert({
         name,

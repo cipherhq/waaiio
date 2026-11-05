@@ -14,6 +14,8 @@ export function StepAuth({
   setEmailSent,
   handleEmailSignup,
   setAuthLoading,
+  inviteCode,
+  setInviteCode,
 }: StepAuthProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [resendStatus, setResendStatus] = useState<'idle' | 'sent' | 'error'>('idle');
@@ -97,6 +99,13 @@ export function StepAuth({
               </button>
             </div>
           </div>
+          {setInviteCode && (
+            <div>
+              <label htmlFor="staging-invite-code" className="mb-1.5 block text-sm font-medium text-gray-700">Staging invite code</label>
+              <input id="staging-invite-code" type="text" value={inviteCode ?? ''} onChange={(e) => setInviteCode(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required autoComplete="off" />
+              <p className="mt-1 text-xs text-gray-500">This is the test site. Ask the Waaiio team for the invite code.</p>
+            </div>
+          )}
           <button type="submit" disabled={!email || !password || authLoading} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
             {authLoading ? 'Creating account...' : 'Create Account'}
           </button>

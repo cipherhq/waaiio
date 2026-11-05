@@ -1,3 +1,6 @@
+import { beforeEach as beforeChannelAdmissionFixture, vi as channelAdmissionFixture } from 'vitest';
+// These regressions exercise the explicitly enabled channel-operation contract.
+beforeChannelAdmissionFixture(() => channelAdmissionFixture.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'true'));
 /**
  * PR #655 regression: consumeStepUp argument propagation + CTO R2 fixes.
  *

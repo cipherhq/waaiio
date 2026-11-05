@@ -6,7 +6,7 @@ const f = vi.hoisted(() => ({
   authorized: null as null | ((id: string) => Promise<void>),
   directWrite: vi.fn(),
 }));
-const biz = (id: string, name: string) => ({ id, name, category: 'restaurant', city: 'Lagos', country_code: 'NG', subscription_tier: 'free', status: 'active', created_at: '2026-01-01', verification_level: 'basic' });
+const biz = (id: string, name: string) => ({ id, name, email: id === 'a' ? 'contact@alpha.example' : null, category: 'restaurant', city: 'Lagos', country_code: 'NG', subscription_tier: 'free', status: 'active', created_at: '2026-01-01', verification_level: 'basic' });
 vi.mock('@/lib/supabase', () => {
   const from = (table: string) => {
     const run = async () => ({ data: table === 'businesses' ? [biz('a', 'Alpha'), biz('b', 'Beta')] : [], error: null });
@@ -30,7 +30,7 @@ beforeEach(() => {
   f.fetch.mockReset(); f.execute.mockReset(); f.directWrite.mockClear(); f.role = 'admin'; f.authorized = null;
   f.execute.mockImplementation(async (options: { onAuthorized: (id: string) => Promise<void> }) => { f.authorized = options.onAuthorized; });
   save = async () => response({ business: { id: 'a', name: 'Persisted name', status: 'pending' }, auditRecorded: true });
-  f.fetch.mockImplementation((url: string) => /\/(profile|status)$/.test(url) ? save() : Promise.resolve(response({ capabilities: [], overrides: [] })));
+  f.fetch.mockImplementation((url: string, options?: RequestInit) => /\/(profile|status)$/.test(url) && options?.method === 'POST' ? save() : Promise.resolve(response(url.endsWith('/profile') ? { businessId: url.includes('/a/') ? 'a' : 'b', ownerEmail: url.includes('/a/') ? 'owner@alpha.example' : null } : { capabilities: [], overrides: [] })));
   vi.stubEnv('VITE_API_URL', 'https://staging.example'); vi.stubGlobal('fetch', f.fetch); vi.stubGlobal('alert', vi.fn());
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -48,8 +48,44 @@ async function changeStatus() {
   await userEvent.click(within(box).getByRole('button', { name: 'Save' }));
 }
 function deferred() { let resolve!: (value: Response) => void; const promise = new Promise<Response>(done => { resolve = done; }); return { promise, resolve }; }
-function saves() { return f.fetch.mock.calls.filter(([url]) => /\/(profile|status)$/.test(url)); }
+function saves() { return f.fetch.mock.calls.filter(([url, options]) => /\/(profile|status)$/.test(url) && options?.method === 'POST'); }
 describe('persisted admin save truth', () => {
+  it('shows the selected business contact email without confusing it with the admin identity', async () => {
+    render(<Businesses />); await open();
+    expect(screen.getByText('Business contact email')).toBeInTheDocument();
+    expect(screen.getByText('contact@alpha.example')).toBeInTheDocument();
+    expect(await screen.findByText('owner@alpha.example')).toBeInTheDocument();
+    expect(screen.getByText('Owner sign-in email')).toBeInTheDocument();
+  });
+  it('labels an absent business email without inventing a fallback address', async () => {
+    render(<Businesses />); await open('Beta');
+    expect((await screen.findAllByText('Not provided')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('contact@alpha.example')).not.toBeInTheDocument();
+  });
+  it('shows an owner lookup failure separately and retries without hiding contact email', async () => {
+    const standard = f.fetch.getMockImplementation()!;
+    let fail = true;
+    f.fetch.mockImplementation((url: string, options?: RequestInit) => url.endsWith('/profile') && options?.method === 'GET' && fail
+      ? Promise.resolve(response({ error: 'Unavailable' }, 503)) : standard(url, options));
+    render(<Businesses />); await open();
+    expect(await screen.findByText('Owner sign-in email unavailable.')).toBeInTheDocument();
+    expect(screen.getByText('contact@alpha.example')).toBeInTheDocument();
+    fail = false; await userEvent.click(screen.getByRole('button', { name: 'Retry Owner sign-in email' }));
+    expect(await screen.findByText('owner@alpha.example')).toBeInTheDocument();
+  });
+  it('never shows a late owner email on the newly selected business', async () => {
+    const standard = f.fetch.getMockImplementation()!;
+    const late = deferred();
+    f.fetch.mockImplementation((url: string, options?: RequestInit) => url.includes('/a/profile') && options?.method === 'GET' ? late.promise : standard(url, options));
+    render(<Businesses />); await open(); await open('Beta');
+    await act(async () => late.resolve(response({ businessId: 'a', ownerEmail: 'late@alpha.example' })));
+    expect(screen.queryByText('late@alpha.example')).not.toBeInTheDocument();
+  });
+  it('does not request or display the owner sign-in email for support', async () => {
+    f.role = 'support'; render(<Businesses />); await open();
+    expect(screen.queryByText('Owner sign-in email')).not.toBeInTheDocument();
+    expect(f.fetch.mock.calls.some(([url]) => url.endsWith('/profile'))).toBe(false);
+  });
   it('renders returned profile value rather than submitted draft, and uses authenticated API', async () => {
     render(<Businesses />); await open(); await edit();
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Persisted name' })).toBeInTheDocument());

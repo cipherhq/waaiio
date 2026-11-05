@@ -47,7 +47,7 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
     .from('keyword_campaigns')
     .select('id, keyword, is_active, starts_at, ends_at')
     .eq('id', campaignId)
-    .eq('business_id', businessId)
+    .eq('business_id', result.business.id)
     .maybeSingle();
 
   if (campErr) return errorResponse(500, 'Service Error', 'Unable to load campaign information. Please try again later.');

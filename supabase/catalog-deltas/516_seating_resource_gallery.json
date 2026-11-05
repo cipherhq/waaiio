@@ -1,0 +1,34 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "'{}'::text[]",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text[]"
+   },
+   "after_sha256": "e000a94fb382d37e275e6df11cb3fb71bd0cd982b43b50f9b5eb943934921b4f",
+   "identity": "column:public.seating_resources.gallery_urls",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (cardinality(gallery_urls) <= 3)",
+    "validated": true
+   },
+   "after_sha256": "b013ca5e09cfc907aea8c316142511cb2db16f3f7ae82ca81d66a5e686c03501",
+   "identity": "constraint:public.seating_resources.seating_resources_gallery_max_3",
+   "operation": "add"
+  }
+ ],
+ "migration": "516_seating_resource_gallery.sql",
+ "migration_sha256": "f762127594756c0a6b567230272841a048dc61e5e822b993573bed04a37c4c9f",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}

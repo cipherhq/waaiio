@@ -1,0 +1,106 @@
+name: Release V3 deploy
+# The run name carries the packet sha256: the gate uses it to make each
+# approval single-use (any other run with the same packet stops this one).
+run-name: Release deploy ${{ inputs.packet_sha256 }}
+# Release Process V3 (RELEASE_GATE_V2.md §9.4, docs/RELEASE_V3_GATE.md).
+# Owner-dispatched with the approved packet. Re-reads production before every
+# mutation and stops on any difference. Merchant first, then admin.
+# No retry and no automatic rollback; only the Owner authorizes a rollback.
+on:
+  workflow_dispatch:
+    inputs:
+      prepare_run_id:
+        description: 'Successful Release V3 prepare run ID'
+        type: string
+        required: true
+      packet_sha256:
+        description: 'Approved packet sha256'
+        type: string
+        required: true
+      target_sha:
+        description: 'Packet target SHA (checked against the packet)'
+        type: string
+        required: true
+      approval_comment_url:
+        description: 'GitHub comment recording the Owner release approval'
+        type: string
+        required: true
+      staging_acceptance_comment_url:
+        description: 'Full lane only: GitHub comment recording Owner staging acceptance'
+        type: string
+        required: false
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    name: Re-check and deploy approved release
+    runs-on: ubuntu-24.04
+    environment: release-observer
+    steps:
+      - name: Validate dispatch inputs
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          PACKET_SHA256: ${{ inputs.packet_sha256 }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'target_sha must be a full commit SHA'; exit 1; }
+          [[ "$PACKET_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo 'packet_sha256 must be 64 hex characters'; exit 1; }
+          [[ "$PREPARE_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'prepare_run_id must be numeric'; exit 1; }
+      - name: Checkout trusted gate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - name: Checkout exact merchant source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: merchant-source
+      - name: Checkout exact admin source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: admin-source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+      - name: Install pinned deployment CLI
+        run: npm install --global vercel@60.1.3
+      - name: Verify PostgreSQL client
+        run: psql --version
+      - name: Re-check production and deploy exact target
+        env:
+          CONTROL_PATH: trusted
+          GITHUB_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ADMIN_STAGING_BYPASS: ${{ secrets.VERCEL_ADMIN_STAGING_BYPASS }}
+          RELEASE_OBSERVER_PRODUCTION_URL: ${{ secrets.RELEASE_OBSERVER_PRODUCTION_URL }}
+          RELEASE_OBSERVER_STAGING_URL: ${{ secrets.RELEASE_OBSERVER_STAGING_URL }}
+          RELEASE_OBSERVER_CA_PEM: ${{ secrets.RELEASE_OBSERVER_CA_PEM }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          PACKET_SHA256: ${{ inputs.packet_sha256 }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          APPROVAL_COMMENT_URL: ${{ inputs.approval_comment_url }}
+          STAGING_ACCEPTANCE_COMMENT_URL: ${{ inputs.staging_acceptance_comment_url }}
+        run: node trusted/scripts/release-gate-v3.mjs deploy merchant-source admin-source release-record
+      - name: Upload release record
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-record/record.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Stop for Owner recovery review on failure
+        if: failure()
+        run: echo 'Release incomplete. Current state preserved for Owner review; no automatic rollback.'

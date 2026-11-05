@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import HomeClient from './HomeClient';
+import { serializeJsonLd } from '@/lib/utils/json-ld';
 import { BRAND_NAME, WORDMARK_PATH, WORDMARK_WIDTH, WORDMARK_HEIGHT, WORDMARK_ALT } from '@/lib/brand';
 
 export const revalidate = 60;
@@ -44,7 +45,7 @@ const FAQ_DATA = [
   },
   {
     question: 'Can I use my own WhatsApp number?',
-    answer: 'Yes. You can use your existing business WhatsApp number or start with a shared Waaiio number. You can upgrade to a dedicated number when ready.',
+    answer: 'Yes, on any plan. It must be a brand-new number that has never had WhatsApp (for example a new SIM); a number that already has WhatsApp or WhatsApp Business on it will not connect. You can also start straight away on a shared Waaiio number.',
   },
 ];
 
@@ -111,10 +112,10 @@ const JSON_LD_APP = {
 export default function HomePage() {
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_ORG) }} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_APP) }} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_FAQ) }} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_WEBSITE) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(JSON_LD_ORG) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(JSON_LD_APP) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(JSON_LD_FAQ) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(JSON_LD_WEBSITE) }} />
       <HomeClient faqData={FAQ_DATA} />
     </>
   );

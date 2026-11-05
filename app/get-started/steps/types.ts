@@ -43,6 +43,9 @@ export interface StepAuthProps {
   setEmailSent: (v: boolean) => void;
   handleEmailSignup: (e: React.FormEvent) => void;
   setAuthLoading: (v: boolean) => void;
+  /** Staging only: when set, the form asks for the staging invite code. */
+  inviteCode?: string;
+  setInviteCode?: (v: string) => void;
 }
 
 export interface StepCategoryProps {
@@ -140,6 +143,8 @@ export interface StepSuccessProps {
   successData: { bot_code: string; business_id: string } | null;
   waMethod: WhatsAppMethod;
   waLink: string;
+  /** Permanent /m/{uuid} link for QR codes; waLink may be the short /m/{BOT_CODE} text link. */
+  qrLink?: string;
   selectedCapabilities: CapabilityId[];
   category: BusinessCategoryKey | '';
   error: string;

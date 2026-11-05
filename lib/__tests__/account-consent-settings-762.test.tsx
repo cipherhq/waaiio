@@ -20,55 +20,66 @@ import { GET, POST } from '@/app/api/account/consent/route';
 import { AccountTab } from '@/app/dashboard/settings/tabs/AccountTab';
 import type { SettingsTabProps } from '@/app/dashboard/settings/tabs/types';
 
-type Metadata = Record<string, unknown>;
-type DbResult = { data: { metadata?: Metadata; value?: string } | null; error: { message: string } | null };
+type Consent = Record<string, unknown>;
+/** A live profiles row (M515): consent lives in its own column; other columns must never be touched. */
+type Row = { consent_preferences: Consent | null; first_name: string };
+type DbError = { code?: string; message: string };
+type DbResult = { data: { consent_preferences?: Consent | null; value?: string } | null; error: DbError | null };
 const db = {
   user: 'owner-762' as string | null,
-  rows: new Map<string, Metadata>(),
+  rows: new Map<string, Row>(),
   readFailure: '' as '' | 'returned' | 'thrown',
   writeFailure: '' as '' | 'returned' | 'thrown' | 'zero',
   versions: { privacy_version: '"privacy-v2"', terms_version: '"terms-v2"' } as Record<string, string>,
-  writes: [] as Array<{ id: string; metadata: Metadata }>,
+  writes: [] as Array<{ id: string; consent_preferences: Consent }>,
   filters: [] as Array<{ table: string; key: string; value: unknown }>,
-  persistedConsent: null as Metadata | null,
+  persistedConsent: null as Consent | null,
 };
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const row = (consent: Consent | null = null, firstName = 'Ada'): Row => ({ consent_preferences: consent, first_name: firstName });
 function resetDb() {
-  db.user = 'owner-762'; db.rows = new Map([['owner-762', {}], ['other-762', { untouched: true }]]);
+  db.user = 'owner-762'; db.rows = new Map([['owner-762', row()], ['other-762', row({ untouched: true }, 'Bola')]]);
   db.readFailure = ''; db.writeFailure = ''; db.writes = []; db.filters = []; db.persistedConsent = null;
   db.versions = { privacy_version: '"privacy-v2"', terms_version: '"terms-v2"' };
 }
+// PostgREST answers for columns the live table does not have (profiles.metadata never existed).
+const missingColumn = (column: string): DbResult => ({ data: null, error: { code: '42703', message: `column profiles.${column} does not exist` } });
+const isObject = (value: unknown) => typeof value === 'object' && value !== null && !Array.isArray(value);
 function service() {
   return { from(table: string) {
-    let id = ''; let key = ''; let payload: { metadata: Metadata } | null = null; let returned = false;
+    let id = ''; let key = ''; let columns = ''; let payload: Record<string, unknown> | null = null; let returned = false;
     async function execute(): Promise<DbResult> {
       if (table === 'platform_settings') {
         return { data: db.versions[key] ? { value: db.versions[key] } : null, error: null };
       }
       if (table !== 'profiles') throw new Error('Unexpected table: ' + table);
+      if (columns !== 'consent_preferences') return missingColumn(columns);
       if (!payload) {
         if (db.readFailure === 'thrown') throw new Error('Read failed');
         if (db.readFailure === 'returned') return { data: null, error: { message: 'Read failed' } };
-        return { data: db.rows.has(id) ? { metadata: copy(db.rows.get(id)!) } : null, error: null };
+        return { data: db.rows.has(id) ? { consent_preferences: copy(db.rows.get(id)!.consent_preferences) } : null, error: null };
       }
+      const written = Object.keys(payload).find(column => column !== 'consent_preferences');
+      if (written) return missingColumn(written);
+      // M515 CHECK: NULL or a JSON object.
+      if (!isObject(payload.consent_preferences)) return { data: null, error: { code: '23514', message: 'profiles_consent_preferences_object_check' } };
       if (db.writeFailure === 'thrown') throw new Error('Write failed');
       if (db.writeFailure === 'returned') return { data: null, error: { message: 'Write failed' } };
       if (db.writeFailure === 'zero' || !db.rows.has(id)) return { data: null, error: null };
-      const metadata = copy(payload.metadata);
-      if (db.persistedConsent) metadata.consent_preferences = copy(db.persistedConsent);
-      db.rows.set(id, metadata);
-      db.writes.push({ id, metadata: copy(metadata) });
-      return { data: returned ? { metadata: copy(metadata) } : null, error: null };
+      const consent = copy(db.persistedConsent ?? payload.consent_preferences) as Consent;
+      db.rows.set(id, { ...db.rows.get(id)!, consent_preferences: consent });
+      db.writes.push({ id, consent_preferences: copy(consent) });
+      return { data: returned ? { consent_preferences: copy(consent) } : null, error: null };
     }
     const query = {
-      select(_columns: string) { if (payload) returned = true; return query; },
+      select(selected: string) { if (payload) returned = true; columns = selected; return query; },
       eq(column: string, value: unknown) {
         db.filters.push({ table, key: column, value });
         if (column === 'id') id = String(value);
         if (column === 'key') key = String(value);
         return query;
       },
-      update(value: { metadata: Metadata }) { payload = value; return query; },
+      update(value: Record<string, unknown>) { payload = value; return query; },
       maybeSingle: execute,
       then(resolve: (result: DbResult) => unknown, reject?: (reason: unknown) => unknown) { return execute().then(resolve, reject); },
     };
@@ -142,7 +153,7 @@ async function saveAndWait() {
 
 describe('W27 rendered AccountTab with actual consent GET/POST', () => {
   it('saves, unmounts and reads persisted preferences on remount', async () => {
-    db.rows.set('owner-762', { unrelated: { keep: true }, consent_preferences: { ...preferences, marketing_emails: false, terms_accepted_at: 'prior', terms_version: 'v1' } });
+    db.rows.set('owner-762', row({ ...preferences, marketing_emails: false, terms_accepted_at: 'prior', terms_version: 'v1' }, 'Adaeze'));
     const view = await mountReady();
     expect(marketing().getAttribute('aria-checked')).toBe('false');
     fireEvent.click(marketing());
@@ -150,7 +161,7 @@ describe('W27 rendered AccountTab with actual consent GET/POST', () => {
     await saveAndWait();
     expect(db.writes).toHaveLength(1);
     expect(db.rows.get('owner-762')).toMatchObject({
-      unrelated: { keep: true }, consent_preferences: { marketing_emails: true, analytics: true, ai_processing: false, terms_accepted_at: 'prior', terms_version: 'v1' },
+      first_name: 'Adaeze', consent_preferences: { marketing_emails: true, analytics: true, ai_processing: false, terms_accepted_at: 'prior', terms_version: 'v1' },
     });
     view.unmount();
     await mountReady();
@@ -158,7 +169,7 @@ describe('W27 rendered AccountTab with actual consent GET/POST', () => {
     expect(analytics().getAttribute('aria-checked')).toBe('true');
     expect(ai().getAttribute('aria-checked')).toBe('false');
     expect(screen.queryByText('Preferences saved.')).toBeNull();
-    expect(db.rows.get('other-762')).toEqual({ untouched: true });
+    expect(db.rows.get('other-762')).toEqual(row({ untouched: true }, 'Bola'));
   });
 
   it.each(['http', 'network', 'malformed', 'shape'] as const)('shows %s load failure without editable defaults, then retries', async failure => {

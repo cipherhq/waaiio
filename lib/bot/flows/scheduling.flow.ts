@@ -28,6 +28,8 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
+import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow } from './shared/table-same-day';
+import { seatingGalleryMessages } from './table-reservation.flow';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
 function clearTablePromoState(ctx: FlowContext): boolean {
@@ -850,7 +852,24 @@ export const schedulingFlow: FlowDefinition = {
         // Validate: must be in the future, business must be open, not fully booked
         const selected = new Date(preDate + 'T00:00');
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        if (selected < today) { delete ctx.session.session_data.date; return false; }
+
+        // Tables: a pre-filled date follows the same-day rule, in the business's local
+        // calendar. Today is kept only when the business timezone fits its country and a
+        // slot is still free today; otherwise the tomorrow-first rule applies and the
+        // picker is shown. Other flows keep the existing server-date check.
+        if (ctx.session.session_data._is_table_reservation !== true) {
+          if (selected < today) { delete ctx.session.session_data.date; return false; }
+        } else {
+          const local = await resolveBusinessLocalNow(ctx);
+          if (local) {
+            if (preDate < local.date || (preDate === local.date && !(await hasTableSlotLeftToday(ctx, local)))) {
+              delete ctx.session.session_data.date; return false;
+            }
+          } else {
+            const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(0, 0, 0, 0);
+            if (selected < tomorrow) { delete ctx.session.session_data.date; return false; }
+          }
+        }
 
         // Check business is open on this day
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -883,6 +902,8 @@ export const schedulingFlow: FlowDefinition = {
             ctx.session.session_data._gallery_sent = true;
           }
         }
+        // Table bookings: photos of the tapped table or section (#892)
+        messages.push(...await seatingGalleryMessages(ctx));
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const dateRange = (meta.date_range_days as number) || 7;
@@ -897,12 +918,6 @@ export const schedulingFlow: FlowDefinition = {
         const durationMin = (ctx.session.session_data._service_duration as number) || 30;
         const slotInterval = (meta.slot_interval_minutes as number) || durationMin;
 
-        // Pre-fetch all bookings for the next maxAdvanceDays to filter fully-booked dates
-        const todayStr = new Date().toISOString().split('T')[0];
-        const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
-        const futureDateStr = futureDate.toISOString().split('T')[0];
-
         const isTableRes = ctx.session.session_data._is_table_reservation === true;
         const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
 
@@ -910,6 +925,16 @@ export const schedulingFlow: FlowDefinition = {
         if (isTableRes && !dateSeatingResourceId) {
           return [{ type: 'text' as const, text: 'Please select a table first. Send *Hi* to start over.' }];
         }
+
+        // Same-day bookings are for tables only, counted in the business timezone.
+        // Without a readable timezone, tables keep the tomorrow-first list.
+        const tableLocalNow = isTableRes ? await resolveBusinessLocalNow(ctx) : null;
+
+        // Pre-fetch all bookings for the next maxAdvanceDays to filter fully-booked dates
+        const todayStr = tableLocalNow ? tableLocalNow.date : new Date().toISOString().split('T')[0];
+        const futureDate = new Date();
+        futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
+        const futureDateStr = tableLocalNow ? addDaysToDateStr(tableLocalNow.date, maxAdvanceDays) : futureDate.toISOString().split('T')[0];
 
         let bookingsQuery = ctx.supabase
           .from('bookings')
@@ -938,10 +963,19 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
-        // Scan up to maxAdvanceDays but collect max 10 matching dates
-        for (let i = 1; i <= maxAdvanceDays && dates.length < 10; i++) {
-          const d = new Date();
-          d.setDate(d.getDate() + i);
+        // Scan up to maxAdvanceDays but collect max 10 matching dates.
+        // Tables with a known timezone start at today (i = 0), in local calendar days.
+        for (let i = tableLocalNow ? 0 : 1; i <= maxAdvanceDays && dates.length < 10; i++) {
+          let d: Date;
+          let dateStr: string;
+          if (tableLocalNow) {
+            dateStr = addDaysToDateStr(tableLocalNow.date, i);
+            d = new Date(dateStr + 'T00:00');
+          } else {
+            d = new Date();
+            d.setDate(d.getDate() + i);
+            dateStr = d.toISOString().split('T')[0];
+          }
           const dayOfWeek = dayNames[d.getDay()];
 
           // Filter by service available days
@@ -950,8 +984,12 @@ export const schedulingFlow: FlowDefinition = {
           // Filter by business operating hours (skip closed days)
           if (opHours[dayOfWeek]?.closed) continue;
 
+          // Today (tables only): offer it only while a slot after the current local time is free
+          if (tableLocalNow && i === 0) {
+            if (!(await hasTableSlotLeftToday(ctx, tableLocalNow))) continue;
+          }
+
           // Filter fully-booked dates: count available slots vs bookings
-          const dateStr = d.toISOString().split('T')[0];
           const openTime = opHours[dayOfWeek]?.open || '08:00';
           const closeTime = opHours[dayOfWeek]?.close || '18:00';
           // Handle midnight-crossing hours (e.g., 22:00-06:00)
@@ -988,36 +1026,54 @@ export const schedulingFlow: FlowDefinition = {
         // ── Quick date shortcuts: show "Tomorrow" / "This Saturday" / "Pick a Date" as buttons ──
         // Only show shortcuts on first prompt (not after "Pick a Date" was tapped)
         if (!ctx.session.session_data._show_full_date_list) {
-          const tomorrow = new Date();
-          tomorrow.setDate(tomorrow.getDate() + 1);
-          const tomorrowStr = tomorrow.toISOString().split('T')[0];
-          const tomorrowDay = dayNames[tomorrow.getDay()];
+          let tomorrowStr: string;
+          let tomorrowDay: string;
+          let nextSatStr: string;
+          if (tableLocalNow) {
+            // Tables: shortcuts follow the business's local calendar
+            tomorrowStr = addDaysToDateStr(tableLocalNow.date, 1);
+            tomorrowDay = dayNames[new Date(tomorrowStr + 'T00:00').getDay()];
+            const todayDow = new Date(tableLocalNow.date + 'T00:00').getDay();
+            nextSatStr = addDaysToDateStr(tableLocalNow.date, (6 - todayDow + 7) % 7 || 7);
+          } else {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrowStr = tomorrow.toISOString().split('T')[0];
+            tomorrowDay = dayNames[tomorrow.getDay()];
+
+            // Find next Saturday
+            const nextSat = new Date();
+            nextSat.setDate(nextSat.getDate() + ((6 - nextSat.getDay() + 7) % 7 || 7));
+            nextSatStr = nextSat.toISOString().split('T')[0];
+          }
           const tomorrowOpen = !opHours[tomorrowDay]?.closed && (availableDays.length === 0 || availableDays.includes(tomorrowDay));
           const tomorrowAvailable = dates.some(d => d.postbackText === tomorrowStr);
-
-          // Find next Saturday
-          const nextSat = new Date();
-          nextSat.setDate(nextSat.getDate() + ((6 - nextSat.getDay() + 7) % 7 || 7));
-          const nextSatStr = nextSat.toISOString().split('T')[0];
           const satOpen = !opHours['saturday']?.closed && (availableDays.length === 0 || availableDays.includes('saturday'));
           const satAvailable = dates.some(d => d.postbackText === nextSatStr);
 
           const quickButtons: Array<{ id: string; title: string }> = [];
+          // Tables: "Today" first when a slot is still free today (already checked in the date scan)
+          if (tableLocalNow && dates.some(d => d.postbackText === tableLocalNow.date)) {
+            const todayDay = dayNames[new Date(tableLocalNow.date + 'T00:00').getDay()];
+            quickButtons.push({ id: `date_${tableLocalNow.date}`, title: `Today (${todayDay.charAt(0).toUpperCase() + todayDay.slice(1, 3)})` });
+          }
           if (tomorrowAvailable && tomorrowOpen) {
             const dayLabel = tomorrowDay.charAt(0).toUpperCase() + tomorrowDay.slice(1, 3);
             quickButtons.push({ id: `date_${tomorrowStr}`, title: `Tomorrow (${dayLabel})` });
           }
-          if (satAvailable && satOpen && nextSatStr !== tomorrowStr) {
+          if (satAvailable && satOpen && nextSatStr !== tomorrowStr && quickButtons.length < 2) {
             quickButtons.push({ id: `date_${nextSatStr}`, title: getFlowCopy(ctx.copyLang, 'booking.this_saturday') });
           }
 
           // Show quick buttons if we have at least 1 shortcut + "Pick a Date"
           if (quickButtons.length > 0) {
-            quickButtons.push({ id: 'pick_date', title: getFlowCopy(ctx.copyLang, 'booking.pick_a_date') });
+            // WhatsApp allows 3 buttons: at most 2 shortcuts, then "Pick a Date"
+            const shortcuts = quickButtons.slice(0, 2);
+            shortcuts.push({ id: 'pick_date', title: getFlowCopy(ctx.copyLang, 'booking.pick_a_date') });
             messages.push({
               type: 'buttons' as const,
               body: getDatePrompt(ctx.business?.category || 'other', ctx.copyLang),
-              buttons: quickButtons.slice(0, 3),
+              buttons: shortcuts,
             });
             return messages;
           }
@@ -1054,6 +1110,10 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: false, errorMessage: undefined };
         }
 
+        // Same-day is for tables only, in the business timezone (null → tomorrow-first rule)
+        const isTableRes = ctx.session.session_data._is_table_reservation === true;
+        const tableLocalNow = isTableRes ? await resolveBusinessLocalNow(ctx) : null;
+
         // Handle quick date shortcut buttons (date_YYYY-MM-DD)
         let dateStr = input;
         const quickDateMatch = /^date_(\d{4}-\d{2}-\d{2})$/.exec(input);
@@ -1064,10 +1124,10 @@ export const schedulingFlow: FlowDefinition = {
           const lower = input.toLowerCase().trim();
           const now = new Date();
           if (/\b(today|2day|todey)\b/.test(lower)) {
-            dateStr = now.toISOString().split('T')[0];
+            dateStr = tableLocalNow ? tableLocalNow.date : now.toISOString().split('T')[0];
           } else if (/\b(tomorrow|2moro|2morrow|tmrw|tmr|2mr|2mrw)\b/.test(lower)) {
             const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
-            dateStr = tmr.toISOString().split('T')[0];
+            dateStr = tableLocalNow ? addDaysToDateStr(tableLocalNow.date, 1) : tmr.toISOString().split('T')[0];
           } else if (/\bnext\s*week\b/.test(lower)) {
             const nw = new Date(now); nw.setDate(nw.getDate() + 7);
             dateStr = nw.toISOString().split('T')[0];
@@ -1097,13 +1157,23 @@ export const schedulingFlow: FlowDefinition = {
         tomorrow.setDate(tomorrow.getDate() + 1);
         tomorrow.setHours(0, 0, 0, 0);
 
-        if (selected < tomorrow) return { valid: false, errorMessage: 'That date has passed. Try *tomorrow* or pick a future date.' };
-
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxAdvanceDays = (meta.max_advance_days as number) || BOOKING_DEFAULTS.maxAdvanceDays;
-        const maxDate = new Date();
-        maxDate.setDate(maxDate.getDate() + maxAdvanceDays);
-        if (selected > maxDate) return { valid: false, errorMessage: `Bookings can only be made up to ${maxAdvanceDays} days in advance.` };
+
+        if (tableLocalNow) {
+          // Tables: today onwards in the business's local calendar
+          if (dateStr < tableLocalNow.date) return { valid: false, errorMessage: 'That date has passed. Try *tomorrow* or pick a future date.' };
+          if (dateStr === tableLocalNow.date && !(await hasTableSlotLeftToday(ctx, tableLocalNow))) {
+            return { valid: false, errorMessage: 'There are no more times left today. Try *tomorrow* or pick a future date.' };
+          }
+          if (dateStr > addDaysToDateStr(tableLocalNow.date, maxAdvanceDays)) return { valid: false, errorMessage: `Bookings can only be made up to ${maxAdvanceDays} days in advance.` };
+        } else {
+          if (selected < tomorrow) return { valid: false, errorMessage: 'That date has passed. Try *tomorrow* or pick a future date.' };
+
+          const maxDate = new Date();
+          maxDate.setDate(maxDate.getDate() + maxAdvanceDays);
+          if (selected > maxDate) return { valid: false, errorMessage: `Bookings can only be made up to ${maxAdvanceDays} days in advance.` };
+        }
 
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { date: dateStr } };
@@ -1168,6 +1238,15 @@ export const schedulingFlow: FlowDefinition = {
         if (dateStr === todayStr) {
           const nowMinutes = now.getHours() * 60 + now.getMinutes();
           if (preMinutes <= nowMinutes) { delete ctx.session.session_data.time; return false; }
+        }
+
+        // Tables: also judge "past" in the business timezone (same-day bookings)
+        if (ctx.session.session_data._is_table_reservation === true) {
+          const local = await resolveBusinessLocalNow(ctx);
+          if (local && dateStr === local.date && preMinutes <= local.minutes) {
+            delete ctx.session.session_data.time;
+            return false;
+          }
         }
 
         return true;
@@ -1253,6 +1332,12 @@ export const schedulingFlow: FlowDefinition = {
           });
         }
 
+        // Same-day tables: only times after the current time in the business timezone
+        if (isTableResPrompt) {
+          const local = await resolveBusinessLocalNow(ctx);
+          if (local && dateStr === local.date) allSlots = filterSlotsAfterNow(allSlots, local.minutes);
+        }
+
         // ── Availability check: remove fully booked slots ──
         const staffId = ctx.session.session_data.staff_id as string | null;
         const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
@@ -1335,7 +1420,8 @@ export const schedulingFlow: FlowDefinition = {
         // Add "Change Date" navigation option at the end
         items.push({ title: getFlowCopy(ctx.copyLang, 'booking.change_date'), description: getFlowCopy(ctx.copyLang, 'booking.change_date_desc'), postbackText: 'change_date' });
 
-        return [{
+        // Table bookings whose date was already given skip select_date: show the seat's photos here (#892)
+        return [...await seatingGalleryMessages(ctx), {
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'booking.select_time'),
           body: `Pick a${prefLabel} time on ${dateLabel}:`,
@@ -1400,6 +1486,12 @@ export const schedulingFlow: FlowDefinition = {
         const valSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
 
         if (isTableRes && valSeatingResourceId) {
+          // Same-day tables: book_table_atomic accepts past times, so refuse them here
+          const local = await resolveBusinessLocalNow(ctx);
+          if (local && dateStr === local.date && timeToMinutes(input) <= local.minutes) {
+            return { valid: false, errorMessage: 'That time has already passed today. Pick a later time.' };
+          }
+
           // Table reservations: duration-aware overlap check against SAME resource
           // (authoritative concurrency is in book_table_atomic; this is UX-level)
           const resDuration = (ctx.session.session_data._seating_duration as number) || 90;
@@ -1470,6 +1562,14 @@ export const schedulingFlow: FlowDefinition = {
       id: 'select_addons',
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
+        // Table reservations are a flat per-reservation deposit and book_table_atomic
+        // stores no add-ons, so offering them would show items that are never saved
+        // or charged. Clear any add-on state carried over from an earlier selection.
+        if (ctx.session.session_data._is_table_reservation === true) {
+          delete ctx.session.session_data._available_addons;
+          delete ctx.session.session_data._selected_addons;
+          return true;
+        }
         const serviceId = ctx.session.session_data.service_id as string | undefined;
         const { data: addons } = await ctx.supabase
           .from('service_addons')
@@ -1489,8 +1589,18 @@ export const schedulingFlow: FlowDefinition = {
         if (required.length === addons.length) return true;
         return false;
       },
+      nextAfterPrompt(ctx: FlowContext) {
+        return ctx.session.session_data._is_table_reservation === true ? 'select_quantity' : undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number; is_required: boolean }>;
+        // "Back" re-shows this prompt without running skipIf. A table never gets
+        // add-ons, so clear any carried-over state and show party size instead.
+        if (ctx.session.session_data._is_table_reservation === true) {
+          delete ctx.session.session_data._available_addons;
+          delete ctx.session.session_data._selected_addons;
+          return schedulingFlow.steps.find(step => step.id === 'select_quantity')!.prompt(ctx);
+        }
+        const addons = (ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number; is_required: boolean }> | undefined) ?? [];
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const optional = addons.filter(a => !a.is_required);
         const items = optional.map(a => buildListItem({
@@ -1508,6 +1618,8 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Reached for a table only via a 'require' override after "back": move on, never loop.
+        if (ctx.session.session_data._is_table_reservation === true) return { valid: true };
         if (input === 'skip_addons') return { valid: true };
         const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number }>;
         const found = addons?.find(a => a.id === input);
@@ -1806,7 +1918,8 @@ export const schedulingFlow: FlowDefinition = {
             title: `${n} guest${n > 1 ? 's' : ''}`,
           }));
           const rangeLabel = minCap === maxCap ? `${minCap}` : `${minCap}-${maxCap}`;
-          return [{
+          // Date and time given up front skip select_date/select_time: show the seat's photos here (#892 D3)
+          return [...await seatingGalleryMessages(ctx), {
             type: 'buttons',
             body: `How many guests will be dining?\n\nType a number (${rangeLabel}).`,
             buttons,
@@ -2259,7 +2372,10 @@ export const schedulingFlow: FlowDefinition = {
           '',
           `${labels.confirmationEmoji} ${ctx.business?.name || 'Business'}`,
         ];
-        if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
+        // Table reservations show the table the customer chose (service_name is only
+        // set from the table after booking, and may hold a stale keyword-matched service).
+        if (d._is_table_reservation === true && d.seating_resource_name) lines.push(`🪑 ${d.seating_resource_name as string}`);
+        else if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
         if (d._location_name) lines.push(`📍 Location: ${d._location_name as string}`);
         if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
 

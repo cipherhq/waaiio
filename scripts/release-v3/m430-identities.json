@@ -1,0 +1,12 @@
+{
+ "added_identities": [
+  "constraint:public.businesses.chk_shared_requires_channel",
+  "function:public.allocate_shared_channel(p_business_id uuid, p_country_code text)",
+  "function:public.reassign_shared_channel(p_business_id uuid, p_new_channel_id uuid)",
+  "function:public.transition_to_shared(p_business_id uuid)"
+ ],
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1,
+ "source": "430_shared_number_tenant_isolation.sql",
+ "source_sha256": "04bd1fb7f6d9ca84e4faca94ba5d01a8acf32b67d13c60465a1d66ee6df1a653"
+}

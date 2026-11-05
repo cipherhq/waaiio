@@ -80,6 +80,7 @@ export function disambiguateByCategory(
     restaurant: 'table_reservation',
     cafe: 'table_reservation',
     bar: 'table_reservation',
+    lounge: 'table_reservation', // Owner decision 2026-11-04: lounge works like bar
     // Everything else: service_time_booking
   };
 

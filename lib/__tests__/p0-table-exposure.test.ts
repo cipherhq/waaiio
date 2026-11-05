@@ -261,7 +261,7 @@ describe('P0: Application code uses safe view fallback helpers', () => {
 
   it('dashboard uses permanent link (no direct channel query)', () => {
     const dashboard = fs.readFileSync(path.resolve('app/dashboard/page.tsx'), 'utf-8');
-    expect(dashboard).toContain('buildMerchantLink');
+    expect(dashboard).toContain('buildShortMerchantLink(business.bot_code, business.id)');
     expect(dashboard).not.toContain('queryChannelsPublic');
   });
 

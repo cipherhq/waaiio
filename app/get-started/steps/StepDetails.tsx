@@ -191,7 +191,7 @@ export function StepDetails({
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-900">Connect my own WhatsApp number</p>
-                <p className="text-xs text-gray-500">Use your existing business or personal number via Meta Embedded Signup</p>
+                <p className="text-xs text-gray-500">Needs a brand-new number that has never had WhatsApp (for example a new SIM)</p>
               </div>
             </button>
             <div className="flex w-full items-center gap-3 rounded-xl border-2 border-gray-100 bg-gray-50/50 p-3 text-left opacity-60 cursor-not-allowed">
@@ -215,6 +215,9 @@ export function StepDetails({
                   <p className="text-sm font-medium text-gray-900">You&apos;ll connect your number after signup</p>
                   <p className="text-xs text-gray-500">
                     We&apos;ll create your business first, then guide you through connecting your WhatsApp number via Meta from your dashboard.
+                  </p>
+                  <p className="mt-2 text-xs font-medium text-amber-700" data-testid="own-number-warning">
+                    Use a brand-new number that has never had WhatsApp — for example a new SIM. This is the only way we support. A number that already has WhatsApp or WhatsApp Business on it will not connect.
                   </p>
                 </div>
               </div>
@@ -255,7 +258,7 @@ export function StepDetails({
       </label>
 
       <div className="mt-4 flex gap-3">
-        <button type="button" onClick={() => setStep('features')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
+        <button type="button" onClick={() => setStep('plan')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
         <button type="submit" disabled={loading || !agreedToTerms || !agreedToDataProcessing || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
           {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
         </button>

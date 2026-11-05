@@ -11,7 +11,8 @@ import { logger } from '@/lib/logger';
  * GET: return current consent status
  * POST: update consent preferences
  *
- * Stored in profiles.metadata.consent_preferences
+ * Stored in profiles.consent_preferences (M515, #878): a server-only JSONB
+ * column. Owners can read their own row; only this service-role code writes it.
  */
 
 interface ConsentPreferences {
@@ -43,7 +44,7 @@ export async function GET() {
     const serviceClient = createServiceClient();
     const { data: profile, error: profileError } = await serviceClient
       .from('profiles')
-      .select('metadata')
+      .select('consent_preferences')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -55,8 +56,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
     }
 
-    const metadata = (profile?.metadata || {}) as Record<string, unknown>;
-    const consent = (metadata.consent_preferences || DEFAULT_CONSENT) as ConsentPreferences;
+    const consent = (profile.consent_preferences || DEFAULT_CONSENT) as ConsentPreferences;
 
     return NextResponse.json({ consent });
   } catch (error) {
@@ -90,10 +90,10 @@ export async function POST(request: NextRequest) {
 
     const serviceClient = createServiceClient();
 
-    // Fetch current profile metadata
+    // Fetch the current consent answers
     const { data: profile, error: profileError } = await serviceClient
       .from('profiles')
-      .select('metadata')
+      .select('consent_preferences')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -105,8 +105,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
     }
 
-    const existingMetadata = (profile.metadata || {}) as Record<string, unknown>;
-    const existingConsent = (existingMetadata.consent_preferences || {}) as Partial<ConsentPreferences>;
+    const existingConsent = (profile.consent_preferences || {}) as Partial<ConsentPreferences>;
 
     // Fetch current privacy policy version from platform_settings
     let policyVersion = '2026-05-23'; // fallback
@@ -142,17 +141,11 @@ export async function POST(request: NextRequest) {
       ...(terms_accepted === true ? { terms_accepted_at: new Date().toISOString(), terms_version: termsVersion } : {}),
     };
 
-    // Merge with existing metadata
-    const updatedMetadata = {
-      ...existingMetadata,
-      consent_preferences: consentPreferences,
-    };
-
     const { data: updatedProfile, error: updateError } = await serviceClient
       .from('profiles')
-      .update({ metadata: updatedMetadata })
+      .update({ consent_preferences: consentPreferences })
       .eq('id', user.id)
-      .select('metadata')
+      .select('consent_preferences')
       .maybeSingle();
 
     if (updateError) {
@@ -163,8 +156,7 @@ export async function POST(request: NextRequest) {
     if (!updatedProfile) {
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
     }
-    const persistedMetadata = updatedProfile.metadata as Record<string, unknown> | null;
-    const persistedConsent = persistedMetadata?.consent_preferences;
+    const persistedConsent = updatedProfile.consent_preferences;
     if (!persistedConsent) {
       return NextResponse.json({ error: 'Failed to confirm consent' }, { status: 500 });
     }

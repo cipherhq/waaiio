@@ -375,8 +375,8 @@ export default function SiteAnnouncement() {
   // Auto-open modal once per session for launch_countdown
   useEffect(() => {
     if (!config || config.type !== 'launch_countdown') return;
-    // Suppress on /launch page (it IS the launch experience)
-    if (pathname === '/launch') return;
+    // The live homepage has no launch treatment; /launch is already its own experience.
+    if (pathname === '/launch' || pathname === '/') return;
     try {
       if (!sessionStorage.getItem(MODAL_SHOWN_KEY)) {
         setModalOpen(true);
@@ -404,8 +404,8 @@ export default function SiteAnnouncement() {
 
   if (!config?.enabled) return null;
 
-  // Suppress launch treatment on /launch page — it IS the launch experience
-  if (config.type === 'launch_countdown' && pathname === '/launch') return null;
+  // Keep launch treatment off the live homepage and standalone launch page.
+  if (config.type === 'launch_countdown' && (pathname === '/launch' || pathname === '/')) return null;
 
   // Non-launch types keep the original compact behavior
   if (config.type !== 'launch_countdown') {

@@ -91,7 +91,8 @@ describe('#730: Table Reservation capability definition', () => {
     const { CAPABILITIES } = await import('@/shared/capabilities');
     const cap = CAPABILITIES.find(c => c.id === 'table_reservation');
     expect(cap).toBeDefined();
-    expect(cap!.label).toBe('Table Reservations');
+    // Owner decision 2026-11-04: renamed from 'Table Reservations' (id unchanged)
+    expect(cap!.label).toBe('Tables & Sections');
   });
 
   it('table_reservation tier is free', async () => {
