@@ -886,7 +886,11 @@ export class FlowExecutor {
         // is accepted. When it already went out for this payment, end the session
         // instead of sending the customer a second menu.
         if (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd)) {
-          await this.deactivateSession(session.id);
+          // Version-checked like the menu path: if another message already moved
+          // this session on (e.g. the save-card PIN step), leave it alone.
+          if (await this.casUpdateSession(session, { current_step: 'complete', session_data: sd })) {
+            await this.deactivateSession(session.id);
+          }
         } else {
           await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
         }

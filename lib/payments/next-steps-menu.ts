@@ -37,17 +37,21 @@ export async function paymentNextStepsMenuSent(
   sessionData: Record<string, unknown>,
 ): Promise<boolean> {
   try {
-    let paymentId = typeof sessionData._saved_card_payment_id === 'string' ? sessionData._saved_card_payment_id : null;
-    if (!paymentId && typeof sessionData.payment_reference === 'string' && sessionData.payment_reference) {
-      const { data, error } = await supabase
-        .from('payments')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('gateway_reference', sessionData.payment_reference)
-        .maybeSingle();
-      if (error) return false;
-      paymentId = (data?.id as string | undefined) ?? null;
-    }
+    const savedCardPaymentId = typeof sessionData._saved_card_payment_id === 'string' && sessionData._saved_card_payment_id
+      ? sessionData._saved_card_payment_id : null;
+    const reference = typeof sessionData.payment_reference === 'string' && sessionData.payment_reference
+      ? sessionData.payment_reference : null;
+    if (!savedCardPaymentId && !reference) return false;
+
+    // Always resolve through payments scoped to this business.
+    const { data: payment, error: paymentError } = await supabase
+      .from('payments')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq(savedCardPaymentId ? 'id' : 'gateway_reference', savedCardPaymentId ?? reference)
+      .maybeSingle();
+    if (paymentError) return false;
+    const paymentId = (payment?.id as string | undefined) ?? null;
     if (!paymentId) return false;
 
     const { data, error } = await supabase

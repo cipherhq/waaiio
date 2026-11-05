@@ -151,9 +151,16 @@ function completingStep(data: Record<string, unknown>) {
   });
 }
 
-async function runCompletion(sessionData: Record<string, unknown>) {
+async function runCompletion(sessionData: Record<string, unknown>, opts: { conflictOnStep?: string } = {}) {
   const casCalls: CasCall[] = [];
   const sb = buildExecutorSb(casCalls);
+  if (opts.conflictOnStep) {
+    const base = sb.rpc.getMockImplementation();
+    sb.rpc.mockImplementation((name: string, args: CasCall) => (
+      name === 'update_session_cas' && args.p_current_step === opts.conflictOnStep
+        ? Promise.resolve({ data: { success: false, reason: 'version_conflict' }, error: null })
+        : base(name, args)));
+  }
   const sender = {
     sendText: vi.fn().mockResolvedValue(undefined),
     sendButtons: vi.fn().mockResolvedValue(undefined),
@@ -181,7 +188,16 @@ describe('Paid chat completion: one next-steps menu', () => {
     expect(sender.sendButtons).not.toHaveBeenCalled();
     expect(sender.sendList).not.toHaveBeenCalled();
     expect(rpcNames).toContain('deactivate_session_atomic');
+    expect(casCalls.some(c => c.p_current_step === 'complete')).toBe(true);
     expect(casCalls.some(c => c.p_current_step === 'post_completion')).toBe(false);
+  });
+
+  it('session moved on meanwhile (e.g. save-card PIN step) → left alone, not ended', async () => {
+    mockMenuSent.mockResolvedValue(true);
+    completingStep({ _action: 'payment_confirmed' });
+    const { sender, rpcNames } = await runCompletion({ payment_reference: 'PAY-1' }, { conflictOnStep: 'complete' });
+    expect(rpcNames).not.toContain('deactivate_session_atomic');
+    expect(sender.sendButtons).not.toHaveBeenCalled();
   });
 
   it('payment confirmation did not send a menu → chat shows its own menu with the footer', async () => {

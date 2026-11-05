@@ -4,7 +4,7 @@
   - When the payment confirmation sends a customer's "✅ Confirmed!" message for a payment confirmed by the provider, a dashboard transfer approval or a cron job, it now follows it with a "What would you like to do next?" button menu with the footer "Powered by Waaiio.com". The footer is hidden for white-label businesses.
   - The menu is sent only after this payment's single claimed confirmation has been accepted by Meta, so a retry never repeats it. If the menu fails to send, the logs record it, but the confirmation is never marked failed.
   - Buttons use the same words the confirmation already tells the customer to type: `my bookings`, `my orders`, `my giving` or `history`, then `menu`, plus `directory` on shared numbers. So they work whatever state the chat is in.
-  - When a customer taps "I've Paid" in the chat and the confirmation has already gone out for that payment, the chat now ends the session instead of sending a second menu. If that check fails for any reason, the chat menu still shows: two menus at worst, never none.
+  - When a customer taps "I've Paid" in the chat and the confirmation has already gone out for that payment, the chat now ends the session instead of sending a second menu. Ending the session is version-checked, so a session that has already moved on (for example to the save-card PIN step) is left alone. The payment lookup is always scoped to the business. If that check fails for any reason, the chat menu still shows: two menus at worst, never none.
   - Owner rule 2026-11-05.
 - **Files:**
   - `lib/payments/next-steps-menu.ts` (new)

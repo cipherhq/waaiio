@@ -47,12 +47,19 @@ function db(opts: { payment?: unknown; paymentError?: unknown; deliveries?: unkn
 }
 
 describe('paymentNextStepsMenuSent', () => {
-  it('saved-card payment with an accepted confirmation → true, without a reference lookup', async () => {
-    const { client, calls } = db({ deliveries: [{ id: 'd1' }] });
-    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-1' })).toBe(true);
-    expect(calls.map(c => c.table)).toEqual(['payment_confirmation_deliveries']);
-    expect(calls[0].filters).toContainEqual(['eq', 'payment_id', 'pay-1']);
-    expect(calls[0].filters).toContainEqual(['in', 'delivery_status', ['accepted', 'sent', 'delivered', 'read']]);
+  it('saved-card payment with an accepted confirmation → true, payment checked against the business', async () => {
+    const { client, calls } = db({ payment: { id: 'pay-1' }, deliveries: [{ id: 'd1' }] });
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-1', payment_reference: 'ignored' })).toBe(true);
+    expect(calls.map(c => c.table)).toEqual(['payments', 'payment_confirmation_deliveries']);
+    expect(calls[0].filters).toContainEqual(['eq', 'business_id', 'biz-1']);
+    expect(calls[0].filters).toContainEqual(['eq', 'id', 'pay-1']);
+    expect(calls[1].filters).toContainEqual(['eq', 'payment_id', 'pay-1']);
+    expect(calls[1].filters).toContainEqual(['in', 'delivery_status', ['accepted', 'sent', 'delivered', 'read']]);
+  });
+
+  it('saved-card payment from another business → false', async () => {
+    const { client } = db({ payment: null, deliveries: [{ id: 'd1' }] });
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-other' })).toBe(false);
   });
 
   it('payment reference lookup is scoped to the business', async () => {
