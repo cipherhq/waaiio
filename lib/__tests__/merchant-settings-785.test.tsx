@@ -18,6 +18,7 @@ vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ from: (table: s
 } }) }));
 import Billing from '@/app/dashboard/billing/page';
 import Giving from '@/app/dashboard/giving/page';
+import Settings from '@/app/dashboard/settings/page';
 import { PaymentsTab } from '@/app/dashboard/settings/tabs/PaymentsTab';
 import type { SettingsTabProps } from '@/app/dashboard/settings/tabs/types';
 beforeEach(() => {
@@ -50,11 +51,28 @@ it('renders recurring controls for a payment-only business', async () => {
   expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
   expect(screen.getByText(/Enable automatic recurring payments/)).toBeTruthy();
 });
-it.each([true, false])('giving links to the correct destination with recurring capability=%s', async enabled => {
-  if (!enabled) { state.business.capabilities = ['payment', 'giving']; state.business.selectedCapabilities = [...state.business.capabilities]; }
+// Owner request 2026-11-04: the Giving recurring-settings link always opens
+// Settings > Payments > Recurring, whatever blocks recurring for the business.
+it.each([
+  ['recurring available but switched off', ['payment', 'giving', 'recurring'], ['payment', 'giving', 'recurring']],
+  ['recurring paused by plan', ['payment', 'giving'], ['payment', 'giving', 'recurring']],
+  ['recurring not selected', ['payment', 'giving'], ['payment', 'giving']],
+])('giving links to Payments > Recurring settings when %s', async (_label, capabilities, selected) => {
+  state.business.capabilities = capabilities; state.business.selectedCapabilities = selected;
   render(<Giving />);
   const buttons = await screen.findAllByRole('button', { name: /Add.*Category/i });
   fireEvent.click(buttons[0]);
-  const link = await screen.findByRole('link', { name: 'Open recurring settings' });
-  expect(link.getAttribute('href')).toBe(enabled ? '/dashboard/settings?tab=payments&section=recurring' : '/dashboard/capabilities');
+  const links = await screen.findAllByRole('link', { name: 'Open recurring settings' });
+  expect(links).toHaveLength(1);
+  expect(links[0].getAttribute('href')).toBe('/dashboard/settings?tab=payments&section=recurring');
+});
+it('settings opens Payments with the Recurring section expanded from that link', async () => {
+  window.history.pushState({}, '', '/dashboard/settings?tab=payments&section=recurring');
+  try {
+    render(<Settings />);
+    expect((await screen.findAllByRole('heading', { name: 'Recurring Payments' })).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Enable automatic recurring payments/)).toBeTruthy();
+  } finally {
+    window.history.pushState({}, '', '/');
+  }
 });
