@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: mocks.refresh, push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/hooks/useCategoryConfig', () => ({
