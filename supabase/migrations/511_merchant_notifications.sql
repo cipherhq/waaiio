@@ -142,10 +142,11 @@ BEGIN
  RETURN to_jsonb(d);
 END $$;
 -- Shares the existing monthly allowance with legacy notifications; serializes every recipient.
+-- FOR NO KEY UPDATE serializes reservations without blocking the FOR KEY SHARE that merchant source-write FK checks take.
 CREATE FUNCTION public.reserve_merchant_notification_allowance(p_business_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions AS $$
 DECLARE tier text; used integer; reset_date date; month_start date:=date_trunc('month',now())::date; maximum integer;
 BEGIN
- SELECT subscription_tier::text INTO tier FROM public.businesses WHERE id=p_business_id FOR UPDATE;
+ SELECT subscription_tier::text INTO tier FROM public.businesses WHERE id=p_business_id FOR NO KEY UPDATE;
  IF NOT FOUND THEN RETURN false; END IF;
  maximum:=CASE WHEN tier IN ('growth','business') THEN 999999 ELSE 50 END;
  INSERT INTO public.whatsapp_config(business_id) VALUES(p_business_id) ON CONFLICT(business_id) DO NOTHING;

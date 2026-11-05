@@ -314,4 +314,79 @@ suite('M511 merchant notification transaction and tenant boundaries',()=>{
   await expect(sql('SELECT recover_merchant_notification_pre_emission($1,$2)',[d.id,d.claim_token])).rejects.toThrow('allowance invariant');
   expect((await sql('SELECT state,allowance_reserved_month IS NOT NULL marker FROM merchant_notification_deliveries')).rows[0]).toEqual({state:'dispatched',marker:true});
  });
+
+ // Lock-order regression (#813 review r2-813-sync): fence and capture must take businesses before recipients.
+ type Tracked={done:boolean;ok?:boolean;value?:{rows:any[]};error?:{code?:string};promise:Promise<void>};
+ function track(p:Promise<{rows:any[]}>):Tracked {
+  const t:Tracked={done:false,promise:Promise.resolve()};
+  t.promise=p.then(v=>{t.ok=true;t.value=v;},e=>{t.ok=false;t.error=e;}).finally(()=>{t.done=true;});
+  return t;
+ }
+ async function blockedOrDone(pid:number,t:Tracked) {
+  for(let i=0;i<200;i++){
+   if(t.done) return 'done';
+   const wait=(await sql('SELECT wait_event_type w FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0]?.w;
+   if(wait==='Lock') return 'blocked';
+   await new Promise(r=>setTimeout(r,25));
+  }
+  throw new Error('session neither blocked nor finished');
+ }
+ async function session(deadlockTimeout:string) {
+  const c=new Client({connectionString:url});await c.connect();
+  // Bounded waits: the test can fail but never hang.
+  await c.query(`SET lock_timeout='5s'; SET statement_timeout='10s'; SET deadlock_timeout='${deadlockTimeout}'`);
+  return {c,pid:(await c.query('SELECT pg_backend_pid() p')).rows[0].p as number};
+ }
+ it('a WhatsApp fence never deadlocks a concurrent merchant source write (40P01)',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));
+  await sql("INSERT INTO whatsapp_config VALUES($1,0,date_trunc('month',now())::date)",[B]);
+  await order();const d=await claim();const next=await order('draft');
+  // The merchant session detects any cycle first, so a deadlock fails the merchant write (as observed in review).
+  const fencer=await session('5s'),merchant=await session('50ms');
+  try {
+   // Production's orders_business_id_fkey check holds the business row FOR KEY SHARE for the rest of the
+   // merchant transaction. The fixture orders table has no FK, so take exactly that lock explicitly.
+   await merchant.c.query('BEGIN');await merchant.c.query('SELECT 1 FROM businesses WHERE id=$1 FOR KEY SHARE',[B]);
+   await fencer.c.query('BEGIN');
+   const fenceRun=track(fencer.c.query('SELECT fence_merchant_notification($1,$2) ok',[d.id,d.claim_token]));
+   await blockedOrDone(fencer.pid,fenceRun);
+   // Capture trigger: delivery insert FK checks take businesses then recipients FOR KEY SHARE.
+   const writeRun=track(merchant.c.query("UPDATE orders SET status='confirmed' WHERE id=$1",[next]));
+   await blockedOrDone(merchant.pid,writeRun);
+   if(fenceRun.done){
+    await fencer.c.query(fenceRun.ok?'COMMIT':'ROLLBACK');await writeRun.promise;await merchant.c.query(writeRun.ok?'COMMIT':'ROLLBACK');
+   } else {
+    await writeRun.promise;await merchant.c.query(writeRun.ok?'COMMIT':'ROLLBACK');await fenceRun.promise;await fencer.c.query(fenceRun.ok?'COMMIT':'ROLLBACK');
+   }
+   expect(writeRun.error?.code).toBeUndefined();
+   expect(fenceRun.error?.code).toBeUndefined();
+   expect(fenceRun.value?.rows[0].ok).toBe(true);
+  } finally {await fencer.c.end();await merchant.c.end();}
+  expect((await sql('SELECT state FROM merchant_notification_deliveries ORDER BY state')).rows.map(r=>r.state)).toEqual(['dispatched','pending']);
+  expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(1);
+ });
+ it('an in-flight WhatsApp fence never makes merchant FK checks wait on the business row',async()=>{
+  await verify(await recipient('whatsapp','+2348012345678'));await order();const d=await claim();
+  const fencer=await session('1s');
+  try {
+   await fencer.c.query('BEGIN');
+   expect((await fencer.c.query('SELECT fence_merchant_notification($1,$2) ok',[d.id,d.claim_token])).rows[0].ok).toBe(true);
+   // The fence still holds every lock it took; a source-table FK check must not have to wait for it.
+   await expect(sql('SELECT 1 FROM businesses WHERE id=$1 FOR KEY SHARE NOWAIT',[B])).resolves.toBeDefined();
+   await fencer.c.query('ROLLBACK');
+  } finally {await fencer.c.end();}
+ });
+ it('allowance reservation stays serialized while a competing reservation is uncommitted',async()=>{
+  await sql("INSERT INTO whatsapp_config VALUES($1,49,date_trunc('month',now())::date)",[B]);
+  const first=await session('1s'),second=await session('1s');
+  try {
+   await first.c.query('BEGIN');
+   expect((await first.c.query('SELECT reserve_merchant_notification_allowance($1) ok',[B])).rows[0].ok).toBe(true);
+   const competing=track(second.c.query('SELECT reserve_merchant_notification_allowance($1) ok',[B]));
+   expect(await blockedOrDone(second.pid,competing)).toBe('blocked');
+   await first.c.query('COMMIT');await competing.promise;
+   expect(competing.error).toBeUndefined();expect(competing.value?.rows[0].ok).toBe(false);
+  } finally {await first.c.end();await second.c.end();}
+  expect((await sql('SELECT notify_monthly_count n FROM whatsapp_config')).rows[0].n).toBe(50);
+ });
 });
