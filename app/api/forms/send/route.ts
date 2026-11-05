@@ -15,7 +15,7 @@ import {
 /** Most scheduled sends one business may have waiting at once (interim; Owner decision pending on limits). */
 const MAX_WAITING_SENDS = 20;
 
-/** Scheduled sends: at least a minute ahead (the cron runs every 15 minutes), at most 90 days. */
+/** Scheduled sends: at least a minute ahead (the cron runs every 5 minutes), at most 90 days. */
 function parseSchedule(value: unknown): Date | 'invalid' | null {
   if (value === undefined || value === null || value === '') return null;
   if (typeof value !== 'string') return 'invalid';

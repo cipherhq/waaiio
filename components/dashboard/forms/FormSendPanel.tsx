@@ -294,7 +294,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
                 <span>
                   <span className="font-medium text-gray-900">{STATUS_TEXT[h.status]}</span>{' '}
                   <span className="text-gray-500">{new Date(h.scheduled_at).toLocaleString()}</span>
-                  {h.status !== 'scheduled' && h.status !== 'cancelled' && (
+                  {h.status !== 'scheduled' && (h.status !== 'cancelled' || h.sent_count > 0) && (
                     <span className="text-gray-500"> · Sent {h.sent_count} · Failed {h.failed_count} · Skipped {h.skipped_count}</span>
                   )}
                   {h.error_message && <span className="block text-gray-400">{h.error_message}</span>}

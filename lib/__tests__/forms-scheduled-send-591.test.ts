@@ -206,7 +206,7 @@ describe('the scheduled-sends cron', () => {
     await tick();
     expect(m.template).not.toHaveBeenCalled();
     expect(m.text).not.toHaveBeenCalled();
-    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/no longer approved.*nothing was sent/) });
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/Nothing was sent because the chosen template is no longer approved/) });
   });
 
   it('gives up on a template check that keeps failing for 2 hours, with nothing sent', async () => {
@@ -214,7 +214,7 @@ describe('the scheduled-sends cron', () => {
     sendRow().scheduled_at = new Date(Date.now() - 3 * 60 * 60_000).toISOString();
     m.getTemplates.mockRejectedValue(new Error('Session has expired'));
     await tick();
-    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/could not be checked for 2 hours/) });
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/Nothing was sent because WhatsApp templates could not be checked for 2 hours/) });
     expect(m.template).not.toHaveBeenCalled();
   });
 
@@ -263,7 +263,83 @@ describe('the scheduled-sends cron', () => {
     expect(sendRow().sent_count).toBeUndefined();
   });
 
-    it('a send left in "sending" by a killed run is marked interrupted and never re-sent', async () => {
+    it('a partly sent send that stops early says who already got it, never "nothing was sent"', async () => {
+    await schedule();
+    // An earlier run reached one person; one is still to go.
+    Object.assign(sendRow(), { recipients: [P2], sent_count: 1, failed_count: 0, skipped_count: 0, results: [{ phone: P1, status: 'sent', via: 'template' }] });
+    m.getTemplates.mockResolvedValue({ data: [template({ status: 'PAUSED' })] });
+    await tick();
+    expect(sendRow()).toMatchObject({ status: 'sent', sent_count: 1, error_message: 'Sent to 1; the other 1 were not sent because the chosen template is no longer approved for form links.' });
+    expect(m.template).not.toHaveBeenCalled();
+  });
+
+  it('takes turns across businesses: a busy business cannot push others back by more than one turn', async () => {
+    const C = 'biz-c';
+    m.db.tables.forms.push(
+      { id: 'form-b2', business_id: OTHER, title: 'B2', description: null, token: 'tokB2', is_active: true, settings: {} },
+      { id: 'form-c', business_id: C, title: 'C', description: null, token: 'tokC', is_active: true, settings: {} },
+    );
+    m.db.tables.businesses.push({ id: C, owner_id: 'owner-c', name: 'C', country_code: 'NG' });
+    const row = (id: string, business_id: string, form_id: string, minutesAgo: number) => ({
+      id, business_id, form_id, template_name: null, recipients: ['+2348039999999'], status: 'scheduled',
+      scheduled_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(), updated_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+      results: [], sent_count: 0, failed_count: 0, skipped_count: 0,
+    });
+    // Business A queued 60 sends first (more than one page of the old 50-row window); B and C each queued one afterwards.
+    for (let i = 0; i < 60; i++) m.db.tables.form_sends.push(row(`00000000-0000-4000-a000-000000000${String(i).padStart(3, '0')}`, BIZ, FORM, 200 - i));
+    m.db.tables.form_sends.push(row('00000000-0000-4000-a000-0000000002bb', OTHER, 'form-b2', 50), row('00000000-0000-4000-a000-0000000003cc', C, 'form-c', 40));
+    await tick();
+    const status = (b: string) => m.db.tables.form_sends.filter(r => r.business_id === b).map(r => r.status);
+    expect(status(OTHER)).not.toContain('scheduled');
+    expect(status(C)).not.toContain('scheduled');
+    expect(status(BIZ).filter(s => s !== 'scheduled')).toHaveLength(1);
+  });
+
+  it('a send put back in the queue waits behind the same business\u2019s other due sends', async () => {
+    const row = (id: string, scheduledMinutesAgo: number, updatedMinutesAgo: number) => ({
+      id, business_id: BIZ, form_id: FORM, template_name: null, recipients: [P1], status: 'scheduled',
+      scheduled_at: new Date(Date.now() - scheduledMinutesAgo * 60_000).toISOString(),
+      updated_at: new Date(Date.now() - updatedMinutesAgo * 60_000).toISOString(),
+      results: [], sent_count: 0, failed_count: 0, skipped_count: 0,
+    });
+    // X was due first but was just put back; Y was due later and hasn't been tried.
+    m.db.tables.form_sends.push(row('00000000-0000-4000-a000-0000000000a1', 60, 1), row('00000000-0000-4000-a000-0000000000a2', 30, 30));
+    m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-${BIZ}`, sender_phone: P1.slice(1), provider_timestamp: new Date(Date.now() - 60_000).toISOString() });
+    await tick();
+    const byId = (id: string) => m.db.tables.form_sends.find(r => r.id === id)!;
+    expect(byId('00000000-0000-4000-a000-0000000000a2').status).toBe('sent');
+    expect(byId('00000000-0000-4000-a000-0000000000a1').status).toBe('scheduled');
+  });
+
+  it('does not start another send with under 20 seconds of the run left', async () => {
+    m.db.tables.forms.push({ id: 'form-b2', business_id: OTHER, title: 'B2', description: null, token: 'tokB2', is_active: true, settings: {} });
+    await schedule();
+    m.db.tables.form_sends.push({ id: '00000000-0000-4000-a000-0000000000b9', business_id: OTHER, form_id: 'form-b2', template_name: null, recipients: ['+2348039999999'], status: 'scheduled', scheduled_at: new Date(Date.now() - 1000).toISOString(), updated_at: new Date().toISOString(), results: [], sent_count: 0, failed_count: 0, skipped_count: 0 });
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    // The first send takes 25 of the run's 40 seconds.
+    m.template.mockImplementation(async () => { offset = 25_000; return { success: true, messageId: 'w' }; });
+    try { await tick(); } finally { spy.mockRestore(); }
+    expect(sendRow()).toMatchObject({ status: 'sent', sent_count: 2 });
+    expect(m.db.tables.form_sends.find(r => r.business_id === OTHER)).toMatchObject({ status: 'scheduled', updated_at: expect.any(String) });
+    expect(m.db.tables.form_sends.find(r => r.business_id === OTHER)!.started_at).toBeUndefined();
+  });
+
+  it('a send that never gets going is closed honestly after 2 hours, not retried for ever', async () => {
+    await schedule();
+    sendRow().scheduled_at = new Date(Date.now() - 3 * 60 * 60_000).toISOString();
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    // The template check finishes after the run's time is already used up.
+    m.getTemplates.mockImplementation(async () => { offset = 45_000; return { data: [template()] }; });
+    try { await tick(); } finally { spy.mockRestore(); }
+    expect(m.template).not.toHaveBeenCalled();
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: 'Nothing was sent because it could not be started within 2 hours of the send time.' });
+  });
+
+  it('a send left in "sending" by a killed run is marked interrupted and never re-sent', async () => {
     await schedule();
     Object.assign(sendRow(), { status: 'sending', started_at: new Date(Date.now() - 11 * 60_000).toISOString() });
     await tick();

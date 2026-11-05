@@ -24,6 +24,38 @@ const STALE_SENDING_MS = 10 * 60_000;
 /** Keep retrying a template check that WhatsApp can't answer for this long after the send time. */
 const TEMPLATE_RETRY_WINDOW_MS = 2 * 60 * 60_000;
 
+/** Due sends read per run, before taking turns between businesses. */
+const MAX_CANDIDATES = 200;
+
+/**
+ * Round-robin between businesses: every business's oldest due send comes before
+ * any business's second, so a business with many waiting sends never pushes
+ * another business's send back by more than one turn per business.
+ */
+function takeTurns(rows: Due[]): Due[] {
+  const position = new Map<string, number>();
+  const ranked = rows.map((row, index) => {
+    const turn = position.get(row.business_id) ?? 0;
+    position.set(row.business_id, turn + 1);
+    return { row, turn, index };
+  });
+  ranked.sort((a, b) => a.turn - b.turn || a.index - b.index);
+  // Only a business's first turn runs now; later turns wait for later runs.
+  return ranked.filter(r => r.turn === 0).map(r => r.row);
+}
+
+/**
+ * Close a send that stops before everyone was reached. If some people already got
+ * it in an earlier run, say so instead of claiming nothing was sent.
+ */
+function endedEarly(send: Due, status: 'failed' | 'cancelled', reason: string): Record<string, unknown> {
+  const already = send.sent_count || 0;
+  if (already > 0) {
+    return { status: 'sent', error_message: `Sent to ${already}; the other ${send.recipients.length} were not sent because ${reason}.` };
+  }
+  return { status, error_message: `Nothing was sent because ${reason}.` };
+}
+
 const INTERRUPTED_MESSAGE = 'Interrupted while sending. Some messages may have gone out, so check before sending again.';
 
 type Due = {
@@ -58,19 +90,12 @@ export async function GET(request: NextRequest) {
   const { data: candidates, error } = await db.from('form_sends')
     .select('id, business_id, form_id, template_name, recipients, results, sent_count, failed_count, skipped_count, scheduled_at')
     .eq('status', 'scheduled').lte('scheduled_at', nowIso())
-    .order('updated_at', { ascending: true }).order('id', { ascending: true }).limit(50);
+    .order('updated_at', { ascending: true }).order('id', { ascending: true }).limit(MAX_CANDIDATES);
   if (error) {
     logger.error('[FORM SENDS] Due lookup failed:', error.message);
     return NextResponse.json({ error: 'Lookup failed' }, { status: 500 });
   }
-  const picked: Due[] = [];
-  const businesses = new Set<string>();
-  for (const row of (candidates || []) as Due[]) {
-    if (businesses.has(row.business_id)) continue;
-    businesses.add(row.business_id);
-    picked.push(row);
-    if (picked.length === MAX_SENDS_PER_RUN) break;
-  }
+  const picked = takeTurns((candidates || []) as Due[]).slice(0, MAX_SENDS_PER_RUN);
 
   let processed = 0;
   for (const send of picked) {
@@ -92,19 +117,19 @@ export async function GET(request: NextRequest) {
         .eq('id', send.form_id).eq('business_id', send.business_id).maybeSingle();
       if (!form || !form.token || !form.is_active) {
         // A switched-off form would show "no longer accepting responses": never send a dead link.
-        await finish({ status: 'cancelled', error_message: 'The form was switched off or removed before the send time' });
+        await finish(endedEarly(send, 'cancelled', 'the form was switched off or removed'));
         continue;
       }
       const { data: biz } = await db.from('businesses').select('id, name').eq('id', send.business_id).maybeSingle();
       const resolved = biz ? await new ChannelResolver(db).resolveByBusinessId(send.business_id) : null;
       if (!biz || !resolved) {
-        await finish({ status: 'failed', error_message: 'No active WhatsApp channel for this business' });
+        await finish(endedEarly(send, 'failed', 'this business has no active WhatsApp channel'));
         continue;
       }
       const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
       const conv = await checkConversationLimit(db, send.business_id);
       if (!conv.allowed) {
-        await finish({ status: 'failed', error_message: 'Monthly conversation limit reached' });
+        await finish(endedEarly(send, 'failed', 'the monthly conversation limit was reached'));
         continue;
       }
 
@@ -116,7 +141,7 @@ export async function GET(request: NextRequest) {
         } catch (err) {
           if (!(err instanceof TemplateLookupUnavailableError)) throw err;
           if (Date.now() - Date.parse(send.scheduled_at) > TEMPLATE_RETRY_WINDOW_MS) {
-            await finish({ status: 'failed', error_message: 'WhatsApp templates could not be checked for 2 hours, so nothing was sent. Check the WhatsApp connection and schedule again.' });
+            await finish(endedEarly(send, 'failed', 'WhatsApp templates could not be checked for 2 hours (check the WhatsApp connection and schedule again)'));
           } else {
             await putBack({ error_message: 'Waiting: templates could not be checked, will retry' });
           }
@@ -124,7 +149,7 @@ export async function GET(request: NextRequest) {
         }
         if (!template) {
           // Same rule as an immediate send: an unusable template means nothing goes out.
-          await finish({ status: 'failed', error_message: 'The chosen template is no longer approved for form links, so nothing was sent.' });
+          await finish(endedEarly(send, 'failed', 'the chosen template is no longer approved for form links'));
           continue;
         }
       }
@@ -145,8 +170,18 @@ export async function GET(request: NextRequest) {
         results: [...(Array.isArray(send.results) ? send.results : []), ...done],
       };
       if (remaining.length > 0) {
+        const progressed = done.length > 0;
+        if (!progressed && Date.now() - Date.parse(send.scheduled_at) > TEMPLATE_RETRY_WINDOW_MS) {
+          // Never got going for 2 hours: close it honestly rather than retrying for ever.
+          await finish({ ...totals, ...endedEarly(send, 'failed', 'it could not be started within 2 hours of the send time') });
+          continue;
+        }
         // Out of time: the rest go back in the queue for the next run, with results so far kept.
-        await putBack({ ...totals, recipients: remaining, error_message: `Partly sent; ${remaining.length} still to send` });
+        await putBack({
+          ...totals, recipients: remaining,
+          error_message: totals.sent_count + totals.failed_count + totals.skipped_count > 0
+            ? `Partly sent; ${remaining.length} still to send` : 'Waiting: not started yet, will retry',
+        });
         continue;
       }
       await finish({
