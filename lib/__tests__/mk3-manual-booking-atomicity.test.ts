@@ -1,8 +1,8 @@
 /**
- * MK-3: Manual booking atomicity — book_manual_slot_atomic wrapper.
+ * MK-3: Manual booking atomicity — book_manual_slot_authoritative_604 wrapper.
  *
  * Tests verify:
- * - Route uses book_manual_slot_atomic (not direct INSERT)
+ * - Route uses book_manual_slot_authoritative_604 (not direct INSERT)
  * - No post-booking metadata UPDATE exists
  * - book_slot_atomic remains canonical (wrapper delegates)
  * - ROW_COUNT verification in wrapper
@@ -123,8 +123,8 @@ beforeEach(() => {
 describe('MK-3: route source verification', () => {
   const src = readFileSync('app/api/bookings/create-manual/route.ts', 'utf-8');
 
-  it('calls book_manual_slot_atomic RPC', () => {
-    expect(src).toContain("rpc('book_manual_slot_atomic'");
+  it('calls book_manual_slot_authoritative_604 RPC', () => {
+    expect(src).toContain("rpc('book_manual_slot_authoritative_604'");
   });
 
   it('does NOT directly INSERT into bookings', () => {
@@ -136,7 +136,7 @@ describe('MK-3: route source verification', () => {
   });
 
   it('does NOT perform post-booking metadata UPDATE on bookings', () => {
-    const afterRpc = src.slice(src.indexOf('book_manual_slot_atomic'));
+    const afterRpc = src.slice(src.indexOf('book_manual_slot_authoritative_604'));
     expect(afterRpc).not.toContain(".update({");
   });
 
@@ -154,7 +154,7 @@ describe('MK-3: route source verification', () => {
     expect(src).toContain('createWhatsAppUser');
     // Customer resolution must happen BEFORE the RPC call
     const resolveIdx = src.indexOf('createWhatsAppUser');
-    const rpcIdx = src.indexOf('book_manual_slot_atomic');
+    const rpcIdx = src.indexOf('book_manual_slot_authoritative_604');
     expect(resolveIdx).toBeLessThan(rpcIdx);
   });
 
@@ -214,7 +214,7 @@ describe('MK-3: route behavior', () => {
   it('calls wrapper with correct parameters', async () => {
     await POST(makeReq({ ...VALID_BODY, notes: 'Window seat please' }));
     expect(mockRpc).toHaveBeenCalledWith(
-      'book_manual_slot_atomic',
+      'book_manual_slot_authoritative_604',
       expect.objectContaining({
         p_business_id: 'biz-1',
         p_service_id: 'svc-1',
@@ -231,7 +231,7 @@ describe('MK-3: route behavior', () => {
   it('passes null notes when not provided', async () => {
     await POST(makeReq(VALID_BODY));
     expect(mockRpc).toHaveBeenCalledWith(
-      'book_manual_slot_atomic',
+      'book_manual_slot_authoritative_604',
       expect.objectContaining({ p_notes: null }),
     );
   });
@@ -298,11 +298,11 @@ describe('MK-3: customer identity resolution', () => {
     // Owner is 'owner-1', customer profile resolved as 'customer-profile-123'
     await POST(makeReq(VALID_BODY));
     expect(mockRpc).toHaveBeenCalledWith(
-      'book_manual_slot_atomic',
+      'book_manual_slot_authoritative_604',
       expect.objectContaining({ p_user_id: 'customer-profile-123' }),
     );
     // Must NOT be the owner
-    const rpcCall = mockRpc.mock.calls.find((c: unknown[]) => c[0] === 'book_manual_slot_atomic');
+    const rpcCall = mockRpc.mock.calls.find((c: unknown[]) => c[0] === 'book_manual_slot_authoritative_604');
     expect(rpcCall).toBeDefined();
     expect((rpcCall as unknown[])[1]).toHaveProperty('p_user_id', 'customer-profile-123');
     expect((rpcCall as unknown[])[1]).not.toHaveProperty('p_user_id', 'owner-1');
@@ -328,7 +328,7 @@ describe('MK-3: customer identity resolution', () => {
     mockCreateWhatsAppUser.mockResolvedValue('existing-customer-456');
     await POST(makeReq(VALID_BODY));
     expect(mockRpc).toHaveBeenCalledWith(
-      'book_manual_slot_atomic',
+      'book_manual_slot_authoritative_604',
       expect.objectContaining({ p_user_id: 'existing-customer-456' }),
     );
   });
@@ -340,7 +340,7 @@ describe('MK-3: customer identity resolution', () => {
     const data = await res.json();
     expect(data.error).toContain('customer identity');
     // RPC must NOT be called when customer resolution fails
-    expect(mockRpc).not.toHaveBeenCalledWith('book_manual_slot_atomic', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('book_manual_slot_authoritative_604', expect.anything());
   });
 
   it('parses multi-word name into first/last', async () => {

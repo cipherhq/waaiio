@@ -19,7 +19,12 @@ vi.mock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi
 
 // ── Mock database: chainable, thenable; bookings filtered like PostgREST ──
 type Booking = SlotBookingRow & { date: string; seating_resource_id?: string | null; staff_id?: string | null };
-interface DbOpts { bookings?: Booking[]; rpc?: (name: string, params: Record<string, unknown>) => unknown }
+interface DbOpts {
+  bookings?: Booking[];
+  rpc?: (name: string, params: Record<string, unknown>) => unknown;
+  /** The booking row create_booking reads back after a claim (#806 committed amounts). */
+  committed?: () => Record<string, unknown> | null;
+}
 
 function mockDb(opts: DbOpts = {}) {
   const casCalls: Array<Record<string, unknown>> = [];
@@ -41,7 +46,7 @@ function mockDb(opts: DbOpts = {}) {
         return true;
       }));
     };
-    chain.single = vi.fn(async () => ({ data: null, error: null }));
+    chain.single = vi.fn(async () => ({ data: table === 'bookings' ? (opts.committed?.() ?? null) : null, error: null }));
     chain.maybeSingle = vi.fn(async () => ({ data: null, error: null }));
     chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
       const data = rows();
@@ -403,14 +408,14 @@ describe('C create_booking — the time was taken at the last moment', () => {
   const TAKEN = 'Sorry, this time slot just got booked. Please choose another time.';
 
   /** Saturday 10:00 picked; someone else booked 10:00 first (it is now in the bookings table). */
-  function raced(rpc: DbOpts['rpc'], extra: Record<string, unknown> = {}) {
-    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc });
+  function raced(rpc: DbOpts['rpc'], extra: Record<string, unknown> = {}, committed?: DbOpts['committed']) {
+    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc, committed });
     return { db, ctx: ctxFor({ db, sessionData: { date: SAT, time: '10:00', _action: 'confirm', ...extra } }) };
   }
 
   it('says so, sends the open times on that day again, and waits for a new time', async () => {
     const { create } = await flow();
-    const { ctx } = raced(name => name === 'book_slot_atomic' ? claim({ booking_id: null, reference_code: null, slot_available: false }) : undefined);
+    const { ctx } = raced(name => name === 'book_slot_authoritative_604' ? claim({ booking_id: null, reference_code: null, slot_available: false }) : undefined);
     const messages = await create.prompt(ctx);
 
     expect(messages[0]).toEqual({ type: 'text', text: TAKEN });
@@ -425,11 +430,14 @@ describe('C create_booking — the time was taken at the last moment', () => {
   it('a new time goes back to the summary, then straight to booking that new time', async () => {
     const { create, time, confirmation } = await flow();
     let refuse = true;
-    const { ctx, db } = raced(name => name === 'book_slot_atomic'
+    const { ctx, db } = raced(name => name === 'book_slot_authoritative_604'
       ? claim(refuse
         ? { booking_id: null, reference_code: null, slot_available: false }
         : { booking_id: 'bk-new', reference_code: 'REF12', slot_available: true })
-      : undefined);
+      : undefined, {}, () => ({
+      id: 'bk-new', service_id: 'svc-cut', appointment_id: null, party_size: 1, date: SAT, time: '12:00:00',
+      class_session_id: null, staff_id: null, total_amount: 0, deposit_amount: 0,
+    }));
     await create.prompt(ctx);
 
     const picked = await time.validate('12:00', ctx);
@@ -446,7 +454,7 @@ describe('C create_booking — the time was taken at the last moment', () => {
 
     refuse = false;
     await create.prompt(ctx);
-    const claims = db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic');
+    const claims = db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_authoritative_604');
     expect(claims.map(([, p]) => p.p_time)).toEqual(['10:00', '12:00']);
     expect(claims[1][1]).toMatchObject({ p_date: SAT, p_time: '12:00' });
     expect(ctx.session.session_data).toMatchObject({ booking_id: 'bk-new', reference_code: 'REF12' });
@@ -456,7 +464,7 @@ describe('C create_booking — the time was taken at the last moment', () => {
 
   it('"Change date" from the re-sent list clears the taken time', async () => {
     const { create, time } = await flow();
-    const { ctx } = raced(name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined);
+    const { ctx } = raced(name => name === 'book_slot_authoritative_604' ? claim({ slot_available: false }) : undefined);
     await create.prompt(ctx);
     const result = await time.validate('change_date', ctx);
     Object.assign(ctx.session.session_data, result.data);
@@ -468,10 +476,10 @@ describe('C create_booking — the time was taken at the last moment', () => {
 
   it('reaching the booking step again without confirming a new time never claims', async () => {
     const { create } = await flow();
-    const { ctx, db } = raced(name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined);
+    const { ctx, db } = raced(name => name === 'book_slot_authoritative_604' ? claim({ slot_available: false }) : undefined);
     await create.prompt(ctx); // refused: flag set
     const again = await create.prompt(ctx); // e.g. "back" from the summary
-    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic')).toHaveLength(1);
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_authoritative_604')).toHaveLength(1);
     expect(rowIds(again)).toContain('12:00');
     expect(typeof create.nextAfterPrompt === 'function' && create.nextAfterPrompt(ctx)).toBe('select_time');
     // A reply that lands on create_booking goes to the time list, not the end of the flow
@@ -482,14 +490,14 @@ describe('C create_booking — the time was taken at the last moment', () => {
     ctx.session.session_data._show_full_date_list = true;
     const dates = await create.prompt(ctx);
     expect(rowIds(dates)).toContain(SAT);
-    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic')).toHaveLength(1);
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_authoritative_604')).toHaveLength(1);
     expect(typeof create.nextAfterPrompt === 'function' && create.nextAfterPrompt(ctx)).toBe('select_date');
     expect(await create.next(ctx)).toBe('select_date');
   });
 
   it('after three refusals in one session: the old message, no loop', async () => {
     const { create } = await flow();
-    const { ctx } = raced(name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined, { _slot_taken_count: 2 });
+    const { ctx } = raced(name => name === 'book_slot_authoritative_604' ? claim({ slot_available: false }) : undefined, { _slot_taken_count: 2 });
     const messages = await create.prompt(ctx);
     expect(messages).toEqual([{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }]);
     expect(ctx.session.session_data._slot_taken_return).toBeUndefined();
@@ -512,7 +520,7 @@ describe('C create_booking — the time was taken at the last moment', () => {
 
   it('classes are unchanged: a full class keeps its own message', async () => {
     const { create } = await flow();
-    const { ctx } = raced(name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined, {
+    const { ctx } = raced(name => name === 'book_slot_authoritative_604' ? claim({ slot_available: false }) : undefined, {
       _service_is_class: true, _class_session_id: 'cs-1',
     });
     const messages = await create.prompt(ctx);
@@ -542,7 +550,7 @@ describe('C through the real FlowExecutor', () => {
 
   it('confirm → refused claim → the taken message and time list, current step select_time', async () => {
     const sent: Array<{ kind: string; payload: Record<string, unknown> }> = [];
-    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc: name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined });
+    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc: name => name === 'book_slot_authoritative_604' ? claim({ slot_available: false }) : undefined });
     const { FlowExecutor } = await import('@/lib/bot/flows/executor');
     const executor = new FlowExecutor(db.client as never, sender(sent) as never, {} as never, { resetAbuse: vi.fn() } as never);
     const session = {
@@ -569,7 +577,7 @@ describe('C through the real FlowExecutor', () => {
 
   it('"back" on the re-shown summary does not book the new time without a confirm', async () => {
     const sent: Array<{ kind: string; payload: Record<string, unknown> }> = [];
-    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc: name => name === 'book_slot_atomic' ? claim({ booking_id: 'bk-x', reference_code: 'X', slot_available: true }) : undefined });
+    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc: name => name === 'book_slot_authoritative_604' ? claim({ booking_id: 'bk-x', reference_code: 'X', slot_available: true }) : undefined });
     const { FlowExecutor } = await import('@/lib/bot/flows/executor');
     const executor = new FlowExecutor(db.client as never, sender(sent) as never, {} as never, { resetAbuse: vi.fn() } as never);
     // After a refusal the customer picked 12:00 and sees the summary again
@@ -584,7 +592,7 @@ describe('C through the real FlowExecutor', () => {
     };
     await executor.execute('+2348000000000', 'back', session as never, business as never);
 
-    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic')).toEqual([]);
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_authoritative_604')).toEqual([]);
     expect(session.session_data).not.toHaveProperty('booking_id');
     const lists = sent.filter(m => m.kind === 'list');
     expect(lists).toHaveLength(1);
