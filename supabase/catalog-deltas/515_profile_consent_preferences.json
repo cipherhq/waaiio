@@ -1,0 +1,34 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.profiles.consent_preferences",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (consent_preferences IS NULL OR jsonb_typeof(consent_preferences) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "1afdd09b99a655071def931f0cb85064dca9e362c2d21d569e9ddbf59078c46e",
+   "identity": "constraint:public.profiles.profiles_consent_preferences_object_check",
+   "operation": "add"
+  }
+ ],
+ "migration": "515_profile_consent_preferences.sql",
+ "migration_sha256": "d6203b79e8b23e293897603c48722c788ddb4bcef8b87dffeb676372187f6299",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}
