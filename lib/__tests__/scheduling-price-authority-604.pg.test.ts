@@ -89,9 +89,32 @@ suite('M518 final-state scheduling authority', () => {
  it('rejects mismatched business identity',async()=>{
    await expect(rpc({p_business_id:id(99)})).rejects.toThrow('business_unavailable');
  });
- it('rejects unconfirmed variable terms',async()=>{
+ it('books a "price varies" item without a session claim at its stored starting price',async()=>{
    await pool.query('UPDATE services SET price_is_variable=true WHERE id=$1',[service]);
-   await expect(rpc()).rejects.toThrow('verified_quote_required');
+   const r=await rpc();
+   expect(r).toMatchObject({slot_available:true,committed_total:1000,committed_deposit:1000});
+ });
+ it('rejects a "price varies" amount other than the starting price without a session claim',async()=>{
+   await pool.query('UPDATE services SET price_is_variable=true WHERE id=$1',[service]);
+   for (const price of [900,1500]) {
+     await expect(rpc({p_total_amount:price,p_deposit_amount:price,
+       p_expected_terms:{price,deposit:0,discount:0,country:'NG'}})).rejects.toThrow('terms_changed');
+   }
+   expect((await pool.query('SELECT count(*)::int n FROM bookings WHERE business_id=$1',[business])).rows[0].n).toBe(0);
+ });
+ it('books a "price varies" item from the dashboard at its starting price with nothing due',async()=>{
+   await pool.query('UPDATE services SET price_is_variable=true WHERE id=$1',[service]);
+   const client=await pool.connect();
+   try {
+     await client.query('BEGIN');
+     await client.query('SET LOCAL ROLE service_role');
+     const r=(await client.query(`SELECT to_jsonb(m) AS m FROM public.book_manual_slot_authoritative_604(p_business_id=>$1,p_user_id=>$2,
+       p_service_id=>$3,p_staff_id=>NULL,p_date=>'2027-12-06',p_time=>'10:00',p_party_size=>1,p_max_capacity=>99,
+       p_guest_name=>'Desk',p_guest_phone=>'+2348000000607',p_guest_email=>NULL,p_notes=>NULL,p_total_amount=>1000,
+       p_staff_name=>NULL,p_expected_terms=>$4::jsonb) m`,[business,user,service,JSON.stringify({price:1000,deposit:0,discount:0,country:'NG'})])).rows[0].m;
+     await client.query('COMMIT');
+     expect(r).toMatchObject({slot_available:true,committed_total:1000,committed_deposit:0});
+   } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
  });
  it('derives addon value from its locked row',async()=>{
    await pool.query("INSERT INTO service_addons(id,business_id,service_id,name,price,is_active,is_required) VALUES($1,$2,$3,'Addon',100,true,false)",[addon,business,service]);

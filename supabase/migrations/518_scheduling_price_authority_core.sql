@@ -43,14 +43,17 @@ BEGIN
   IF item IS NULL OR (item->>'is_active')::boolean IS NOT TRUE OR item->>'deleted_at' IS NOT NULL THEN
     RAISE EXCEPTION 'item_unavailable';
   END IF;
-  -- No customer-selected variable amount is inferred from a floor/session ID.
-  -- A separately verified quote producer must be integrated before enabling it.
-  
   unit_price := COALESCE((item->>'price')::integer,0);
   unit_deposit := COALESCE((item->>'deposit_amount')::integer,0);
-  IF COALESCE((item->>'price_is_variable')::boolean,false) THEN
-    IF p_expected->>'verified_variable_intent' IS DISTINCT FROM 'true'
-       OR (p_expected->>'price')::integer IS NULL OR (p_expected->>'price')::integer<unit_price THEN
+  -- "Price varies" items (Owner decision 2026-11-05, option A):
+  --  * WhatsApp bookings carry a confirmed session claim; the confirmed amount is
+  --    used, never below the stored starting price.
+  --  * Public page and dashboard bookings have no claim and book at the stored
+  --    starting price, as before M518. The terms check below then requires the
+  --    caller's expected price to equal that stored price.
+  IF COALESCE((item->>'price_is_variable')::boolean,false)
+     AND p_expected->>'verified_variable_intent' = 'true' THEN
+    IF (p_expected->>'price')::integer IS NULL OR (p_expected->>'price')::integer<unit_price THEN
        RAISE EXCEPTION 'verified_quote_required';
     END IF;
     unit_price := (p_expected->>'price')::integer;
