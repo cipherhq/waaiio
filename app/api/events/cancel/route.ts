@@ -1,139 +1,64 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { formatDisplayDate } from '@/lib/bot/format-date';
-import { logger } from '@/lib/logger';
+import { EVENT_UUID, EventMutationError, mutateEvent, parseEventMutation, readEventOperation } from '@/lib/events/event-mutation';
 
-/**
- * POST /api/events/cancel
- * Cancels an event, invalidates all tickets, and notifies ticket holders.
- * Called from the dashboard when an event status is set to 'cancelled'.
- */
+function failure(error: unknown) {
+  if (error instanceof EventMutationError) return NextResponse.json({ success: false, code: error.code, error: error.message }, { status: error.status });
+  return NextResponse.json({ success: false, code: 'outcome_unknown', error: 'Could not confirm the cancellation. Check its outcome before retrying.' }, { status: 500 });
+}
+async function ownedEvent(eventId: unknown) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) throw new EventMutationError('unauthorized', 401, 'Unauthorized');
+  if (typeof eventId !== 'string' || !EVENT_UUID.test(eventId)) throw new EventMutationError('invalid_event', 400, 'Invalid event ID');
+  const { data: event, error } = await supabase.from('events')
+    .select('id,business_id,name,date,time,venue,price,status,updated_at,businesses!inner(owner_id)')
+    .eq('id', eventId).maybeSingle();
+  if (error) throw new EventMutationError('readback_unavailable', 503, 'Could not load event');
+  if (!event) throw new EventMutationError('not_found', 404, 'Event not found');
+  const business = event.businesses as unknown as { owner_id: string };
+  if (business?.owner_id !== user.id) throw new EventMutationError('forbidden', 403, 'Forbidden');
+  return { event, user };
+}
+/** Owner-authorized cancellation; uses the same transaction as Admin Save/Cancel. */
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { event_id } = body as { event_id: string };
-
-    if (!event_id) {
-      return NextResponse.json({ error: 'event_id required' }, { status: 400 });
-    }
-
-    // Verify ownership: event belongs to a business owned by this user
-    const { data: event } = await supabase
-      .from('events')
-      .select('id, name, date, time, business_id, status, businesses!inner(owner_id, country_code)')
-      .eq('id', event_id)
-      .single();
-
-    if (!event) {
-      return NextResponse.json({ error: 'Event not found' }, { status: 404 });
-    }
-
-    const businessOwner = (event.businesses as unknown as { owner_id: string; country_code?: string })?.owner_id;
-    if (businessOwner !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    if (event.status === 'cancelled') {
-      return NextResponse.json({ message: 'Event already cancelled' });
-    }
-
-    // Use service client for admin operations (notification sending)
-    const serviceSupabase = createServiceClient();
-
-    // 1. Set event status to cancelled
-    await serviceSupabase
-      .from('events')
-      .update({ status: 'cancelled' })
-      .eq('id', event_id);
-
-    // 2. Get all valid tickets for this event
-    const { data: tickets } = await serviceSupabase
-      .from('event_tickets')
-      .select('id, guest_phone, guest_name, guest_email, payment_id, status')
-      .eq('event_id', event_id)
-      .eq('status', 'valid');
-
-    if (!tickets || tickets.length === 0) {
-      return NextResponse.json({ success: true, cancelled_tickets: 0 });
-    }
-
-    // 3. Cancel all valid tickets
-    await serviceSupabase
-      .from('event_tickets')
-      .update({ status: 'cancelled' })
-      .eq('event_id', event_id)
-      .eq('status', 'valid');
-
-    // 4. Send WhatsApp notifications to ticket holders
-    const bizCc = (event.businesses as unknown as { country_code?: string })?.country_code || 'NG';
-    const eventDate = event.date
-      ? formatDisplayDate(event.date, 'long-year', 'en', bizCc)
-      : 'TBD';
-    const cancelMessage = `Event "${event.name}" on ${eventDate} has been cancelled. A refund will be processed if applicable. We apologize for any inconvenience.`;
-
-    let notifiedCount = 0;
-    const phonesNotified = new Set<string>();
-
+    let body: Record<string, unknown>;
     try {
-      const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
-      const resolver = new ChannelResolver(serviceSupabase);
-      const resolved = await resolver.resolveByBusinessId(event.business_id);
-
-      if (resolved) {
-        for (const ticket of tickets) {
-          if (ticket.guest_phone && !phonesNotified.has(ticket.guest_phone)) {
-            phonesNotified.add(ticket.guest_phone);
-            try {
-              await resolved.sender.sendText({ to: ticket.guest_phone, text: cancelMessage });
-              notifiedCount++;
-            } catch (sendErr) {
-              logger.error(`[EVENT-CANCEL] Failed to notify ${ticket.guest_phone}:`, sendErr);
-            }
-          }
-        }
-      }
-    } catch (channelErr) {
-      logger.error('[EVENT-CANCEL] Channel resolution failed:', channelErr);
+      const value = await request.json();
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid');
+      body = value;
+    } catch { throw new EventMutationError('invalid_request', 400, 'Invalid JSON body'); }
+    const allowed = new Set(['event_id', 'business_id', 'expected_updated_at', 'operation_id', 'changes']);
+    if (Object.keys(body).some(key => !allowed.has(key))) throw new EventMutationError('invalid_request', 400, 'Unexpected request field');
+    const { event, user } = await ownedEvent(body.event_id);
+    const service = createServiceClient();
+    // Preserve event_id-only callers without repeating historical cancellation effects.
+    if (!body.operation_id && event.status === 'cancelled') {
+      const { data: operation, error } = await service.from('event_mutation_operations')
+        .select('id').eq('event_id', event.id).eq('business_id', event.business_id).eq('is_cancellation', true).maybeSingle();
+      if (error) throw new EventMutationError('readback_unavailable', 503, 'Could not check cancellation history');
+      if (!operation) throw new EventMutationError('legacy_cancellation_unverified', 409, 'This event was previously cancelled; its notification history cannot be verified.');
+      return NextResponse.json(await readEventOperation(service, event.id, event.business_id, operation.id));
     }
-
-    // 5. Create refund notification for paid tickets
-    const paidTickets = tickets.filter(t => t.payment_id);
-    if (paidTickets.length > 0) {
-      // Create an alert for the business owner about pending refunds
-      try {
-        const { createAlert } = await import('@/lib/alerts/create-alert');
-        await createAlert(serviceSupabase, {
-          businessId: event.business_id,
-          type: 'event_cancelled',
-          severity: 'warning',
-          title: 'Event Cancelled - Refunds Required',
-          message: `Event "${event.name}" was cancelled. ${paidTickets.length} paid ticket(s) may require refunds.`,
-          metadata: {
-            eventId: event_id,
-            paidTicketCount: paidTickets.length,
-            paymentIds: paidTickets.map(t => t.payment_id).filter(Boolean),
-          },
-        });
-      } catch (alertErr) {
-        logger.error('[EVENT-CANCEL] Failed to create refund alert:', alertErr);
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
-      cancelled_tickets: tickets.length,
-      notified: notifiedCount,
-      refunds_pending: paidTickets.length,
-    });
-  } catch (error) {
-    logger.error('[EVENT-CANCEL] Error:', (error as Error).message);
-    return NextResponse.json({ error: 'Something went wrong on our end' }, { status: 500 });
-  }
+    const input = parseEventMutation({
+      business_id: body.business_id ?? event.business_id,
+      expected_updated_at: 'expected_updated_at' in body ? body.expected_updated_at : event.updated_at,
+      operation_id: body.operation_id ?? crypto.randomUUID(),
+      changes: body.changes ?? { status: 'cancelled' },
+    }, false);
+    if (input.business_id !== event.business_id) throw new EventMutationError('identity_mismatch', 403, 'Event and business do not match');
+    if (input.changes.status !== 'cancelled') throw new EventMutationError('invalid_changes', 400, 'This endpoint only cancels events');
+    return NextResponse.json(await mutateEvent(service, event.id, input, { id: user.id, kind: 'merchant' }));
+  } catch (error) { return failure(error); }
+}
+/** Read-only recovery after a lost cancellation response; no notification dispatch. */
+export async function GET(request: NextRequest) {
+  try {
+    const { event } = await ownedEvent(request.nextUrl.searchParams.get('event_id'));
+    const operationId = request.nextUrl.searchParams.get('operation_id');
+    if (!operationId) return NextResponse.json({ success: true, event, cancelled: event.status === 'cancelled' }, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json(await readEventOperation(createServiceClient(), event.id, event.business_id, operationId), { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) { return failure(error); }
 }

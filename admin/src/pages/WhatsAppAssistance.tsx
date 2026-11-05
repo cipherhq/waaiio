@@ -15,6 +15,7 @@ interface WhatsAppSetup {
   bot_code: string | null;
   channel_ready: boolean;
   whatsapp_link: string | null;
+  permanent_link: string | null;
   channel_type: string | null;
   connection_status: string | null;
   owner_connection_required: boolean;
@@ -166,9 +167,15 @@ export default function WhatsAppAssistance() {
                 {setup?.bot_code && <p className="text-xs text-gray-500">Bot code: {setup.bot_code}</p>}
                 <p className="text-xs text-gray-500">Business: {setup?.business_status || 'pending'}</p>
                 {setup?.messaging_suspended && <p className="text-xs font-semibold text-red-700">Messaging suspended — do not share bot link until resolved</p>}
+                {setup?.permanent_link && <div className="mt-2">
+                  <p className="text-xs font-medium text-gray-600">Permanent Waaiio link (survives number changes):</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <QRCodeSVG value={setup.permanent_link} size={76} aria-label="Permanent merchant WhatsApp QR code" />
+                    <a href={setup.permanent_link} target="_blank" rel="noopener noreferrer" className="max-w-44 break-all text-xs font-medium text-brand underline">{setup.permanent_link}</a>
+                  </div>
+                </div>}
                 {setup?.whatsapp_link && <div className="mt-2 flex items-center gap-2">
-                  <QRCodeSVG value={setup.whatsapp_link} size={76} aria-label="Verified business WhatsApp QR code" />
-                  <a href={setup.whatsapp_link} target="_blank" rel="noopener noreferrer" className="max-w-44 break-all text-xs font-medium text-brand underline">Test active WhatsApp link</a>
+                  <a href={setup.whatsapp_link} target="_blank" rel="noopener noreferrer" className="text-xs text-gray-500 underline">Test direct WhatsApp link</a>
                 </div>}
               </td>
               <td className="p-3">

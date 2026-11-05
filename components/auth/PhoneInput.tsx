@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { type CountryCode } from '@/lib/constants';
 import { getCountry, loadCountries, type CountryRow } from '@/lib/countries';
 
@@ -32,9 +32,29 @@ export function PhoneInput({ value, onChange, disabled, countryCode = 'NG', onCo
     return value.replace(/^\+/, '');
   });
 
+  // A parent-selected customer/reset must update the visible input. Ignore our
+  // own emissions so an incomplete manually typed number is not erased.
+  const lastEmitted = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (value === lastEmitted.current) return;
+    lastEmitted.current = undefined;
+    if (value.startsWith('+') && countryOptions.length === 0) return;
+    const matches = countryOptions.filter(option => value.startsWith(option.dialing_code));
+    const selected = matches.find(option => option.code === cc)
+      || matches.find(option => option.code === countryCode)
+      || matches.sort((a, b) => b.dialing_code.length - a.dialing_code.length)[0];
+    if (value.startsWith('+') && selected) {
+      setCc(selected.code as CountryCode);
+      setRaw(value.slice(selected.dialing_code.length));
+    } else {
+      setRaw(value.replace(/^\+/, ''));
+    }
+  }, [value, countryOptions, countryCode]);
+
   function handleCountryChange(newCode: CountryCode) {
     setCc(newCode);
     setRaw('');
+    lastEmitted.current = '';
     onChange('');
     onCountryChange?.(newCode);
   }
@@ -42,11 +62,9 @@ export function PhoneInput({ value, onChange, disabled, countryCode = 'NG', onCo
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const digits = e.target.value.replace(/\D/g, '').slice(0, phoneDigits);
     setRaw(digits);
-    if (digits.length === phoneDigits) {
-      onChange(`${dialingCode}${digits}`);
-    } else {
-      onChange('');
-    }
+    const next = digits.length === phoneDigits ? `${dialingCode}${digits}` : '';
+    lastEmitted.current = next;
+    onChange(next);
   }
 
   return (

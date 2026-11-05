@@ -12,19 +12,31 @@ Machine-readable contracts for Waaiio's high-risk capability domains. Each contr
 
 - `capability-index.json` — All 32 capabilities with risk tier and contract status
 - `{capability}.contract.json` — Detailed Tier-1 contracts
+- `shared-payment-lifecycle.md` — Universal payment-to-fulfillment lifecycle standard (#721)
+- `whatsapp-experience-contract.md` — Shared WhatsApp customer experience standards (#721)
+- `721-capability-journey-matrix.md` — Complete 32-capability × WhatsApp journey matrix (#721)
+- `721-behavior-vs-contract-report.md` — Current behavior vs contract audit report (#721)
 
 ## Schema
 
 Contracts follow `waaiio-capability-contract-v1`. See any `.contract.json` for the full schema.
 
+## Cross-Capability Lifecycle Contract
+
+`736-capability-e2e-contract.md` — Full 32-capability WhatsApp E2E certification contract (Issue #736). Documents the lifecycle matrix, entry types, payment-to-fulfillment chain, channel architecture, multilingual support, navigation, messaging optimization, cross-lane dependencies, implementation gaps, and Phase B–E certification plan. Read before modifying any capability flow, payment authority, or channel routing.
+
+Binding Owner product contracts: Issues #721 (shared payment parity) and #507 (all-capabilities bot menu).
+
 ## Validation
 
 The governance CI script (`scripts/verify-engineering-governance.mjs`) validates:
-- All Tier-1 capabilities have detailed contracts with valid JSON and matching IDs
+- Eight explicitly enumerated capabilities have detailed contracts with valid JSON and matching IDs: scheduling, payment, giving, ordering, ticketing, reservation, loyalty and recurring
 - No duplicate capability IDs in the index
 - Index total matches array length
 - Index IDs match canonical `shared/capabilities.ts` CapabilityId values
-- All `requiredTestsOnChange` paths in contracts reference existing test files
+- `requiredTestsOnChange` paths in those eight detailed contracts reference existing test files
+
+The script does not dynamically enforce a detailed contract for every Tier-1 index entry, execute the referenced tests, or certify all32 capabilities. `table_reservation` remains Tier1 with a separate detailed-contract/integration gate; a green validator does not clear it. Canonical CI has12 jobs; specific test execution requires exact-SHA, job/step, count and zero-skip evidence.
 
 ## Usage
 

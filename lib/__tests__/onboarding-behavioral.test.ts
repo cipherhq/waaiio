@@ -1,3 +1,6 @@
+import { beforeEach as beforeChannelAdmissionFixture, vi as channelAdmissionFixture } from 'vitest';
+// These regressions exercise the explicitly enabled channel-operation contract.
+beforeChannelAdmissionFixture(() => channelAdmissionFixture.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'true'));
 /**
  * CAS-001 — Onboarding behavioral test coverage.
  *

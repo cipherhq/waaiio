@@ -128,17 +128,19 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     rpc: (...args: unknown[]) => mockRpc(...args),
-    from: (table: string) => ({
-      select: () => ({
-        eq: (_col: string, _val: string) => ({
-          single: () => Promise.resolve({
-            data: table === 'businesses' ? { id: 'biz-1', subscription_tier: 'growth' } : null,
-            error: null,
-          }),
-          eq: () => Promise.resolve({ data: [], error: null }),
-        }),
-      }),
-    }),
+    from: (table: string) => {
+      const row = table === 'businesses' ? { id: 'biz-1', subscription_tier: 'growth' } : null;
+      const single = () => Promise.resolve({ data: row, error: null });
+      const result = { data: table === 'businesses' ? [row] : [], error: null };
+      const chain = {
+        select: () => chain,
+        eq: (_col: string, _val: unknown) => chain,
+        single,
+        maybeSingle: single,
+        then: (resolve: (value: typeof result) => unknown) => Promise.resolve(result).then(resolve),
+      };
+      return chain;
+    },
   }),
 }));
 
@@ -323,45 +325,10 @@ describe('P0-ADMIN: Admin capability route security', () => {
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
-  it('23. handleCapToggle re-fetches authoritative state after successful mutation', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('admin/src/pages/Businesses.tsx', 'utf-8');
-    const handleCapFn = source.slice(
-      source.indexOf('async function handleCapToggle'),
-      source.indexOf('setCapSaving(null);\n    }')
-    );
-    // After successful POST, must GET authoritative state
-    expect(handleCapFn).toContain('/api/admin/businesses/');
-    expect(handleCapFn).toContain('state.capabilities');
-    expect(handleCapFn).toContain('state.overrides');
-    // Must NOT manually guess local state after mutation
-    expect(handleCapFn).not.toContain("prev => [...prev.filter");
-    expect(handleCapFn).not.toContain("prev => prev.filter");
-  });
-
-  it('24. failed POST does not mutate displayed capability state', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('admin/src/pages/Businesses.tsx', 'utf-8');
-    const handleCapFn = source.slice(
-      source.indexOf('async function handleCapToggle'),
-      source.indexOf('setCapSaving(null);\n    }')
-    );
-    // On !res.ok, must return before any state mutation
-    const failBlock = handleCapFn.slice(
-      handleCapFn.indexOf('if (!res.ok)'),
-      handleCapFn.indexOf('if (!res.ok)') + 200
-    );
-    expect(failBlock).toContain('return');
-  });
-
-  it('25. failed refresh after successful mutation shows clear fallback', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('admin/src/pages/Businesses.tsx', 'utf-8');
-    const handleCapFn = source.slice(
-      source.indexOf('async function handleCapToggle'),
-      source.indexOf('setCapSaving(null);\n    }')
-    );
-    // Must handle refresh failure explicitly
-    expect(handleCapFn).toContain('failed to refresh');
-  });
+  // Cases 23–25 are replaced by executable mounted coverage in
+  // admin/src/__tests__/businesses-financial-capabilities-762.test.tsx:
+  // 23: grant/revoke awaited cascade readback + override badge replacement/removal.
+  // 24: failed POST leaves controls blocked and sends no refresh GET.
+  // 25: successful save / failed refresh is distinct, with authoritative retry.
+  // Cases 1–22 and all of their authorization/RPC assertions remain unchanged.
 });

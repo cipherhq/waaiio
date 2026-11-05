@@ -48,6 +48,7 @@ vi.mock('@/lib/channels/channel-resolver', () => {
   const MockChannelResolver = class {
     resolveByChannelId = vi.fn().mockResolvedValue(null);
     resolveByBusinessId = vi.fn().mockResolvedValue({
+      channel: { id: 'ch-dedicated', channel_type: 'dedicated' },
       sender: {
         sendText: vi.fn().mockResolvedValue(undefined),
         sendDocument: vi.fn().mockResolvedValue(undefined),
@@ -100,6 +101,9 @@ function buildBookingSupabase(config: BookingConfig) {
 
   return {
     rpc: vi.fn().mockImplementation((name: string) => {
+      if (config.flow_type === 'ticketing' && name === 'terminate_cancelled_event_confirmation') {
+        return Promise.resolve({ data: { terminated: false, reason: 'not_cancelled' }, error: null });
+      }
       if (name === 'claim_payment_confirmation') {
         return Promise.resolve({
           data: {

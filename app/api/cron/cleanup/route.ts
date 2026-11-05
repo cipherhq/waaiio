@@ -17,17 +17,21 @@ export async function GET(request: NextRequest) {
   staleDate.setHours(staleDate.getHours() - 48);
 
   // First, fetch stale pending bookings (before cancelling) to restore tickets
+  // #736 Finding 6: Exclude paid bookings awaiting merchant approval
+  // (deposit_status='paid' means merchant verified funds but hasn't approved fulfillment yet)
   const { data: staleBookings } = await supabase
     .from('bookings')
     .select('id, event_id, quantity, flow_type')
     .eq('status', 'pending')
+    .neq('deposit_status', 'paid')
     .lt('created_at', staleDate.toISOString());
 
-  // Cancel them
+  // Cancel them (same filter — exclude paid-awaiting-approval)
   const { data: expiredBookings } = await supabase
     .from('bookings')
     .update({ status: 'cancelled' })
     .eq('status', 'pending')
+    .neq('deposit_status', 'paid')
     .lt('created_at', staleDate.toISOString())
     .select('id');
 

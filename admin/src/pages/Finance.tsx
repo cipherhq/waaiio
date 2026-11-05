@@ -171,7 +171,7 @@ export default function Finance() {
 
   // Compute metrics (per-currency) using filtered data
   const metrics = useMemo(() => {
-    const successPayments = filteredPayments.filter(p => p.status === 'success');
+    const successPayments = filteredPayments.filter(p => ['success', 'refunded'].includes(p.status));
 
     const grossVolume: Record<string, number> = {};
     for (const p of successPayments) {
@@ -238,7 +238,7 @@ export default function Finance() {
 
     // Gateway breakdown (per-currency)
     const gatewayBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
-    for (const p of filteredPayments.filter(p => p.status === 'success')) {
+    for (const p of filteredPayments.filter(p => ['success', 'refunded'].includes(p.status))) {
       const gw = p.gateway || 'unknown';
       if (!gatewayBuckets[gw]) gatewayBuckets[gw] = { count: 0, amounts: {} };
       gatewayBuckets[gw].count++;
@@ -278,7 +278,7 @@ export default function Finance() {
       byMonthCur.get(key) || { month, currency, transactions: 0, gross: 0, refunded: 0, fees: 0, net: 0 };
 
     for (const p of filteredPayments) {
-      if (p.status !== 'success') continue;
+      if (!['success', 'refunded'].includes(p.status)) continue;
       const month = getMonth(p.created_at);
       const cur = getPaymentCurrency(p);
       const key = `${month}|${cur}`;
@@ -319,7 +319,7 @@ export default function Finance() {
     const byCat = new Map<string, { amounts: Record<string, number>; txCount: number }>();
 
     for (const p of filteredPayments) {
-      if (p.status !== 'success' || !p.business_id) continue;
+      if (!['success', 'refunded'].includes(p.status) || !p.business_id) continue;
       const biz = bizMap.get(p.business_id);
       const cat = biz?.category || 'other';
       const cur = getPaymentCurrency(p);
@@ -580,7 +580,7 @@ export default function Finance() {
                 byCountry.set(cc, row);
               }
               for (const p of filteredPayments) {
-                if (p.status !== 'success' || !p.business_id) continue;
+                if (!['success', 'refunded'].includes(p.status) || !p.business_id) continue;
                 const biz = bizMap.get(p.business_id);
                 const cc = biz?.country_code || 'Unknown';
                 const row = byCountry.get(cc) || { count: 0, volumeByCurrency: {}, subs: 0 };

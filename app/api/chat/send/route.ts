@@ -1,3 +1,4 @@
+import { hasRecipientPermission, RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
@@ -60,6 +61,10 @@ export async function POST(request: NextRequest) {
       staffMemberId = ownerMembership?.id || null;
     }
 
+    if (!await hasRecipientPermission(supabase, businessId, customerPhone, 'utility')) {
+      return NextResponse.json({ error: RECIPIENT_POLICY }, { status: 403 });
+    }
+
     // Send WhatsApp message via channel resolver (dedicated first, fallback to shared)
     const resolver = new ChannelResolver(supabase);
     const resolved = await resolver.resolveByBusinessId(businessId);
@@ -72,10 +77,11 @@ export async function POST(request: NextRequest) {
       ? customerPhone.slice(1)
       : customerPhone;
 
-    if (audioUrl) {
-      await sender.sendAudio({ to: phone, audioUrl });
-    } else {
-      await sender.sendText({ to: phone, text: messageText });
+    const delivery = audioUrl
+      ? await sender.sendAudio({ to: phone, audioUrl, messageCategory: 'service' })
+      : await sender.sendText({ to: phone, text: messageText, messageCategory: 'service' });
+    if (delivery.success === false) {
+      return NextResponse.json({ error: 'Message was not accepted. Please try again.' }, { status: 502 });
     }
 
     // Upsert conversation and get conversation_id

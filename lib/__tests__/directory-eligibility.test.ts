@@ -132,7 +132,7 @@ describe('searchMarketplace', () => {
   it('4. category filter is applied', async () => {
     const { supabase, filters } = createMockSupabase([ELIGIBLE_BIZ]);
     await searchMarketplace(supabase, { category: 'barber' });
-    const categoryFilter = filters().find(f => f.method === 'ilike' && f.args[0] === 'category');
+    const categoryFilter = filters().find(f => f.method === 'ilike' && f.args[0] === 'category_text');
     expect(categoryFilter).toBeTruthy();
     expect(categoryFilter!.args[1]).toBe('%barber%');
   });

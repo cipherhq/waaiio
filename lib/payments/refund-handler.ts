@@ -276,6 +276,13 @@ async function dispatchAndFinalize(
   refundId: string, recoveryToken: string | null,
   payment: Record<string, unknown>, isDirectSplit: boolean,
 ): Promise<ProcessRefundResult> {
+  // #736: Direct bank transfers cannot be provider-refunded — platform never held funds.
+  // merchant_obligation refunds should never reach dispatch, but guard here as defense-in-depth.
+  if (payment.gateway === 'direct') {
+    logger.error('[REFUND] Blocked provider dispatch for direct/bank-transfer payment:', refundId);
+    return { success: false, refundId, errorMessage: 'Direct transfers cannot be provider-refunded', state: 'failed' as RefundState };
+  }
+
   // Atomic dispatch claim (token-bound if recovering)
   const { data: claimResult } = await service.rpc('claim_refund_dispatch', {
     p_refund_id: refundId,

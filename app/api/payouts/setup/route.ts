@@ -62,6 +62,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Business not found' }, { status: 404 });
   }
 
+  if (gateway === 'flutterwave') {
+    return NextResponse.json({ error: 'Flutterwave is unavailable for new payout setup' }, { status: 400 });
+  }
+
   const service = createServiceClient();
 
   try {

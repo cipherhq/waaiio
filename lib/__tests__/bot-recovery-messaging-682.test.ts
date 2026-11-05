@@ -298,6 +298,10 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
 
     const callPattern = /this\.handleMessage\(from,\s*[^)]+\)/g;
     const calls = [...source.matchAll(callPattern)];
+    const approvedWaitlistCall = "this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id)";
+    expect(source.split(approvedWaitlistCall).length - 1).toBe(1);
+    const waitlistPrefix = source.slice(source.indexOf('if (notifiedEntry)'), source.indexOf(approvedWaitlistCall));
+    expect(waitlistPrefix).toContain('if (existingSession) await this.deactivateSession(existingSession.id)');
     expect(calls.length).toBeGreaterThan(10);
 
     const bizIdCalls = calls.filter(m => {
@@ -314,9 +318,9 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
       if (parts.length < 8) {
         const idx = source.indexOf(call[0]);
         const lineNum = source.substring(0, idx).split('\n').length;
-        // Known exceptions: these deactivate the session first → no resumed-session
-        // tracking at line 734. New-session tracking at line 2155 is also guarded.
-        const isKnownException = [588, 4038].some(l => Math.abs(lineNum - l) <= 5);
+        // This existing waitlist handoff deactivates the old session first.
+        // Match its identity, not a source line that unrelated edits can move.
+        const isKnownException = call[0] === approvedWaitlistCall;
         if (!isKnownException) {
           throw new Error(
             `Business-scoped handleMessage redispatch at line ~${lineNum} missing _internalProvenance. ` +

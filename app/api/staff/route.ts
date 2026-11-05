@@ -76,6 +76,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'businessId and name required' }, { status: 400 });
     }
 
+    if (commission_rate != null) return NextResponse.json({ error: 'Staff commission is coming in Phase 2.' }, { status: 400 });
+
     // Sanitize role — allow any alphanumeric string up to 50 chars
     if (role && (typeof role !== 'string' || role.length > 50)) {
       return NextResponse.json({ error: 'Role must be a string under 50 characters' }, { status: 400 });
@@ -105,7 +107,7 @@ export async function POST(request: NextRequest) {
         services: services || [],
         schedule: schedule || {},
         is_active: true,
-        commission_rate: commission_rate ?? null,
+        commission_rate: null,
         notes: notes || null,
         start_date: start_date || null,
         color: color || null,
@@ -136,6 +138,8 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const { staffId, businessId, name, phone, email, role, services, schedule, is_active, commission_rate, notes, start_date, color, photo_url } = body;
 
+    if (commission_rate !== undefined) return NextResponse.json({ error: 'Staff commission is coming in Phase 2.' }, { status: 400 });
+
     if (!staffId || !businessId) {
       return NextResponse.json({ error: 'staffId and businessId required' }, { status: 400 });
     }
@@ -161,7 +165,7 @@ export async function PUT(request: NextRequest) {
     if (services !== undefined) updateData.services = services;
     if (schedule !== undefined) updateData.schedule = schedule;
     if (is_active !== undefined) updateData.is_active = is_active;
-    if (commission_rate !== undefined) updateData.commission_rate = commission_rate;
+    // Phase 2: preserve existing commission configuration; editing is disabled.
     if (notes !== undefined) updateData.notes = notes || null;
     if (start_date !== undefined) updateData.start_date = start_date || null;
     if (color !== undefined) updateData.color = color || null;

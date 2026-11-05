@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { IntegrationsTab } from '@/components/dashboard/settings/IntegrationsTab';
@@ -18,16 +19,21 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Read the query from the router, not window.location: on an in-app <Link>
+  // click, Next updates the address bar only after this page first renders.
+  const searchParams = useSearchParams();
   const initialTab = (() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const tab = params.get('tab');
-      if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'integrations' || tab === 'notifications' || tab === 'business') return tab;
-    }
+    const tab = searchParams.get('tab');
+    if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'integrations' || tab === 'notifications' || tab === 'business') return tab;
     return 'business' as const;
   })();
   const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'integrations' | 'notifications' | 'account'>(initialTab);
-  const [openSections, setOpenSections] = useState<string[]>([initialTab === 'account' ? 'plan' : 'profile']);
+  const [openSections, setOpenSections] = useState<string[]>(() => {
+    const section = searchParams.get('section');
+    if (initialTab === 'payments') return [section === 'recurring' ? 'recurring' : 'gateway'];
+    if (initialTab === 'business' && section === 'hours') return ['profile', 'hours'];
+    return [initialTab === 'account' ? 'plan' : initialTab === 'features' ? 'queue' : 'profile'];
+  });
   const toggleSection = (section: string) => {
     setOpenSections((prev) =>
       prev.includes(section) ? prev.filter((s) => s !== section) : [...prev, section]

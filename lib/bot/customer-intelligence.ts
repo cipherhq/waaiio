@@ -9,6 +9,9 @@ export interface CustomerHistory {
   lastServiceName: string | null;
   lastServiceId: string | null;
   lastFlowType: string | null;  // 'scheduling', 'payment', 'ticketing', etc.
+  lastEntityType?: 'appointment' | 'service' | null;
+  lastTransactionAt?: string | null;
+  lastOrder?: { id: string; reference_code: string; created_at: string } | null;
   lastVisitDate: string | null;
   daysSinceLastVisit: number | null;
   favoriteServiceName: string | null;
@@ -50,19 +53,23 @@ export async function getCustomerHistory(
     // Get past bookings for this customer at this business
     const { data: bookings } = await supabase
       .from('bookings')
-      .select('id, service_id, appointment_id, flow_type, date, total_amount, status, guest_phone')
+      .select('id, service_id, appointment_id, flow_type, date, created_at, total_amount, status, guest_phone')
       .eq('business_id', businessId)
       .in('guest_phone', phoneVariants)
       .in('status', ['completed', 'confirmed'])
-      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(50);
 
-    if (!bookings || bookings.length === 0) return empty;
+    const { data: lastOrder } = await supabase.from('orders')
+      .select('id, reference_code, created_at').eq('business_id', businessId)
+      .in('delivery_phone', phoneVariants).in('status', ['confirmed', 'delivered', 'ready'])
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!bookings || bookings.length === 0) return { ...empty, isReturning: !!lastOrder, lastOrder };
 
     // Get service names for the bookings
     const serviceIds = [...new Set(bookings.map(b => b.service_id).filter(Boolean))];
     const { data: services } = serviceIds.length > 0
-      ? await supabase.from('services').select('id, name').in('id', serviceIds)
+      ? await supabase.from('services').select('id, name').eq('business_id', businessId).in('id', serviceIds)
       : { data: [] };
     const serviceMap = new Map((services || []).map(s => [s.id, s.name]));
 
@@ -72,7 +79,7 @@ export async function getCustomerHistory(
       const { data: appointments } = await supabase
         .from('appointments')
         .select('id, name')
-        .in('id', appointmentIds);
+        .eq('business_id', businessId).in('id', appointmentIds);
       if (appointments) {
         for (const a of appointments) serviceMap.set(a.id, a.name);
       }
@@ -125,6 +132,9 @@ export async function getCustomerHistory(
       totalSpent,
       ltvTier: calculateLtvTier(totalSpent, totalVisits),
       lastServiceName,
+      lastEntityType: lastBooking.appointment_id && !lastBooking.service_id ? 'appointment' : 'service',
+      lastTransactionAt: lastBooking.created_at || null,
+      lastOrder,
       lastServiceId: lastBooking.service_id || lastBooking.appointment_id || null,
       lastFlowType: lastBooking.flow_type || null,
       lastVisitDate,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { currentAnswers, validateAnswers, type PartyQuestion, type PartyAnswers } from '@/lib/parties/rsvp-questions';
 
 interface EventOrPartyDetails {
   id: string;
@@ -16,6 +17,8 @@ interface EventOrPartyDetails {
   ask_dietary: boolean;
   invite_message: string | null;
   dress_code?: string | null;
+  question_definitions?: PartyQuestion[];
+  question_revision?: number;
   businesses: {
     name: string;
     slug: string;
@@ -30,6 +33,9 @@ interface InviteData {
   status: 'pending' | 'accepted' | 'maybe' | 'declined';
   plus_ones: number;
   dietary_notes: string | null;
+  custom_answers?: PartyAnswers;
+  saved_question_snapshot?: PartyQuestion[];
+  saved_answer_revision?: number;
   events: EventOrPartyDetails | null;
   parties: EventOrPartyDetails | null;
 }
@@ -45,6 +51,8 @@ export default function RSVPPage() {
   const [response, setResponse] = useState<'accepted' | 'maybe' | 'declined' | ''>('');
   const [plusOnes, setPlusOnes] = useState(0);
   const [dietary, setDietary] = useState('');
+  const [answers, setAnswers] = useState<PartyAnswers>({});
+  const [error, setError] = useState('');
 
   useEffect(() => {
     async function load() {
@@ -63,6 +71,10 @@ export default function RSVPPage() {
         }
 
         setInvite(inviteData);
+        setPlusOnes(inviteData.plus_ones || 0);
+        setDietary(inviteData.dietary_notes || '');
+        setResponse(inviteData.status === 'pending' ? '' : inviteData.status);
+        setAnswers(currentAnswers(inviteData.parties?.question_definitions || [], inviteData.custom_answers || {}));
 
         if (inviteData.status !== 'pending') {
           setState('already_responded');
@@ -79,6 +91,9 @@ export default function RSVPPage() {
 
   async function handleSubmit() {
     if (!response || !invite) return;
+    setError('');
+    try { if (invite.parties && response === 'accepted') validateAnswers(invite.parties.question_definitions || [], answers); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Check your answers.'); return; }
     setState('submitting');
 
     try {
@@ -88,19 +103,27 @@ export default function RSVPPage() {
         body: JSON.stringify({
           status: response,
           plus_ones: response === 'accepted' ? plusOnes : 0,
-          dietary_notes: dietary.trim() || undefined,
+          dietary_notes: dietary.trim() || null,
+          ...(invite.parties ? { answers, revision: invite.parties.question_revision } : {}),
         }),
       });
 
+      const result = await res.json();
       if (!res.ok) {
+        setError(result.error || 'Unable to save your response.');
+        if (result.stale) {
+          const fresh = await fetch(`/api/rsvp/${token}`);
+          if (fresh.ok) { const data = await fresh.json(); setInvite(data.invite); setAnswers(currentAnswers(data.invite.parties?.question_definitions || [], answers)); }
+        }
         setState('rsvp_form');
         return;
       }
 
       // Update local state
-      setInvite({ ...invite, status: response, plus_ones: response === 'accepted' ? plusOnes : 0 });
+      setInvite({ ...invite, ...(result.saved || { status: response, plus_ones: response === 'accepted' ? plusOnes : 0 }) });
       setState('done');
     } catch {
+      setError('Unable to save your response. Please retry.');
       setState('rsvp_form');
     }
   }
@@ -246,6 +269,12 @@ export default function RSVPPage() {
   const dateLabel = formatDate(event.date, event.time);
   const dressCode = ('dress_code' in event) ? (event as EventOrPartyDetails).dress_code : null;
 
+  const savedAnswersView = invite.parties && !!invite.saved_question_snapshot?.length && <section aria-label="Your saved answers" className="mt-4 rounded border bg-white p-4 text-sm">
+    <h2 className="font-semibold">Your saved answers</h2>
+    {invite.saved_answer_revision !== invite.parties.question_revision && <p>These answers belong to an earlier version of the questions.</p>}
+    <dl>{invite.saved_question_snapshot.map(q => <div key={q.id} className="mt-2"><dt>{q.label}</dt><dd>{typeof invite.custom_answers?.[q.id] === 'boolean' ? (invite.custom_answers[q.id] ? 'Yes' : 'No') : q.options?.find(o => o.id === invite.custom_answers?.[q.id])?.label || invite.custom_answers?.[q.id] || 'Not answered'}</dd></div>)}</dl>
+  </section>;
+
   // Already responded
   if (state === 'already_responded') {
     const statusMessages: Record<string, { emoji: string; title: string; desc: string }> = {
@@ -256,7 +285,9 @@ export default function RSVPPage() {
     const msg = statusMessages[invite.status] || statusMessages.declined;
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+      <div className="flex min-h-screen flex-col gap-4 items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+        {invite.parties && <div><button type="button" onClick={() => setState('rsvp_form')} className="rounded border p-3">Change response</button>{savedAnswersView}</div>}
+
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
           <div className="text-5xl mb-4">{msg.emoji}</div>
           <h1 className="text-2xl font-bold text-gray-900">{msg.title}</h1>
@@ -310,7 +341,7 @@ export default function RSVPPage() {
             className="mt-4 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
           >
             <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.489-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.489.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
             </svg>
             Share on WhatsApp
           </a>
@@ -327,7 +358,9 @@ export default function RSVPPage() {
     const isMaybe = invite.status === 'maybe';
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+      <div className="flex min-h-screen flex-col gap-4 items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4">
+        {savedAnswersView}
+
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
           <div className="text-5xl mb-4">{isAccepted ? '🎉' : isMaybe ? '🤔' : '🙏'}</div>
           <h1 className="text-2xl font-bold text-gray-900">
@@ -394,7 +427,7 @@ export default function RSVPPage() {
               className="mt-4 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
             >
               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.489-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.489.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
               </svg>
               Open in WhatsApp
             </a>
@@ -534,6 +567,14 @@ export default function RSVPPage() {
                 </div>
               )}
 
+              {response === 'accepted' && invite.parties?.question_definitions?.map(q => <div className="mt-4" key={q.id}>
+                <label htmlFor={`question-${q.id}`} className="block text-sm font-medium">{q.label}{q.required ? ' *' : ' (optional)'}</label>
+                {q.type === 'short_text' ? <input id={`question-${q.id}`} className="mt-1 w-full rounded border p-2" maxLength={500} value={String(answers[q.id] ?? '')} onChange={e => setAnswers(old => ({ ...old, [q.id]: e.target.value }))} /> :
+                  <select id={`question-${q.id}`} className="mt-1 w-full rounded border p-2" value={String(answers[q.id] ?? '')} onChange={e => setAnswers(old => { const next = { ...old }; if (!e.target.value) delete next[q.id]; else next[q.id] = q.type === 'yes_no' ? e.target.value === 'true' : e.target.value; return next; })}>
+                    <option value="">Choose an answer</option>{q.type === 'yes_no' ? <><option value="true">Yes</option><option value="false">No</option></> : q.options?.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>}
+              </div>)}
+              {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
               {/* Submit */}
               {response && (
                 <button

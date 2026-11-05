@@ -1,3 +1,6 @@
+import { VERIFICATION_BUCKET, verificationLocator } from '@/lib/verification/documents';
+import { randomUUID } from 'node:crypto';
+import { createServiceClient } from '@/lib/supabase/service';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
@@ -47,7 +50,7 @@ export async function POST(request: NextRequest) {
     .slice(0, 100) || 'file';
 
   // Validate file type
-  const ext = safeName.split('.').pop()?.toLowerCase() || '';
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
   const allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
   if (!allowedExts.includes(ext)) {
     return NextResponse.json({ error: 'Invalid file type. Allowed: PDF, JPG, PNG, WebP' }, { status: 400 });
@@ -87,10 +90,11 @@ export async function POST(request: NextRequest) {
   }
 
   // Upload to Supabase Storage
-  const path = `verification/${businessId}/${docType}-${Date.now()}.${uploadExt}`;
+  const path = `${businessId}/${randomUUID()}.${uploadExt}`;
+  const storage = createServiceClient().storage;
 
-  const { error: uploadError } = await supabase.storage
-    .from('business-documents')
+  const { error: uploadError } = await storage
+    .from(VERIFICATION_BUCKET)
     .upload(path, uploadBuffer, {
       contentType: uploadContentType,
       upsert: false,
@@ -101,9 +105,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Upload failed. Please try again.' }, { status: 500 });
   }
 
-  const { data: urlData } = supabase.storage
-    .from('business-documents')
-    .getPublicUrl(path);
 
   // Create document record
   const { data: doc, error: insertError } = await supabase
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
     .insert({
       business_id: businessId,
       type: docType,
-      file_url: urlData.publicUrl,
+      file_url: verificationLocator(businessId, path),
       file_name: safeName,
       status: 'pending',
     })
@@ -119,8 +120,9 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (insertError) {
+    await storage.from(VERIFICATION_BUCKET).remove([path]);
     return NextResponse.json({ error: 'Failed to save document record' }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, document_id: doc.id, file_url: urlData.publicUrl });
+  return NextResponse.json({ success: true, document_id: doc.id, file_url: verificationLocator(businessId, path) });
 }

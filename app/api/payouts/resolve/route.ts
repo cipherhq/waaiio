@@ -19,6 +19,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
+  if (gateway === 'flutterwave') {
+    return NextResponse.json({ error: 'Flutterwave is unavailable for new payout setup' }, { status: 400 });
+  }
+
   // Reject test bank code in production
   if (bank_code === '001' && (process.env.WAAIIO_ENVIRONMENT === 'production' || !paystackSecretKey.startsWith('sk_test_'))) {
     return NextResponse.json({ error: 'Invalid bank' }, { status: 400 });

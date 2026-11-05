@@ -1,0 +1,80 @@
+name: Release V3 prepare
+run-name: Release prepare ${{ inputs.mode }} ${{ inputs.target_sha }}
+# Release Process V3 (RELEASE_GATE_V2.md §9, docs/RELEASE_V3_GATE.md).
+# Owner-dispatched from main. Reads production and staging read-only, derives
+# the release and writes the packet the Owner approves. Deploys nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'packet (normal) or lock-map (one-time lock bootstrap)'
+        type: choice
+        options: [packet, lock-map]
+        default: packet
+      target_sha:
+        description: 'Protected-main SHA to release (default: this run''s main SHA)'
+        type: string
+        required: false
+      raise_lane:
+        description: 'Reviewer may raise the lane to full; never lower it'
+        type: choice
+        options: ['', full]
+        default: ''
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+concurrency:
+  group: release-v3-prepare
+  cancel-in-progress: false
+jobs:
+  prepare:
+    name: Prepare release packet
+    runs-on: ubuntu-24.04
+    # Holds RELEASE_OBSERVER_PRODUCTION_URL and RELEASE_OBSERVER_STAGING_URL,
+    # set by the Owner out of band (read-only release_observer login).
+    environment: release-observer
+    steps:
+      - name: Checkout trusted gate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+      - name: Verify PostgreSQL client
+        run: psql --version
+      - name: Read production and staging, write the packet
+        env:
+          CONTROL_PATH: trusted
+          GITHUB_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ADMIN_STAGING_BYPASS: ${{ secrets.VERCEL_ADMIN_STAGING_BYPASS }}
+          RELEASE_OBSERVER_PRODUCTION_URL: ${{ secrets.RELEASE_OBSERVER_PRODUCTION_URL }}
+          RELEASE_OBSERVER_STAGING_URL: ${{ secrets.RELEASE_OBSERVER_STAGING_URL }}
+          RELEASE_OBSERVER_CA_PEM: ${{ secrets.RELEASE_OBSERVER_CA_PEM }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          RAISE_LANE: ${{ inputs.raise_lane }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$MODE" = "lock-map" ]; then node trusted/scripts/release-gate-v3.mjs lock-map release-packet
+          else node trusted/scripts/release-gate-v3.mjs prepare release-packet; fi
+      - name: Upload release packet
+        if: inputs.mode == 'packet'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packet-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-packet/packet.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload lock catalog maps
+        if: inputs.mode == 'lock-map'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-lock-maps-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-packet/lock-catalog-*.json
+          if-no-files-found: error
+          retention-days: 7

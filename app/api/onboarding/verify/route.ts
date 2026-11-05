@@ -1,8 +1,9 @@
+import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATIONS_UNAVAILABLE, WHATSAPP_NUMBER_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
-import { allocateSharedChannelWithFallback } from '@/lib/onboarding/whatsapp-readiness';
+import { allocateSharedChannelWithFallback, assignFirstSharedChannel } from '@/lib/onboarding/whatsapp-readiness';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { initCapabilities } from '@/lib/capabilities/service';
@@ -262,7 +263,7 @@ export async function POST(request: NextRequest) {
 
     const { data: ownerCheck } = await supabase
       .from('businesses')
-      .select('owner_id, subscription_tier')
+      .select('owner_id, subscription_tier, wa_method, assigned_channel_id')
       .eq('id', businessId)
       .single();
 
@@ -271,6 +272,20 @@ export async function POST(request: NextRequest) {
         { message: 'Business not found or not owned by you' },
         { status: 403 },
       );
+    }
+
+    if (!channelOperationsEnabled() && (!ownerCheck.wa_method || ownerCheck.wa_method === 'shared') && !ownerCheck.assigned_channel_id) {
+      if (!firstSharedAssignmentEnabled()) {
+        return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
+      }
+      // M507: a shared business with no number gets its country's first shared
+      // number. The database function never replaces an existing assignment.
+      const { data: firstAssignment, error: firstAssignmentError } = await assignFirstSharedChannel(createServiceClient(), businessId);
+      if (firstAssignmentError || !firstAssignment?.allocated) {
+        console.warn('[ONBOARDING-VERIFY] First shared number assignment failed:', businessId,
+          firstAssignmentError?.message || firstAssignment?.reason || 'unknown');
+        return NextResponse.json(WHATSAPP_NUMBER_UNAVAILABLE, { status: 503 });
+      }
     }
 
     const service = createServiceClient();

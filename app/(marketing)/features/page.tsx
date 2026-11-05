@@ -110,7 +110,7 @@ export default function FeaturesPage() {
               <FeatureCard
                 icon="&#x23F0;"
                 title="Smart Reminders"
-                desc="Automatic WhatsApp reminders before appointments and events, reducing no-shows by up to 60%."
+                desc="Automatic WhatsApp reminders before appointments and events, helping customers remember their bookings."
               />
               <FeatureCard
                 icon="&#x1F3AD;"
@@ -188,7 +188,7 @@ export default function FeaturesPage() {
 
           {/* Gateway callout */}
           <AnimatedSection delay={0.2} direction="left">
-            <div className="mx-auto mt-10 grid max-w-3xl gap-3 sm:grid-cols-4">
+            <div className="mx-auto mt-10 grid max-w-4xl gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {[
                 { name: 'Paystack', region: 'Nigeria, Ghana', color: 'border-blue-200 bg-blue-50/50' },
                 { name: 'Stripe', region: 'US, UK, Canada', color: 'border-purple-200 bg-purple-50/50' },

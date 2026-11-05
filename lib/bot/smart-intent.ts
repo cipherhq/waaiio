@@ -602,6 +602,8 @@ function detectSemanticFamily(text: string, broadIntent: SmartParseResult['inten
 }
 
 function detectRequestedAction(text: string): import('./semantic-types').RequestedAction {
+  // The booking completion shortcut promises a new order; explicit history phrases remain read-only.
+  if (/^order$/i.test(text.trim())) return 'create_new';
   // Check specific action patterns (order matters)
   if (READ_HISTORY_PATTERNS.some(p => p.test(text))) return 'read_history';
   if (MANAGE_EXISTING_PATTERNS.some(p => p.test(text))) return 'manage_existing';

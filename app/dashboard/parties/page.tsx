@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
+import PartyQuestionsEditor from './components/PartyQuestionsEditor';
+import PartyReminderPreview from './components/PartyReminderPreview';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { QRCodeSVG } from 'qrcode.react';
 import { createClient } from '@/lib/supabase/client';
@@ -9,6 +11,10 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
+import { seatingRequest } from '@/lib/parties/table-assignment';
+import { reservedTagsFor, type SeatingSnapshot, type SeatingPreview, type SeatingGroup } from '@/lib/parties/seating-planner';
+import type { PartyAnswers, PartyQuestion } from '@/lib/parties/rsvp-questions';
+import { answerText, guestListCsv } from '@/lib/parties/guest-answers';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
 interface PartyItem {
@@ -46,6 +52,12 @@ interface InviteRow {
   tags: string[];
   table_id: string | null;
   seat_number: number | null;
+  seating_group_id: string | null;
+  seating_pinned: boolean;
+  /** M514: the tag that came from the guest's RSVP answer. */
+  answer_tag: string | null;
+  custom_answers: PartyAnswers | null;
+  saved_question_snapshot: PartyQuestion[] | null;
   created_at: string;
 }
 
@@ -74,11 +86,10 @@ export default function PartiesPage() {
   const [showBulk, setShowBulk] = useState(false);
   const [bulkPhones, setBulkPhones] = useState('');
   const [sending, setSending] = useState(false);
-  const [sendingReminder, setSendingReminder] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
 
   // Table management state
-  interface TableRow { id: string; name: string; capacity: number; sort_order: number; seated: number; }
+  interface TableRow { id: string; name: string; capacity: number; sort_order: number; seated: number; reserved_tag: string | null; }
   const [partyTables, setPartyTables] = useState<TableRow[]>([]);
   const [showTableForm, setShowTableForm] = useState(false);
   const [tableForm, setTableForm] = useState({ name: '', capacity: 10 });
@@ -91,6 +102,8 @@ export default function PartiesPage() {
   const [showBulkTag, setShowBulkTag] = useState(false);
   const [bulkTagValue, setBulkTagValue] = useState('');
   const [selectedInviteIds, setSelectedInviteIds] = useState<Set<string>>(new Set());
+  // Current RSVP questions, reported by the questions editor after it loads or saves.
+  const [partyQuestions, setPartyQuestions] = useState<PartyQuestion[]>([]);
 
   const appUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
@@ -142,7 +155,7 @@ export default function PartiesPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('event_invites')
-      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, created_at')
+      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, seating_group_id, seating_pinned, answer_tag, custom_answers, saved_question_snapshot, created_at')
       .eq('party_id', partyId)
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
@@ -210,6 +223,7 @@ export default function PartiesPage() {
 
   function openDetail(party: PartyItem) {
     setSelectedParty(party);
+    setPartyQuestions([]);
     setView('detail');
     setStatusMessage('');
     loadInvites(party.id);
@@ -351,28 +365,7 @@ export default function PartiesPage() {
     setSending(false);
   }
 
-  async function handleSendReminders() {
-    if (!selectedParty) return;
-    setSendingReminder(true);
-    setStatusMessage('');
-    try {
-      const res = await fetch('/api/events/invite', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partyId: selectedParty.id, businessId: business.id }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStatusMessage(`Reminders sent to ${data.sent} guests`);
-        loadInvites(selectedParty.id);
-      } else {
-        setStatusMessage(data.error || 'Failed to send reminders');
-      }
-    } catch {
-      setStatusMessage('Failed to send reminders');
-    }
-    setSendingReminder(false);
-  }
+
 
   // ── Tag management ──
   async function handleAddTag(inviteId: string, tag: string) {
@@ -417,7 +410,7 @@ export default function PartiesPage() {
     const supabase = createClient();
     const { data: tables } = await supabase
       .from('party_tables')
-      .select('id, name, capacity, sort_order')
+      .select('id, name, capacity, sort_order, reserved_tag')
       .eq('party_id', partyId)
       .eq('business_id', business.id)
       .order('sort_order', { ascending: true });
@@ -460,46 +453,28 @@ export default function PartiesPage() {
   }
 
   async function handleDeleteTable(tableId: string) {
-    if (!confirm('Delete this table? Guests will be unassigned.')) return;
+    if (!confirm('Delete this table? Assigned guests must be explicitly unassigned first.')) return;
     const supabase = createClient();
-    await supabase.from('party_tables').delete().eq('id', tableId);
+    const { error: deleteError } = await supabase.from('party_tables').delete().eq('id', tableId);
+    if (deleteError) { setStatusMessage(deleteError.message); return; }
     if (selectedParty) loadTables(selectedParty.id);
   }
 
-  async function handleAssignGuest(inviteId: string, tableId: string | null) {
-    const supabase = createClient();
-    if (tableId) {
-      const { assignGuest: assign } = await import('@/lib/parties/table-assignment');
-      const result = await assign(supabase, inviteId, tableId);
-      if (!result.success) {
-        setStatusMessage(result.error || 'Assignment failed');
-        return;
-      }
-    } else {
-      const { unassignGuest } = await import('@/lib/parties/table-assignment');
-      await unassignGuest(supabase, inviteId);
-    }
-    if (selectedParty) {
-      loadInvites(selectedParty.id);
-      loadTables(selectedParty.id);
-    }
-  }
-
-  async function handleAutoAssign() {
+  async function handleReserveTable(tableId: string, tag: string | null) {
     if (!selectedParty) return;
     const supabase = createClient();
-    const { autoAssign } = await import('@/lib/parties/table-assignment');
-    const result = await autoAssign(supabase, selectedParty.id, business.id);
-    if (result.success) {
-      const msg = result.assigned
-        ? `Auto-assigned ${result.assigned} guest${result.assigned !== 1 ? 's' : ''}${result.skipped ? ` (${result.skipped} could not be placed)` : ''}`
-        : 'No guests could be placed — all tables may be full';
-      setStatusMessage(msg);
-      loadInvites(selectedParty.id);
-      loadTables(selectedParty.id);
-    } else {
-      setStatusMessage(result.error || 'Auto-assign failed — please try again');
-    }
+    const { error: reserveError } = await supabase.from('party_tables').update({ reserved_tag: tag }).eq('id', tableId);
+    if (reserveError) { setStatusMessage(reserveError.message); return; }
+    setStatusMessage('');
+    loadTables(selectedParty.id);
+  }
+
+  async function handleAssignGuest(inviteId: string, tableId: string | null) {
+    if (!selectedParty) return;
+    try {
+      await seatingRequest(selectedParty.id, { op: 'manual', invite_id: inviteId, table_id: tableId });
+      await Promise.all([loadInvites(selectedParty.id), loadTables(selectedParty.id)]);
+    } catch (err) { setStatusMessage(err instanceof Error ? err.message : 'Assignment failed'); }
   }
 
   async function handleBulkAssignByTag(tag: string, tableId: string) {
@@ -518,6 +493,10 @@ export default function PartiesPage() {
 
   // All unique tags across current guest list
   const allTags = [...new Set(invites.flatMap(i => i.tags || []))].sort();
+  // Tables can be reserved before anyone answers: offer the tagging question's options too.
+  // Labels are trimmed of spaces only, exactly as M514's btrim() makes the guests' auto-tags.
+  const tagQuestion = partyQuestions.find(q => q.type === 'single_choice' && q.tag_answers);
+  const reservableTags = [...new Set([...(tagQuestion?.options || []).map(o => o.label.replace(/^ +| +$/g, '')).filter(Boolean), ...allTags])].sort();
 
   // Loading
   if (loading) {
@@ -782,17 +761,7 @@ export default function PartiesPage() {
           {invites.length > 0 && (
             <button
               onClick={() => {
-                const headers = ['Name', 'Phone', 'Status', 'Plus Ones', 'Tags', 'Dietary Notes', 'Responded At'];
-                const rows = filteredInvites.map(inv => [
-                  inv.guest_name || '',
-                  inv.guest_phone,
-                  inv.status,
-                  inv.status === 'accepted' ? String(inv.plus_ones) : '0',
-                  (inv.tags || []).join('; '),
-                  inv.dietary_notes || '',
-                  inv.responded_at ? new Date(inv.responded_at).toLocaleString('en-GB') : '',
-                ]);
-                const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n');
+                const csvContent = guestListCsv(filteredInvites, partyQuestions);
                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -806,11 +775,7 @@ export default function PartiesPage() {
               Export Guest List
             </button>
           )}
-          {(pending.length > 0 || maybe.length > 0) && (
-            <button onClick={handleSendReminders} disabled={sendingReminder} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-              {sendingReminder ? 'Sending...' : `Send Reminders (${pending.length + maybe.length})`}
-            </button>
-          )}
+
         </div>
 
         {/* Tag filter + bulk tag */}
@@ -885,7 +850,7 @@ export default function PartiesPage() {
                     target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
-                    <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+                    <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.489-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.489.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
                     WhatsApp
                   </a>
                   <a
@@ -1117,16 +1082,23 @@ export default function PartiesPage() {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Tables &amp; Seating</h3>
             <div className="flex items-center gap-2">
-              {partyTables.length > 0 && invites.some(i => !i.table_id && ['accepted', 'maybe', 'pending'].includes(i.status)) && (
-                <button onClick={handleAutoAssign} className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10">
-                  Auto-Assign
-                </button>
-              )}
               <button onClick={() => { setShowTableForm(!showTableForm); setEditingTableId(null); setTableForm({ name: '', capacity: 10 }); }} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600">
                 + Add Table
               </button>
             </div>
           </div>
+
+          <PartyReminderPreview key={`reminders:${selectedParty.id}`} partyId={selectedParty.id} onSaved={() => loadInvites(selectedParty.id)} />
+
+          <PartyQuestionsEditor key={`questions:${selectedParty.id}`} partyId={selectedParty.id}
+            onQuestions={(questions, saved) => { setPartyQuestions(questions); if (saved) loadInvites(selectedParty.id); }} />
+
+          <PartySeatingEditor
+            key={selectedParty.id}
+            partyId={selectedParty.id}
+            revision={JSON.stringify(invites) + JSON.stringify(partyTables)}
+            onSaved={() => { loadInvites(selectedParty.id); loadTables(selectedParty.id); }}
+          />
 
           {showTableForm && (
             <div className="mt-3 flex items-end gap-3">
@@ -1172,6 +1144,22 @@ export default function PartiesPage() {
                     <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{table.name}</span>
                     <button onClick={() => handleDeleteTable(table.id)} className="text-xs text-red-400 hover:text-red-600" title="Delete table">&times;</button>
                   </div>
+                  {(reservableTags.length > 0 || table.reserved_tag) && (
+                    <label className="mt-1 block text-xs text-gray-500">Reserved for{' '}
+                      <select
+                        aria-label={`Reserved for (${table.name})`}
+                        value={table.reserved_tag || ''}
+                        onChange={e => handleReserveTable(table.id, e.target.value || null)}
+                        className="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-1 py-0.5 text-xs dark:text-gray-100"
+                      >
+                        <option value="">Anyone</option>
+                        {[...new Set([...reservableTags, ...(table.reserved_tag ? [table.reserved_tag] : [])])].map(tag => <option key={tag} value={tag}>{tag}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {table.reserved_tag && !invites.some(i => (i.tags || []).includes(table.reserved_tag!)) && (
+                    <p className="mt-1 text-[11px] text-amber-600">No guest has the tag &quot;{table.reserved_tag}&quot; yet.</p>
+                  )}
                   <div className="mt-2">
                     <div className="flex items-center justify-between text-xs text-gray-500">
                       <span>{table.seated} / {table.capacity} seats</span>
@@ -1189,7 +1177,8 @@ export default function PartiesPage() {
                   {/* Bulk assign by tag for this table */}
                   {allTags.length > 0 && table.seated < table.capacity && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {allTags.map(tag => (
+                      {/* A reserved table takes only its own tag's guests. */}
+                      {allTags.filter(tag => !table.reserved_tag || tag === table.reserved_tag).map(tag => (
                         <button
                           key={tag}
                           onClick={() => handleBulkAssignByTag(tag, table.id)}
@@ -1239,6 +1228,7 @@ export default function PartiesPage() {
                   <th scope="col" className="pb-3 pr-4">Plus-ones</th>
                   {partyTables.length > 0 && <th scope="col" className="pb-3 pr-4">Table</th>}
                   <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Dietary</th>
+                  {partyQuestions.length > 0 && <th scope="col" className="pb-3 pr-4">RSVP answers</th>}
                   <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Responded</th>
                   <th scope="col" className="pb-3">Actions</th>
                 </tr>
@@ -1276,6 +1266,7 @@ export default function PartiesPage() {
                           {(invite.tags || []).map(tag => (
                             <span key={tag} className="inline-flex items-center gap-0.5 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
                               {tag}
+                              {tag === invite.answer_tag && <span className="text-[10px] font-normal text-brand/70">(from RSVP)</span>}
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveTag(invite.id, tag); }}
                                 className="ml-0.5 text-brand/50 hover:text-brand"
@@ -1323,14 +1314,25 @@ export default function PartiesPage() {
                           >
                             <option value="">Unassigned</option>
                             {partyTables.map(t => (
-                              <option key={t.id} value={t.id} disabled={t.seated >= t.capacity && invite.table_id !== t.id}>
-                                {t.name} ({t.seated}/{t.capacity})
+                              <option key={t.id} value={t.id} disabled={invite.table_id !== t.id &&
+                                (t.seated >= t.capacity || !!t.reserved_tag && !(invite.tags || []).includes(t.reserved_tag))}>
+                                {t.name} ({t.seated}/{t.capacity}){t.reserved_tag ? ` · ${t.reserved_tag}` : ''}
                               </option>
                             ))}
                           </select>
                         </td>
                       )}
                       <td className="py-3 pr-4 text-gray-600 text-xs max-w-[150px] truncate hidden md:table-cell">{invite.dietary_notes || '-'}</td>
+                      {partyQuestions.length > 0 && (
+                        <td className="py-3 pr-4 text-xs text-gray-600 dark:text-gray-400">
+                          <dl aria-label={`RSVP answers for ${invite.guest_name || invite.guest_phone}`}>
+                            {partyQuestions.map(q => {
+                              const text = answerText(q, invite.custom_answers, invite.saved_question_snapshot || []);
+                              return text ? <div key={q.id}><dt className="inline font-medium">{q.label}: </dt><dd className="inline">{text}</dd></div> : null;
+                            })}
+                          </dl>
+                        </td>
+                      )}
                       <td className="py-3 pr-4 text-gray-400 text-xs hidden md:table-cell">
                         {invite.responded_at ? new Date(invite.responded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-'}
                       </td>
@@ -1463,5 +1465,147 @@ export default function PartiesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Kept page-local so the party slice does not claim shared dashboard components. */
+function PartySeatingEditor({ partyId, revision, onSaved }: {
+  partyId: string; revision: string; onSaved: () => void;
+}) {
+  const [snapshot, setSnapshot] = useState<SeatingSnapshot | null>(null);
+  const [preview, setPreview] = useState<SeatingPreview | null>(null);
+  const [partial, setPartial] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [groupName, setGroupName] = useState('');
+  const [allowed, setAllowed] = useState<string[]>([]);
+  const generation = useRef(0);
+  const invalidate = () => { setPreview(null); setPartial(false); };
+  useEffect(() => {
+    const current = ++generation.current;
+    setSnapshot(null); setPreview(null); setPartial(false); setMessage('');
+    seatingRequest<{ snapshot: SeatingSnapshot }>(partyId).then(result => {
+      if (generation.current === current) setSnapshot(result.snapshot);
+    }).catch(error => {
+      if (generation.current === current) setMessage(error.message);
+    });
+    return () => { generation.current++; };
+  }, [partyId, revision]);
+  async function run(payload: Record<string, unknown>) {
+    invalidate(); setBusy(true); setMessage('');
+    const current = generation.current;
+    try {
+      const result = await seatingRequest<{ snapshot: SeatingSnapshot }>(partyId, payload);
+      if (current !== generation.current) return;
+      setSnapshot(result.snapshot); onSaved();
+    } catch (error) {
+      if (current === generation.current) setMessage(error instanceof Error ? error.message : 'Unable to save seating');
+    } finally { setBusy(false); }
+  }
+  function editGroup(group?: SeatingGroup) {
+    invalidate(); setGroupId(group?.id || null);
+    setGroupName(group?.name || ''); setAllowed(group?.table_ids || []);
+  }
+  async function makePreview() {
+    invalidate(); setBusy(true); setMessage('');
+    const current = generation.current;
+    try {
+      const result = await seatingRequest<SeatingPreview>(partyId, { op: 'preview', seed: Date.now() >>> 0 });
+      if (current === generation.current) { setSnapshot(result.snapshot); setPreview(result); }
+    } catch (error) {
+      if (current === generation.current) setMessage(error instanceof Error ? error.message : 'Unable to preview seating');
+    } finally { setBusy(false); }
+  }
+  async function commit() {
+    if (!preview) return;
+    const reviewed = preview;
+    await run({ op: 'commit', seed: reviewed.seed, fingerprint: reviewed.snapshot.fingerprint,
+      planHash: reviewed.planHash, acknowledgePartial: partial });
+  }
+  const name = (id: string) => snapshot?.guests.find(g => g.id === id)?.guest_name || 'Unnamed guest';
+  const tableName = (id: string | null) => snapshot?.tables.find(t => t.id === id)?.name || 'Unassigned';
+  const reservedFor = (id: string | null) => snapshot?.tables.find(t => t.id === id)?.reserved_tag || null;
+  // Unplaced guests grouped by the tag whose tables they need ("" = unreserved tables).
+  const overflowByTag = (ids: string[]) => {
+    const groups = new Map<string, string[]>();
+    for (const id of ids) {
+      const guest = snapshot?.guests.find(g => g.id === id);
+      const tag = guest && snapshot ? reservedTagsFor(guest, snapshot.tables).join(' or ') : '';
+      groups.set(tag, [...(groups.get(tag) || []), id]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  };
+  return (
+    <section aria-label="Seating plan" className="mt-4 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+      <p className="text-sm text-gray-600 dark:text-gray-300">Manual assignments are pinned. A guest and their plus-ones always stay together. Groups use only their selected tables; ungrouped guests use the remaining seats. A table reserved for a tag seats only guests with that tag.</p>
+      {message && <p role="alert" className="text-sm text-red-600">{message}</p>}
+      {!snapshot && !message && <p role="status">Loading seating…</p>}
+      {snapshot && <>
+        <fieldset disabled={busy} className="space-y-2">
+          <legend className="text-sm font-semibold">Seating groups</legend>
+          <div className="flex flex-wrap gap-2">
+            {snapshot.groups.map(g => <span key={g.id}>
+              <button type="button" className="rounded border px-2 py-1 text-sm" onClick={() => editGroup(g)}>Edit {g.name}</button>
+              <button type="button" className="px-2 py-1 text-sm text-red-600" onClick={() => run({ op: 'delete_group', id: g.id })}>Delete {g.name}</button>
+            </span>)}
+            <button type="button" className="rounded border px-2 py-1 text-sm" onClick={() => editGroup()}>New group</button>
+          </div>
+          <label className="block text-sm">Group name
+            <input aria-label="Group name" value={groupName} maxLength={100}
+              className="ml-2 rounded border px-2 py-1 dark:bg-gray-800"
+              onChange={e => { invalidate(); setGroupName(e.target.value); }} />
+          </label>
+          <p className="text-xs">Select every table this group may use. With no tables selected, the group stays unassigned.</p>
+          <div className="flex flex-wrap gap-3">
+            {snapshot.tables.map(t => <label key={t.id} className="text-sm">
+              <input type="checkbox" checked={allowed.includes(t.id)}
+                onChange={e => { invalidate(); setAllowed(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id)); }} /> {t.name}
+            </label>)}
+          </div>
+          <button type="button" disabled={!groupName.trim()} className="rounded bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+            onClick={() => run({ op: 'save_group', id: groupId, name: groupName, table_ids: allowed })}>Save group</button>
+          <div className="space-y-2">
+            {snapshot.guests.map(g => <div key={g.id} className="flex flex-wrap items-center gap-2 rounded border p-2 text-sm">
+              <span>{g.guest_name || 'Unnamed guest'} · {1 + g.plus_ones} seat{g.plus_ones ? 's' : ''} · {tableName(g.table_id)}{g.seating_pinned ? ' · Pinned' : ''}</span>
+              <select aria-label={'Seating group for ' + (g.guest_name || g.id)} value={g.seating_group_id || ''}
+                className="rounded border p-1 dark:bg-gray-800"
+                onChange={e => run({ op: 'membership', invite_id: g.id, group_id: e.target.value || null })}>
+                <option value="">Ungrouped</option>
+                {snapshot.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </select>
+              {g.table_id && <button type="button" className="rounded border px-2 py-1"
+                onClick={() => run({ op: 'pin', invite_id: g.id, pinned: !g.seating_pinned })}>{g.seating_pinned ? 'Unpin' : 'Pin'} {g.guest_name || 'guest'}</button>}
+            </div>)}
+          </div>
+          <button type="button" className="rounded border border-brand px-3 py-2 text-sm text-brand"
+            onClick={makePreview}>Randomize and preview</button>
+        </fieldset>
+        {preview && <div className="space-y-2 rounded border border-brand p-3">
+          <h4 className="font-semibold">Review seating</h4>
+          {preview.plan.occupancy.map(t => <p key={t.table_id} className="text-sm">{tableName(t.table_id)}{reservedFor(t.table_id) ? ` (${reservedFor(t.table_id)})` : ''}: {t.used} / {t.capacity} seats</p>)}
+          <ul className="text-sm">{preview.plan.assignments.map(a => <li key={a.invite_id}>
+            {name(a.invite_id)}: {tableName(snapshot.guests.find(g => g.id === a.invite_id)?.table_id || null)} → {tableName(a.table_id)}
+            {snapshot.guests.find(g => g.id === a.invite_id)?.seating_pinned ? ' (pinned, unchanged)' : ''}
+          </li>)}</ul>
+          {!!preview.plan.conflicts.length && <p role="alert">Resolve existing seating conflicts before committing.</p>}
+          {!!preview.plan.warnings.length && <ul role="status" className="text-sm text-amber-700">{preview.plan.warnings.map(id => {
+            const guest = snapshot.guests.find(g => g.id === id);
+            return <li key={id}>{name(id)} stays at {tableName(guest?.table_id || null)}{guest?.seating_pinned ? ' (pinned)' : ''}, which is reserved for {reservedFor(guest?.table_id || null)}.</li>;
+          })}</ul>}
+          {!!preview.plan.overflow.length && <>
+            {overflowByTag(preview.plan.overflow).map(([tag, ids]) => <p key={tag || 'unreserved'} className="text-sm">
+              {tag
+                ? `${tag}: ${ids.length} guest${ids.length === 1 ? " doesn't" : "s don't"} fit at ${tag} tables — add seats or a table. Not placed: ${ids.map(name).join(', ')}.`
+                : `Not placed by this plan: ${ids.map(name).join(', ')}.`}
+            </p>)}
+            <label className="block text-sm"><input type="checkbox" checked={partial} onChange={e => setPartial(e.target.checked)} /> I acknowledge these guests will remain unassigned.</label>
+          </>}
+          <button type="button" disabled={busy || !!preview.plan.conflicts.length || !!preview.plan.overflow.length && !partial}
+            className="rounded bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+            onClick={commit}>Confirm seating</button>
+        </div>}
+      </>}
+    </section>
   );
 }

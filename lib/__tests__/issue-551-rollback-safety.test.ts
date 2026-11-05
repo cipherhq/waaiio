@@ -1,3 +1,6 @@
+import { beforeEach as beforeChannelAdmissionFixture, vi as channelAdmissionFixture } from 'vitest';
+// Existing enabled-operation behavior remains covered explicitly.
+beforeChannelAdmissionFixture(() => channelAdmissionFixture.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'true'));
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { NextRequest } from 'next/server';

@@ -15,24 +15,28 @@ export function StepPlan({
   localTiers,
   setStep,
 }: StepPlanProps) {
+  const planOrder = ['free', 'growth', 'business'] as const;
+  const eligibleCapabilities = selectedCapabilities.filter(capability =>
+    planOrder.indexOf(CAPABILITY_TIER_REQUIREMENTS[capability] || 'free') <= planOrder.indexOf(selectedPlan));
+  const omittedCount = selectedCapabilities.length - eligibleCapabilities.length;
+  const feeLabel = (tier: typeof planOrder[number]) => {
+    const pricing = localTiers[tier];
+    return `${pricing.feePercentage}%${pricing.feeFlat > 0 ? ` + ${formatCurrency(pricing.feeFlat, selectedCountry)}` : ''} Waaiio fee per transaction`;
+  };
   return (
     <div>
-      <button type="button" onClick={() => setStep('category')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
+      <button type="button" onClick={() => setStep('features')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         Back
       </button>
       <h2 className="text-2xl font-bold text-gray-900">Choose your plan</h2>
       <p className="mt-1 text-sm text-gray-500">
-        Select the plan that fits your business needs. Each tier unlocks more capabilities.
+        Start free and upgrade later, or choose a paid plan now for lower transaction fees—even if you only need free features.
       </p>
 
       <div className="mt-6 space-y-4">
         {/* Free / Starter */}
-        <button type="button" onClick={() => {
-          setSelectedPlan('free');
-          // Remove capabilities above free tier
-          setSelectedCapabilities(prev => prev.filter(c => (CAPABILITY_TIER_REQUIREMENTS[c] || 'free') === 'free'));
-        }} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+        <button type="button" aria-pressed={selectedPlan === 'free'} onClick={() => setSelectedPlan('free')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
           {requiredPlan === 'free' && selectedCapabilities.length > 0 && (
             <span className="absolute -top-3 left-4 rounded-full bg-green-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
           )}
@@ -45,25 +49,12 @@ export function StepPlan({
               {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
             </div>
           </div>
-          <p className="mt-2 text-sm text-gray-600">Try Waaiio risk-free. Accept bookings, collect payments, and chat with customers on WhatsApp.</p>
-          <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Auto-book appointments &amp; take orders</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Collect payments via WhatsApp</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 50 bookings/month</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> {String(localTiers?.free?.feePercentage)}% per transaction — no monthly fee</li>
-          </ul>
+          <p className="mt-2 text-sm text-gray-600">Start with free features. Upgrade from your dashboard whenever you are ready.</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900">{feeLabel('free')} after trial — no monthly fee</p>
         </button>
 
         {/* Growth / Pro */}
-        <button type="button" onClick={() => {
-          setSelectedPlan('growth');
-          // Remove capabilities above growth tier
-          setSelectedCapabilities(prev => prev.filter(c => {
-            const t = CAPABILITY_TIER_REQUIREMENTS[c] || 'free';
-            return t === 'free' || t === 'growth';
-          }));
-        }} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
-          <span className="absolute -top-3 right-4 rounded-full bg-accent px-3 py-0.5 text-xs font-bold text-gray-900">Most Popular</span>
+        <button type="button" aria-pressed={selectedPlan === 'growth'} onClick={() => setSelectedPlan('growth')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
           {requiredPlan === 'growth' && (
             <span className="absolute -top-3 left-4 rounded-full bg-blue-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
           )}
@@ -76,18 +67,12 @@ export function StepPlan({
               {selectedPlan === 'growth' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
             </div>
           </div>
-          <p className="mt-2 text-sm text-gray-600">Grow faster with automated reminders, loyalty rewards, and your own WhatsApp number.</p>
-          <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Starter</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Automated reminders — reduce no-shows by 60%</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Loyalty points &amp; referral program — customers come back</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {String(localTiers?.growth?.feePercentage)}% fees</li>
-            <li className="flex items-center gap-2"><span className="text-brand">&#9733;</span> <span className="font-medium text-gray-700">Connect your own WhatsApp number</span></li>
-          </ul>
+          <p className="mt-2 text-sm text-gray-600">Choose lower transaction fees with the features you need. You do not have to use the extras.</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900">{feeLabel('growth')}</p>
         </button>
 
         {/* Business / Premium */}
-        <button type="button" onClick={() => setSelectedPlan('business')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'business' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+        <button type="button" aria-pressed={selectedPlan === 'business'} onClick={() => setSelectedPlan('business')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'business' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
           {requiredPlan === 'business' && (
             <span className="absolute -top-3 left-4 rounded-full bg-brand-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
           )}
@@ -100,23 +85,19 @@ export function StepPlan({
               {selectedPlan === 'business' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
             </div>
           </div>
-          <p className="mt-2 text-sm text-gray-600">Full platform with unlimited bookings, e-signatures, staff management, and your brand — not ours.</p>
-          <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Pro</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Unlimited bookings &amp; conversations</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> WhatsApp Sign — send documents for e-signature</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Staff management, queue, waitlist, invoices</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Whitelabel — your brand, not Waaiio</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Lowest fees: {String(localTiers?.business?.feePercentage)}% per transaction</li>
-          </ul>
+          <p className="mt-2 text-sm text-gray-600">Choose our lowest plan transaction rate, even if free features cover your needs.</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900">{feeLabel('business')}</p>
         </button>
       </div>
 
+      <p className="mt-4 text-sm text-gray-600">Payment-provider processing charges are separate. Selecting a paid plan does not charge you; you will confirm payment at checkout.</p>
+      {omittedCount > 0 && <p role="status" className="mt-3 text-sm text-amber-800">{omittedCount} selected feature(s) require a higher plan and will not be included if you continue with this plan. Choose a higher plan to keep them.</p>}
+      {eligibleCapabilities.length === 0 && <p role="status" className="mt-2 text-sm text-amber-800">Choose a higher plan or go back and select at least one feature included in this plan.</p>}
       <div className="mt-8">
-        <button type="button" onClick={() => setStep('details')} disabled={!selectedPlan} className={`w-full rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
+        <button type="button" onClick={() => { setSelectedCapabilities(eligibleCapabilities); setStep('details'); }} disabled={eligibleCapabilities.length === 0} className={`w-full rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
           {selectedPlan === 'free'
-            ? 'Start Free Trial'
-            : `Subscribe \u2014 ${formatCurrency(Number(localTiers?.[selectedPlan as 'growth' | 'business']?.price) || 0, selectedCountry)}/mo`}
+            ? 'Start free — upgrade later'
+            : `Continue with ${formatCurrency(Number(localTiers?.[selectedPlan as 'growth' | 'business']?.price) || 0, selectedCountry)}/mo`}
         </button>
       </div>
     </div>

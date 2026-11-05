@@ -2,6 +2,7 @@
 import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
@@ -265,6 +266,12 @@ export default function QueuePage() {
           <p className="mt-1 text-sm text-gray-500">Live queue for today, {new Date().toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'long', month: 'long', day: 'numeric' })}.</p>
         </div>
         <div className="flex gap-2">
+          <Link
+            href="/dashboard/qr-code?template=queue"
+            className="rounded-lg border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100"
+          >
+            Share Queue
+          </Link>
           <button
             onClick={togglePause}
             disabled={pauseLoading}

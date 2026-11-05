@@ -1,3 +1,4 @@
+import { transactionNextSteps } from '@/lib/bot/flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -10,6 +11,9 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { getEntityBalance } from '@/lib/payments/entity-balance';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
+import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
+import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -148,6 +152,10 @@ export async function sendProactiveConfirmation(
   }
 
   if (!claim?.claimed) {
+    if (claim?.reason === 'already_terminated' &&
+        claim.terminal_reason === 'event_cancelled_followup_recorded') {
+      return { status: 'not_deliverable', retryable: false, reason: 'event_cancelled_followup_recorded' };
+    }
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
       // K2/Refinement 1: Retry pending saved-card CTA via stored channel_id
@@ -195,12 +203,14 @@ export async function sendProactiveConfirmation(
   let serviceName = 'Payment';
   let referenceCode = '';
   let countryCode: CountryCode = 'US';
-  // Read authoritative payment currency (read-only, no calculation change)
+  // Read authoritative payment identity: currency + campaign_id for canonical context validation
   let paymentCurrencyCode: string | undefined;
+  let canonicalPaymentCampaignId: string | null = null;
   try {
-    const { data: payRow } = await supabase.from('payments').select('currency').eq('id', payment.id).maybeSingle();
+    const { data: payRow } = await supabase.from('payments').select('currency, campaign_id').eq('id', payment.id).maybeSingle();
     paymentCurrencyCode = payRow?.currency || undefined;
-  } catch { /* non-blocking */ }
+    canonicalPaymentCampaignId = payRow?.campaign_id || null;
+  } catch { /* non-blocking — campaign_id fallback is payment.campaign_id from claim */ }
   let bookingDate: string | undefined;
   let bookingTime: string | undefined;
   let bookingAddress: string | undefined;
@@ -229,6 +239,27 @@ export async function sendProactiveConfirmation(
       const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
       const svc = booking.services as unknown as { name: string; duration_minutes?: number; service_type?: string } | null;
       bookingFlowType = booking.flow_type || undefined;
+      // M481: resolve a cancelled ticket event before success-only messaging.
+      // This RPC checks authoritative booking/event state and is a no-op for other payments.
+      if (bookingFlowType === 'ticketing') {
+        const { data: cancellation, error: cancellationError } = await supabase.rpc(
+          'terminate_cancelled_event_confirmation',
+          { p_payment_id: payment.id, p_claim_token: claimToken },
+        );
+        if (cancellationError || !cancellation) {
+          await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+          return { status: 'retryable_failed', retryable: true, reason: 'event_cancellation_resolution_failed' };
+        }
+        if (cancellation.terminated === true) {
+          return { status: 'not_deliverable', retryable: false, reason: 'event_cancelled_followup_recorded' };
+        }
+        if (cancellation.reason !== 'not_cancelled') {
+          await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+          return { status: 'retryable_failed', retryable: true, reason: cancellation.reason || 'event_cancellation_resolution_failed' };
+        }
+      }
+
+
       bookingServiceType = svc?.service_type || undefined;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
@@ -306,6 +337,66 @@ export async function sendProactiveConfirmation(
     }
   }
 
+  // ── 2b. Try campaign donation ──
+  // Authoritative identity binding: donation must match both payment_id AND campaign_id
+  // from the canonical payment read, with status='success'. On ANY failure in this branch
+  // (error, missing, inconsistent), release claim and return retryable — no fallthrough
+  // to order/profile fallback after entering the campaign path.
+  if (!customerPhone && payment.campaign_id) {
+    // Use canonical payment-read campaign_id when available; fall back to claim's
+    const effectiveCampaignId = canonicalPaymentCampaignId || payment.campaign_id;
+
+    const { data: donation, error: donationError } = await supabase
+      .from('campaign_donations')
+      .select('donor_phone, donor_name, reference_code, business_id, campaign_id, campaigns(title, business_id, businesses(name, country_code))')
+      .eq('payment_id', payment.id)
+      .eq('campaign_id', effectiveCampaignId)
+      .eq('status', 'success')
+      .maybeSingle();
+
+    if (donationError) {
+      logSafeError(logPrefix, 'campaign-donation-lookup', donationError);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_donation_lookup_error' };
+    }
+
+    if (!donation) {
+      logger.warn(`${logPrefix} No matching campaign donation for payment=${payment.id} campaign=${effectiveCampaignId}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_donation_not_found' };
+    }
+
+    // Validate canonical context: joined campaign must exist and its business_id
+    // must match the donation's own business_id
+    const campaign = donation.campaigns as unknown as { title: string; business_id: string; businesses: { name: string; country_code?: string } | null } | null;
+    const campaignBizId = campaign?.business_id;
+
+    if (!campaign || !campaignBizId) {
+      logger.warn(`${logPrefix} Campaign join missing for donation payment=${payment.id}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_context_missing' };
+    }
+
+    if (campaignBizId !== donation.business_id) {
+      logger.warn(`${logPrefix} Campaign/donation business_id mismatch — campaign=${campaignBizId} donation=${donation.business_id}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_business_mismatch' };
+    }
+
+    if (!donation.donor_phone) {
+      logger.warn(`${logPrefix} Donation has no donor_phone for payment=${payment.id}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'campaign_donor_phone_missing' };
+    }
+
+    customerPhone = donation.donor_phone;
+    businessId = donation.business_id;
+    referenceCode = donation.reference_code || '';
+    if (campaign.businesses?.name) businessName = campaign.businesses.name;
+    if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
+    serviceName = campaign.title || 'Campaign Donation';
+  }
+
   // ── 3. Fallback: orders via payment metadata ──
   if (!customerPhone) {
     const { data: paymentFull } = await supabase
@@ -352,10 +443,14 @@ export async function sendProactiveConfirmation(
 
   // Fetch subscription tier for white-label checks on emails
   let isWl = false;
+  let subscriptionTier: string | null = null;
+  let businessIsWhitelabel: boolean | null = null;
   try {
-    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', businessId).single();
+    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier, is_whitelabel').eq('id', businessId).single();
     const { isWhiteLabel } = await import('@/lib/whitelabel');
-    isWl = isWhiteLabel(bizTier?.subscription_tier);
+    subscriptionTier = (bizTier?.subscription_tier as string | null | undefined) ?? null;
+    businessIsWhitelabel = (bizTier?.is_whitelabel as boolean | null | undefined) ?? null;
+    isWl = isWhiteLabel(subscriptionTier);
   } catch { /* non-critical */ }
 
   // For web channel bookings, we may not have a phone but should still send email
@@ -414,9 +509,11 @@ export async function sendProactiveConfirmation(
 
   // Slice 5A: Resolve proactive localization once for reuse in confirmation + post-completion
   let proactiveTranslate: ((text: string, pv?: string[]) => Promise<string>) | undefined;
+  let proactiveLanguage = 'en';
   if (customerPhone && businessId) {
     try {
       const proactiveL10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+      proactiveLanguage = proactiveL10n.language || 'en';
       if (proactiveL10n.language !== 'en') {
         proactiveTranslate = proactiveL10n.translate;
       }
@@ -608,7 +705,9 @@ export async function sendProactiveConfirmation(
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
   }
 
-  lines.push('', 'Type *receipt* to get your receipt', 'Type *my bookings* to view your bookings');
+  const nextStepsKind = payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment';
+  const nextStepsShared = resolved?.channel.channel_type === 'shared';
+  lines.push('', 'Type *receipt* to get your receipt', transactionNextSteps(nextStepsKind, nextStepsShared));
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {
@@ -790,6 +889,23 @@ export async function sendProactiveConfirmation(
                     logger.info(`${logPrefix} WAMID recovery succeeded for payment ${payment.id} (already_attached=${recoveryResult.already_attached})`);
                   }
                 }
+              }
+
+              // Owner rule 2026-11-05: every completed transaction ends with a
+              // next-steps menu and "Powered by Waaiio.com". Sent only here, after
+              // this payment's one claimed confirmation was accepted, so a Stage-3
+              // retry never repeats it. Its own try/catch: a menu failure must not
+              // mark the already-accepted confirmation as failed.
+              try {
+                await resolved.sender.sendButtons({
+                  to: phone,
+                  body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
+                  buttons: buildPaymentNextStepsButtons(nextStepsKind, nextStepsShared, proactiveLanguage),
+                  footer: getPoweredByInteractiveFooter(subscriptionTier, businessIsWhitelabel),
+                  messageCategory: 'service',
+                });
+              } catch (menuErr) {
+                logSafeError(logPrefix, 'next-steps-menu', menuErr);
               }
             } else {
               // No WAMID returned but no error thrown — indeterminate
@@ -1517,7 +1633,7 @@ export async function sendProactiveConfirmation(
             await supabase
               .from('bot_sessions')
               .update({ is_active: false, current_step: 'complete' })
-              .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+              .or(`whatsapp_number.eq.${sanitizeFilterValue(stripPlus(customerPhone))},whatsapp_number.eq.+${sanitizeFilterValue(stripPlus(customerPhone))}`)
               .eq('business_id', businessId)
               .eq('is_active', true)
               .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
@@ -1530,7 +1646,7 @@ export async function sendProactiveConfirmation(
         await supabase
           .from('bot_sessions')
           .update({ is_active: false, current_step: 'complete' })
-          .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+          .or(`whatsapp_number.eq.${sanitizeFilterValue(stripPlus(customerPhone))},whatsapp_number.eq.+${sanitizeFilterValue(stripPlus(customerPhone))}`)
           .eq('business_id', businessId)
           .eq('is_active', true)
           .in('current_step', ['await_invoice_payment', 'await_donation_payment']);

@@ -43,9 +43,17 @@ vi.mock('@/lib/constants', () => ({
   getPayoutLimit: vi.fn(() => 500000),
   formatPayoutLimit: vi.fn(() => '₦500,000'),
   formatCurrency: vi.fn(() => '₦100'),
+  getCurrencyCode: vi.fn((cc: string) => {
+    const map: Record<string, string> = { NG: 'NGN', US: 'USD', GB: 'GBP', CA: 'CAD', GH: 'GHS' };
+    if (map[cc]) return map[cc];
+    throw new Error(`unknown country: ${cc}`);
+  }),
   getDocTypeLabel: vi.fn((cc: string, d: string) => d),
   CountryCode: {},
   VerificationLevel: {},
+}));
+vi.mock('@/lib/countries', () => ({
+  loadCountries: vi.fn(),
 }));
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -167,10 +175,10 @@ describe('verification/review: document pre-validation and ordered writes', () =
   } = {}) {
     const defaults = {
       bizSelectResult: { data: { name: 'Test Biz', owner_id: 'u1', country_code: 'NG' }, error: null },
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
-      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
+      bizUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000001' }], error: null },
       profileResult: { data: { email: 'test@test.com' }, error: null },
     };
     const cfg = { ...defaults, ...overrides };
@@ -232,7 +240,8 @@ describe('verification/review: document pre-validation and ordered writes', () =
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['foreign-doc'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000013'],
       }),
     );
     expect(res.status).toBe(400);
@@ -245,12 +254,13 @@ describe('verification/review: document pre-validation and ordered writes', () =
   it('approve: missing document_id returns 400 with no writes', async () => {
     // Pre-validation finds 1 owned doc out of 2 requested
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1', 'nonexistent'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000014'],
       }),
     );
     expect(res.status).toBe(400);
@@ -263,15 +273,16 @@ describe('verification/review: document pre-validation and ordered writes', () =
   it('approve: business update fails AFTER docs/requests succeed returns 500 with log', async () => {
     // Documents and requests write successfully, then business update errors
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
       bizUpdateResult: { data: null, error: { message: 'db error' } },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000011'],
       }),
     );
     expect(res.status).toBe(500);
@@ -284,16 +295,17 @@ describe('verification/review: document pre-validation and ordered writes', () =
 
   it('approve: happy path writes docs, then requests, then business', async () => {
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
-      bizUpdateResult: { data: [{ id: 'b1' }], error: null },
+      bizUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000001' }], error: null },
       profileResult: { data: { email: 'test@test.com' }, error: null },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'approve', level: 'basic', document_ids: ['d1'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'approve', level: 'basic', document_ids: ['00000000-0000-0000-0000-000000000011'],
       }),
     );
     expect(res.status).toBe(200);
@@ -303,15 +315,16 @@ describe('verification/review: document pre-validation and ordered writes', () =
 
   it('reject: business update fails after docs/requests succeed returns 500', async () => {
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null },
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null },
       reqUpdateResult: { data: null, error: null },
       bizUpdateResult: { data: null, error: { message: 'db error' } },
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'reject', reason: 'incomplete docs', document_ids: ['d1'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'reject', reason: 'incomplete docs', document_ids: ['00000000-0000-0000-0000-000000000011'],
       }),
     );
     expect(res.status).toBe(500);
@@ -324,13 +337,14 @@ describe('verification/review: document pre-validation and ordered writes', () =
   it('reject: documents update affected wrong count returns 500', async () => {
     // Pre-validation says 2 docs exist, but UPDATE only touches 1
     setupMocks({
-      docPreValidateResult: { data: [{ id: 'd1' }, { id: 'd2' }], error: null },
-      docsUpdateResult: { data: [{ id: 'd1' }], error: null }, // only 1 updated, expected 2
+      docPreValidateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }, { id: '00000000-0000-0000-0000-000000000012' }], error: null },
+      docsUpdateResult: { data: [{ id: '00000000-0000-0000-0000-000000000011' }], error: null }, // only 1 updated, expected 2
     });
     reviewModule = await import('@/app/api/verification/review/route');
     const res = await reviewModule.POST(
       makeRequest('/api/verification/review', {
-        business_id: 'b1', action: 'reject', reason: 'bad docs', document_ids: ['d1', 'd2'],
+        stepUpId: '00000000-0000-0000-0000-000000000762',
+        business_id: '00000000-0000-0000-0000-000000000001', action: 'reject', reason: 'bad docs', document_ids: ['00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000012'],
       }),
     );
     expect(res.status).toBe(500);
@@ -554,6 +568,20 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
       consumeStepUp: vi.fn().mockResolvedValue(true),
       StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
     }));
+    vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
+    vi.doMock('@/lib/constants', () => ({
+      getPayoutLimit: vi.fn(() => 500000),
+      formatPayoutLimit: vi.fn(() => '₦500,000'),
+      formatCurrency: vi.fn(() => '₦100'),
+      getCurrencyCode: vi.fn((cc: string) => {
+        const map: Record<string, string> = { NG: 'NGN', US: 'USD', GB: 'GBP', CA: 'CAD', GH: 'GHS' };
+        if (map[cc]) return map[cc];
+        throw new Error(`unknown country: ${cc}`);
+      }),
+      getDocTypeLabel: vi.fn((cc: string, d: string) => d),
+      CountryCode: {},
+      VerificationLevel: {},
+    }));
     vi.doMock('@/lib/platformSettings', () => ({
       loadPlatformSettings: vi.fn().mockResolvedValue({
         payout_cooling_period_days: 7,
@@ -603,7 +631,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
       businessesError: null,
       existingPayout: null,
       existingError: null,
-      feesData: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+      feesData: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
       feesError: null,
       paymentsError: null,
       insertResult: { data: { id: 'payout-1' }, error: null },
@@ -618,7 +646,10 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
           eq: vi.fn().mockResolvedValue({ data: cfg.businesses, error: cfg.businessesError }),
         });
       } else if (table === 'business_payouts') {
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: cfg.existingPayout, error: cfg.existingError });
+        chain.eq = vi.fn().mockImplementation((column: string) => column === 'period_end'
+          ? Promise.resolve({ data: cfg.existingPayout ? [{ ...(cfg.existingPayout as Record<string, unknown>), currency: 'NGN' }] : [], error: cfg.existingError })
+          : chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         chain.insert = vi.fn().mockReturnValue({
           select: vi.fn().mockReturnValue({
@@ -710,17 +741,17 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           // Dedup check
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
+        } else if (idx === 2) {
           // Monthly limit check
           chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
-        } else if (idx === 2) {
+        } else if (idx === 3) {
           // INSERT as held + pending flag
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-partial' }, error: null }),
             }),
           });
-        } else if (idx === 3) {
+        } else if (idx === 4) {
           // Flag swap: pending -> failed (after partial link)
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedSwapPayload = payload;
@@ -733,7 +764,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -743,7 +774,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (aIdx === 0) {
           // Batch SELECT returns 2 adjustments
           chain.is = vi.fn().mockResolvedValue({
-            data: [{ id: 'adj-1', amount: -200 }, { id: 'adj-2', amount: -300 }],
+            data: [{ id: 'adj-1', amount: -200, currency: 'NGN' }, { id: 'adj-2', amount: -300, currency: 'NGN' }],
             error: null,
           });
         } else {
@@ -806,15 +837,15 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const idx = payoutsIdx++;
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 3) {
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-claimed' }, error: null }),
             }),
           });
-        } else if (idx === 3) {
+        } else if (idx === 4) {
           // Flag swap
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedSwapPayload = payload;
@@ -827,7 +858,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -837,7 +868,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (aIdx === 0) {
           // Returns 1 adjustment
           chain.is = vi.fn().mockResolvedValue({
-            data: [{ id: 'adj-claimed', amount: -100 }],
+            data: [{ id: 'adj-claimed', amount: -100, currency: 'NGN' }],
             error: null,
           });
         } else {
@@ -899,15 +930,15 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const idx = payoutsIdx++;
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 3) {
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-swap-fail' }, error: null }),
             }),
           });
-        } else if (idx === 3) {
+        } else if (idx === 4) {
           // Flag swap also FAILS
           chain.update = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
@@ -917,7 +948,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -926,7 +957,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const aIdx = adjIdx++;
         if (aIdx === 0) {
           chain.is = vi.fn().mockResolvedValue({
-            data: [{ id: 'adj-sf', amount: -100 }],
+            data: [{ id: 'adj-sf', amount: -100, currency: 'NGN' }],
             error: null,
           });
         } else {
@@ -990,16 +1021,16 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const idx = payoutsIdx++;
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 3) {
           // INSERT
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-promote-fail' }, error: null }),
             }),
           });
-        } else if (idx === 3) {
+        } else if (idx === 4) {
           // Promote CAS returns 0 rows
           chain.update = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
@@ -1010,7 +1041,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
               }),
             }),
           });
-        } else if (idx === 4) {
+        } else if (idx === 5) {
           // Re-read after promote failure
           chain.single = vi.fn().mockResolvedValue({
             data: { id: 'payout-promote-fail', status: 'held', flags: [{ type: 'adjustment_link_pending' }] },
@@ -1019,7 +1050,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1028,7 +1059,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const aIdx = adjIdx++;
         if (aIdx === 0) {
           chain.is = vi.fn().mockResolvedValue({
-            data: [{ id: 'adj-pf', amount: -100 }],
+            data: [{ id: 'adj-pf', amount: -100, currency: 'NGN' }],
             error: null,
           });
         } else {
@@ -1094,9 +1125,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const idx = payoutsIdx++;
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 3) {
           // INSERT — capture payload
           chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedInsertPayload = payload;
@@ -1106,7 +1137,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
               }),
             };
           });
-        } else if (idx === 3) {
+        } else if (idx === 4) {
           // Promote CAS succeeds — capture payload
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedPromotePayload = payload;
@@ -1123,7 +1154,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1132,7 +1163,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const aIdx = adjIdx++;
         if (aIdx === 0) {
           chain.is = vi.fn().mockResolvedValue({
-            data: [{ id: 'adj-happy', amount: -100 }],
+            data: [{ id: 'adj-happy', amount: -100, currency: 'NGN' }],
             error: null,
           });
         } else {
@@ -1209,10 +1240,10 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         if (idx === 0) {
           // Dedup check
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
+        } else if (idx === 2) {
           // Monthly limit check
           chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
-        } else if (idx === 2) {
+        } else if (idx === 3) {
           // INSERT — capture the payload
           chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedInsertPayload = payload;
@@ -1225,7 +1256,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1281,9 +1312,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const idx = payoutsIdx++;
         if (idx === 0) {
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        } else if (idx === 1) {
-          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx === 2) {
+          chain.gte = vi.fn().mockResolvedValue({ data: [], error: null });
+        } else if (idx === 3) {
           // INSERT returns unique violation
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
@@ -1293,7 +1324,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         }
       } else if (table === 'platform_fees') {
         chain.lte = vi.fn().mockResolvedValue({
-          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+          data: [{ transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
           error: null,
         });
       } else if (table === 'payments') {
@@ -1302,7 +1333,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
         const aIdx = adjIdx++;
         if (aIdx === 0) {
           chain.is = vi.fn().mockResolvedValue({
-            data: [{ id: 'adj-uv', amount: -100 }],
+            data: [{ id: 'adj-uv', amount: -100, currency: 'NGN' }],
             error: null,
           });
         } else {
@@ -1609,11 +1640,19 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           // Held payouts query
           chain.eq = vi.fn().mockResolvedValue({
             data: [{
               id: 'held-payout-1',
               business_id: 'b1',
+              currency: 'NGN',
               flags: [{ type: 'adjustment_link_failed', message: 'test failure', severity: 'critical' }],
             }],
             error: null,
@@ -1721,11 +1760,19 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           // Held payouts query — has adjustment_link_pending flag
           chain.eq = vi.fn().mockResolvedValue({
             data: [{
               id: 'held-pending-flag',
               business_id: 'b1',
+              currency: 'NGN',
               flags: [{ type: 'adjustment_link_pending', message: 'Linking 1 adjustment(s)', severity: 'critical' }],
             }],
             error: null,
@@ -1810,7 +1857,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         if (idx === 0) {
           chain.eq = vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'biz-dummy', name: 'Dummy', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic' }],
+              data: [{ id: 'b1', name: 'Dummy', created_at: '2024-01-01', country_code: 'NG', verification_level: 'basic' }],
               error: null,
             }),
           });
@@ -1837,10 +1884,18 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           chain.eq = vi.fn().mockResolvedValue({
             data: [{
               id: 'held-payout-2',
               business_id: 'b1',
+              currency: 'NGN',
               flags: [{ type: 'cooling_period', message: 'was new', severity: 'warning' }],
             }],
             error: null,
@@ -1948,13 +2003,20 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           // INSERT as held + pending flag
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-ok-1', net_amount: 9000 }, error: null }),
             }),
           });
-        } else if (idx === 2) {
+        } else if (idx === 3) {
           // Promote CAS succeeds
           chain.update = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
@@ -1975,7 +2037,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-ok', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),
@@ -1985,11 +2047,18 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       } else if (table === 'payout_adjustments') {
         const aIdx = adjIdx++;
         if (aIdx === 0) {
+          // Historical NULL-currency scan — no ambiguous adjustments.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (aIdx === 1) {
           // Batch adjustments
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-ok', business_id: 'biz-ok', amount: -100 }],
+                data: [{ id: 'adj-ok', business_id: 'biz-ok', amount: -100, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2096,13 +2165,20 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           // INSERT as held + pending
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-adj-1', net_amount: 9000 }, error: null }),
             }),
           });
-        } else if (idx === 2) {
+        } else if (idx === 3) {
           // Flag swap: pending -> failed (captures payload)
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedSwapPayload = payload;
@@ -2120,7 +2196,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-adj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),
@@ -2130,10 +2206,17 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       } else if (table === 'payout_adjustments') {
         const aIdx = adjIdx++;
         if (aIdx === 0) {
+          // Historical NULL-currency scan — no ambiguous adjustments.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (aIdx === 1) {
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-1', business_id: 'biz-adj', amount: -200 }],
+                data: [{ id: 'adj-1', business_id: 'biz-adj', amount: -200, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2219,13 +2302,20 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           // INSERT
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-pf-1', net_amount: 9000 }, error: null }),
             }),
           });
-        } else if (idx === 2) {
+        } else if (idx === 3) {
           // Promote CAS returns 0 rows
           chain.update = vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
@@ -2236,7 +2326,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
               }),
             }),
           });
-        } else if (idx === 3) {
+        } else if (idx === 4) {
           // Re-read after promote failure
           chain.single = vi.fn().mockResolvedValue({
             data: { id: 'payout-pf-1', status: 'held', flags: [{ type: 'adjustment_link_pending' }] },
@@ -2252,7 +2342,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-pf', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),
@@ -2262,10 +2352,17 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       } else if (table === 'payout_adjustments') {
         const aIdx = adjIdx++;
         if (aIdx === 0) {
+          // Historical NULL-currency scan — no ambiguous adjustments.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (aIdx === 1) {
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-pf', business_id: 'biz-pf', amount: -100 }],
+                data: [{ id: 'adj-pf', business_id: 'biz-pf', amount: -100, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2348,12 +2445,19 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) }) }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           chain.insert = vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({ data: { id: 'payout-0row', net_amount: 9000 }, error: null }),
             }),
           });
-        } else if (idx === 2) {
+        } else if (idx === 3) {
           // Flag swap: captures payload
           chain.update = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedSwapPayload = payload;
@@ -2368,7 +2472,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
         chain.in = vi.fn().mockReturnValue({
           is: vi.fn().mockReturnValue({ gte: vi.fn().mockReturnValue({ lte: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({
-              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+              data: [{ business_id: 'biz-0row', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
               error: null,
             }),
           }) }) }),
@@ -2376,10 +2480,17 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       } else if (table === 'payout_adjustments') {
         const aIdx = adjIdx++;
         if (aIdx === 0) {
+          // Historical NULL-currency scan — no ambiguous adjustments.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (aIdx === 1) {
           chain.in = vi.fn().mockReturnValue({
             is: vi.fn().mockReturnValue({
               limit: vi.fn().mockResolvedValue({
-                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200 }],
+                data: [{ id: 'adj-0row', business_id: 'biz-0row', amount: -200, currency: 'NGN' }],
                 error: null,
               }),
             }),
@@ -2466,6 +2577,13 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             }),
           });
         } else if (idx === 1) {
+          // Legacy-currency preflight: no ambiguous historical payouts in this fixture.
+          chain.in = vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          });
+        } else if (idx === 2) {
           // INSERT — capture payload
           chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
             capturedInsertPayload = payload;
@@ -2485,7 +2603,7 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 limit: vi.fn().mockResolvedValue({
-                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false }],
+                  data: [{ business_id: 'biz-noAdj', transaction_amount: 10000, fee_total: 500, gateway_fee: 100, waived: false, is_direct_transfer: false, payments: { currency: "NGN" }}],
                   error: null,
                 }),
               }),

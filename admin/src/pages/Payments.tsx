@@ -43,6 +43,7 @@ export default function Payments() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [refundRequests, setRefundRequests] = useState<Array<{ id: string; payment_id: string; business_id: string; customer_name: string; customer_phone: string; amount: number; currency?: string; reason: string; status: string; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState('');
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
   const [gatewayFilter, setGatewayFilter] = useState('all');
@@ -54,35 +55,67 @@ export default function Payments() {
   const [refundLoading, setRefundLoading] = useState(false);
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
+  const [actionError, setActionError] = useState('');
   const perPage = 20;
 
   const stepUp = useStepUp();
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   const loadingRef = useRef(false);
+  const readableRef = useRef(false);
+  const authorizationEpochRef = useRef(0);
+  const paymentSnapshotRef = useRef<PaymentRecord[]>([]);
+  const requestSnapshotRef = useRef<typeof refundRequests>([]);
+  const pendingActionRef = useRef<{ paymentId: string; requestId?: string; signature: string } | null>(null);
+
+  function contextSignature(paymentId: string, requestId: string | undefined, paymentRows = paymentSnapshotRef.current, requestRows = requestSnapshotRef.current) {
+    const payment = paymentRows.find(row => row.id === paymentId);
+    const request = requestId ? requestRows.find(row => row.id === requestId) : undefined;
+    return JSON.stringify([
+      payment ? [payment.id, payment.business_id, payment.currency || 'UNKNOWN', payment.status, Number(payment.amount), Number(payment.refund_amount || 0)] : null,
+      requestId ? (request ? [request.id, request.payment_id, request.business_id, request.status, Number(request.amount), request.reason] : null) : null,
+    ]);
+  }
+
+  function captureAuthorization(paymentId: string, requestId?: string) {
+    const epoch = ++authorizationEpochRef.current;
+    pendingActionRef.current = { paymentId, requestId, signature: contextSignature(paymentId, requestId) };
+    setActionError('');
+    return epoch;
+  }
+
+  function assertAuthorization(epoch: number) {
+    if (!readableRef.current || loadingRef.current) throw new Error('Payment data is refreshing or unavailable. Retry the refund after reads complete.');
+    if (epoch !== authorizationEpochRef.current) throw new Error('Refund details changed or a read failed. Restart the refund authorization.');
+  }
 
   async function loadData() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
+    readableRef.current = false;
 
     try {
-      const { data: paymentData } = await adminDb
+      const { data: paymentData, error: paymentsError } = await adminDb
         .from('payments')
         .select('*')
         .order('created_at', { ascending: false });
 
+      if (paymentsError || !Array.isArray(paymentData)) throw new Error('Payments read unavailable');
+
       // Resolve business IDs: directly from payment, via booking, or via order
       const bookingIds = [...new Set((paymentData || []).map(p => p.booking_id).filter(Boolean))];
-      const { data: bookings } = bookingIds.length > 0
+      const { data: bookings, error: bookingsError } = bookingIds.length > 0
         ? await adminDb.from('bookings').select('id, business_id, reference_code').in('id', bookingIds)
-        : { data: [] };
+        : { data: [], error: null };
+      if (bookingsError || !Array.isArray(bookings)) throw new Error('Bookings read unavailable');
       const bookingMap = new Map((bookings || []).map(b => [b.id, b]));
 
       const orderIds = [...new Set((paymentData || []).map(p => p.order_id).filter(Boolean))];
-      const { data: orders } = orderIds.length > 0
+      const { data: orders, error: ordersError } = orderIds.length > 0
         ? await adminDb.from('orders').select('id, business_id, reference_code').in('id', orderIds)
-        : { data: [] };
+        : { data: [], error: null };
+      if (ordersError || !Array.isArray(orders)) throw new Error('Orders read unavailable');
       const orderMap = new Map((orders || []).map(o => [o.id, o]));
 
       // Collect all business IDs (from payments + bookings + orders)
@@ -98,17 +131,18 @@ export default function Payments() {
         }
       }
 
-      const { data: businesses } = allBizIds.size > 0
+      const { data: businesses, error: businessesError } = allBizIds.size > 0
         ? await adminDb.from('businesses').select('id, name, category').in('id', [...allBizIds])
-        : { data: [] };
+        : { data: [], error: null };
 
+      if (businessesError || !Array.isArray(businesses)) throw new Error('Businesses read unavailable');
       const givingBizIds = new Set(
         (businesses || []).filter(b => GIVING_CATEGORIES.includes(b.category)).map(b => b.id)
       );
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
 
       // Enrich payments with business name + booking reference
-      const enriched: PaymentRecord[] = (paymentData || [])
+      const resolvedPayments: PaymentRecord[] = (paymentData || [])
         .map(p => {
           const booking = p.booking_id ? bookingMap.get(p.booking_id) : null;
           const order = p.order_id ? orderMap.get(p.order_id) : null;
@@ -119,21 +153,42 @@ export default function Payments() {
             business_name: resolvedBizId ? bizMap.get(resolvedBizId) || 'Unknown' : 'Unknown',
             gateway_ref: booking?.reference_code || order?.reference_code || p.gateway_reference?.slice(-12) || p.id.slice(0, 8),
           };
-        })
-        .filter(p => !givingBizIds.has(p.business_id));
-
-      setPayments(enriched);
+        });
+      const enriched = resolvedPayments.filter(p => !givingBizIds.has(p.business_id));
 
       // Load refund requests and resolve currency from payments
-      const { data: reqData } = await adminDb.from('refund_requests').select('*').order('created_at', { ascending: false });
-      const paymentCurrencyMap = new Map((enriched || []).map(p => [p.id, p.currency || 'NGN']));
+      const { data: reqData, error: requestsError } = await adminDb.from('refund_requests').select('*').order('created_at', { ascending: false });
+      if (requestsError || !Array.isArray(reqData)) throw new Error('Refund requests read unavailable');
+      // Canonical payment currency must survive Giving-category display filtering.
+      const paymentCurrencyMap = new Map(paymentData.map(p => [p.id, p.currency || 'UNKNOWN']));
       const enrichedRequests = (reqData || []).map(r => ({
         ...r,
-        currency: paymentCurrencyMap.get(r.payment_id) || 'NGN',
+        currency: paymentCurrencyMap.get(r.payment_id) || 'UNKNOWN',
       }));
+      const pending = pendingActionRef.current;
+      if (pending && pending.signature !== contextSignature(pending.paymentId, pending.requestId, resolvedPayments, enrichedRequests)) {
+        authorizationEpochRef.current += 1;
+        pendingActionRef.current = null;
+        setActionError('Refund details changed. Restart the refund authorization.');
+      }
+      paymentSnapshotRef.current = resolvedPayments;
+      requestSnapshotRef.current = enrichedRequests;
+      setPayments(enriched);
       setRefundRequests(enrichedRequests);
-    } catch (error) {
-      console.warn('Failed to load payments:', error);
+      setSelected(previous => previous ? enriched.find(payment => payment.id === previous.id) || null : null);
+      setReadError('');
+      readableRef.current = true;
+    } catch {
+      authorizationEpochRef.current += 1;
+      pendingActionRef.current = null;
+      paymentSnapshotRef.current = [];
+      requestSnapshotRef.current = [];
+      setPayments([]);
+      setRefundRequests([]);
+      setSelected(null);
+      stepUpCallbackRef.current = null;
+      stepUp.reset();
+      setReadError('Payment data unavailable. Previous results are stale; refund actions are disabled until a successful retry.');
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -168,7 +223,7 @@ export default function Payments() {
   const totalByCurrency: Record<string, number> = {};
   const refundByCurrency: Record<string, number> = {};
   for (const p of filtered) {
-    const cur = p.currency || 'NGN';
+    const cur = p.currency || 'UNKNOWN';
     totalByCurrency[cur] = (totalByCurrency[cur] || 0) + Number(p.amount || 0);
     if (Number(p.refund_amount || 0) > 0) {
       refundByCurrency[cur] = (refundByCurrency[cur] || 0) + Number(p.refund_amount || 0);
@@ -181,11 +236,11 @@ export default function Payments() {
   const refundedCount = filtered.filter(p => Number(p.refund_amount || 0) > 0).length;
 
   async function handleAdminRefund() {
-    if (!selected) return;
+    if (!selected || !readableRef.current || loadingRef.current) return;
     const amt = parseFloat(refundAmount);
     const remaining = Number(selected.amount) - Number(selected.refund_amount || 0);
     if (isNaN(amt) || amt <= 0) { setRefundError('Enter a valid amount'); return; }
-    if (amt > remaining) { setRefundError(`Maximum refundable: ${fmtCurrency(remaining, selected.currency || undefined)}`); return; }
+    if (amt > remaining) { setRefundError(`Maximum refundable: ${fmtCurrency(remaining, selected.currency || 'UNKNOWN')}`); return; }
 
     setRefundLoading(true);
     setRefundError('');
@@ -196,12 +251,16 @@ export default function Payments() {
       const businessId = selected.business_id;
       const reason = refundReason.trim();
 
+      const authorizationEpoch = captureAuthorization(paymentId);
       const onAuthorized = async (stepUpId: string) => {
+        assertAuthorization(authorizationEpoch);
         const apiUrl = import.meta.env.VITE_API_URL || '';
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData?.session?.access_token;
         if (!token) { setRefundError('Not authenticated'); return; }
 
+        assertAuthorization(authorizationEpoch);
+        pendingActionRef.current = null; // This epoch is dispatching; its own committed changes are no longer pending MFA.
         const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
           method: 'POST',
           headers: {
@@ -244,7 +303,7 @@ export default function Payments() {
         actionType: 'refund',
         targetId: paymentId,
         params: { businessId, amount: amt, reason: reason || null },
-        description: `Refund ${fmtCurrency(amt, selected.currency || undefined)} for payment ${paymentId.slice(0, 8)}...`,
+        description: `Refund ${fmtCurrency(amt, selected.currency || 'UNKNOWN')} for payment ${paymentId.slice(0, 8)}...`,
         onAuthorized,
       });
     } catch {
@@ -259,6 +318,18 @@ export default function Payments() {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+        {stepUp.state.phase === 'error' && <p role="alert" className="ml-3 text-red-800">{stepUp.state.error}</p>}
+      </div>
+    );
+  }
+
+  if (readError) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
+        <p role="alert" className="mt-4 rounded-lg bg-red-50 p-4 text-red-800">{readError}</p>
+        <button type="button" onClick={loadData} className="mt-3 rounded-lg border px-3 py-2">Retry payment data</button>
+        <button type="button" disabled className="ml-2 rounded-lg border px-3 py-2 opacity-50">Export CSV</button>
       </div>
     );
   }
@@ -276,7 +347,7 @@ export default function Payments() {
               ref: p.gateway_ref || p.id.slice(0, 8),
               business: p.business_name,
               amount: p.amount,
-              currency: p.currency || 'NGN',
+              currency: p.currency || 'UNKNOWN',
               gateway: p.gateway || '',
               status: p.status,
               method: p.payment_method || '',
@@ -291,6 +362,10 @@ export default function Payments() {
         </button>
       </div>
 
+      {(actionError || stepUp.state.phase === 'error') && (
+        <p role="alert" className="mt-4 rounded-lg bg-red-50 p-4 text-red-800">{stepUp.state.phase === 'error' ? stepUp.state.error : actionError}</p>
+      )}
+
       {/* Pending Refund Requests */}
       {refundRequests.filter(r => r.status === 'pending').length > 0 && (
         <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
@@ -302,13 +377,13 @@ export default function Payments() {
               <div key={req.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
                 <div>
                   <span className="font-medium text-gray-900">{req.customer_name || req.customer_phone}</span>
-                  <span className="ml-2 text-gray-500">{fmtCurrency(req.amount, req.currency || undefined)}</span>
+                  <span className="ml-2 text-gray-500">{fmtCurrency(req.amount, req.currency || 'UNKNOWN')}</span>
                   {req.reason && <span className="ml-2 text-xs text-gray-400">— {req.reason}</span>}
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!canMutate || !confirm(`Approve and process refund of ${fmtCurrency(req.amount, req.currency || undefined)} to ${req.customer_name || req.customer_phone}?`)) return;
+                      if (!canMutate || !readableRef.current || loadingRef.current || !confirm(`Approve and process refund of ${fmtCurrency(req.amount, req.currency || 'UNKNOWN')} to ${req.customer_name || req.customer_phone}?`)) return;
                       try {
                         const reqId = req.id;
                         const paymentId = req.payment_id;
@@ -316,10 +391,14 @@ export default function Payments() {
                         const amount = req.amount;
                         const reason = req.reason || 'Approved refund request';
 
+                        const authorizationEpoch = captureAuthorization(paymentId, reqId);
                         const onAuthorized = async (stepUpId: string) => {
+                          assertAuthorization(authorizationEpoch);
                           const apiUrl = import.meta.env.VITE_API_URL || '';
                           const { data: session } = await supabase.auth.getSession();
                           const token = session?.session?.access_token;
+                          assertAuthorization(authorizationEpoch);
+                          pendingActionRef.current = null; // Retire only the context matched by the assertion, without yielding.
                           const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -338,7 +417,7 @@ export default function Payments() {
                           actionType: 'refund',
                           targetId: paymentId,
                           params: { businessId, amount, reason },
-                          description: `Approve refund request of ${fmtCurrency(amount, req.currency || undefined)} for ${req.customer_name || req.customer_phone}`,
+                          description: `Approve refund request of ${fmtCurrency(amount, req.currency || 'UNKNOWN')} for ${req.customer_name || req.customer_phone}`,
                           onAuthorized,
                         });
                       } catch { alert('Failed to process refund'); }
@@ -349,7 +428,7 @@ export default function Payments() {
                   </button>
                   <button
                     onClick={async () => {
-                      if (!canMutate || !confirm('Reject this refund request?')) return;
+                      if (!canMutate || !readableRef.current || loadingRef.current || !confirm('Reject this refund request?')) return;
                       await adminDb.from('refund_requests').update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', req.id);
                       await loadData();
                     }}
@@ -471,7 +550,7 @@ export default function Payments() {
                   </td>
                   <td className="px-4 py-3 font-medium text-gray-900">{p.business_name}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {fmtCurrency(p.amount, p.currency || undefined)}
+                    {fmtCurrency(p.amount, p.currency || 'UNKNOWN')}
                   </td>
                   <td className="px-4 py-3 text-gray-600 capitalize">{p.gateway || '—'}</td>
                   <td className="px-4 py-3">
@@ -511,8 +590,8 @@ export default function Payments() {
           <div className="space-y-3 text-sm">
             <DetailRow label="Payment ID" value={selected.id} />
             <DetailRow label="Business" value={selected.business_name || 'Unknown'} />
-            <DetailRow label="Amount" value={fmtCurrency(selected.amount, selected.currency || undefined)} />
-            <DetailRow label="Currency" value={selected.currency?.toUpperCase()} />
+            <DetailRow label="Amount" value={fmtCurrency(selected.amount, selected.currency || 'UNKNOWN')} />
+            <DetailRow label="Currency" value={selected.currency?.toUpperCase() || 'UNKNOWN'} />
             <DetailRow label="Gateway" value={selected.gateway} />
             <DetailRow label="Gateway Ref" value={selected.gateway_ref} />
             <DetailRow label="Status" value={selected.status} />
@@ -561,7 +640,7 @@ export default function Payments() {
                   <p className="text-sm font-semibold text-red-800">Issue Refund</p>
                   {Number(selected.refund_amount || 0) > 0 && (
                     <p className="mt-1 text-xs text-red-600">
-                      Already refunded: {fmtCurrency(Number(selected.refund_amount), selected.currency || undefined)} of {fmtCurrency(selected.amount, selected.currency || undefined)}
+                      Already refunded: {fmtCurrency(Number(selected.refund_amount), selected.currency || 'UNKNOWN')} of {fmtCurrency(selected.amount, selected.currency || 'UNKNOWN')}
                     </p>
                   )}
                   <div className="mt-3 space-y-2">
@@ -572,7 +651,7 @@ export default function Payments() {
                       max={Number(selected.amount) - Number(selected.refund_amount || 0)}
                       value={refundAmount}
                       onChange={e => setRefundAmount(e.target.value)}
-                      placeholder={`Amount (max ${fmtCurrency(Number(selected.amount) - Number(selected.refund_amount || 0), selected.currency || undefined)})`}
+                      placeholder={`Amount (max ${fmtCurrency(Number(selected.amount) - Number(selected.refund_amount || 0), selected.currency || 'UNKNOWN')})`}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
                     <div className="flex gap-2">

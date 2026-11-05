@@ -42,6 +42,11 @@ export interface PaystackCardAuthorization {
   reusable: true;
 }
 
+/** Explicit provider observation. Absence is different from supplied zero. */
+export type VerifiedGatewayFee =
+  | { version: 1; supplied: false }
+  | { version: 1; supplied: true; value: number };
+
 /** Provider-agnostic verification result. Amount/currency from PROVIDER truth. */
 export interface VerifiedPaymentResult {
   provider: PaymentProviderName;
@@ -53,6 +58,7 @@ export interface VerifiedPaymentResult {
   cardLast4?: string;
   cardBrand?: string;
   gatewayFee?: number;
+  verifiedGatewayFee?: VerifiedGatewayFee;
   verifiedAt: string;
   providerStatus?: string;
   cardAuthorization?: PaystackCardAuthorization;
@@ -85,6 +91,17 @@ function validateInput(v: VerifiedPaymentResult): PaymentLifecycleResult | null 
   if (!v.provider || !SUPPORTED_PROVIDERS.has(v.provider)) return reject(`Unsupported provider: '${v.provider}'`, 'invalid_input');
   if (typeof v.amount !== 'number' || !Number.isFinite(v.amount)) return reject(`Non-finite amount: ${v.amount}`, 'invalid_input');
   if (!v.currency?.trim()) return reject('Missing currency', 'invalid_input');
+  // Only a missing property is legacy. A present malformed envelope must not downgrade.
+  if ('verifiedGatewayFee' in v) {
+    const fee = v.verifiedGatewayFee;
+    if (v.provider !== 'paystack' || !fee || typeof fee !== 'object' ||
+        fee.version !== 1 || typeof fee.supplied !== 'boolean' ||
+        (fee.supplied
+          ? !('value' in fee) || !Number.isSafeInteger(fee.value) || fee.value < 0 || fee.value > 2147483647
+          : 'value' in fee)) {
+      return reject('Invalid verified gateway fee observation', 'invalid_gateway_fee');
+    }
+  }
   return null;
 }
 
@@ -226,7 +243,7 @@ export async function authorizeAndFinalize(
   const stagesPaid = { providerPaid: true, businessFinalized: false, customerConfirmed: false };
 
   // ── Stage 2→2.5→3: Delegate to common executor ──
-  return executeStage2Through3(supabase, payment, processPayment, sendConfirmation, logPrefix, stagesPaid);
+  return executeStage2Through3(supabase, payment, processPayment, sendConfirmation, logPrefix, stagesPaid, verified);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -331,6 +348,7 @@ async function executeStage2Through3(
   sendConfirmation: SendConfirmationCallback,
   logPrefix: string,
   stagesPaid: PaymentLifecycleResult['stages'],
+  verified?: VerifiedPaymentResult,
 ): Promise<PaymentLifecycleResult> {
 
   // ── Stage 2: Business finalization ──
@@ -360,13 +378,47 @@ async function executeStage2Through3(
   }
 
   // Claim finalization
-  const { data: claim, error: claimError } = await supabase.rpc('claim_payment_finalization', {
-    p_payment_id: payment.id,
-  });
+  const observation = verified?.verifiedGatewayFee;
+  let claim: { claimed?: boolean; already_completed?: boolean; reason?: string; claim_token?: string; gateway_fee?: number; booking_id?: string; invoice_id?: string; campaign_id?: string; reservation_id?: string; order_id?: string } | null = null;
+  let claimError: unknown = null;
+  try {
+    const result = observation && verified
+      ? await supabase.rpc('claim_payment_finalization_with_verified_fee', {
+        p_payment_id: payment.id,
+        p_provider: verified.provider,
+        p_reference: verified.waaiioReference,
+        p_amount: verified.amount,
+        p_currency: verified.currency,
+        p_fee_supplied: observation.supplied,
+        p_gateway_fee: observation.supplied ? observation.value : null,
+      })
+      : await supabase.rpc('claim_payment_finalization', { p_payment_id: payment.id });
+    claim = result.data;
+    claimError = result.error;
+  } catch (error) {
+    claimError = error;
+  }
 
   if (claimError) {
     logger.withContext({ op: 'authority.finalization-claim', ...safeLogErrorContext(claimError) })
       .error(`${logPrefix} Finalization claim RPC error`);
+    if (observation) {
+      // The RPC may have committed before its response was lost. Reread state,
+      // never execute effects using a token whose ownership was not acknowledged.
+      try {
+        const { data: current, error } = await supabase.from('payments')
+          .select('finalization_completed_at, finalization_processing_at, gateway_fee_claim_sealed_at, gateway_fee_claim_snapshot, verified_gateway_fee')
+          .eq('id', payment.id).single();
+        if (!error && current?.finalization_completed_at) {
+          return executeStage2Through3(supabase, { ...payment, finalization_completed_at: current.finalization_completed_at },
+            processPayment, sendConfirmation, logPrefix, stagesPaid);
+        }
+        if (!error && current?.finalization_processing_at &&
+            Date.parse(current.finalization_processing_at) > Date.now() - 5 * 60 * 1000) {
+          return processing('finalization_claim_response_unknown', stagesPaid);
+        }
+      } catch { /* Unknown state remains retryable without financial effects. */ }
+    }
     return retryable('finalization_claim_error', stagesPaid);
   }
   if (!claim?.claimed) {
@@ -392,7 +444,12 @@ async function executeStage2Through3(
       }, { exactEntityFamily });
       return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
     }
-    return processing(claim?.reason || 'finalization_claim_not_granted', stagesPaid);
+    const reason = typeof claim?.reason === 'string' ? claim.reason : 'finalization_claim_not_granted';
+    if (observation && ['invalid_gateway_fee', 'payment_tuple_mismatch', 'fee_conflict',
+      'fee_snapshot_sealed', 'legacy_fee_reconciliation_required'].includes(reason)) {
+      return { status: 'rejected', retryable: false, reason, stages: stagesPaid };
+    }
+    return processing(reason, stagesPaid);
   }
 
   const claimToken = claim.claim_token as string;

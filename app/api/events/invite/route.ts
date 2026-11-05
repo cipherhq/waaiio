@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { POST as confirmPartyReminder } from '@/app/api/parties/[partyId]/reminders/route';
+import { NextResponse, NextRequest } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
 import { createClient } from '@/lib/supabase/server';
 import { requireCapability } from '@/lib/capabilities/api-guard';
@@ -462,6 +463,12 @@ export async function PUT(request: NextRequest) {
   });
   if (auth instanceof NextResponse) return auth;
   const { service } = auth;
+
+  if (partyId) {
+    if (typeof body.previewToken !== 'string') return NextResponse.json({error:'Review a Party reminder preview first.'},{status:409});
+    const delegated = new NextRequest(request.url, {method:'POST',headers:request.headers,body:JSON.stringify({op:'confirm',token:body.previewToken})});
+    return confirmPartyReminder(delegated,{params:Promise.resolve({partyId})});
+  }
 
   // Get event or party details
   let targetName = '';

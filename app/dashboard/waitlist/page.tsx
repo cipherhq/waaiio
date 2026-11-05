@@ -139,7 +139,7 @@ export default function WaitlistPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Waitlist</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Manage customers waiting for availability.
+            Manage customers waiting for a booking slot to become available. For customers waiting to be served now, use Queue.
           </p>
         </div>
         <button

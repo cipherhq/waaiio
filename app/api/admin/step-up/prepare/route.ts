@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { prepareStepUp, StepUpError } from '@/lib/admin-step-up';
 import type { StepUpAction } from '@/lib/admin-step-up';
+import { channelChangeDescriptor, ChannelChangeError } from '@/lib/admin-channel-change';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 
 const VALID_ACTIONS: StepUpAction[] = [
@@ -10,7 +11,7 @@ const VALID_ACTIONS: StepUpAction[] = [
   'team_grant', 'team_revoke', 'impersonate', 'refund',
   'reseller_payout_approve', 'reseller_payout_reject', 'reseller_payout_mark_paid',
   'reseller_payout_generate',
-  'commercial_config', 'messaging_config', 'messaging_suspension',
+  'commercial_config', 'messaging_config', 'messaging_suspension', 'business_status', 'channel_change_execute',
 ];
 
 export async function OPTIONS(request: NextRequest) {
@@ -34,9 +35,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Params object required' }, { status: 400, headers: cors });
     }
 
+    if (params.channel_change || actionType === 'channel_change_execute') {
+      if (admin.role !== 'admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: cors });
+      const bound = await channelChangeDescriptor(admin, params.channel_change);
+      if (params.previewHash !== bound.hash || actionType !== bound.actionType || targetId !== bound.targetId) {
+        throw new ChannelChangeError('Preview changed. Reload and review it again.');
+      }
+      const result = await prepareStepUp(admin, bound.actionType, bound.targetId, bound.descriptor);
+      return NextResponse.json(result, { headers: cors });
+    }
     const result = await prepareStepUp(admin, actionType, targetId ?? null, params);
     return NextResponse.json(result, { headers: cors });
   } catch (err) {
+    if (err instanceof ChannelChangeError) {
+      return NextResponse.json({ error: err.message, code: 'CHANNEL_CHANGE_RELOAD_REQUIRED' }, { status: err.status, headers: cors });
+    }
     if (err instanceof StepUpError) {
       return NextResponse.json({ error: err.message }, { status: 400, headers: cors });
     }

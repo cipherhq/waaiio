@@ -1,3 +1,16 @@
+import { beforeEach as beforeEnabledChannelFixture, afterEach as afterEnabledChannelFixture } from 'vitest';
+// These positive-path fixtures intentionally exercise enabled allocation.
+// Restore only this server flag; production admission remains disabled by default.
+let previousChannelAdmission: string | undefined;
+beforeEnabledChannelFixture(() => {
+  previousChannelAdmission = process.env.ENABLE_CHANNEL_ALLOCATION_OPERATIONS;
+  process.env.ENABLE_CHANNEL_ALLOCATION_OPERATIONS = 'true';
+});
+afterEnabledChannelFixture(() => {
+  if (previousChannelAdmission === undefined) delete process.env.ENABLE_CHANNEL_ALLOCATION_OPERATIONS;
+  else process.env.ENABLE_CHANNEL_ALLOCATION_OPERATIONS = previousChannelAdmission;
+});
+
 /**
  * Subscribe Now Handler Failure-Path Tests (#263)
  *

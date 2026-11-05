@@ -1,4 +1,6 @@
 'use client';
+import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
 
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -507,7 +509,8 @@ export default function CampaignsPage() {
         </button>
       </div>
 
-      <PageHelp
+      <p className="mt-3 text-sm text-amber-700">{RECIPIENT_POLICY}</p>
+        <PageHelp
         pageKey="campaigns"
         title="Campaigns"
         description="Run fundraising campaigns with goals and progress tracking. Set donation limits, track donors, and manage your fundraising efforts."

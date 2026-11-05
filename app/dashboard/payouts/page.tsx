@@ -8,6 +8,7 @@ import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { t } from '@/lib/dashboard-i18n';
+import { formatCalendarDate } from '@/lib/utils/calendar-date';
 
 interface Bank {
   code: string;
@@ -31,6 +32,7 @@ interface TermsAcceptance {
 }
 
 interface Balance {
+  settlement_held: boolean;
   total_revenue: number;  // all completed business revenue (bookings + orders + invoices)
   gross: number;          // platform-held gross (platform_managed) or = total_revenue (direct_split)
   fees: number;
@@ -52,6 +54,9 @@ interface PayoutRecord {
   gateway_fee: number;
   net_amount: number;
   status: string;
+  status_explanation?: string;
+  recorded_context?: string[];
+  linked_destination?: string;
   paid_at: string | null;
   created_at: string;
 }
@@ -70,11 +75,9 @@ export default function PayoutsPage() {
   const gatewayOptions: Record<string, Array<{ id: string; name: string; desc: string; icon: string }>> = {
     NG: [
       { id: 'paystack', name: 'Paystack', desc: 'Most popular in Nigeria. Fast settlement.', icon: '🟢' },
-      { id: 'flutterwave', name: 'Flutterwave', desc: 'Supports multiple African countries.', icon: '🟡' },
     ],
     GH: [
       { id: 'paystack', name: 'Paystack', desc: 'Available in Ghana. Fast settlement.', icon: '🟢' },
-      { id: 'flutterwave', name: 'Flutterwave', desc: 'Supports mobile money.', icon: '🟡' },
     ],
     US: [
       { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
@@ -92,10 +95,13 @@ export default function PayoutsPage() {
   };
 
   const availableGateways = gatewayOptions[country] || gatewayOptions['NG'];
-  const [selectedGateway, setSelectedGateway] = useState<string>(
-    (business as any).payment_gateway || defaultGateway,
-  );
-  const gateway = selectedGateway;
+  // Normalize only the local setup choice; keep saved destinations/history unchanged.
+  const setupDefaultGateway = defaultGateway === 'flutterwave' ? availableGateways[0].id : defaultGateway;
+  const [selectedGateway, setSelectedGateway] = useState<string>(() => {
+    const savedGateway = (business as any).payment_gateway;
+    return savedGateway === 'flutterwave' ? setupDefaultGateway : savedGateway || setupDefaultGateway;
+  });
+  const gateway = selectedGateway === 'flutterwave' ? setupDefaultGateway : selectedGateway;
   const isStripe = gateway === 'stripe';
 
   const [pageView, setPageView] = useState<PageView>('loading');
@@ -108,6 +114,7 @@ export default function PayoutsPage() {
   const [step, setStep] = useState<SetupStep>('idle');
   const [error, setError] = useState('');
   const [stripeLoading, setStripeLoading] = useState(false);
+  const [settlementHeld, setSettlementHeld] = useState(false);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [recentPayouts, setRecentPayouts] = useState<PayoutRecord[]>([]);
   const [payoutMode, setPayoutMode] = useState<'direct_split' | 'platform_managed'>('platform_managed');
@@ -116,7 +123,10 @@ export default function PayoutsPage() {
 
   // Load initial state
   useEffect(() => {
+    let cancelled = false;
     async function load() {
+      setBalance(null);
+      setSettlementHeld(false);
       const supabase = createClient();
 
       // Check for existing payout account
@@ -127,6 +137,8 @@ export default function PayoutsPage() {
         .eq('is_active', true)
         .maybeSingle();
 
+      if (cancelled) return;
+
       // Check for terms acceptance
       const { data: terms } = await supabase
         .from('payout_terms_acceptance')
@@ -136,18 +148,22 @@ export default function PayoutsPage() {
         .limit(1)
         .maybeSingle();
 
+      if (cancelled) return;
       setExisting(payoutAccount);
       setTermsAccepted(terms);
 
       // Fetch balance in all views (not just connected) so setup view shows earnings
       try {
         const res = await fetch(`/api/payouts/balance?business_id=${business.id}`);
-        if (res.ok) {
+        if (res.ok || res.status === 409) {
           const data = await res.json();
-          setBalance(data);
+          if (cancelled) return;
+          setSettlementHeld(data.settlement_held === true);
+          if (res.ok) setBalance(data);
         }
       } catch { /* ignore */ }
 
+      if (cancelled) return;
       if (payoutAccount) {
         setPageView('connected');
         // Fetch recent payouts for the connected view
@@ -155,7 +171,8 @@ export default function PayoutsPage() {
           const res = await fetch(`/api/payouts/history?business_id=${business.id}&page=1`);
           if (res.ok) {
             const data = await res.json();
-            setRecentPayouts((data.records || []).slice(0, 5));
+            if (cancelled) return;
+            setRecentPayouts((data.payouts || []).slice(0, 5));
           }
         } catch { /* ignore */ }
       } else if (!terms) {
@@ -165,9 +182,10 @@ export default function PayoutsPage() {
       }
     }
     load();
+    return () => { cancelled = true; };
   }, [business.id]);
 
-  // Fetch banks for Paystack/Flutterwave
+  // Fetch banks for the selected setup provider
   useEffect(() => {
     if (isStripe || pageView !== 'setup') return;
     async function fetchBanks() {
@@ -513,6 +531,13 @@ export default function PayoutsPage() {
           </Link>
         </div>
 
+        {settlementHeld && isPlatformManaged && (
+          <div role="status" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">Settlement held for reconciliation</p>
+            <p>Platform-held funds are not available for payout while accounting is reconciled. Any amounts shown are provisional accounting totals.</p>
+          </div>
+        )}
+
         {/* Earnings Stats */}
         {balance && (
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -525,7 +550,7 @@ export default function PayoutsPage() {
               <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(balance.fees, country)}</p>
             </div>
             <div className="rounded-xl border border-green-200 bg-green-50 p-5">
-              <p className="text-xs font-medium text-green-600">{isPlatformManaged ? 'Available for Payout' : 'Net Earned'}</p>
+              <p className="text-xs font-medium text-green-600">{isPlatformManaged ? (settlementHeld ? 'Provisional Accounting Total' : 'Available for Payout') : 'Net Earned'}</p>
               <p className="mt-1 text-2xl font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
             </div>
           </div>
@@ -560,7 +585,7 @@ export default function PayoutsPage() {
                   <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.fees, country)}</p>
                 </div>
                 <div>
-                  <p className="text-blue-600">Available</p>
+                  <p className="text-blue-600">{settlementHeld ? 'Provisional Accounting Total' : 'Available'}</p>
                   <p className="text-lg font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
                 </div>
                 <div>
@@ -689,6 +714,12 @@ export default function PayoutsPage() {
             </div>
           )}
 
+          {error && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* Disconnect confirmation */}
           {showDisconnectConfirm && (
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
@@ -776,9 +807,9 @@ export default function PayoutsPage() {
                           {new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                         </td>
                         <td className="py-2 text-gray-500">
-                          {new Date(p.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          {formatCalendarDate(p.period_start, false)}
                           {' – '}
-                          {new Date(p.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          {formatCalendarDate(p.period_end, false)}
                         </td>
                         <td className="py-2 text-right font-medium text-gray-900">
                           {formatCurrency(p.net_amount, country)}
@@ -793,6 +824,9 @@ export default function PayoutsPage() {
                           }`}>
                             {p.status}
                           </span>
+                          {p.status_explanation && <p className="mt-2 max-w-xs text-xs text-gray-600">{p.status_explanation}</p>}
+                          {p.recorded_context && <p className="mt-1 max-w-xs text-xs text-gray-500">Recorded context: {p.recorded_context.join(' ')}</p>}
+                          {p.linked_destination && <p className="mt-1 max-w-xs text-xs text-gray-500">Linked payout account: {p.linked_destination}</p>}
                         </td>
                       </tr>
                     ))}
@@ -821,6 +855,13 @@ export default function PayoutsPage() {
       />
 
       <div className="mt-8 max-w-lg">
+        {settlementHeld && (termsAccepted?.payout_mode || business.payout_mode) !== 'direct_split' && (
+          <div role="status" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">Settlement held for reconciliation</p>
+            <p>Platform-held funds are not available for payout while accounting is reconciled. Any amounts shown are provisional accounting totals.</p>
+          </div>
+        )}
+
         {/* Earnings Overview */}
         {balance && (
           <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
@@ -838,7 +879,7 @@ export default function PayoutsPage() {
                   </div>
                 </div>
                 <div className="mt-4 rounded-lg bg-green-50 px-4 py-3">
-                  <p className="text-xs text-green-700">Available for Payout</p>
+                  <p className="text-xs text-green-700">{settlementHeld && (termsAccepted?.payout_mode || business.payout_mode) !== 'direct_split' ? 'Provisional Accounting Total' : 'Available for Payout'}</p>
                   <p className="text-xl font-bold text-green-800">{formatCurrency(balance.net_available, country)}</p>
                 </div>
               </>
@@ -970,7 +1011,7 @@ export default function PayoutsPage() {
             <p className="mt-2 text-center text-xs text-gray-400">Accept CashApp, Apple Pay &amp; Google Pay via Square</p>
           </div>
         ) : (
-          /* Paystack/Flutterwave Bank Flow */
+          /* Bank setup flow */
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Add your bank account</h2>
             <p className="mt-1 text-xs text-gray-500">

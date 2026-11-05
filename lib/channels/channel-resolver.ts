@@ -238,10 +238,15 @@ export class ChannelResolver {
         .eq('is_active', true)
         .maybeSingle();
 
-      if (assigned) {
-        const record = assigned as ChannelRecord;
-        this.cacheSet(cacheKey, record);
-        const resolved = this.buildResolved(record);
+      // A business may only send through a shared platform number or a
+      // non-shared channel it owns. A pointer to another business's channel
+      // is ignored (never cached) and resolution falls through below.
+      const assignedRecord = assigned as ChannelRecord | null;
+      if (assignedRecord && assignedRecord.channel_type !== 'shared' && assignedRecord.business_id !== businessId) {
+        console.warn('[ChannelResolver] Ignoring channel pointer not owned by business', { businessId, channelId });
+      } else if (assignedRecord) {
+        this.cacheSet(cacheKey, assignedRecord);
+        const resolved = this.buildResolved(assignedRecord);
         this.stampBusinessId(resolved, businessId);
         return resolved;
       }

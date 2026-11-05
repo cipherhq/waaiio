@@ -93,7 +93,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       const { sendWithTemplate } = await import('@/lib/channels/send-with-template');
       const pollBody = `📊 *${poll.question}*\n\nTap your choice:`;
 
-      await sendWithTemplate({
+      const result = await sendWithTemplate({
         sender: resolved.sender,
         to: phone,
         templateName: 'feedback_request',
@@ -122,7 +122,8 @@ export async function POST(request: NextRequest, { params }: Params) {
           }
         },
       });
-      sent++;
+      if (result.sent) sent++;
+      else failed++;
     } catch (err) {
       logger.error(`[POLL-SEND] Failed for ${phone}:`, (err as Error).message);
       failed++;

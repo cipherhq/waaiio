@@ -14,7 +14,7 @@ export async function GET(
 
   const { data: form } = await supabase
     .from('forms')
-    .select('id, title, description, fields, is_active, business_id')
+    .select('id, title, description, fields, is_active, business_id, settings')
     .eq('token', token)
     .single();
 
@@ -58,5 +58,6 @@ export async function GET(
     business_name: biz?.name || '',
     business_phone: whatsappPhone || biz?.phone || null,
     business_logo: biz?.logo_url || null,
+    marketing_opt_in: (form.settings as Record<string, unknown> | null)?.marketing_opt_in === true,
   });
 }

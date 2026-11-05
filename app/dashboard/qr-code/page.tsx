@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { buildMerchantLink, type MerchantLinkAction } from '@/lib/url';
 
 // ── Poster templates based on business capabilities / use case ──
 const TEMPLATES = [
@@ -46,49 +48,76 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 
 export default function QRCodePage() {
   const business = useBusiness();
-  const [channelPhone, setChannelPhone] = useState('');
+  const searchParams = useSearchParams();
+  const initialTemplate = useMemo(() => {
+    const param = searchParams.get('template');
+    if (param && TEMPLATES.some(t => t.id === param)) return param as TemplateId;
+    return 'generic' as TemplateId;
+  }, [searchParams]);
   const [channelLoaded, setChannelLoaded] = useState(false);
+  // Whether the business's assigned channel is one its /m/{businessId} link can use
+  const [hasBotChannel, setHasBotChannel] = useState(false);
+  // Track whether the resolved channel is a shared channel (for routing context)
+  const [resolvedChannelIsShared, setResolvedChannelIsShared] = useState(false);
 
-  // Load the actual WhatsApp channel phone number (not business.phone which is the owner's contact)
+  // Mirror the /m/{businessId} resolver (app/m/resolve.ts): only the business's
+  // assigned channel (assigned_channel_id || whatsapp_channel_id) counts. There is
+  // no "any shared number" fallback, so an unassigned business shows "not connected".
+  // Reset readiness on dependency change so stale results are discarded.
   useEffect(() => {
-    async function loadChannelPhone() {
+    let cancelled = false;
+    setChannelLoaded(false);
+    setHasBotChannel(false);
+    setResolvedChannelIsShared(false);
+
+    async function loadAssignedChannel() {
       const supabase = createClient();
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
 
-      // Fire all 3 queries in parallel
-      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
-        channelId
-          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle()
-          : Promise.resolve({ data: null }),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
-      ]);
+      // Owners can read their own dedicated channel from the base table (RLS), but
+      // not a shared channel; shared channels are readable via whatsapp_channels_public.
+      const [dedicatedResult, sharedResult] = channelId
+        ? await Promise.all([
+            supabase.from('whatsapp_channels').select('channel_type')
+              .eq('id', channelId).eq('business_id', business.id)
+              .eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
+            queryChannelsPublic(supabase, 'id', (q) => q.eq('id', channelId).maybeSingle()),
+          ])
+        : [{ data: null }, { data: null }];
 
-      // Priority: assigned > dedicated > shared > business.phone fallback
-      const resolved = assignedResult.data?.phone_number
-        || dedicatedResult.data?.phone_number
-        || sharedResult.data?.phone_number
-        || business.phone
-        || '';
+      if (cancelled) return; // Discard obsolete response from prior business context
 
-      setChannelPhone(resolved.replace(/[^0-9]/g, ''));
+      const isDedicatedReady = !!dedicatedResult.data;
+      // The view only lists active shared channels. Country/connection-status
+      // checks stay server-side (app/m/resolve.ts); the browser cannot see
+      // connection_status or the staging-only fallback countries.
+      const isSharedReady = !!sharedResult.data;
+
+      setHasBotChannel(isDedicatedReady || isSharedReady);
+      setResolvedChannelIsShared(!isDedicatedReady && isSharedReady);
       setChannelLoaded(true);
     }
-    loadChannelPhone();
-  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.phone]);
+    loadAssignedChannel();
+    return () => { cancelled = true; };
+  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id]);
 
-  const phone = channelPhone;
-  const cleanPhone = phone;
 
-  const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>(initialTemplate);
+
+  const isQueueTemplate = selectedTemplate === 'queue';
+  // Queue routing uses the resolved channel's type; other templates use business preference.
+  const businessIsShared = !business.wa_method || business.wa_method === 'shared';
+  const isSharedNumber = isQueueTemplate ? resolvedChannelIsShared : businessIsShared;
   const routingCode = isSharedNumber ? (business.bot_code || '') : '';
   const isWhitelabel = PRICING_TIERS[(business.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
-
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('generic');
   const [copied, setCopied] = useState(false);
-  // Deep-link suffix auto-set by template; routing code is always prepended separately
-  const [deepLinkSuffix, setDeepLinkSuffix] = useState('');
+  // Deep-link suffix derived reactively from current template + routing context
+  // (not stored in state — recalculates when routingCode changes after async channel load)
+  const deepLinkSuffix = useMemo(() => {
+    const tmpl = TEMPLATES.find(t => t.id === selectedTemplate);
+    const cap = tmpl?.capabilities?.[0];
+    return cap && routingCode ? cap : '';
+  }, [selectedTemplate, routingCode]);
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
 
@@ -105,28 +134,44 @@ export default function QRCodePage() {
   const effectiveSubtitle = customSubtitle || template.subtitle;
   const effectiveLabel = customLabel || template.label;
 
-  // Build the WhatsApp pre-filled message: routing code is always present (non-editable),
-  // deep-link suffix is auto-set by template selection
-  const prefillText = routingCode
-    ? (deepLinkSuffix ? `${routingCode}:${deepLinkSuffix}` : routingCode)
-    : 'Hi';
-
-  // When template changes, auto-update deep-link suffix
+  // When template changes, reset customization (suffix is derived reactively)
   function handleTemplateChange(templateId: TemplateId) {
     setSelectedTemplate(templateId);
     setCustomColor('');
     setCustomSubtitle('');
     setCustomLabel('');
-
-    const tmpl = TEMPLATES.find(t => t.id === templateId);
-    const cap = tmpl?.capabilities?.[0];
-    setDeepLinkSuffix(cap && routingCode ? cap : '');
   }
 
   const isAttendanceTemplate = selectedTemplate === 'attendance';
-  const activeLink = isAttendanceTemplate
-    ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/checkin/${business.id}`
-    : `https://wa.me/${cleanPhone}?text=${encodeURIComponent(prefillText)}`;
+
+  // Queue sharing requires a real bot channel (not contact-phone fallback)
+  // and, for shared numbers, a routing code to direct customers to the right business
+  const queueReady = isQueueTemplate
+    ? channelLoaded && hasBotChannel && (!isSharedNumber || !!routingCode)
+    : true;
+  const queueLoading = isQueueTemplate && !channelLoaded;
+
+  // Permanent Waaiio links for customer-facing QR codes.
+  // Attendance keeps the canonical /checkin/{id} web URL (not WhatsApp).
+  // All others use /m/{businessId}[/{action}] — the server applies existing
+  // shared bot_code:capability / dedicated "Hi" prefill semantics.
+  const templateAction = useMemo((): MerchantLinkAction | 'attendance' => {
+    const tmpl = TEMPLATES.find(t => t.id === selectedTemplate);
+    if (!tmpl) return 'generic';
+    const map: Record<TemplateId, MerchantLinkAction | 'attendance'> = {
+      book: 'book', order: 'order', pay: 'pay', ticket: 'ticket',
+      donate: 'donate', queue: 'queue', waitlist: 'waitlist',
+      give: 'give', chat: 'chat', attendance: 'attendance', generic: 'generic',
+    };
+    return map[tmpl.id] || 'generic';
+  }, [selectedTemplate]);
+
+  const activeLink = useMemo(() => {
+    if (templateAction === 'attendance') {
+      return `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/checkin/${business.id}`;
+    }
+    return buildMerchantLink(business.id, templateAction);
+  }, [business.id, templateAction]);
 
   // Filter templates to show relevant ones first (matching capabilities), then generic
   const relevantTemplates = TEMPLATES.filter(t =>
@@ -134,13 +179,15 @@ export default function QRCodePage() {
   );
 
   const copyLink = useCallback(() => {
+    if (isQueueTemplate && !queueReady) return; // Guard: queue requires valid bot channel
     navigator.clipboard.writeText(activeLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [activeLink]);
+  }, [activeLink, isQueueTemplate, queueReady]);
 
   // ── Download QR only as PNG ──
   function downloadQROnly() {
+    if (isQueueTemplate && !queueReady) return; // Guard: queue requires valid bot channel
     const canvas = qrOnlyRef.current?.querySelector('canvas');
     if (!canvas) return;
     const url = canvas.toDataURL('image/png');
@@ -152,6 +199,7 @@ export default function QRCodePage() {
 
   // ── Download poster as high-res PNG ──
   async function downloadPoster(size: PosterSize = 'a4') {
+    if (isQueueTemplate && !queueReady) return; // Guard: queue requires valid bot channel
     const sizeConfig = POSTER_SIZES[size];
     const { width, height } = sizeConfig;
     const canvas = document.createElement('canvas');
@@ -198,6 +246,13 @@ export default function QRCodePage() {
       ctx.fillStyle = '#9CA3AF';
       ctx.font = '28px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(business.name || 'Your Business', cx, height / 2 + 280);
+
+      // Queue Send/Join instruction
+      if (isQueueTemplate) {
+        ctx.fillStyle = '#9CA3AF';
+        ctx.font = '20px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('Send the message to join', cx, height / 2 + 320);
+      }
 
       // Powered by Waaiio
       if (!isWhitelabel) {
@@ -269,11 +324,18 @@ export default function QRCodePage() {
       ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText('WhatsApp', cx, 1020);
 
+      // Queue Send/Join instruction
+      if (isQueueTemplate) {
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = '22px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('Send the message to join', cx, 1055);
+      }
+
       // Powered by Waaiio
       if (!isWhitelabel) {
         ctx.fillStyle = 'rgba(255,255,255,0.5)';
         ctx.font = '20px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText('Powered by Waaiio', cx, 1060);
+        ctx.fillText('Powered by Waaiio', cx, isQueueTemplate ? 1080 : 1060);
       }
     } else {
       // ── Full layout: A4 and Table Tent ──
@@ -359,21 +421,39 @@ export default function QRCodePage() {
       ctx.lineTo(width - Math.round(400 * scale), divY);
       ctx.stroke();
 
-      // Fallback text
+      // Fallback: permanent link text
       const fallbackY = divY + Math.round(100 * scale);
       ctx.fillStyle = '#6B7280';
       ctx.font = `${Math.round(52 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
-      ctx.fillText('Or send a message to', cx, fallbackY);
+      ctx.fillText('Or open this link', cx, fallbackY);
 
-      // Phone number
+      // Permanent Waaiio URL (wrap long UUID for legibility)
       ctx.fillStyle = '#111827';
-      ctx.font = `bold ${Math.round(80 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
-      ctx.fillText(phone || cleanPhone, cx, fallbackY + Math.round(120 * scale));
+      const linkFontSize = Math.round(44 * scale);
+      ctx.font = `bold ${linkFontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      const linkText = activeLink;
+      const maxW = width - Math.round(200 * scale);
+      const linkY = fallbackY + Math.round(100 * scale);
+      // Simple two-line wrap if text exceeds canvas width
+      if (ctx.measureText(linkText).width > maxW) {
+        const mid = Math.ceil(linkText.length / 2);
+        ctx.fillText(linkText.slice(0, mid), cx, linkY);
+        ctx.fillText(linkText.slice(mid), cx, linkY + Math.round(60 * scale));
+      } else {
+        ctx.fillText(linkText, cx, linkY);
+      }
 
       // WhatsApp label
       ctx.fillStyle = '#25D366';
       ctx.font = `bold ${Math.round(48 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
-      ctx.fillText('WhatsApp', cx, fallbackY + Math.round(200 * scale));
+      ctx.fillText('WhatsApp', cx, fallbackY + Math.round(220 * scale));
+
+      // Queue-specific Send/Join instruction on exported material
+      if (isQueueTemplate) {
+        ctx.fillStyle = '#6B7280';
+        ctx.font = `${Math.round(36 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.fillText('Send the message to join the queue', cx, fallbackY + Math.round(280 * scale));
+      }
 
       // Footer (hidden for whitelabel)
       if (!isWhitelabel) {
@@ -429,21 +509,40 @@ export default function QRCodePage() {
         />
       </div>
 
-      {channelLoaded && !phone && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <strong>No WhatsApp number found.</strong> Please connect a WhatsApp number in{' '}
+      {channelLoaded && !hasBotChannel && !isQueueTemplate && (
+        <div data-testid="no-whatsapp-channel" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>WhatsApp isn&apos;t connected yet.</strong> Customers who scan this QR code or open this link will see &ldquo;not connected&rdquo; until it is. Connect a WhatsApp number in{' '}
           <a href="/dashboard/whatsapp/connect" className="font-medium underline hover:no-underline">WhatsApp Setup</a>{' '}
           to generate a working QR code and link.
         </div>
       )}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
+      {isQueueTemplate && queueLoading && (
+        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          Loading WhatsApp channel…
+        </div>
+      )}
+
+      {isQueueTemplate && channelLoaded && !queueReady && (
+        <div data-testid="queue-setup-guidance" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>WhatsApp bot setup required for queue sharing.</strong>{' '}
+          {!hasBotChannel
+            ? <>Connect an active WhatsApp bot channel in <a href="/dashboard/whatsapp/connect" className="font-medium underline hover:no-underline">WhatsApp Setup</a> to share your queue QR code.</>
+            : <>Your shared WhatsApp number needs a routing code. Contact support or check your <a href="/dashboard/settings" className="font-medium underline hover:no-underline">Settings</a>.</>
+          }
+        </div>
+      )}
+
+      <div data-testid="qr-content-area" className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* ── Left: Settings ── */}
         <div className="space-y-6">
-          {/* WhatsApp Link */}
-          <div className="rounded-xl border border-gray-100 bg-white p-5">
-            <h2 className="text-sm font-semibold text-gray-900">{isAttendanceTemplate ? 'Your Check-In Link' : 'Your WhatsApp Link'}</h2>
-            <p className="mt-1 text-xs text-gray-400">Share this link on your website, social media, or email</p>
+          {/* WhatsApp Link + Plain QR — withheld when queue template is not ready */}
+          {(!isQueueTemplate || queueReady) ? <><div className="rounded-xl border border-gray-100 bg-white p-5">
+            <h2 className="text-sm font-semibold text-gray-900">{isAttendanceTemplate ? 'Your Check-In Link' : 'Your Permanent Waaiio Link'}</h2>
+            <p className="mt-1 text-xs text-gray-400">
+              Share this link on your website, social media, or email.
+              {!isAttendanceTemplate && ' This permanent Waaiio link stays the same even if your connected WhatsApp number changes.'}
+            </p>
             <div className="mt-3 flex gap-2">
               <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
                 <p className="truncate font-mono text-sm text-gray-700">{activeLink}</p>
@@ -490,6 +589,17 @@ export default function QRCodePage() {
                 </p>
               </div>
             )}
+
+            {isQueueTemplate && queueReady && (
+              <div data-testid="queue-join-guidance" className="mt-3 rounded-lg border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                <strong>How customers join:</strong> Scanning opens WhatsApp with a pre-filled message.{' '}
+                {routingCode
+                  ? 'The customer sends the message to join your queue directly — no menu needed.'
+                  : 'The customer sends the message, then selects "Join Queue" from your menu to join.'
+                }
+                {' '}Scanning alone does not add them to the queue.
+              </div>
+            )}
           </div>
 
           {/* QR Code Download (plain) */}
@@ -507,7 +617,7 @@ export default function QRCodePage() {
                 Download PNG
               </button>
             </div>
-          </div>
+          </div></> : null}
 
           {/* Template selector */}
           <div>
@@ -584,8 +694,8 @@ export default function QRCodePage() {
           </div>
         </div>
 
-        {/* ── Right: Poster Preview ── */}
-        <div>
+        {/* ── Right: Poster Preview — withheld when queue not ready ── */}
+        {(!isQueueTemplate || queueReady) ? <div>
           <div className="sticky top-6">
             <h2 className="mb-3 text-sm font-semibold text-gray-900">Poster Preview</h2>
 
@@ -627,10 +737,10 @@ export default function QRCodePage() {
                 </p>
               </div>
 
-              {/* Divider + fallback */}
+              {/* Divider + permanent link fallback */}
               <div className="border-t border-gray-100 px-6 py-4 text-center">
-                <p className="text-xs text-gray-400">Or send a message to</p>
-                <p className="mt-1 text-lg font-bold text-gray-900">{phone || cleanPhone}</p>
+                <p className="text-xs text-gray-400">Or open this link</p>
+                <p className="mt-1 break-all text-xs font-bold text-gray-900">{activeLink}</p>
                 <p className="mt-0.5 text-xs font-medium text-green-500">WhatsApp</p>
               </div>
 
@@ -674,7 +784,7 @@ export default function QRCodePage() {
               Print this and place it at your counter, storefront, or on flyers
             </p>
           </div>
-        </div>
+        </div> : null}
       </div>
     </div>
   );

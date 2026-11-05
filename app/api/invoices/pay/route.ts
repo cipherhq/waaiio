@@ -16,12 +16,13 @@ async function getDirectGatewayUrl(supabase: SupabaseClient, reference: string):
 
   if (!payment) return null;
 
-  if (payment.gateway === 'paystack' && payment.gateway_reference) {
-    return `https://checkout.paystack.com/${payment.gateway_reference}`;
+  const meta = (payment.metadata || {}) as Record<string, unknown>;
+  const checkoutUrl = meta.checkout_url;
+  if (typeof checkoutUrl === 'string' && checkoutUrl.trim().length > 0) {
+    return checkoutUrl;
   }
 
   if (payment.gateway === 'stripe') {
-    const meta = (payment.metadata || {}) as Record<string, unknown>;
     const sessionId = meta.stripe_session_id as string;
     if (sessionId) {
       try {
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     const result = await initializePayment(supabase, {
       invoiceId: invoice.id,
-      userId: '00000000-0000-0000-0000-000000000000', // public, no auth user
+      userId: null, // public, no authenticated payer
       amount: balance,
       referenceCode: invoice.reference_code,
       businessName: biz.name,

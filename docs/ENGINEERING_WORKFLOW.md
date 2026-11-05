@@ -10,7 +10,7 @@ Permanent engineering process for Waaiio.
 4. **GitHub Issues** — planned and tracked milestones
 5. **Engineering status ledger** (`docs/engineering-status.json`)
 6. **Migration registry** (`docs/MIGRATION_REGISTRY.md`)
-7. **Changelog** (`CHANGELOG.md`)
+7. **Changelog** (`CHANGELOG.md`, plus not-yet-collected per-PR entries in `changelog/unreleased/`)
 8. **Chat handoffs** (`docs/CHAT_HANDOFF_TEMPLATE.md`)
 
 **Chat memory and pasted summaries are never authoritative over GitHub.** If a chat session claims work is complete but `git merge-base --is-ancestor <sha> origin/main` fails, the work is not on main.
@@ -130,7 +130,7 @@ Every new conversation must begin by reading:
 3. `docs/MIGRATION_REGISTRY.md`
 4. The active GitHub Issue
 5. The active pull request
-6. `CHANGELOG.md`
+6. `CHANGELOG.md` and `changelog/unreleased/`
 
 Then confirm current `origin/main` SHA before proposing or changing anything.
 
@@ -165,6 +165,14 @@ For high-risk changes (payment, capability, session state, shared helpers, cross
     - Dependency / Regression Reconciliation (CHANGED INTENTIONALLY / INDIRECTLY AFFECTED / PROVEN UNAFFECTED)
     - Local test evidence
     - Exact-head CI run/jobs
+
+### Phase B self-verification and escalation before handoff
+
+Claude should continue an already-authorized implementation without asking the Owner to reapprove the work's size or its unfinished parts. Track each agreed acceptance ID in the existing Issue/PR through implementation and actual executable proof; preserve earlier cleared items unless a dependency or evidence changes.
+
+Before returning as `READY FOR CTO REVIEW`, Claude must inspect the full changed lifecycle (Graphify plus TS-to-SQL/final-state database authority where relevant), exercise real handlers/rendered UI/disposable PostgreSQL, affected negative/concurrency and neighboring regressions, verify targeted files have **zero skips**, and inspect exact-head protected CI runs/job logs and independent review findings. Clearly distinguish mocks/source checks/build success from runtime coverage; mark missing evidence or pending CI honestly.
+
+Claude can investigate and resolve deterministic failures **within an already authorized scope**, documenting the root cause and bounded corrections. Escalate after two unsuccessful substantive attempts at the same failure, or immediately for product ambiguity, architecture/security/payment changes, migration conflict, permission failure or unapproved external operation. Ask one concrete question supported by evidence; do not silently alter testing expectations or open a new lane. Return for CTO review when evidence is complete, or for a true blocker/required Owner approval. All existing architecture, review, merge, migration and deployment gates remain mandatory.
 
 ### Exact-Head Review
 

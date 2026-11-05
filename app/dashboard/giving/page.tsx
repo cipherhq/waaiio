@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness, useDashboard } from '@/components/dashboard/DashboardProvider';
@@ -47,10 +48,16 @@ export default function GivingPage() {
   const recurringBlockReason = !business.capabilities.includes('recurring')
     ? (business.selectedCapabilities?.includes('recurring')
       ? 'Recurring is paused due to your current plan. Upgrade to activate.'
-      : 'Enable the Recurring capability in Settings > Capabilities first.')
+      : 'Enable Recurring on the Capabilities page first.')
     : !business.recurring_enabled
       ? 'Enable Recurring Payments in Settings > Payments first.'
       : '';
+  // Send the merchant to the page that can clear the block named above.
+  const recurringFixHref = !business.capabilities.includes('recurring')
+    ? (business.selectedCapabilities?.includes('recurring')
+      ? '/dashboard/settings?tab=account'
+      : '/dashboard/capabilities')
+    : '/dashboard/settings?tab=payments&section=recurring';
 
   const fetchCategories = useCallback(async () => {
     const supabase = createClient();
@@ -178,7 +185,7 @@ export default function GivingPage() {
               <span className="text-sm text-gray-700 dark:text-gray-300">Recurring (auto-charge members on schedule)</span>
             </label>
             {recurringBlocked && (
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{recurringBlockReason}</p>
+              <div className="mt-1 text-xs text-amber-600 dark:text-amber-400"><p>{recurringBlockReason}</p><Link className="mt-2 inline-block font-medium underline" href={recurringFixHref}>Open recurring settings</Link></div>
             )}
             {isRecurring && !recurringBlocked && (
               <select value={interval} onChange={e => setInterval(e.target.value as 'weekly' | 'monthly')}

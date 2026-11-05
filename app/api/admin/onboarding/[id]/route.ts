@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
@@ -21,6 +22,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const service = createServiceClient({ noStore: true });
   const body = await request.json();
   const action = String(body.action || '');
+  if (['ensure_shared_channel', 'retry'].includes(action) && !channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
   const { id } = await params;
   const { data: onboarding, error } = await service.from('admin_onboarding_invites').select('*').eq('id', id).maybeSingle();
   if (error || !onboarding) return NextResponse.json({ error: 'Onboarding not found' }, { status: 404 });

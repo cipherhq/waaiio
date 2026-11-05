@@ -3,7 +3,7 @@
  *
  * Proves all 9 required executable proofs from the CTO review:
  * 1-2. Paystack/Flutterwave save_refs preflight blocks mismatch/unavailable → zero save RPC
- * 3. Stripe refs rejected
+ * 3. Stripe catalog refs verified before ref-only save
  * 4. Switch TO Paystack always denied → zero switch RPC
  * 5. Stripe readiness failure → zero switch RPC
  * 6. Unsupported gateway → zero switch RPC
@@ -151,17 +151,6 @@ describe('save_refs Flutterwave preflight', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'active', amount: 9999, currency: 'NGN', interval: 'monthly' } }) });
     const res = await POST(makeReq({ action: 'save_refs', country_code: 'NG', plan_refs: { growth: { flutterwave: '999' } }, expected_version_id: 'uuid-1' }) as never);
     expect(res.status).toBe(400);
-    expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
-  });
-});
-
-// ═══ Proof 3: Stripe plan refs rejected ═══
-describe('save_refs Stripe rejection', () => {
-  it('Stripe refs → 400 rejection', async () => {
-    const res = await POST(makeReq({ action: 'save_refs', country_code: 'NG', plan_refs: { growth: { stripe: 'price_xxx' } }, expected_version_id: 'uuid-1' }) as never);
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain('inline price_data');
     expect(rpcCalls.filter(c => c.fn === 'save_provider_plan_refs')).toHaveLength(0);
   });
 });
@@ -560,5 +549,72 @@ describe('SEC-005 country mutation step-up boundary', () => {
       { action: 'delete_country', country_code: 'NG' },
     );
     expect(deleteCalls).toEqual([{ table: 'countries', code: 'NG' }]);
+  });
+});
+
+describe('#762 Stripe ref-only admin save', () => {
+  const refs = { growth: { stripe: 'price_syntheticPro' }, business: { stripe: 'price_syntheticPremium' } };
+  function country() {
+    mockServiceClient.from.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: { currency_code: 'USD', payment_gateway: 'stripe',
+        pricing: { growth: { price: 29.99 }, business: { price: 59.99 } } }, error: null }),
+    } as never);
+  }
+  function price(id: string, amount: number, patch = {}) {
+    return { id, object: 'price', active: true, type: 'recurring', billing_scheme: 'per_unit', currency: 'usd',
+      unit_amount: amount, unit_amount_decimal: String(amount), custom_unit_amount: null, transform_quantity: null, tiers_mode: null,
+      livemode: false, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+      product: { id: 'prod_synthetic', object: 'product', active: true, livemode: false }, ...patch };
+  }
+  function provider(patch = {}) {
+    mockFetch.mockImplementation(async (url: string) => ({ ok: true, json: async () =>
+      url.includes('price_syntheticPremium') ? price('price_syntheticPremium', 5999, patch) : price('price_syntheticPro', 2999, patch) }));
+  }
+  const body = () => ({ action: 'save_refs', country_code: 'US', plan_refs: refs, expected_version_id: 'synthetic-version', stepUpId: 'synthetic-stepup' });
+  it('verifies both prices then saves exact refs, actor and CAS without tier_prices', async () => {
+    country(); provider();
+    const res = await POST(makeReq(body()) as never); expect(res.status).toBe(200);
+    expect(rpcCalls).toEqual([{ fn: 'save_provider_plan_refs', params: {
+      p_country_code: 'US', p_plan_refs: refs, p_expected_version_id: 'synthetic-version', p_actor_id: 'admin-uuid-1',
+    } }]);
+    expect(consumeStepUp).toHaveBeenCalledWith(expect.objectContaining({ userId: 'admin-uuid-1', aal: 'aal2' }),
+      'synthetic-stepup', 'provider_config', 'save_refs',
+      { action: 'save_refs', country_code: 'US', plan_refs: refs, expected_version_id: 'synthetic-version', tier_prices: null });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls.every(([, opts]) => opts.method === 'GET')).toBe(true);
+  });
+  it.each(['', null, 12, 'price_bad/path'])('rejects invalid Stripe ref %# with zero save', async ref => {
+    country(); const res = await POST(makeReq({ ...body(), plan_refs: { growth: { stripe: ref } } }) as never);
+    expect(res.status).toBe(400); expect(rpcCalls).toHaveLength(0); expect(mockFetch).not.toHaveBeenCalled();
+  });
+  it.each([{ active: false }, { currency: 'gbp' }, { unit_amount: 1 }, { product: null }])('denies invalid provider price %#', async patch => {
+    country(); provider(patch); const res = await POST(makeReq(body()) as never);
+    expect(res.status).toBe(400); expect(rpcCalls).toHaveLength(0);
+  });
+  it('rejects tier_prices in Stripe saves before provider read or RPC', async () => {
+    country(); const res = await POST(makeReq({ ...body(), tier_prices: { growth: { price: 49 } } }) as never);
+    expect(res.status).toBe(400); expect(mockFetch).not.toHaveBeenCalled(); expect(rpcCalls).toHaveLength(0);
+  });
+  it('fails closed on provider rejection', async () => {
+    country(); mockFetch.mockRejectedValueOnce(new Error('synthetic timeout'));
+    expect((await POST(makeReq(body()) as never)).status).toBe(400); expect(rpcCalls).toHaveLength(0);
+  });
+  it('preserves CAS conflict response after valid preflight', async () => {
+    country(); provider();
+    mockServiceClient.rpc.mockResolvedValueOnce({ data: null, error: { message: 'config_version_conflict' } } as never);
+    expect((await POST(makeReq(body()) as never)).status).toBe(409);
+  });
+  it('denies missing admin before preflight/save', async () => {
+    const { requirePlatformAdmin } = await import('@/lib/admin-auth');
+    vi.mocked(requirePlatformAdmin).mockResolvedValueOnce(null);
+    expect((await POST(makeReq(body()) as never)).status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled(); expect(rpcCalls).toHaveLength(0);
+    expect(requirePlatformAdmin).toHaveBeenCalledWith(expect.anything(), { requiredRole: 'admin' });
+  });
+  it('denies failed action-bound step-up before preflight/save', async () => {
+    vi.mocked(consumeStepUp).mockRejectedValueOnce(new StepUpError('synthetic binding mismatch'));
+    expect((await POST(makeReq(body()) as never)).status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled(); expect(rpcCalls).toHaveLength(0);
   });
 });

@@ -197,7 +197,11 @@ export async function verifyPromoCode(input: VerificationInput): Promise<Verific
   });
 
   if (error) {
-    // RPC error is non-critical — returns invalid message to user
+    // Keep the response contract; never log RPC payloads or submitted claim data.
+    logger.error('promo.verify', 'claim_promo_code RPC failed', {
+      businessId: input.businessId,
+      campaignId: campaign.id,
+    });
     return {
       result: 'invalid',
       message: appendFormatHint(campaign.invalid_message, campaign.code_format),

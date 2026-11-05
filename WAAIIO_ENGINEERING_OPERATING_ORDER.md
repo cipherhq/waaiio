@@ -1,6 +1,6 @@
 # Waaiio Engineering Standing Operating Order
 
-> Canonical governance document for Waaiio engineering, security, release, production E2E certification, and Claude/ChatGPT/Owner collaboration.
+> Canonical governance document for Waaiio engineering, security, release, production E2E certification, and Claude/CTO-reviewer/Owner collaboration.
 > Source: GitHub issue #220 and its governance addenda. This file is the authoritative version once merged to protected main.
 
 ---
@@ -9,7 +9,14 @@
 
 - **Owner** = final business/product authority and separate merge/deploy/production-mutation authority.
 - **Claude** = primary repository auditor/reviewer/implementer.
-- **ChatGPT** = independent CTO, architecture/security/release gate; not merely a second reviewer.
+- **CTO / reviewer of record** = an independent Claude reviewer (see below). This role is the architecture/security/release gate, not merely a second reviewer.
+
+**Reviewer of record (Owner decision 2026-11-03).** The CTO review role is performed by an **independent Claude reviewer**, every time.
+- **Who:** a separate Claude session or agent, not the implementing Claude. It starts from fresh context.
+- **How:** it makes no changes to code, branches, data, infrastructure or providers. It reviews the exact head SHA, uses the Supabase, GitHub and Vercel MCP connectors and Graphify for evidence, and returns **READY FOR MERGE**, **BLOCKED** or **FAILED -- CTO HELP NEEDED**.
+- **Posting:** it may post only its own review and checkpoint on GitHub. If it cannot post, the orchestrating session posts its output verbatim, unedited, with the reviewer's session or agent ID and the reviewed SHA.
+- **Two-reviewer gate:** two such reviewers, each with its own fresh context.
+- **ChatGPT** (the earlier CTO) may still be used when the Owner asks. It is no longer required. Elsewhere in these documents, "CTO" means the reviewer of record.
 
 ## Evidence Hierarchy
 
@@ -29,7 +36,7 @@ Repository/database/runtime/executable-test evidence beats:
 For every new or reopened P0/P1 claim, launch blocker, or proposed remediation of a historical finding:
 
 1. **Primary auditor** records a precise hypothesis and relevant invariant, exact code SHA, current source/caller path, migration/schema contract, earlier remediations, tests, known feature flags, and which environment is affected. Do not infer current state from issue title/status or archived reports.
-2. An **independent Evidence Verification Agent** (Codex or ChatGPT/CTO or separately tasked independent reviewer) checks the hypothesis against current GitHub repository, applicable database/runtime evidence and exact-head executable tests. Independence means checking sources, not echoing a Claude summary. For financial/provider claims, trace real funds custody and provider state when that claim requires it; if credentials or access are missing, record the limitation rather than guessing.
+2. An **independent Evidence Verification Agent** (Codex, the CTO reviewer of record, or another separately tasked independent reviewer) checks the hypothesis against current GitHub repository, applicable database/runtime evidence and exact-head executable tests. Independence means checking sources, not echoing a Claude summary. For financial/provider claims, trace real funds custody and provider state when that claim requires it; if credentials or access are missing, record the limitation rather than guessing.
 3. **Proof standard:** Cite a reproducible failing behavior/test, authoritative database/runtime discrepancy, or a complete reachable code + schema trace with concrete failure/impact. Explicitly distinguish a code defect from production deployment, a conditional risk from an active failure, and unverified certification from malfunction.
 4. **Mandatory finding states:** `CONFIRMED ACTIVE`, `CONFIRMED CODE DEFECT — DEPLOYMENT UNVERIFIED`, `FIXED`, `NOT REPRODUCED`, `UNVERIFIED / EVIDENCE GAP`, `PRODUCT DECISION NEEDED`. Only confirmed findings receive present-tense defect severity. Unverified hypotheses must not inflate P0/P1 counts or automatically trigger implementation.
 5. **Severity gate:** P0 requires evidence of a critical, actually applicable failure or provably reachable severe security/financial exposure; P1 requires a specific supported material defect. An umbrella audit, missing provider acceptance proof, stale severity label, or theoretical concern is not itself a confirmed P0. Lack of acceptance evidence may separately block certification of that precise capability. No unsafe live transactions are required to prove a risk when deterministic safe evidence suffices.
@@ -53,12 +60,12 @@ For security, payments, financial state, migrations, authorization, concurrency,
 1. Claude performs **Phase A audit + blast-radius mapping** first.
 2. Claude posts all substantive evidence to the GitHub issue, not chat.
 3. Claude ends Phase A with explicit **AGREE** or **PUSHBACK** on the proposed architecture.
-4. ChatGPT independently reads GitHub, verifies repository/database/runtime evidence, and makes the CTO architecture decision.
-5. Claude and ChatGPT must substantively agree before implementation.
+4. The CTO reviewer independently reads GitHub, verifies repository/database/runtime evidence, and makes the CTO architecture decision.
+5. Claude and the CTO reviewer must substantively agree before implementation.
 6. If they cannot agree on a genuine product/business tradeoff, escalate to Owner with a concise decision question and recommended options.
 7. Claude implements only after agreement, on a dedicated branch/PR.
 8. Claude runs executable tests/CI, posts evidence to GitHub, then stops.
-9. ChatGPT independently reviews the exact final PR head SHA and returns **READY FOR MERGE** or **BLOCKED**.
+9. The CTO reviewer independently reviews the exact final PR head SHA and returns **READY FOR MERGE** or **BLOCKED**.
 10. Owner separately authorizes merge.
 11. Protected-main CI must pass after merge.
 12. Deployment and production/database mutation are separate authorization phases unless Owner explicitly combines them.
@@ -80,7 +87,7 @@ GitHub is the canonical workspace for substantive engineering review. Chat is th
 
 ### Trigger
 
-When the owner says **"Claude done"**, **"review it"**, or equivalent, ChatGPT/CTO must proceed directly from GitHub without asking the owner to relay Claude output.
+When the owner says **"Claude done"**, **"review it"**, or equivalent, CTO must proceed directly from GitHub without asking the owner to relay Claude output.
 
 ### CTO review workflow
 
@@ -100,7 +107,7 @@ For changes requiring Claude/CTO substantive agreement, the discussion happens o
 - Claude posts explicit **AGREE** or **PUSHBACK** with repository/schema/runtime evidence there.
 - CTO resolves it there before implementation proceeds.
 
-The owner should not have to copy messages between Claude and ChatGPT.
+The owner should not have to copy messages between Claude and the CTO reviewer.
 
 ### Chat discipline
 
@@ -125,36 +132,25 @@ If Claude is stuck or evidence is insufficient after reasonable investigation:
 
 Do not repeatedly re-audit/rewrite the same material without new evidence.
 
+## Autonomous Execution, Self-Verification, and Handoff Gate
+
+**Owner directive (2026-10-28):** Once Phase A/architecture approval and implementation authorization have been granted, Claude owns completion of the *entire* approved acceptance contract. Do not pause to ask whether to finish already-authorized SQL, application code, integration, or tests merely because the work is large. This changes execution discipline, not product authority, release permissions, or the mandatory CTO review.
+
+1. **Start with the durable acceptance set.** Read the issue, approved decisions, latest CTO checkpoint, current main and lane worktree. Record each remaining acceptance ID, responsible runtime path, required executable proof, and status in the existing GitHub issue/PR. Mark previously cleared findings and only reopen when the recorded dependency scope or evidence has changed. Do not modify another lane or invent migration reservations.
+2. **Ask early when an answer is genuinely needed.** Escalate a missing Owner product/business rule, an unresolved architectural or migration-order conflict, unavailable required access, or a security/release authorization boundary. Ask one precise question with observed evidence, options and recommended safe path. Do not seek duplicate permission for the same already-approved task. Continue independent safe work when possible; do not implement the disputed part by assumption.
+3. **Finish and verify before handoff.** Trace the complete affected lifecycle (entry point, caller, database authority, downstream state, UI/bot response, and integration) with Graphify plus TypeScript-to-SQL RPC linkage and final-state SQL/RLS/grants where applicable. Exercise actual handlers, rendered UI/Playwright, disposable PostgreSQL, negative, concurrency, tenant, financial and neighboring regression paths as appropriate. Source-string checks, mocks and a successful build are not substitutes for executable acceptance evidence.
+4. **Inspect the exact evidence, not the badge.** For each required test file record its real runner/job/step, pass/fail/skip counts (**zero skipped targeted tests**), and what was truly exercised; disclose wider-suite intentional skips separately. Check all currently required protected-branch CI jobs on the final PR HEAD, not an older SHA, and read failing logs. Never state that a CI job proves tests it did not run.
+5. **Self-review the whole agreed scope.** Confirm every acceptance item, preserve accepted fixes, run Codex/independent review as required, distinguish AGREE/PUSHBACK, and post exact head/base, changed-file inventory, dependencies, test logs, CI jobs, review threads, and residual risks on GitHub. Do not hide incomplete functions, unrun tests, or pending CI behind a 'done' report.
+6. **Return only at a meaningful gate.** Handoff states are `READY FOR CTO REVIEW` (full authorized implementation and exact-head evidence complete), `PRODUCT DECISION NEEDED`, `BLOCKED — CTO HELP REQUESTED`, or a mandatory separate Owner authorization gate. If CI is pending, remain `AWAITING CI`, monitor while the session permits, and do not call the work complete. No claim of merge, migration application, deployment, staging acceptance, or production verification follows from PR/CI readiness alone.
+
 ## Failure Escalation Gate
 
-When Claude encounters a new CI, runtime, PostgreSQL, migration, authorization, concurrency, provider, or executable-test failure during an implementation/correction round, Claude must **stop auto-correcting after identifying the failure** unless the failure is a trivial deterministic typo already covered by an explicitly approved correction plan.
+The goal is to avoid speculative correction loops **without returning every routine engineering failure to the Owner**.
 
-### Required behavior
-
-1. Capture the exact failing SHA, workflow/run/job/step or local command, and the smallest useful error/log excerpt.
-2. Classify the failure: product logic, migration/SQL, CI/test harness, fixture/environment, flaky/unrelated, or unknown.
-3. State the affected acceptance ID/invariant and dependency scope.
-4. Post `FAILED -- CTO HELP REQUESTED` to the active PR with evidence and a concise diagnosis. Do not silently broaden scope.
-5. Stop and wait for ChatGPT/CTO direction before changing product architecture, migrations, security/authorization semantics, test expectations, CI harness behavior, or neighboring dependencies.
-6. ChatGPT performs dependency-aware review of the failure and returns a bounded correction plan or explicitly authorizes Claude to continue diagnosis.
-7. Claude then implements only the approved correction, runs targeted executable evidence first, then the broader required suite/CI, and stops again at the normal CTO review gate.
-
-### Anti-loop rule
-
-Do not push/fail/fix repeatedly by discovering one CI/schema/fixture error at a time. A second materially different failure in the same correction area automatically triggers this escalation gate even if the first correction was locally obvious.
-
-### Evidence/safety rule
-
-Never weaken or replace an acceptance test merely to make CI pass without CTO agreement. If the harness cannot prove the intended invariant (for example RLS under a superuser connection), escalate and fix/provide a faithful proof path rather than lowering the test.
-
-### Exceptions
-
-Claude may continue without escalation only when:
-
-- the failure is an explicitly expected negative-path assertion inside a passing test; or
-- the exact failure mode and correction were already authorized in the current CTO plan (for example, a known formatting/lint fix explicitly included in the agreed correction scope).
-
-This gate complements the dependency-aware delta-review/checkpoint model; it does not reduce the existing evidence, merge, deployment, or owner-authorization requirements.
+- For a deterministic failure within the **already approved scope**, Claude may inspect logs, identify a root cause, make the smallest technically justified correction, and rerun the affected executable test **without requesting renewed permission**. Capture the failing command/SHA, diagnosis and each substantive correction attempt in the existing GitHub record. Do not broaden the scope.
+- After **two unsuccessful substantive correction attempts for the same root cause**, or when the agent cannot obtain faithful executable evidence, stop and post `BLOCKED — CTO HELP REQUESTED` with the exact failing SHA/run/job/step, minimal log excerpt, affected invariant, investigated callers/schema, attempts, and a recommended bounded next step. A materially new failure in the same correction area also warrants root-cause review rather than blind fix/push cycles.
+- **Stop immediately** (without consuming two attempts) for an unknown product decision; a change to accepted architecture, money, security/authorization semantics, test expectations or CI safeguards; unreserved/conflicting migration; unapproved environment/provider operation; missing privilege or a 401/403; destructive action; or an unsafe concurrency/data-loss risk. Request the existing CTO/Owner gate. Never route around permissions, disable tests or change an expected outcome to obtain green CI.
+- Expected negative-path assertions are not failures. A previously CTO-authorized correction may be executed as authorized. The standard Phase A, two-reviewer high-risk, exact-SHA CTO review, protected main, and separate Owner merge/migration/deployment/live-provider approval gates remain in force.
 
 ## Dependency-Aware Delta Review and CTO Checkpoints
 
@@ -174,7 +170,7 @@ Delta review does **not** replace the initial full audit.
 
 ### Exact-SHA CTO checkpoint
 
-After ChatGPT independently verifies a finding or invariant at an exact SHA, the durable GitHub control record should identify:
+After the CTO reviewer independently verifies a finding or invariant at an exact SHA, the durable GitHub control record should identify:
 
 - checkpoint SHA and base SHA;
 - cleared acceptance/finding IDs;
@@ -186,7 +182,7 @@ A cleared item is trusted only to the extent of its recorded exact-SHA evidence 
 
 ### Correction-round review cursor
 
-For the next correction round, ChatGPT starts from the most recent valid CTO checkpoint and reviews:
+For the next correction round, the CTO reviewer starts from the most recent valid CTO checkpoint and reviews:
 
 1. the complete delta from checkpoint SHA to new PR head;
 2. direct and security-relevant callers/callees/dependencies of the changed code, even when those dependency files are unchanged;
@@ -205,13 +201,13 @@ A previously cleared finding/invariant automatically reopens when any of the fol
 - the PR base changes/rebases/merges new base behavior that can affect the dependency scope;
 - exact-head CI, PostgreSQL, runtime, production, or other executable evidence contradicts the prior clearance;
 - the new change expands the original blast radius;
-- ChatGPT cannot establish with high confidence that the prior dependency assumptions still hold.
+- the CTO reviewer cannot establish with high confidence that the prior dependency assumptions still hold.
 
 When dependency impact is uncertain, **err toward re-review**, not toward preserving the clearance.
 
 ### High-risk invariants remain conservative
 
-For payments, financial state, authorization, RLS/grants, cross-tenant behavior, migrations, concurrency, replay/idempotency, privileged RPCs, and state transitions, ChatGPT must continue tracing the affected dependency chain and requiring executable evidence. Delta review is an efficiency mechanism, never a substitute for database/runtime proof.
+For payments, financial state, authorization, RLS/grants, cross-tenant behavior, migrations, concurrency, replay/idempotency, privileged RPCs, and state transitions, the CTO reviewer must continue tracing the affected dependency chain and requiring executable evidence. Delta review is an efficiency mechanism, never a substitute for database/runtime proof.
 
 ### Claude correction-round closure requirement
 
@@ -222,11 +218,11 @@ Claude must not patch only the latest sentence from a CTO review. Before reporti
 - inspect the dependency impact of its correction;
 - rerun all required affected executable tests plus the required full CI suite;
 - post exact new SHA, delta summary, evidence, and any AGREE/PUSHBACK;
-- stop for ChatGPT exact-SHA review.
+- stop for the CTO reviewer's exact-SHA review.
 
 ### Final pre-merge release gate
 
-Before **READY FOR MERGE**, ChatGPT still performs a final exact-head release pass covering:
+Before **READY FOR MERGE**, the CTO reviewer still performs a final exact-head release pass covering:
 
 - every remaining/open finding;
 - all automatically reopened findings;
@@ -287,7 +283,7 @@ Rules:
 
 ## New-Chat Bootstrap Contract
 
-When Owner says **`Continue Waaiio`** in a new chat, ChatGPT must:
+When Owner says **`Continue Waaiio`** in a new chat, the Claude session the Owner is talking to must:
 
 1. read this Standing Operating Order;
 2. read the **Waaiio Active Release Control** issue;
@@ -302,12 +298,12 @@ When Owner says **`Continue Waaiio`** in a new chat, ChatGPT must:
 - Corrections stay on the same PR unless genuinely separate.
 - Testing authorization is not merge/deploy/production-mutation authorization.
 - No production mutation/deployment without separate Owner authorization.
-- Merge requires ChatGPT exact-SHA review plus explicit Owner authorization.
+- Merge requires the CTO reviewer's exact-SHA review plus explicit Owner authorization.
 - All existing safety rules remain unchanged: repository/runtime evidence wins; corrections stay on the same PR; merge requires exact-head CTO approval plus separate owner authorization; production mutation/deployment remains separately authorized.
 
 ## MCP, Security, Access, and Non-Regression Operating Protocol
 
-This protocol applies to Claude, ChatGPT/CTO, and any connected tool or agent used for Waaiio work.
+This protocol applies to Claude, CTO, and any connected tool or agent used for Waaiio work.
 
 ### Security objective: least privilege without functional lockout
 
@@ -395,10 +391,10 @@ The target is **secure, understandable, testable, and sufficient** — neither u
 
 ### Claude/CTO collaboration requirement
 
-Claude and ChatGPT/CTO must actively challenge each other's assumptions on security-sensitive and cross-cutting work.
+Claude and CTO must actively challenge each other's assumptions on security-sensitive and cross-cutting work.
 
 - Claude performs repo/runtime/MCP investigation and posts evidence plus explicit **AGREE** or **PUSHBACK** when architecture is under review.
-- ChatGPT/CTO independently checks the exact evidence, dependency scope, and security/access contract before approving implementation or release.
+- CTO independently checks the exact evidence, dependency scope, and security/access contract before approving implementation or release.
 - Neither agent treats the other's summary as proof.
 - Disagreement is resolved with repository/database/runtime evidence where possible.
 - Genuine business tradeoffs are escalated to Owner rather than being silently decided by an agent.
@@ -419,6 +415,11 @@ The following remain separate gates unless Owner explicitly combines them:
 10. live provider/financial/Meta actions.
 
 Authorization for one gate does not imply authorization for the next.
+
+**Release Process V3 combination (Owner decision 2026-11-03, Issue #843).** For a release that passes the reusable gate (Release Gate V2 §9), one Owner approval of the generated release packet covers gates 5, 7 and 9 for that exact packet.
+- Gates 3 (merge), 8 (production migration) and 10 (live provider/financial/Meta actions) remain separate Owner approvals.
+- Gates 4 and 6 (staging migration and staging test-data changes) remain separate unless the Owner combines them for a specific release.
+- This takes effect only when both are merged: the Release Gate V2 §9.4 tooling (digest-bound, single-use packet approval and the production re-check before each deployment step) and the §9.5 reusable gate. Until then, the rule above applies (gates are separate unless the Owner explicitly combines them).
 
 ### Required closure evidence
 

@@ -53,10 +53,15 @@ vi.mock('@/lib/supabase/server', () => ({
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: vi.fn().mockReturnValue({
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-      }),
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === 'messaging_opt_outs' || table === 'customer_consents') {
+        const permission: Record<string, any> = {};
+        for (const method of ['select', 'eq', 'in', 'or', 'is', 'order', 'limit']) permission[method] = vi.fn(() => permission);
+        permission.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ count: 0, error: null }).then(resolve);
+        permission.maybeSingle = vi.fn().mockResolvedValue({ data: { status: 'granted', expires_at: null }, error: null });
+        return permission;
+      }
+      return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: [], error: null }) }) };
     }),
   }),
 }));

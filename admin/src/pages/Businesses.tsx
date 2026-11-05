@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
@@ -11,6 +11,7 @@ import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { Building2, CheckCircle, Clock, Ban, Search, FlaskConical, Shield } from 'lucide-react';
 import { getCurrencyCode, type CountryCode } from '@/lib/verification';
+import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
 import { logAudit } from '@/lib/auditLog';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, PLAN_LABELS, tierMeetsRequirement, type SubscriptionTier } from '@shared/capabilities';
 
@@ -36,6 +37,7 @@ interface Business {
   payout_mode: string;
   status: string;
   phone: string | null;
+  email: string | null;
   city: string | null;
   neighborhood: string | null;
   created_at: string;
@@ -63,6 +65,47 @@ interface ServiceStats {
   featured: number;
 }
 
+
+type ResourceRead<T> = { status: 'loading' | 'ready' | 'error'; data: T | null; retry: () => void };
+
+// A request identity changes during render on selection changes, before effects
+// can run. Results from an earlier selection or retry never become visible.
+function useBusinessResource<T>(businessId: string | null, read: (id: string) => Promise<T>): ResourceRead<T> {
+  const [request, setRequest] = useState({ businessId, generation: 0 });
+  const [result, setResult] = useState<{ request: typeof request; status: 'ready' | 'error'; data: T | null } | null>(null);
+  if (request.businessId !== businessId) {
+    setRequest({ businessId, generation: request.generation + 1 });
+  }
+  const requestRef = useRef(request);
+  requestRef.current = request;
+  const readRef = useRef(read);
+  readRef.current = read;
+  useEffect(() => {
+    if (!businessId || request.businessId !== businessId) return;
+    let cancelled = false;
+    const current = () => !cancelled && requestRef.current === request;
+    void readRef.current(businessId).then(data => {
+      if (current()) setResult({ request, status: 'ready', data });
+    }).catch(() => {
+      if (current()) setResult({ request, status: 'error', data: null });
+    });
+    return () => { cancelled = true; };
+  }, [businessId, request]);
+  const visible = request.businessId === businessId && result?.request === request ? result : null;
+  return {
+    status: visible?.status || 'loading',
+    data: visible?.status === 'ready' ? visible.data : null,
+    retry: () => setRequest(previous => ({ businessId, generation: previous.generation + 1 })),
+  };
+}
+
+function ResourceNotice({ label, resource }: { label: string; resource: ResourceRead<unknown> }) {
+  if (resource.status === 'ready') return null;
+  return resource.status === 'loading'
+    ? <p role="status">Loading {label}… <button type="button" onClick={resource.retry}>Retry {label}</button></p>
+    : <p role="alert">{label} unavailable. <button type="button" onClick={resource.retry}>Retry {label}</button></p>;
+}
+
 function isDemo(b: Business): boolean {
   return (b.bot_code || '').startsWith('test-') || (b.name || '').startsWith('Test ');
 }
@@ -80,8 +123,6 @@ export default function Businesses() {
   const [showDemo, setShowDemo] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Business | null>(null);
-  const [selectedPayout, setSelectedPayout] = useState<PayoutAccount | null>(null);
-  const [selectedServiceStats, setSelectedServiceStats] = useState<ServiceStats | null>(null);
   const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
   const [selectedOverrides, setSelectedOverrides] = useState<string[]>([]);
   const [selectedFinancials, setSelectedFinancials] = useState<{
@@ -89,14 +130,30 @@ export default function Businesses() {
     totalFees: number;
     totalGatewayFees: number;
     totalPayouts: number;
+    processingPayouts: number;
     totalRefunds: number;
     bookingCount: number;
     payoutHistory: Array<{ id: string; net_amount: number; status: string; period_start: string; period_end: string; paid_at: string | null }>;
   } | null>(null);
+  const [financialError, setFinancialError] = useState('');
+  const [financialBusinessId, setFinancialBusinessId] = useState<string | null>(null);
+  const [financialReload, setFinancialReload] = useState(0);
+  const [capLoad, setCapLoad] = useState<{ businessId: string | null; status: 'loading' | 'ready' | 'error'; error: string }>({ businessId: null, status: 'loading', error: '' });
+  const capRequestRef = useRef(0);
+  const selectionGenerationRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selected?.id || null;
+  const capMutationRef = useRef(false);
+  const selectedId = selected?.id || null;
   // Custom fee override state
   const [customFeePercentage, setCustomFeePercentage] = useState('');
   const [customFeeFlat, setCustomFeeFlat] = useState('');
   const [customFeeSaving, setCustomFeeSaving] = useState(false);
+  const [reviewDraft, setReviewDraft] = useState<{ businessId: string; action: 'set_level' | 'set_custom_fees'; level?: string; custom_fee_percentage?: number | null; custom_fee_flat?: number | null } | null>(null);
+  const [reviewReason, setReviewReason] = useState('');
+  const [reviewMessage, setReviewMessage] = useState('');
+  const reviewOperationRef = useRef<object | null>(null);
+  const reviewSubmitRef = useRef(false);
   const [capSaving, setCapSaving] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState('');
   const [tierSaving, setTierSaving] = useState(false);
@@ -104,6 +161,12 @@ export default function Businesses() {
   const [statusSaving, setStatusSaving] = useState(false);
   const [suspensionSaving, setSuspensionSaving] = useState(false);
   const stepUp = useStepUp();
+  // Hold this lock until the shared hook's async transition settles, even after
+  // selection cancellation. A late prepare/verify can then never overwrite a newer flow.
+  const stepUpFlightRef = useRef(false);
+  const [stepUpFlight, setStepUpFlight] = useState(false);
+  const suspensionOperationRef = useRef<object | null>(null);
+  const stepUpBlocked = stepUpFlight || (stepUp.isActive && stepUp.state.phase !== 'error');
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
@@ -111,21 +174,181 @@ export default function Businesses() {
   const [editField, setEditField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+  const profileFlightRef = useRef(false);
   // Products & Services
-  const [selectedBankAccount, setSelectedBankAccount] = useState<{ bank_name: string | null; account_number: string | null; status: string } | null>(null);
-  const [selectedServices, setSelectedServices] = useState<Array<{ id: string; name: string; price: number | null; duration_minutes: number | null; is_active: boolean; status: string | null }>>([]);
-  const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string; name: string; price: number | null; stock: number | null; is_active: boolean }>>([]);
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+
+  const ownerEmailResource = useBusinessResource<string | null>(isFullAdmin ? selectedId : null, async id => {
+    const response = await adminApiGet(`/api/admin/businesses/${id}/profile`);
+    if (!response.ok) throw new Error('Owner email unavailable');
+    const result = await response.json();
+    if (result.businessId !== id || (result.ownerEmail !== null && typeof result.ownerEmail !== 'string')) {
+      throw new Error('Owner email unavailable');
+    }
+    return result.ownerEmail;
+  });
+
+  const payoutResource = useBusinessResource<PayoutAccount | null>(selectedId, async id => {
+    const { data, error } = await adminDb.from('payout_accounts')
+      .select('id, gateway, bank_name, account_name, account_number, is_active')
+      .eq('business_id', id).eq('is_active', true).maybeSingle();
+    if (error) throw error;
+    return data;
+  });
+  const statsResource = useBusinessResource<ServiceStats>(selectedId, async id => {
+    const { data, error } = await adminDb.from('services').select('id, billing_type, is_featured').eq('business_id', id);
+    if (error || !Array.isArray(data)) throw new Error('Service statistics unavailable');
+    return { total: data.length, recurring: data.filter(s => s.billing_type === 'recurring').length, featured: data.filter(s => s.is_featured).length };
+  });
+  const servicesResource = useBusinessResource<Array<{ id: string; name: string; price: number | null; duration_minutes: number | null; is_active: boolean; status: string | null }>>(selectedId, async id => {
+    const { data, error } = await adminDb.from('services').select('id, name, price, duration_minutes, is_active, status')
+      .eq('business_id', id).is('deleted_at', null).order('sort_order');
+    if (error || !Array.isArray(data)) throw new Error('Services unavailable');
+    return data;
+  });
+  const productsResource = useBusinessResource<Array<{ id: string; name: string; price: number | null; stock_quantity: number | null; is_active: boolean }>>(selectedId, async id => {
+    const { data, error } = await adminDb.from('products').select('id, name, price, stock_quantity, is_active')
+      .eq('business_id', id).is('deleted_at', null).order('sort_order');
+    if (error || !Array.isArray(data)) throw new Error('Products unavailable');
+    return data;
+  });
+  const bankResource = useBusinessResource<{ bank_name: string | null; account_number: string | null; status: string } | null>(selectedId, async id => {
+    const { data, error } = await adminDb.from('business_bank_accounts').select('bank_name, account_number, status')
+      .eq('business_id', id).limit(1).maybeSingle();
+    if (error) throw error;
+    return data;
+  });
+  const selectedPayout = payoutResource.data;
+  const selectedServiceStats = statsResource.data;
+  const selectedServices = servicesResource.data || [];
+  const selectedProducts = productsResource.data || [];
+  const selectedBankAccount = bankResource.data;
+
   // Payout verification limits now live in countries.verification_tiers;
   // the server route resolves them per-country — no client-side lookup needed.
   const perPage = 20;
+
+
+  useEffect(() => {
+    setReviewDraft(null);
+    setReviewReason('');
+    setReviewMessage('');
+    setCustomFeeSaving(false);
+    return () => {
+      reviewOperationRef.current = null;
+      suspensionOperationRef.current = null;
+      stepUpCallbackRef.current = null;
+      // In-flight hook transitions are drained by their owner before unlocking.
+      if (!stepUpFlightRef.current) stepUp.reset();
+    };
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (stepUp.state.phase === 'error' && reviewOperationRef.current) {
+      reviewOperationRef.current = null;
+      setCustomFeeSaving(false);
+      setReviewMessage(stepUp.state.error || 'Authorization failed');
+    }
+  }, [stepUp.state.phase, stepUp.state.error]);
+
+  function openReview(action: 'set_level' | 'set_custom_fees', level?: string, clear = false) {
+    if (!selected || !isFullAdmin || reviewOperationRef.current || stepUpFlightRef.current || stepUpBlocked) return;
+    const percentage = clear || !customFeePercentage.trim() ? null : Number(customFeePercentage);
+    const flat = clear || !customFeeFlat.trim() ? null : Number(customFeeFlat);
+    if (action === 'set_custom_fees' &&
+        ((percentage !== null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) ||
+         (flat !== null && (!Number.isSafeInteger(flat) || flat < 0)))) {
+      setReviewMessage('Enter a percentage from 0 to 100 and a non-negative whole flat fee.');
+      return;
+    }
+    setReviewReason('');
+    setReviewMessage('');
+    setReviewDraft({ businessId: selected.id, action,
+      ...(action === 'set_level' ? { level } : { custom_fee_percentage: percentage, custom_fee_flat: flat }) });
+  }
+
+  function cancelReview() {
+    reviewOperationRef.current = null;
+    stepUpCallbackRef.current = null;
+    stepUp.reset();
+    setCustomFeeSaving(false);
+    setReviewDraft(null);
+    setReviewReason('');
+  }
+
+  async function confirmReview() {
+    if (!reviewDraft || !reviewReason.trim() || reviewOperationRef.current || stepUpFlightRef.current || stepUpBlocked || !isFullAdmin) return;
+    const draft = { ...reviewDraft };
+    const businessId = draft.businessId;
+    const params = { scope: 'business_verification_review', action: draft.action,
+      ...(draft.action === 'set_level' ? { level: draft.level } : {
+        custom_fee_percentage: draft.custom_fee_percentage, custom_fee_flat: draft.custom_fee_flat }),
+      reason: reviewReason.trim() };
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
+    const operation = {};
+    reviewOperationRef.current = operation;
+    const current = () => reviewOperationRef.current === operation && selectedIdRef.current === businessId;
+    setCustomFeeSaving(true);
+    setReviewMessage('');
+    const onAuthorized = async (stepUpId: string) => {
+      if (!current()) return;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!current()) return;
+        const token = sessionData.session?.access_token;
+        if (!token) throw new Error('Session expired');
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const response = await fetch(`${apiUrl}/api/verification/review`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ business_id: businessId, ...params, stepUpId }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Save failed; reload before authorizing another attempt.');
+        if (!current()) return;
+        const patch = draft.action === 'set_level'
+          ? { verification_level: result.verification_level, verification_status: result.verification_status, payout_limit_monthly: result.payout_limit_monthly }
+          : { custom_fee_percentage: result.custom_fee_percentage, custom_fee_flat: result.custom_fee_flat };
+        setSelected(previous => previous?.id === businessId ? { ...previous, ...patch } : previous);
+        setBusinesses(previous => previous.map(b => b.id === businessId ? { ...b, ...patch } : b));
+        if (draft.action === 'set_custom_fees') {
+          setCustomFeePercentage(result.custom_fee_percentage == null ? '' : String(result.custom_fee_percentage));
+          setCustomFeeFlat(result.custom_fee_flat == null ? '' : String(result.custom_fee_flat));
+        }
+        setReviewDraft(null);
+        setReviewMessage('Saved. The displayed values are the server result.');
+      } catch (error) {
+        if (current()) setReviewMessage(error instanceof Error ? error.message : 'Save failed. Reload before trying again.');
+        throw error;
+      } finally {
+        if (current()) { reviewOperationRef.current = null; setCustomFeeSaving(false); }
+      }
+    };
+    stepUpCallbackRef.current = onAuthorized;
+    try {
+      await stepUp.execute({ actionType: 'commercial_config', targetId: businessId, params,
+        description: draft.action === 'set_level' ? `Set verification to ${draft.level}: ${params.reason}` :
+          `Set custom fees: ${draft.custom_fee_percentage ?? 'tier default'}%, flat ${draft.custom_fee_flat ?? 'tier default'}. ${params.reason}`,
+        onAuthorized });
+    } catch (error) {
+      if (current()) {
+        reviewOperationRef.current = null;
+        setCustomFeeSaving(false);
+        setReviewMessage(error instanceof Error ? error.message : 'Authorization failed');
+      }
+    } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
+    }
+  }
 
   async function loadData() {
     const [bizRes, chRes] = await Promise.all([
       adminDb
         .from('businesses')
-        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
+        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, email, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
         .order('created_at', { ascending: false }),
       adminDb
         .from('whatsapp_channels')
@@ -144,19 +367,14 @@ export default function Businesses() {
     loadData();
   }, []);
 
-  // Load payout account and service stats when business is selected
+  // Keep existing selection-dependent editing defaults.
   useEffect(() => {
     if (!selected) {
-      setSelectedPayout(null);
-      setSelectedServiceStats(null);
       setSelectedCaps([]);
       setSelectedOverrides([]);
       setSelectedFinancials(null);
-      setSelectedBankAccount(null);
       setSelectedTier('');
       setSelectedStatus('');
-      setSelectedServices([]);
-      setSelectedProducts([]);
       setShowServices(false);
       setShowProducts(false);
       return;
@@ -165,88 +383,94 @@ export default function Businesses() {
     setSelectedStatus(selected.status);
     setCustomFeePercentage(selected.custom_fee_percentage != null ? String(selected.custom_fee_percentage) : '');
     setCustomFeeFlat(selected.custom_fee_flat != null ? String(selected.custom_fee_flat) : '');
-    adminDb
-      .from('payout_accounts')
-      .select('id, gateway, bank_name, account_name, account_number, is_active')
-      .eq('business_id', selected.id)
-      .eq('is_active', true)
-      .maybeSingle()
-      .then(({ data }) => setSelectedPayout(data));
 
-    adminDb
-      .from('services')
-      .select('id, billing_type, is_featured')
-      .eq('business_id', selected.id)
-      .then(({ data }) => {
-        const svcs = data || [];
-        setSelectedServiceStats({
-          total: svcs.length,
-          recurring: svcs.filter(s => s.billing_type === 'recurring').length,
-          featured: svcs.filter(s => s.is_featured).length,
-        });
+  }, [selected]);
+
+  const loadCapabilities = useCallback(async (businessId: string, saved = false) => {
+    const requestId = ++capRequestRef.current;
+    const current = () => requestId === capRequestRef.current && selectedIdRef.current === businessId;
+    setCapLoad({ businessId, status: 'loading', error: '' });
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (error || !token) throw new Error('Session expired. Please log in again.');
+      if (!current()) return;
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/admin/businesses/${businessId}/capabilities`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
+      if (!response.ok) throw new Error('Could not load selected capabilities. Please retry.');
+      const state = await response.json();
+      if (!state || !Array.isArray(state.capabilities) || !Array.isArray(state.overrides)
+        || !state.capabilities.every((value: unknown) => typeof value === 'string')
+        || !state.overrides.every((value: unknown) => typeof value === 'string')) {
+        throw new Error('Could not load selected capabilities. Please retry.');
+      }
+      if (!current()) return;
+      setSelectedCaps(state.capabilities);
+      setSelectedOverrides(state.overrides);
+      setCapLoad({ businessId, status: 'ready', error: '' });
+    } catch (error) {
+      if (!current()) return;
+      setCapLoad({
+        businessId, status: 'error',
+        error: saved ? 'Capability saved, but refreshed state could not be loaded. Retry before making another change.'
+          : error instanceof Error ? error.message : 'Could not load selected capabilities. Please retry.',
+      });
+    }
+  }, []);
 
-    // Load capabilities + overrides
-    adminDb
-      .from('business_capabilities')
-      .select('capability')
-      .eq('business_id', selected.id)
-      .eq('is_enabled', true)
-      .then(({ data }) => setSelectedCaps((data || []).map(r => r.capability)));
+  useEffect(() => {
+    ++selectionGenerationRef.current;
+    setEditField(null);
+    setEditValue('');
+    ++capRequestRef.current;
+    capMutationRef.current = false;
+    setCapSaving(null);
+    setSelectedCaps([]);
+    setSelectedOverrides([]);
+    setCapLoad({ businessId: selectedId, status: 'loading', error: '' });
+    if (selectedId) void loadCapabilities(selectedId);
+    return () => { ++capRequestRef.current; ++selectionGenerationRef.current; };
+  }, [selectedId, loadCapabilities]);
 
-    adminDb
-      .from('capability_overrides')
-      .select('capability')
-      .eq('business_id', selected.id)
-      .then(({ data }) => setSelectedOverrides((data || []).map(r => r.capability)));
-
-    // Load services list
-    adminDb
-      .from('services')
-      .select('id, name, price, duration_minutes, is_active, status')
-      .eq('business_id', selected.id)
-      .is('deleted_at', null)
-      .order('sort_order')
-      .then(({ data }) => setSelectedServices(data || []));
-
-    // Load products list
-    adminDb
-      .from('products')
-      .select('id, name, price, stock, is_active')
-      .eq('business_id', selected.id)
-      .is('deleted_at', null)
-      .order('sort_order')
-      .then(({ data }) => setSelectedProducts(data || []));
-
-    // Load bank account
-    adminDb
-      .from('business_bank_accounts')
-      .select('bank_name, account_number, status')
-      .eq('business_id', selected.id)
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => setSelectedBankAccount(data || null));
-
-    // Load financial summary
+  useEffect(() => {
+    let active = true;
+    setSelectedFinancials(null);
+    setFinancialBusinessId(null);
+    setFinancialError('');
+    if (!selectedId) return;
+    const businessId = selectedId;
     Promise.all([
-      adminDb.from('payments').select('amount').eq('business_id', selected.id).eq('status', 'success'),
-      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', selected.id).is('refunded_at', null),
-      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', selected.id).in('status', ['paid', 'processing']),
-      adminDb.from('payments').select('refund_amount').eq('business_id', selected.id).gt('refund_amount', 0),
-      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', selected.id),
-      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', selected.id).order('created_at', { ascending: false }).limit(10),
-    ]).then(([payments, fees, payouts, refunds, bookings, payoutHistory]) => {
+      adminDb.from('payments').select('amount, refund_amount').eq('business_id', businessId).in('status', ['success', 'refunded']),
+      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', businessId).is('refunded_at', null),
+      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', businessId).in('status', ['paid', 'processing']),
+      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', businessId),
+      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', businessId).order('created_at', { ascending: false }).limit(10),
+    ]).then(([payments, fees, payouts, bookings, payoutHistory]) => {
+      if (!active || selectedIdRef.current !== businessId) return;
+      if ([payments, fees, payouts, bookings, payoutHistory].some(result => result.error)) {
+        throw new Error('Financial summary could not be loaded. Please retry.');
+      }
       setSelectedFinancials({
         totalRevenue: (payments.data || []).reduce((sum, p) => sum + Number(p.amount || 0), 0),
+        totalRefunds: (payments.data || []).reduce((sum, p) => sum + Number(p.refund_amount || 0), 0),
         totalFees: (fees.data || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0),
         totalGatewayFees: (fees.data || []).reduce((sum, f) => sum + Number(f.gateway_fee || 0), 0),
-        totalPayouts: (payouts.data || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
-        totalRefunds: (refunds.data || []).reduce((sum, r) => sum + Number(r.refund_amount || 0), 0),
+        totalPayouts: (payouts.data || []).filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
+        processingPayouts: (payouts.data || []).filter(p => p.status === 'processing').reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
         bookingCount: bookings.count || 0,
         payoutHistory: payoutHistory.data || [],
       });
+      setFinancialBusinessId(businessId);
+    }).catch(() => {
+      if (active && selectedIdRef.current === businessId) {
+        setFinancialBusinessId(businessId);
+        setFinancialError('Financial summary could not be loaded. Please retry.');
+      }
     });
-  }, [selected]);
+    return () => { active = false; };
+  }, [selectedId, financialReload]);
 
   async function handleTierChange() {
     if (!selected || selectedTier === selected.subscription_tier || !isFullAdmin) return;
@@ -302,45 +526,72 @@ export default function Businesses() {
   }
 
   async function handleStatusChange() {
-    if (!selected || selectedStatus === selected.status || !isFullAdmin) return;
+    if (!selected || selectedStatus === selected.status || !isFullAdmin || stepUpFlightRef.current || stepUpBlocked || reviewOperationRef.current) return;
+    const businessId = selected.id;
+    const status = selectedStatus;
+    const previous_status = selected.status;
+    const generation = selectionGenerationRef.current;
+    const current = () => selectedIdRef.current === businessId && selectionGenerationRef.current === generation;
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
     setStatusSaving(true);
     try {
-      const { error } = await adminDb
-        .from('businesses')
-        .update({ status: selectedStatus })
-        .eq('id', selected.id);
-
-      if (error) throw error;
-
-      await logAudit({
-        action: 'change_business_status',
-        entity_type: 'business',
-        entity_id: selected.id,
-        details: { previous_status: selected.status, new_status: selectedStatus, business_name: selected.name },
+      const onAuthorized = async (stepUpId: string) => {
+        if (!current()) return;
+        try {
+          const res = await adminApiFetch(`/api/admin/businesses/${businessId}/status`, { status, previous_status, stepUpId });
+          const data = await res.json();
+          if (!current()) return;
+          if (!res.ok) throw new Error(data.error || 'Failed to change status');
+          if (data.business?.id !== businessId || !['active', 'pending', 'suspended'].includes(data.business.status)) {
+            throw new Error('Unable to confirm saved status. Refresh before retrying.');
+          }
+          const persistedStatus = data.business.status as string;
+          setBusinesses(prev => prev.map(b => b.id === businessId ? { ...b, status: persistedStatus } : b));
+          setSelected(prev => prev?.id === businessId ? { ...prev, status: persistedStatus } : prev);
+          if (data.auditRecorded === false) alert('Status saved, but the audit record could not be written. Contact support; do not repeat the change.');
+        } catch (err) {
+          if (current()) alert(err instanceof Error ? err.message : 'Unable to confirm status. Refresh before retrying.');
+          throw err;
+        }
+      };
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'business_status', targetId: businessId,
+        params: { business_id: businessId, previous_status, status },
+        description: `Change ${selected.name} account status from ${previous_status} to ${status}`,
+        onAuthorized,
       });
-
-      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, status: selectedStatus } : b));
-      setSelected(prev => prev ? { ...prev, status: selectedStatus } : prev);
     } catch (err) {
-      console.error('Status change error:', err);
-      alert('Failed to change status');
+      if (current()) alert(err instanceof Error ? err.message : 'Failed to change status');
     } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
       setStatusSaving(false);
     }
   }
 
   async function handleToggleSuspension() {
-    if (!selected || !isFullAdmin) return;
+    if (!selected || !isFullAdmin || stepUpFlightRef.current || stepUpBlocked || reviewOperationRef.current) return;
     const newState = !selected.messaging_suspended;
     const reasonInput = newState
       ? prompt('Reason for suspending messaging (optional):')
       : prompt('Reason for resuming messaging (optional):');
     if (reasonInput === null) return;
     const reason = reasonInput.trim() || null;
+    const businessId = selected.id;
+    const operation = {};
+    suspensionOperationRef.current = operation;
+    const current = () => suspensionOperationRef.current === operation && selectedIdRef.current === businessId;
+    stepUpFlightRef.current = true;
+    setStepUpFlight(true);
     setSuspensionSaving(true);
     try {
       const onAuthorized = async (stepUpId: string) => {
+        if (!current()) return;
         const { data: sessionData } = await supabase.auth.getSession();
+        if (!current()) return;
         const token = sessionData?.session?.access_token;
         if (!token) { alert('Session expired'); return; }
         const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -356,8 +607,9 @@ export default function Businesses() {
           if (data.code === 'step_up_required') { alert('Step-up authorization failed'); return; }
           throw new Error(data.error || 'Failed');
         }
+        if (!current()) return;
         setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
-        setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
+        setSelected(prev => prev?.id === businessId ? { ...prev, messaging_suspended: newState } : prev);
       };
       stepUpCallbackRef.current = onAuthorized;
       await stepUp.execute({
@@ -368,83 +620,80 @@ export default function Businesses() {
         onAuthorized,
       });
     } catch (err) {
+      if (!current()) return;
       console.error('Suspension toggle error:', err);
       alert('Failed to toggle messaging suspension');
       stepUp.reset();
     } finally {
+      if (!current()) stepUp.reset();
+      stepUpFlightRef.current = false;
+      setStepUpFlight(false);
       setSuspensionSaving(false);
     }
   }
 
   async function handleEditSave() {
-    if (!selected || !editField || !isFullAdmin) return;
+    if (!selected || !editField || !isFullAdmin || profileFlightRef.current) return;
+    const businessId = selected.id;
+    const field = editField;
+    const generation = selectionGenerationRef.current;
+    const current = () => selectedIdRef.current === businessId && selectionGenerationRef.current === generation;
+    profileFlightRef.current = true;
     setEditSaving(true);
     try {
-      const { error } = await adminDb
-        .from('businesses')
-        .update({ [editField]: editValue.trim() })
-        .eq('id', selected.id);
-      if (error) throw error;
-      await logAudit({
-        action: 'edit_business_field',
-        entity_type: 'business',
-        entity_id: selected.id,
-        details: { field: editField, new_value: editValue.trim(), business_name: selected.name },
-      });
-      // Update local state
-      setSelected({ ...selected, [editField]: editValue.trim() } as Business);
+      const res = await adminApiFetch(`/api/admin/businesses/${businessId}/profile`, { field, value: editValue.trim() });
+      const data = await res.json();
+      if (!current()) return;
+      if (!res.ok) throw new Error(data.error || 'Failed to update');
+      if (data.business?.id !== businessId || typeof data.business[field] !== 'string') {
+        throw new Error('Unable to confirm saved value. Refresh before retrying.');
+      }
+      const patch = { [field]: data.business[field] };
+      setBusinesses(prev => prev.map(b => b.id === businessId ? { ...b, ...patch } : b));
+      setSelected(prev => prev?.id === businessId ? { ...prev, ...patch } : prev);
       setEditField(null);
       setEditValue('');
-      await loadData();
+      if (data.auditRecorded === false) alert('Change saved, but the audit record could not be written. Contact support; do not repeat the change.');
     } catch (err) {
-      console.error('Edit error:', err);
-      alert('Failed to update');
+      if (current()) alert(err instanceof Error ? err.message : 'Failed to update');
     } finally {
+      profileFlightRef.current = false;
       setEditSaving(false);
     }
   }
 
-  async function handleCapToggle(bizId: string, bizTier: string, capId: string, isCurrentlyEnabled: boolean) {
+  async function handleCapToggle(bizId: string, capId: string, isCurrentlySelected: boolean) {
+    if (!isFullAdmin || capMutationRef.current || capLoad.businessId !== bizId || capLoad.status !== 'ready') return;
+    capMutationRef.current = true;
     setCapSaving(capId);
+    const generation = selectionGenerationRef.current;
+    const current = () => generation === selectionGenerationRef.current && selectedIdRef.current === bizId;
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
+      const { data: sessionData, error } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
-      if (!token) { alert('Session expired. Please log in again.'); return; }
-
+      if (error || !token) throw new Error('Session expired. Please log in again.');
+      if (!current()) return;
       const apiUrl = import.meta.env.VITE_API_URL || '';
-      const action = isCurrentlyEnabled ? 'revoke' : 'grant';
-
+      const action = isCurrentlySelected ? 'revoke' : 'grant';
       const res = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ capability: capId, action, reason: 'Admin toggled' }),
       });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-        alert(`Failed to ${action} capability: ${err.error || 'Unknown error'}`);
-        return;
-      }
-
-      // Re-fetch authoritative state from server (RPC may cascade dependencies)
-      const refreshRes = await fetch(`${apiUrl}/api/admin/businesses/${bizId}/capabilities`, {
-        headers: { Authorization: `Bearer ${token}` },
+      if (!res.ok) throw new Error('Capability change failed. Retry loading the state before trying again.');
+      if (!current()) return;
+      await loadCapabilities(bizId, true);
+    } catch (error) {
+      if (!current()) return;
+      setCapLoad({
+        businessId: bizId, status: 'error',
+        error: error instanceof Error ? error.message : 'Capability change failed. Please retry.',
       });
-      if (refreshRes.ok) {
-        const state = await refreshRes.json();
-        setSelectedCaps(state.capabilities || []);
-        setSelectedOverrides(state.overrides || []);
-      } else {
-        alert('Capability updated but failed to refresh state. Please reload the page.');
-      }
-    } catch (err) {
-      console.error('Capability toggle error:', err);
-      alert('Failed to update capability. Please try again.');
     } finally {
-      setCapSaving(null);
+      if (current()) {
+        capMutationRef.current = false;
+        setCapSaving(null);
+      }
     }
   }
 
@@ -650,25 +899,25 @@ export default function Businesses() {
                 {editField === field ? (
                   <div className="flex items-center gap-1.5">
                     {field === 'category' ? (
-                      <select value={editValue} onChange={e => setEditValue(e.target.value)}
+                      <select disabled={editSaving} aria-label={`Edit ${field}`} value={editValue} onChange={e => setEditValue(e.target.value)}
                         className="rounded border border-brand px-2 py-1 text-sm w-48 focus:outline-none" autoFocus>
                         {categories.map(c => (
                           <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
                         ))}
                       </select>
                     ) : (
-                      <input value={editValue} onChange={e => setEditValue(e.target.value)}
+                      <input disabled={editSaving} aria-label={`Edit ${field}`} value={editValue} onChange={e => setEditValue(e.target.value)}
                         className="rounded border border-brand px-2 py-0.5 text-sm w-40 focus:outline-none" autoFocus />
                     )}
                     <button onClick={handleEditSave} disabled={editSaving}
                       className="text-xs text-brand font-semibold">{editSaving ? '...' : 'Save'}</button>
-                    <button onClick={() => setEditField(null)}
+                    <button disabled={editSaving} onClick={() => setEditField(null)}
                       className="text-xs text-gray-400">Cancel</button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <span className="text-gray-900">{field === 'category' ? (selected[field] || '').replace(/_/g, ' ') : (selected as Record<string, unknown>)[field] as string || '—'}</span>
-                    <button onClick={() => { setEditField(field); setEditValue((selected as Record<string, unknown>)[field] as string || ''); }}
+                    <button disabled={!isFullAdmin || editSaving} aria-label={`Edit ${field}`} onClick={() => { setEditField(field); setEditValue((selected as Record<string, unknown>)[field] as string || ''); }}
                       className="text-xs text-brand hover:underline">Edit</button>
                   </div>
                 )}
@@ -688,6 +937,11 @@ export default function Businesses() {
             )}
             <DetailRow label="Country" value={selected.country_code} />
             <DetailRow label="Phone" value={selected.phone} />
+            <DetailRow label="Business contact email" value={selected.email || 'Not provided'} />
+            {isFullAdmin && <>
+              <ResourceNotice label="Owner sign-in email" resource={ownerEmailResource} />
+              {ownerEmailResource.status === 'ready' && <DetailRow label="Owner sign-in email" value={ownerEmailResource.data || 'Not provided'} />}
+            </>}
             <DetailRow label="Payout Mode" value={selected.payout_mode === 'direct_split' ? 'Direct Split' : 'Platform Managed'} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
 
@@ -730,7 +984,7 @@ export default function Businesses() {
                     </select>
                     <button
                       onClick={handleStatusChange}
-                      disabled={statusSaving || selectedStatus === selected.status}
+                      disabled={statusSaving || stepUpBlocked || selectedStatus === selected.status}
                       className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                     >
                       {statusSaving ? '...' : 'Save'}
@@ -748,7 +1002,7 @@ export default function Businesses() {
                   </span>
                   <button
                     onClick={handleToggleSuspension}
-                    disabled={suspensionSaving}
+                    disabled={suspensionSaving || stepUpBlocked || customFeeSaving}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50 ${
                       selected.messaging_suspended
                         ? 'bg-green-600 hover:bg-green-700'
@@ -798,34 +1052,8 @@ export default function Businesses() {
                   {['unverified', 'basic', 'standard', 'full'].map(level => (
                     <button
                       key={level}
-                      disabled={selected.verification_level === level}
-                      onClick={async () => {
-                        const reasonInput = prompt(`Reason for setting verification to "${level}" for ${selected.name}:`);
-                        if (!reasonInput) return;
-                        try {
-                          const { data: sessionData } = await supabase.auth.getSession();
-                          const token = sessionData?.session?.access_token;
-                          if (!token) { alert('Session expired'); return; }
-                          const apiUrl = import.meta.env.VITE_API_URL || '';
-                          const res = await fetch(`${apiUrl}/api/verification/review`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                            body: JSON.stringify({
-                              business_id: selected.id,
-                              action: 'set_level',
-                              level,
-                              reason: reasonInput.trim(),
-                            }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.error || 'Failed');
-                          setSelected({ ...selected, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly });
-                          setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, verification_level: data.verification_level, verification_status: data.verification_status, payout_limit_monthly: data.payout_limit_monthly } : b));
-                        } catch (err) {
-                          console.error('Verification level change error:', err);
-                          alert(err instanceof Error ? err.message : 'Failed to update verification level');
-                        }
-                      }}
+                      disabled={selected.verification_level === level || customFeeSaving || stepUpBlocked}
+                      onClick={() => openReview('set_level', level)}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level
                           ? 'bg-brand text-white'
@@ -839,17 +1067,35 @@ export default function Businesses() {
               )}
             </div>
 
-            {selectedPayout && (
+
+            {reviewMessage && <p role="status" className="mt-3 text-sm">{reviewMessage}</p>}
+            {reviewDraft && reviewDraft.businessId === selected.id && (
+              <section aria-label="Review business change" className="mt-4 space-y-3 rounded-lg border p-4">
+                <p>{reviewDraft.action === 'set_level' ? `Set verification to ${reviewDraft.level}` :
+                  `Custom fee: ${reviewDraft.custom_fee_percentage ?? 'tier default'}%, flat ${reviewDraft.custom_fee_flat ?? 'tier default'}`}</p>
+                <label className="block text-sm">Reason for change
+                  <textarea aria-label="Reason for change" value={reviewReason} disabled={customFeeSaving}
+                    onChange={e => setReviewReason(e.target.value)} className="mt-1 w-full rounded border p-2" />
+                </label>
+                <button disabled={customFeeSaving || !reviewReason.trim()} onClick={confirmReview}
+                  className="rounded bg-brand px-3 py-2 text-white disabled:opacity-50">Confirm and authorize</button>
+                <button disabled={customFeeSaving} onClick={cancelReview} className="ml-3">Cancel change</button>
+              </section>
+            )}
+
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Payout Account</p>
-                <div className="space-y-2">
+                <ResourceNotice label="payout account" resource={payoutResource} />
+                {payoutResource.status === 'ready' && !selectedPayout && <p>No active payout account</p>}
+                {selectedPayout && <div className="space-y-2">
                   <DetailRow label="Gateway" value={selectedPayout.gateway} />
                   {selectedPayout.bank_name && <DetailRow label="Bank" value={selectedPayout.bank_name} />}
                   {selectedPayout.account_name && <DetailRow label="Account Name" value={selectedPayout.account_name} />}
                   {selectedPayout.account_number && (
                     <DetailRow label="Account" value={`****${selectedPayout.account_number.slice(-4)}`} />
                   )}
-                </div>
+                </div>}
               </div>
             )}
 
@@ -865,7 +1111,8 @@ export default function Businesses() {
                       : 'All channels (default)'
                   }
                 />
-                {selectedBankAccount ? (
+                <ResourceNotice label="bank account" resource={bankResource} />
+                {bankResource.status === 'ready' && (selectedBankAccount ? (
                   <>
                     <DetailRow label="Bank" value={selectedBankAccount.bank_name || '—'} />
                     <DetailRow
@@ -876,29 +1123,32 @@ export default function Businesses() {
                   </>
                 ) : (
                   <p className="text-xs text-gray-400">No bank account configured</p>
-                )}
+                ))}
               </div>
             </div>
 
-            {selectedServiceStats && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Services</p>
-                <div className="space-y-2">
+                <ResourceNotice label="service statistics" resource={statsResource} />
+                {selectedServiceStats && <div className="space-y-2">
                   <DetailRow label="Total Services" value={String(selectedServiceStats.total)} />
                   <DetailRow label="Recurring Services" value={String(selectedServiceStats.recurring)} />
                   <DetailRow label="Featured Services" value={String(selectedServiceStats.featured)} />
-                </div>
+                </div>}
               </div>
             )}
 
             {/* Financial Summary */}
-            {selectedFinancials && (
+            {financialError && financialBusinessId === selected.id && <div role="alert" className="mt-4 text-sm text-red-600">{financialError} <button type="button" onClick={() => setFinancialReload(value => value + 1)}>Retry financial summary</button></div>}
+            {financialBusinessId !== selected.id && <p className="mt-4 text-sm text-gray-500">Loading financial summary…</p>}
+            {selectedFinancials && financialBusinessId === selected.id && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Financial Summary</p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
-                    <p className="text-[10px] text-gray-500">Total Revenue</p>
+                    <p className="text-[10px] text-gray-500">Collections</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -910,7 +1160,7 @@ export default function Businesses() {
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
-                    <p className="text-[10px] text-gray-500">Total Payouts</p>
+                    <p className="text-[10px] text-gray-500">Paid payouts</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-red-500">{fmtCurrency(selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -919,9 +1169,12 @@ export default function Businesses() {
                 </div>
                 <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
                   <span>{selectedFinancials.bookingCount} total bookings</span>
-                  <span>Net: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
-                  <span>Balance: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds - selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Processing reservations: {fmtCurrency(selectedFinancials.processingPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Net retained: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalRefunds - selectedFinancials.totalFees - selectedFinancials.totalGatewayFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Accounting remainder: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalRefunds - selectedFinancials.totalFees - selectedFinancials.totalGatewayFees - selectedFinancials.totalPayouts - selectedFinancials.processingPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
                 </div>
+
+                <p className="mt-2 text-xs text-gray-500">Accounting remainder is not the available-to-withdraw balance. It does not reconcile custody, other pending reservations, adjustments or currency differences.</p>
 
                 {/* Payout History */}
                 {selectedFinancials.payoutHistory.length > 0 && (
@@ -957,6 +1210,7 @@ export default function Businesses() {
                       step="0.01"
                       min="0"
                       max="100"
+                      aria-label="Custom Fee %" disabled={customFeeSaving || !!reviewDraft}
                       value={customFeePercentage}
                       onChange={e => setCustomFeePercentage(e.target.value)}
                       placeholder="e.g. 1.5"
@@ -969,6 +1223,7 @@ export default function Businesses() {
                       type="number"
                       step="1"
                       min="0"
+                      aria-label="Custom Flat Fee" disabled={customFeeSaving || !!reviewDraft}
                       value={customFeeFlat}
                       onChange={e => setCustomFeeFlat(e.target.value)}
                       placeholder="e.g. 50"
@@ -978,77 +1233,15 @@ export default function Businesses() {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <button
-                    onClick={async () => {
-                      setCustomFeeSaving(true);
-                      try {
-                        const feePercentage = customFeePercentage.trim() !== '' ? parseFloat(customFeePercentage) : null;
-                        const feeFlat = customFeeFlat.trim() !== '' ? parseInt(customFeeFlat, 10) : null;
-                        const reasonInput = prompt('Reason for setting custom fees:');
-                        if (!reasonInput) { setCustomFeeSaving(false); return; }
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const token = sessionData?.session?.access_token;
-                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiUrl}/api/verification/review`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            business_id: selected.id,
-                            action: 'set_custom_fees',
-                            custom_fee_percentage: feePercentage,
-                            custom_fee_flat: feeFlat,
-                            reason: reasonInput.trim(),
-                          }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed');
-                        setSelected({ ...selected, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: data.custom_fee_percentage, custom_fee_flat: data.custom_fee_flat } : b));
-                      } catch (err) {
-                        console.error('Custom fee save error:', err);
-                        alert(err instanceof Error ? err.message : 'Failed to save custom fees');
-                      } finally {
-                        setCustomFeeSaving(false);
-                      }
-                    }}
-                    disabled={customFeeSaving}
+                    onClick={() => openReview('set_custom_fees')}
+                    disabled={customFeeSaving || stepUpBlocked}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
                     {customFeeSaving ? '...' : 'Save Override'}
                   </button>
                   <button
-                    onClick={async () => {
-                      setCustomFeeSaving(true);
-                      try {
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const token = sessionData?.session?.access_token;
-                        if (!token) { alert('Session expired'); setCustomFeeSaving(false); return; }
-                        const apiUrl = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiUrl}/api/verification/review`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            business_id: selected.id,
-                            action: 'set_custom_fees',
-                            custom_fee_percentage: null,
-                            custom_fee_flat: null,
-                            reason: 'Clearing custom fee overrides',
-                          }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed');
-                        setCustomFeePercentage('');
-                        setCustomFeeFlat('');
-                        setSelected({ ...selected, custom_fee_percentage: null, custom_fee_flat: null });
-                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: null, custom_fee_flat: null } : b));
-                      } catch (err) {
-                        console.error('Custom fee clear error:', err);
-                        alert('Failed to clear custom fees');
-                      } finally {
-                        setCustomFeeSaving(false);
-                      }
-                    }}
-                    disabled={customFeeSaving || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
+                    onClick={() => openReview('set_custom_fees', undefined, true)}
+                    disabled={customFeeSaving || stepUpBlocked || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
                     className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
                   >
                     Clear Override
@@ -1061,16 +1254,18 @@ export default function Businesses() {
             )}
 
             {/* Services */}
-            {selectedServices.length > 0 && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <button
                   onClick={() => setShowServices(!showServices)}
                   className="flex w-full items-center justify-between"
                 >
-                  <p className="text-xs font-semibold text-gray-500 uppercase">Services ({selectedServices.length})</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Services{servicesResource.status === 'ready' ? ` (${selectedServices.length})` : ''}</p>
                   <span className="text-xs text-gray-400">{showServices ? 'Collapse' : 'Expand'}</span>
                 </button>
-                {showServices && (
+                <ResourceNotice label="services" resource={servicesResource} />
+                {servicesResource.status === 'ready' && selectedServices.length === 0 && <p>No services found</p>}
+                {servicesResource.status === 'ready' && showServices && (
                   <div className="mt-3 space-y-1.5">
                     {selectedServices.map(svc => (
                       <div key={svc.id} className="flex items-center justify-between rounded bg-white px-3 py-2 text-xs">
@@ -1096,16 +1291,18 @@ export default function Businesses() {
             )}
 
             {/* Products */}
-            {selectedProducts.length > 0 && (
+            {(
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <button
                   onClick={() => setShowProducts(!showProducts)}
                   className="flex w-full items-center justify-between"
                 >
-                  <p className="text-xs font-semibold text-gray-500 uppercase">Products ({selectedProducts.length})</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Products{productsResource.status === 'ready' ? ` (${selectedProducts.length})` : ''}</p>
                   <span className="text-xs text-gray-400">{showProducts ? 'Collapse' : 'Expand'}</span>
                 </button>
-                {showProducts && (
+                <ResourceNotice label="products" resource={productsResource} />
+                {productsResource.status === 'ready' && selectedProducts.length === 0 && <p>No products found</p>}
+                {productsResource.status === 'ready' && showProducts && (
                   <div className="mt-3 space-y-1.5">
                     {selectedProducts.map(prod => (
                       <div key={prod.id} className="flex items-center justify-between rounded bg-white px-3 py-2 text-xs">
@@ -1114,7 +1311,7 @@ export default function Businesses() {
                           <span className="text-gray-600">
                             {prod.price != null ? fmtCurrency(prod.price, getCurrencyCode((selected?.country_code || 'NG') as CountryCode)) : 'Free'}
                           </span>
-                          <span className="text-gray-500">Stock: {prod.stock ?? 'N/A'}</span>
+                          <span className="text-gray-500">Stock: {prod.stock_quantity ?? 'N/A'}</span>
                           <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
                             prod.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                           }`}>
@@ -1137,10 +1334,16 @@ export default function Businesses() {
                   {PLAN_LABELS[selected.subscription_tier as SubscriptionTier] || selected.subscription_tier}
                 </span>
               </div>
+              <p className="mb-2 text-xs text-gray-500">Selected capabilities may be paused by the business's current entitlement policy.</p>
+              {capLoad.businessId !== selected.id || capLoad.status === 'loading' ? <p role="status">Loading selected capabilities…</p> : null}
+              {capLoad.businessId === selected.id && capLoad.status === 'error' && (
+                <div role="alert" className="mb-2 text-sm text-red-600">{capLoad.error} <button type="button" onClick={() => void loadCapabilities(selected.id)}>Retry capabilities</button></div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 {CAPABILITIES.map(cap => {
-                  const isEnabled = selectedCaps.includes(cap.id);
-                  const isOverridden = selectedOverrides.includes(cap.id);
+                  const capsReady = capLoad.businessId === selected.id && capLoad.status === 'ready';
+                  const isEnabled = capsReady && selectedCaps.includes(cap.id);
+                  const isOverridden = capsReady && selectedOverrides.includes(cap.id);
                   const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap.id];
                   const isSaving = capSaving === cap.id;
 
@@ -1167,8 +1370,11 @@ export default function Businesses() {
                       </div>
                       <button
                         type="button"
-                        disabled={isSaving}
-                        onClick={() => handleCapToggle(selected.id, selected.subscription_tier, cap.id, isEnabled)}
+                        role="switch"
+                        aria-label={`Selected ${cap.label}`}
+                        aria-checked={isEnabled}
+                        disabled={!isFullAdmin || !capsReady || capSaving !== null}
+                        onClick={() => handleCapToggle(selected.id, cap.id, isEnabled)}
                         className={`flex h-5 w-9 flex-shrink-0 items-center rounded-full transition ${
                           isEnabled ? 'bg-brand' : 'bg-gray-200'
                         } ${isSaving ? 'opacity-50' : 'cursor-pointer'}`}
@@ -1186,12 +1392,25 @@ export default function Businesses() {
         )}
       </DetailModal>
       <StepUpDialog
-        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
         description={stepUp.state.description}
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
-        onSubmit={(code) => { if (stepUpCallbackRef.current) stepUp.submitCode(code, stepUpCallbackRef.current); }}
-        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+        onSubmit={async (code) => {
+          if (reviewSubmitRef.current || stepUpFlightRef.current || !stepUpCallbackRef.current) return;
+          reviewSubmitRef.current = true;
+          stepUpFlightRef.current = true;
+          setStepUpFlight(true);
+          try { await stepUp.submitCode(code, stepUpCallbackRef.current); }
+          finally {
+            if (!stepUpCallbackRef.current) stepUp.reset();
+            stepUpFlightRef.current = false;
+            setStepUpFlight(false);
+            reviewSubmitRef.current = false;
+            if (!reviewOperationRef.current) setCustomFeeSaving(false);
+          }
+        }}
+        onCancel={() => { if (reviewOperationRef.current) cancelReview(); else { stepUp.reset(); stepUpCallbackRef.current = null; } }}
       />
     </div>
   );

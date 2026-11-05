@@ -25,6 +25,7 @@ function makePostRequest(url: string, body: Record<string, unknown>) {
 interface RejectTestConfig {
   /** Payout status returned by the initial read */
   payoutStatus?: string;
+  payoutCurrency?: string | null;
   /** RPC result (array of rows) */
   rpcResult?: unknown[] | null;
   /** RPC error */
@@ -39,6 +40,7 @@ let auditLogCalls: Array<Record<string, unknown>>;
 function setupMocks(config: RejectTestConfig = {}) {
   const {
     payoutStatus = 'held',
+    payoutCurrency = 'NGN',
     rpcResult = [{ rejected_id: 'p1', adjustments_released: 0 }],
     rpcError = null,
     stepUpFails = false,
@@ -56,7 +58,7 @@ function setupMocks(config: RejectTestConfig = {}) {
     if (table === 'business_payouts') {
       chain.single = vi.fn().mockResolvedValue({
         data: {
-          id: 'p1', business_id: 'b1', net_amount: 100, status: payoutStatus,
+          id: 'p1', business_id: 'b1', net_amount: 100, currency: payoutCurrency, status: payoutStatus,
         },
       });
     } else if (table === 'businesses') {
@@ -121,6 +123,22 @@ function setupMocks(config: RejectTestConfig = {}) {
 describe('#620 — Reject route: executable tests', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it('maps the locked manual-settlement guard to 409 without success audit', async () => {
+    setupMocks({ payoutStatus: 'pending', rpcError: { message: 'manual_settlement_in_flight' } });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/reject/route');
+    const res = await POST(makePostRequest('/api/admin/payouts/p1/reject', { reason: 'Fixture', stepUpId: 'step1' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(409);
+    expect(auditLogCalls).toEqual([]);
+  });
+
+  it.each(['USD', null])('reports stored %s denomination instead of the Nigerian business currency', async payoutCurrency => {
+    setupMocks({ payoutCurrency });
+    const { POST } = await import('@/app/api/admin/payouts/[id]/reject/route');
+    const res = await POST(makePostRequest('/api/admin/payouts/p1/reject', { reason: 'Fixture', stepUpId: 'step1' }), { params: Promise.resolve({ id: 'p1' }) });
+    expect(res.status).toBe(200);
+    expect((await import('@/lib/email/templates')).payoutRejectedEmail).toHaveBeenCalledWith('Test Biz', payoutCurrency ? expect.stringMatching(/^USD\s/) : expect.stringContaining('currency unclassified'), 'Fixture');
+  });
 
   it('(a) held → rejected: calls RPC and returns success', async () => {
     setupMocks({ payoutStatus: 'held' });

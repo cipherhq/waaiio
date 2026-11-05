@@ -14,8 +14,11 @@
  * Locally, set it to run these tests; they FAIL (not skip) when the
  * variable is absent in CI.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { execSync, execFile } from 'child_process';
+const commercialFixture = vi.hoisted(() => ({ client: null as any }));
+vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => commercialFixture.client }));
+vi.mock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn() }));
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 const IS_CI = process.env.CI === 'true';
@@ -439,6 +442,91 @@ describe('SEC-005: step-up concurrency and replay (real PostgreSQL)', () => {
       RETURNING id;
     `);
     expect(result).not.toContain(STEP_UP_EXPIRED);
+  });
+});
+
+describe('commercial_config verification binding through actual consumeStepUp (disposable PostgreSQL)', () => {
+  const actor = '00000000-0000-0000-0000-000000762001';
+  const target = '00000000-0000-0000-0000-000000762002';
+  const grant = '00000000-0000-0000-0000-000000762003';
+  const session = 'synthetic-commercial-review';
+  const admin = { userId: actor, email: 'synthetic@example.test', role: 'admin', aal: 'aal2', bearerToken: 'synthetic', sessionId: session } as const;
+  const params = {
+    scope: 'business_verification_review', action: 'approve', level: 'standard', notes: 'review',
+    document_ids: ['00000000-0000-0000-0000-000000762004'],
+  };
+  const quote = (value: unknown) => "'" + String(value).replace(/'/g, "''") + "'";
+  function sqlAsync(sql: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile('psql', [TEST_DB!, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
+        { timeout: 15000 }, (error, stdout, stderr) => error ? reject(new Error(stderr)) : resolve(stdout.trim()));
+    });
+  }
+  beforeAll(() => {
+    expect(runSQL(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id, raw_app_meta_data) VALUES ('${actor}', '{"role":"admin"}');
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+    `)).not.toContain('ERROR');
+    // The adapter executes the actual helper's generated predicates against PostgreSQL.
+    commercialFixture.client = {
+      from: (table: string) => {
+        if (table !== 'admin_step_up_authorizations') throw new Error('Unexpected table');
+        const predicates: string[] = [];
+        let consumedAt = '';
+        const chain = {
+          update: (value: { consumed_at: string }) => { consumedAt = value.consumed_at; return chain; },
+          eq: (key: string, value: unknown) => { predicates.push(key + ' = ' + quote(value)); return chain; },
+          not: (key: string) => { predicates.push(key + ' IS NOT NULL'); return chain; },
+          is: (key: string) => { predicates.push(key + ' IS NULL'); return chain; },
+          gt: (key: string, value: unknown) => { predicates.push(key + ' > ' + quote(value)); return chain; },
+          select: async () => {
+            const result = await sqlAsync('UPDATE admin_step_up_authorizations SET consumed_at = ' + quote(consumedAt) +
+              ' WHERE ' + predicates.join(' AND ') + ' RETURNING id;');
+            return { data: result.split('\n').filter(line => line === grant).map(id => ({ id })), error: null };
+          },
+        };
+        return chain;
+      },
+    };
+  });
+  afterAll(() => {
+    expect(runSQL(`DELETE FROM admin_step_up_authorizations WHERE admin_user_id = '${actor}';
+      ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id = '${actor}'; ALTER TABLE auth.users ENABLE TRIGGER ALL;`)).not.toContain('ERROR');
+  });
+  async function seed(operation: Record<string, unknown> = params) {
+    const { hashOperationParams } = await import('@/lib/admin-step-up');
+    expect(runSQL(`DELETE FROM admin_step_up_authorizations WHERE id = '${grant}';
+      INSERT INTO admin_step_up_authorizations (id, admin_user_id, session_id, action_type, target_id, params_hash, verified_at, expires_at)
+      VALUES ('${grant}', '${actor}', '${session}', 'commercial_config', '${target}', '${hashOperationParams(operation)}', now(), now() + interval '5 minutes');`)).not.toContain('ERROR');
+  }
+  it.each([
+    { scope: 'other' }, { action: 'reject' }, { level: 'full' }, { notes: 'different' },
+    { document_ids: [] },
+  ])('rejects changed verification fields %j without consumption', async change => {
+    await seed();
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    await expect(consumeStepUp(admin, grant, 'commercial_config', target, { ...params, ...change })).rejects.toThrow();
+    expect(runSQL(`SELECT consumed_at IS NULL FROM admin_step_up_authorizations WHERE id = '${grant}';`)).toBe('t');
+  });
+  it.each(['action', 'reason', 'custom_fee_percentage', 'custom_fee_flat'])('binds custom-fee %s including explicit zero', async field => {
+    const fees = { scope: 'business_verification_review', action: 'set_custom_fees', reason: 'review', custom_fee_percentage: 0, custom_fee_flat: 0 };
+    await seed(fees);
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    await expect(consumeStepUp(admin, grant, 'commercial_config', target, { ...fees, [field]: null })).rejects.toThrow();
+    expect(runSQL(`SELECT consumed_at IS NULL FROM admin_step_up_authorizations WHERE id = '${grant}';`)).toBe('t');
+  });
+  it('rejects a different business and allows only one competing consumer, then denies replay', async () => {
+    await seed();
+    const { consumeStepUp } = await import('@/lib/admin-step-up');
+    await expect(consumeStepUp(admin, grant, 'commercial_config', actor, params)).rejects.toThrow();
+    const results = await Promise.allSettled([
+      consumeStepUp(admin, grant, 'commercial_config', target, params),
+      consumeStepUp(admin, grant, 'commercial_config', target, params),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    await expect(consumeStepUp(admin, grant, 'commercial_config', target, params)).rejects.toThrow();
   });
 });
 

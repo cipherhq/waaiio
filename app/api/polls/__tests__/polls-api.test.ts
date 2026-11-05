@@ -11,6 +11,7 @@ import { NextRequest } from 'next/server';
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 const mockServiceFrom = vi.fn();
+const mockSendWithTemplate = vi.fn<() => Promise<{ sent: boolean }>>();
 
 // Helper: build a chainable query mock
 function chainable(finalResult: { data: unknown; error: unknown; count?: number }) {
@@ -474,7 +475,8 @@ describe('POST /api/polls/[id]/send', () => {
   let SEND_POST: (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
 
   beforeEach(async () => {
-    // Reset module for fresh import
+    mockSendWithTemplate.mockReset().mockResolvedValue({ sent: true });
+    // Set up isolated channel and guard boundaries for the send handler
     vi.doMock('@/lib/rate-limit', () => ({
       rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
     }));
@@ -487,13 +489,111 @@ describe('POST /api/polls/[id]/send', () => {
       },
     }));
     vi.doMock('@/lib/channels/send-with-template', () => ({
-      sendWithTemplate: vi.fn().mockResolvedValue(undefined),
+      sendWithTemplate: mockSendWithTemplate,
     }));
     const mod = await import('@/app/api/polls/[id]/send/route');
     SEND_POST = mod.POST;
   });
 
   const params = (id: string) => ({ params: Promise.resolve({ id }) });
+
+  function setupActiveSend(existingSession: { id: string } | null = null) {
+    setupMockFrom({
+      polls: { data: POLL_ACTIVE, error: null },
+      businesses: { data: BIZ, error: null },
+    });
+    const sessionQuery = chainable({ data: existingSession, error: null });
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table !== 'bot_sessions') throw new Error(`Unexpected service table: ${table}`);
+      return sessionQuery;
+    });
+    return sessionQuery;
+  }
+
+  it('counts a true helper result as sent after updating an existing session', async () => {
+    const sessionQuery = setupActiveSend({ id: 'session-1' });
+    mockSendWithTemplate.mockResolvedValueOnce({ sent: true });
+
+    const res = await SEND_POST(
+      makeRequest('POST', '/api/polls/poll-2/send', { phones: ['+15555550101'] }),
+      params('poll-2'),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 1, failed: 0, total: 1 });
+    expect(sessionQuery.maybeSingle).toHaveBeenCalledOnce();
+    expect(sessionQuery.update).toHaveBeenCalledWith(expect.objectContaining({ current_step: 'poll_question' }));
+    expect(sessionQuery.eq).toHaveBeenCalledWith('id', 'session-1');
+    expect(sessionQuery.insert).not.toHaveBeenCalled();
+    expect(mockSendWithTemplate).toHaveBeenCalledTimes(1);
+    expect(mockSendWithTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      to: '+15555550101',
+      templateName: 'feedback_request',
+      templateParams: [BIZ.name, POLL_ACTIVE.question],
+      followUpFn: expect.any(Function),
+    }));
+  });
+
+  it('counts a false helper result as failed after inserting a new session', async () => {
+    const sessionQuery = setupActiveSend();
+    mockSendWithTemplate.mockResolvedValueOnce({ sent: false });
+
+    const res = await SEND_POST(
+      makeRequest('POST', '/api/polls/poll-2/send', { phones: ['+15555550102'] }),
+      params('poll-2'),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 0, failed: 1, total: 1 });
+    expect(sessionQuery.maybeSingle).toHaveBeenCalledOnce();
+    expect(sessionQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
+      whatsapp_number: '+15555550102', business_id: BIZ.id, current_step: 'poll_question', is_active: true,
+    }));
+    expect(sessionQuery.update).not.toHaveBeenCalled();
+    expect(mockSendWithTemplate).toHaveBeenCalledTimes(1);
+    expect(mockSendWithTemplate).toHaveBeenCalledWith(expect.objectContaining({ to: '+15555550102' }));
+  });
+
+  it('counts a thrown helper error as failed', async () => {
+    setupActiveSend();
+    mockSendWithTemplate.mockRejectedValueOnce(new Error('send rejected'));
+
+    const res = await SEND_POST(
+      makeRequest('POST', '/api/polls/poll-2/send', { phones: ['+15555550103'] }),
+      params('poll-2'),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 0, failed: 1, total: 1 });
+    expect(mockSendWithTemplate).toHaveBeenCalledTimes(1);
+    expect(mockSendWithTemplate).toHaveBeenCalledWith(expect.objectContaining({ to: '+15555550103' }));
+  });
+
+  it('reconciles mixed outcomes and continues after false and thrown results', async () => {
+    const sessionQuery = setupActiveSend();
+    const phones = ['+15555550101', '+15555550102', '+15555550103', '+15555550104'];
+    mockSendWithTemplate
+      .mockResolvedValueOnce({ sent: true })
+      .mockResolvedValueOnce({ sent: false })
+      .mockRejectedValueOnce(new Error('send rejected'))
+      .mockResolvedValueOnce({ sent: true });
+
+    const res = await SEND_POST(
+      makeRequest('POST', '/api/polls/poll-2/send', { phones }),
+      params('poll-2'),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ sent: 2, failed: 2, total: 4 });
+    expect(body.sent + body.failed).toBe(body.total);
+    expect(mockSendWithTemplate).toHaveBeenCalledTimes(phones.length);
+    phones.forEach((phone, index) => {
+      expect(mockSendWithTemplate).toHaveBeenNthCalledWith(index + 1, expect.objectContaining({ to: phone }));
+    });
+    expect(sessionQuery.maybeSingle).toHaveBeenCalledTimes(phones.length);
+    expect(sessionQuery.insert).toHaveBeenCalledTimes(phones.length);
+  });
 
   it('returns 400 when poll is not active', async () => {
     setupMockFrom({

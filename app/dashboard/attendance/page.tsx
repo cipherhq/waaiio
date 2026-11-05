@@ -140,7 +140,7 @@ export default function AttendancePage() {
         <PageHelp
           pageKey="attendance"
           title="Attendance Tracking"
-          description="View and manage check-ins for your location. Share your QR code to let customers check in automatically, or add entries manually."
+          description="Track who checked in at your location. Attendance records actual visits; party RSVPs record responses to invitations. Share your QR code for check-in or add entries manually."
         />
       </div>
 

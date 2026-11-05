@@ -11,7 +11,8 @@ import { logger } from '@/lib/logger';
  * GET: return current consent status
  * POST: update consent preferences
  *
- * Stored in profiles.metadata.consent_preferences
+ * Stored in profiles.consent_preferences (M515, #878): a server-only JSONB
+ * column. Owners can read their own row; only this service-role code writes it.
  */
 
 interface ConsentPreferences {
@@ -41,14 +42,21 @@ export async function GET() {
     }
 
     const serviceClient = createServiceClient();
-    const { data: profile } = await serviceClient
+    const { data: profile, error: profileError } = await serviceClient
       .from('profiles')
-      .select('metadata')
+      .select('consent_preferences')
       .eq('id', user.id)
       .maybeSingle();
 
-    const metadata = (profile?.metadata || {}) as Record<string, unknown>;
-    const consent = (metadata.consent_preferences || DEFAULT_CONSENT) as ConsentPreferences;
+    if (profileError) {
+      logger.error('[CONSENT] Profile read error:', profileError);
+      return NextResponse.json({ error: 'Failed to load consent' }, { status: 500 });
+    }
+    if (!profile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
+
+    const consent = (profile.consent_preferences || DEFAULT_CONSENT) as ConsentPreferences;
 
     return NextResponse.json({ consent });
   } catch (error) {
@@ -82,14 +90,22 @@ export async function POST(request: NextRequest) {
 
     const serviceClient = createServiceClient();
 
-    // Fetch current profile metadata
-    const { data: profile } = await serviceClient
+    // Fetch the current consent answers
+    const { data: profile, error: profileError } = await serviceClient
       .from('profiles')
-      .select('metadata')
+      .select('consent_preferences')
       .eq('id', user.id)
       .maybeSingle();
 
-    const existingMetadata = (profile?.metadata || {}) as Record<string, unknown>;
+    if (profileError) {
+      logger.error('[CONSENT] Profile read error:', profileError);
+      return NextResponse.json({ error: 'Failed to load consent' }, { status: 500 });
+    }
+    if (!profile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
+
+    const existingConsent = (profile.consent_preferences || {}) as Partial<ConsentPreferences>;
 
     // Fetch current privacy policy version from platform_settings
     let policyVersion = '2026-05-23'; // fallback
@@ -115,6 +131,7 @@ export async function POST(request: NextRequest) {
     }
 
     const consentPreferences: ConsentPreferences = {
+      ...existingConsent,
       marketing_emails,
       analytics,
       ai_processing,
@@ -124,25 +141,29 @@ export async function POST(request: NextRequest) {
       ...(terms_accepted === true ? { terms_accepted_at: new Date().toISOString(), terms_version: termsVersion } : {}),
     };
 
-    // Merge with existing metadata
-    const updatedMetadata = {
-      ...existingMetadata,
-      consent_preferences: consentPreferences,
-    };
-
-    const { error: updateError } = await serviceClient
+    const { data: updatedProfile, error: updateError } = await serviceClient
       .from('profiles')
-      .update({ metadata: updatedMetadata })
-      .eq('id', user.id);
+      .update({ consent_preferences: consentPreferences })
+      .eq('id', user.id)
+      .select('consent_preferences')
+      .maybeSingle();
 
     if (updateError) {
       logger.error('[CONSENT] Update error:', updateError);
       return NextResponse.json({ error: 'Failed to update consent' }, { status: 500 });
     }
 
+    if (!updatedProfile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
+    const persistedConsent = updatedProfile.consent_preferences;
+    if (!persistedConsent) {
+      return NextResponse.json({ error: 'Failed to confirm consent' }, { status: 500 });
+    }
+
     logger.info(`[CONSENT] User ${user.id} updated consent: marketing=${marketing_emails}, analytics=${analytics}, ai=${ai_processing}`);
 
-    return NextResponse.json({ success: true, consent: consentPreferences });
+    return NextResponse.json({ success: true, consent: persistedConsent });
   } catch (error) {
     logger.error('[CONSENT] POST error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

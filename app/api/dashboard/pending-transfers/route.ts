@@ -38,7 +38,8 @@ export async function GET(request: NextRequest) {
       .select(
         'id, customer_phone, customer_name, expected_amount, currency, reference_code, ' +
         'proof_type, proof_text, proof_image_url, status, expires_at, created_at, ' +
-        'booking_id, order_id, invoice_id',
+        'booking_id, order_id, invoice_id, reservation_id, campaign_id, ' +
+        'ocr_result, verified_by_ocr, proof_submitted_at, proof_protected',
       )
       .eq('business_id', businessId)
       .order('created_at', { ascending: false });

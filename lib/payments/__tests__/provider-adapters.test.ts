@@ -366,3 +366,29 @@ describe('Provider adapters', () => {
     expect(r.status).toBe('verified');
   });
 });
+
+describe('Paystack M485 fee observation normalization', () => {
+  it.each([[undefined, {version:1,supplied:false}], [0,{version:1,supplied:true,value:0}],
+    [49,{version:1,supplied:true,value:0}], [50,{version:1,supplied:true,value:1}],
+    [749,{version:1,supplied:true,value:7}], [750,{version:1,supplied:true,value:8}],
+    [214748364700,{version:1,supplied:true,value:2147483647}]])('normalizes %s without losing presence', async (raw, expected) => {
+    const { normalizePaystackGatewayFee } = await import('../provider-adapters');
+    expect(normalizePaystackGatewayFee(raw)).toEqual(expected);
+  });
+  it.each([null,'0',true,-1,NaN,Infinity,-Infinity,214748364750])('rejects malformed or overflow fee %s', async raw => {
+    const { normalizePaystackGatewayFee } = await import('../provider-adapters');
+    expect(() => normalizePaystackGatewayFee(raw)).toThrow('invalid_paystack_gateway_fee');
+  });
+  it.each([undefined,0,750,null,'0',-1,Infinity])('real verify adapter preserves or rejects fee %s', async fees => {
+    process.env.PAYSTACK_SECRET_KEY='test_fee_key';
+    mockFetch.mockResolvedValueOnce({ok:true,json:async()=>({data:{status:'success',amount:500000,currency:'NGN',fees}})});
+    const {verifyWithProvider}=await import('../provider-adapters');
+    const result=await verifyWithProvider(buildSupabase(),{provider:'paystack',gatewayReference:'FEE-762',
+      expectedAmount:5000,expectedCurrency:'NGN',paymentMetadata:{payment_origin:'platform'},businessId:'biz-1',isNewAuthority:true});
+    if(fees===undefined||fees===0||fees===750) {
+      expect(result.status).toBe('verified');
+      if(result.status==='verified') expect(result.result.verifiedGatewayFee).toEqual(
+        fees===undefined?{version:1,supplied:false}:{version:1,supplied:true,value:fees===750?8:0});
+    } else expect(result.status).toBe('retryable_error');
+  });
+});

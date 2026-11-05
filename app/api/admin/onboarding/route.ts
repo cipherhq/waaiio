@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -8,6 +9,7 @@ import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
 import { buildVerifiedWhatsAppLink, isAssignedWhatsAppChannelReady } from '@/lib/onboarding/whatsapp-readiness';
+import { buildMerchantLink } from '@/lib/url';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
@@ -96,6 +98,7 @@ export async function GET(request: NextRequest) {
         bot_code: biz?.bot_code || null,
         channel_ready: channelReady,
         whatsapp_link: buildVerifiedWhatsAppLink(biz, ch),
+        permanent_link: biz ? buildMerchantLink(biz.id) : null,
         channel_type: ch?.channel_type || null,
         connection_status: ch?.connection_status || null,
         owner_connection_required: requested !== 'shared' && !(channelReady && ch?.channel_type === 'dedicated'),
@@ -108,6 +111,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
+  if (!channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
   const limit = await rateLimitResponseAsync(`admin-onboarding-create:${admin.userId}`, 10, 60 * 60_000);
   if (limit) return limit;
 

@@ -1,3 +1,4 @@
+import { isSharedConversation, DIRECTORY_ACTION } from './shared/navigation';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -82,8 +83,8 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
           return [cap, (count || 0) > 0];
         }
         case 'table_reservation': {
-          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
+          const { count } = await ctx.supabase.from('seating_resources').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
         case 'waiver': {
@@ -134,6 +135,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'invoice': return 'invoice_list';
     case 'class_booking': return 'select_service';
+    case 'table_reservation': return 'select_table';
     case 'promo_verification': return 'promo_entry'; // Dedicated entry step — prevents select_capability recursion
     default: return 'select_service';
   }
@@ -156,7 +158,7 @@ const selectCapabilityStep: FlowStepConfig = {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
 
     // Exactly one renderable capability → auto-select and skip the menu
-    if (userFacing.length === 1) {
+    if (userFacing.length === 1 && !await isSharedConversation(ctx.supabase, ctx.session.session_data) && !ctx.session.session_data._customer_history) {
       ctx.session.session_data.active_capability = userFacing[0];
       // Send greeting as standalone text since capability menu is skipped
       const greeting = ctx.session.session_data._greeting as string | undefined;
@@ -200,7 +202,7 @@ const selectCapabilityStep: FlowStepConfig = {
       const { data: profile } = await ctx.supabase
         .from('profiles')
         .select('id')
-        .eq('phone', phone)
+        .in('phone', [phone, phone.slice(1)])
         .maybeSingle();
       if (profile?.id) {
         const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -253,6 +255,10 @@ const selectCapabilityStep: FlowStepConfig = {
       capItems.push({ id: 'cap_my_account', title: getFlowCopy(ctx.copyLang, 'account.title'), postbackText: 'cap_my_account' });
     }
 
+    if (await isSharedConversation(ctx.supabase, ctx.session.session_data)) {
+      capItems.push({ ...DIRECTORY_ACTION, postbackText: DIRECTORY_ACTION.id });
+    }
+
     // Use greeting as body if available (first-time display), then clear it
     const greeting = ctx.session.session_data._greeting as string | undefined;
     const bodyText = greeting
@@ -273,6 +279,15 @@ const selectCapabilityStep: FlowStepConfig = {
       waaiioOwnedItemTitles: true,
       ...(merchantProtected.length ? { protectedValues: merchantProtected } : {}),
     };
+
+    const META_MAX_ROWS = 10;
+
+    // Clear stale pagination state if the refreshed menu no longer needs pagination
+    // (e.g., backing data removed so fewer capabilities now fit in a single page)
+    if (capItems.length <= META_MAX_ROWS) {
+      delete ctx.session.session_data._cap_menu_page;
+      delete ctx.session.session_data._cap_menu_total_pages;
+    }
 
     // SAFETY: never send an empty buttons/list payload to WhatsApp
     if (capItems.length === 0) {
@@ -296,12 +311,93 @@ const selectCapabilityStep: FlowStepConfig = {
     // List message for 4+ items
     // WhatsApp list body max is 1024 chars — trim greeting if needed
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
+
+    const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText }));
+
+    // If everything fits in one page, no pagination needed
+    if (allListItems.length <= META_MAX_ROWS) {
+      return [{
+        type: 'list' as const,
+        title: bizName || getFlowCopy(ctx.copyLang, 'menu.title'),
+        body: listBody,
+        buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
+        items: allListItems,
+        _localization: locMeta,
+      }];
+    }
+
+    // ── Pagination: split capability items across pages ──
+    // Each page has max META_MAX_ROWS slots. Navigation items ("More...", "Back")
+    // consume slots, leaving the rest for actual capabilities.
+    const currentPage = (ctx.session.session_data._cap_menu_page as number) || 0;
+
+    // Build pages of capability indices — the last slot on non-last pages is "More...",
+    // and the first slot on non-first pages is "← Previous".
+    const pages: Array<{ startIdx: number; endIdx: number }> = [];
+    let idx = 0;
+    let pageNum = 0;
+    while (idx < allListItems.length) {
+      const isFirstPage = pageNum === 0;
+      // Reserve 1 slot for "← Previous" on non-first pages
+      const navPrevSlots = isFirstPage ? 0 : 1;
+      // Tentatively reserve 1 slot for "More..." — we'll drop it if everything fits
+      const slotsForItems = META_MAX_ROWS - navPrevSlots - 1; // -1 for potential "More..."
+      const endIdx = Math.min(idx + slotsForItems, allListItems.length);
+      const remaining = allListItems.length - endIdx;
+
+      if (remaining === 0) {
+        // Everything fits on this page — no "More..." needed, reclaim that slot
+        const finalSlots = META_MAX_ROWS - navPrevSlots;
+        const finalEnd = Math.min(idx + finalSlots, allListItems.length);
+        pages.push({ startIdx: idx, endIdx: finalEnd });
+        break;
+      } else {
+        pages.push({ startIdx: idx, endIdx });
+        idx = endIdx;
+        pageNum++;
+      }
+    }
+
+    const safePage = Math.min(currentPage, pages.length - 1);
+    const page = pages[safePage];
+    const isFirstPage = safePage === 0;
+    const isLastPage = safePage === pages.length - 1;
+
+    const pageItems: Array<{ title: string; postbackText: string; description?: string }> = [];
+
+    // "← Previous" nav item on non-first pages
+    if (!isFirstPage) {
+      pageItems.push({
+        title: getFlowCopy(ctx.copyLang, 'nav.previous_page'),
+        postbackText: 'cap_nav_prev',
+        description: getFlowCopy(ctx.copyLang, 'nav.previous_desc'),
+      });
+    }
+
+    // Actual capability items for this page
+    for (let i = page.startIdx; i < page.endIdx; i++) {
+      pageItems.push(allListItems[i]);
+    }
+
+    // "More..." nav item on non-last pages
+    if (!isLastPage) {
+      pageItems.push({
+        title: getFlowCopy(ctx.copyLang, 'nav.more_options'),
+        postbackText: 'cap_nav_more',
+        description: getFlowCopy(ctx.copyLang, 'nav.more_desc'),
+      });
+    }
+
+    // Store page state for validate() to use
+    ctx.session.session_data._cap_menu_page = safePage;
+    ctx.session.session_data._cap_menu_total_pages = pages.length;
+
     return [{
       type: 'list' as const,
       title: bizName || getFlowCopy(ctx.copyLang, 'menu.title'),
       body: listBody,
       buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
-      items: capItems.map(i => ({ title: i.title, postbackText: i.postbackText })),
+      items: pageItems,
       _localization: locMeta,
     }];
   },
@@ -315,9 +411,39 @@ const selectCapabilityStep: FlowStepConfig = {
 
     let capId: CapabilityId | null = null;
 
+    // ── Pagination navigation — "More..." / "← Previous" ──
+    if (input === 'cap_nav_more' || input === 'cap_nav_prev') {
+      const currentPage = ctx.session.session_data._cap_menu_page as number | undefined;
+      const totalPages = ctx.session.session_data._cap_menu_total_pages as number | undefined;
+
+      // Reject stale/replayed navigation — pagination state must exist from prompt()
+      if (currentPage === undefined || totalPages === undefined) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.stale_navigation'), persistSessionDataOnFailure: true };
+      }
+
+      // Reject impossible navigation: can't go forward from last page, can't go back from first
+      if (input === 'cap_nav_more' && currentPage >= totalPages - 1) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.stale_navigation'), persistSessionDataOnFailure: true };
+      }
+      if (input === 'cap_nav_prev' && currentPage <= 0) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.stale_navigation'), persistSessionDataOnFailure: true };
+      }
+
+      if (input === 'cap_nav_more') {
+        ctx.session.session_data._cap_menu_page = currentPage + 1;
+      } else {
+        ctx.session.session_data._cap_menu_page = currentPage - 1;
+      }
+      // Signal reprompt — stay on select_capability and re-render with new page
+      return { valid: true, data: { _cap_menu_navigate: true }, persistSessionDataOnFailure: true };
+    }
+
     // Handle "My Account" selection
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
       ctx.session.session_data.active_capability = 'my_account';
+      // Clean up pagination state — My Account exits the paginated menu
+      delete ctx.session.session_data._cap_menu_page;
+      delete ctx.session.session_data._cap_menu_total_pages;
       return { valid: true, data: { active_capability: 'my_account' } };
     }
 
@@ -328,6 +454,11 @@ const selectCapabilityStep: FlowStepConfig = {
 
     if (input.startsWith('cap_')) {
       capId = input.replace('cap_', '') as CapabilityId;
+      // Verify capability is still in the business's session capabilities
+      // (guards against stale postback from a removed/changed capability)
+      if (!capabilities.includes(capId)) {
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.capability_unavailable'), persistSessionDataOnFailure: true };
+      }
     } else {
       // Numeric selection: "1", "2", etc.
       const num = parseInt(input, 10);
@@ -408,6 +539,16 @@ const selectCapabilityStep: FlowStepConfig = {
 
       return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
+
+    // Clear stale transactional state BEFORE entity extraction (P2-3).
+    // Must run first so cleanup removes the PREVIOUS capability's data,
+    // not the newly extracted service/date/time from the current request.
+    const { clearStaleCapabilityState } = await import('./shared/capability-transition');
+    clearStaleCapabilityState(
+      ctx.session.session_data,
+      ctx.session.session_data.active_capability as string | undefined,
+      capId,
+    );
 
     // Entity extraction: use ctx.currentCanonical if available, otherwise ONE fresh parse
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
@@ -570,6 +711,10 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: true, data: { active_capability: 'promo_verification', _promo_entry_handled: true } };
     }
 
+    // Clean up pagination state on successful capability selection
+    delete ctx.session.session_data._cap_menu_page;
+    delete ctx.session.session_data._cap_menu_total_pages;
+
     return {
       valid: true,
       data: { active_capability: capId },
@@ -577,15 +722,24 @@ const selectCapabilityStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
+    // Pagination navigation — re-render the menu on the new page
+    if (ctx.session.session_data._cap_menu_navigate) {
+      delete ctx.session.session_data._cap_menu_navigate;
+      return 'select_capability';
+    }
     const cap = ctx.session.session_data.active_capability as string;
     if (cap === 'my_account') return 'my_account_menu';
-    // Waiver was handled inline — return to capability menu
+    // Waiver was handled inline — return to capability menu (reset pagination)
     if (ctx.session.session_data._waiver_handled) {
       delete ctx.session.session_data._waiver_handled;
+      delete ctx.session.session_data._cap_menu_page;
+      delete ctx.session.session_data._cap_menu_total_pages;
       return 'select_capability';
     }
     if (ctx.session.session_data._promo_entry_handled) {
       delete ctx.session.session_data._promo_entry_handled;
+      delete ctx.session.session_data._cap_menu_page;
+      delete ctx.session.session_data._cap_menu_total_pages;
       return 'select_capability'; // Message already sent inline — return to menu for code submission
     }
     return getFirstStepForCapability(cap as CapabilityId);

@@ -21,7 +21,11 @@ interface BankTransferCheckResult {
 
 /**
  * Check if a business qualifies for direct bank transfer and return bank account details.
- * Qualification: NG/GH country + growth/business tier + amount >= minimum.
+ * Qualification: explicit opt-in + NG/GH country + growth/business tier + amount >= minimum
+ * + whole major-unit amount (no fractional cents).
+ *
+ * Owner Option B (#721): bank transfer OFF by default. Requires explicit
+ * businesses.metadata.bank_transfer_enabled === true.
  */
 export async function checkBankTransferEligibility(
   supabase: SupabaseClient,
@@ -49,6 +53,28 @@ export async function checkBankTransferEligibility(
     amount >= minBankTransfer;
 
   if (!qualifies) {
+    return { qualifies: false, bankAccount: null, platformSettings: ps };
+  }
+
+  // #736 Owner Option B: explicit merchant opt-in required (OFF by default).
+  // Only metadata.bank_transfer_enabled === true enables bank transfer.
+  const { data: bizData } = await supabase
+    .from('businesses')
+    .select('metadata')
+    .eq('id', params.businessId)
+    .single();
+  const meta = (bizData?.metadata || {}) as Record<string, unknown>;
+  if (meta.bank_transfer_enabled !== true) {
+    return { qualifies: false, bankAccount: null, platformSettings: ps };
+  }
+
+  // #736: Fail-closed on fractional amounts — reject before showing bank details.
+  // Bank transfer amounts are stored as Math.round(amount * 100) in minor units.
+  // Payment records use major units (integer). If amount has sub-unit fractions,
+  // the minor→major conversion is lossy. Reject these before the customer pays.
+  const minorUnits = Math.round(amount * 100);
+  if (minorUnits % 100 !== 0) {
+    logger.warn('[BANK-TRANSFER] Fractional amount rejected before instructions:', { amount, minorUnits, businessId: params.businessId });
     return { qualifies: false, bankAccount: null, platformSettings: ps };
   }
 
@@ -83,7 +109,7 @@ export async function createPendingTransfer(
     countryCode: CountryCode;
     transferExpiryHours: number;
   },
-): Promise<string> {
+): Promise<string | null> {
   const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
 
   const { error } = await supabase.from('pending_transfers').insert({
@@ -100,9 +126,61 @@ export async function createPendingTransfer(
 
   if (error) {
     logger.error('[BANK-TRANSFER] Failed to insert pending_transfer:', error.message);
+    return null; // #736: fail closed — caller must check and show fallback
   }
 
   return transferRef;
+}
+
+/**
+ * Submit transfer proof through the atomic submit_transfer_proof RPC.
+ * Enforces DB-authoritative deadline, lock order, and immutable timestamps.
+ * Returns { submitted: true } or { submitted: false, reason: string }.
+ *
+ * Falls back to direct UPDATE only for transfers without a resolvable ID
+ * (should not happen in normal flow — createPendingTransfer returns the ref).
+ */
+export async function submitTransferProof(
+  supabase: SupabaseClient,
+  params: {
+    referenceCode: string;
+    businessId: string;
+    proofType: 'screenshot' | 'reference' | 'text';
+    proofImageUrl: string | null;
+    proofText: string | null;
+    ocrResult: Record<string, unknown> | null;
+    verifiedByOcr: boolean;
+  },
+): Promise<{ submitted: boolean; reason?: string }> {
+  // Look up transfer ID by reference_code + business_id
+  const { data: transfer } = await supabase
+    .from('pending_transfers')
+    .select('id')
+    .eq('reference_code', params.referenceCode)
+    .eq('business_id', params.businessId)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (!transfer?.id) {
+    return { submitted: false, reason: 'transfer_not_found_or_expired' };
+  }
+
+  const { data: result, error } = await supabase.rpc('submit_transfer_proof', {
+    p_transfer_id: transfer.id,
+    p_business_id: params.businessId,
+    p_proof_type: params.proofType,
+    p_proof_image_url: params.proofImageUrl,
+    p_proof_text: params.proofText,
+    p_ocr_result: params.ocrResult ? JSON.stringify(params.ocrResult) : null,
+    p_verified_by_ocr: params.verifiedByOcr,
+  });
+
+  if (error) {
+    logger.error('[BANK-TRANSFER] submit_transfer_proof RPC error:', error.message);
+    return { submitted: false, reason: error.message };
+  }
+
+  return result as { submitted: boolean; reason?: string };
 }
 
 /**

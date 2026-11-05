@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { recordInboundReceipt } from '@/lib/channels/inbound-receipts';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
@@ -553,6 +554,9 @@ export async function POST(request: NextRequest) {
         for (const msg of messages) {
           const source = msg.from;
           const msgLog = log.withContext({ from: source });
+
+          // Transport evidence is independent of bot/handoff routing and claim replay.
+          await recordInboundReceipt(supabase, resolved.channel, msg);
 
           // Durable inbound event — atomic claim via RPC (#271 Slice B)
           const metaMsgId = msg.id;

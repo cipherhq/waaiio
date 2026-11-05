@@ -1,3 +1,4 @@
+import { isSharedConversation, transactionNextSteps } from './shared/navigation';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
@@ -13,7 +14,7 @@ import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
@@ -78,6 +79,49 @@ function routeAfterProductSelection(d: Record<string, unknown>, meta?: Record<st
     return 'select_option_axis';
   }
   return 'select_variant';
+}
+
+/** Extra product photos sent with the main image (Owner decision 2026-11-04, #879; same limit as services). */
+const MAX_PRODUCT_GALLERY_IMAGES = 3;
+
+/**
+ * Gallery photos for the current product, sent once per product per conversation.
+ * Skips any URL already shown as the main or variant image. A failed lookup
+ * returns no photos and leaves the product unmarked, so the step still works.
+ */
+async function productGalleryMessages(ctx: FlowContext, shownImageUrl?: string | null): Promise<PromptMessage[]> {
+  const d = ctx.session.session_data;
+  const productId = d.current_product_id as string | undefined;
+  if (!productId || !ctx.business) return [];
+
+  const sentIds = Array.isArray(d._gallery_sent_product_ids) ? (d._gallery_sent_product_ids as string[]) : [];
+  if (sentIds.includes(productId)) return [];
+
+  let galleryUrls: unknown[] = [];
+  try {
+    const { data, error } = await ctx.supabase
+      .from('products')
+      .select('gallery_urls')
+      .eq('id', productId)
+      .eq('business_id', ctx.business.id)
+      .maybeSingle();
+    if (error) throw error;
+    galleryUrls = Array.isArray(data?.gallery_urls) ? data.gallery_urls : [];
+  } catch (err) {
+    logger.warn('[ORDERING] Product gallery lookup failed, sending main image only:', err);
+    return [];
+  }
+
+  d._gallery_sent_product_ids = [...sentIds, productId];
+
+  const alreadyShown = new Set([d.current_product_image_url, shownImageUrl].filter(Boolean));
+  const picked: string[] = [];
+  for (const url of galleryUrls) {
+    if (typeof url !== 'string' || !url || alreadyShown.has(url) || picked.includes(url)) continue;
+    picked.push(url);
+    if (picked.length === MAX_PRODUCT_GALLERY_IMAGES) break;
+  }
+  return picked.map(url => ({ type: 'image' as const, imageUrl: url }));
 }
 
 export const orderingFlow: FlowDefinition = {
@@ -520,6 +564,9 @@ export const orderingFlow: FlowDefinition = {
             caption: `${d.current_product_name}`,
           });
         }
+        if (axisIndex === 0) {
+          messages.push(...await productGalleryMessages(ctx));
+        }
 
         messages.push({
           type: 'list',
@@ -742,6 +789,7 @@ export const orderingFlow: FlowDefinition = {
             caption: `${d.current_product_name}`,
           });
         }
+        messages.push(...await productGalleryMessages(ctx));
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         messages.push({
@@ -967,6 +1015,7 @@ export const orderingFlow: FlowDefinition = {
             caption: `${productName}${variantInfo}`,
           });
         }
+        messages.push(...await productGalleryMessages(ctx, imageUrl));
 
         const minQty = (d.current_min_order_qty as number) || 1;
         let promptText = `*${productName}*${variantInfo} — ${formatCurrency(d.current_product_price as number, cc)}`;
@@ -2977,8 +3026,21 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        // Notify business owner (guarded by freshlyCreated — authoritative creation evidence)
+        // Owner "new order" alert (Owner decision 2026-11-04, option A).
+        // The order exists before the customer picks how to pay, so the alert is
+        // owed here (guarded by freshlyCreated) but sent only once the route is known:
+        //   - online only (payment link, saved card): never sent here; the owner is
+        //     alerted after payment succeeds by send-confirmation.ts.
+        //   - bank transfer, zero total, or still ambiguous (online + bank offered
+        //     together, payment setup failed): sent below.
+        // The owed marker survives a saved-card skip, so a later bank-transfer
+        // offer for the same order still alerts the owner once.
         if (ctx.business && freshlyCreated) {
+          d._owner_order_alert_due = order.id;
+        }
+        const sendOwedOwnerOrderAlert = () => {
+          if (!ctx.business || d._owner_order_alert_due !== order.id) return;
+          delete d._owner_order_alert_due;
           notifyOwnerNewOrder({
             supabase: ctx.supabase,
             sender: ctx.sender,
@@ -2992,7 +3054,7 @@ export const orderingFlow: FlowDefinition = {
             deliveryAddress: (d.delivery_address as string) || undefined,
             paymentPending: total > 0,
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
-        }
+        };
 
         // ACC-008: Promo usage is RESERVED (not finalized) inside create_order_atomic.
         // promo_reservations row inserted atomically with order creation.
@@ -3075,6 +3137,8 @@ export const orderingFlow: FlowDefinition = {
 
             if (d.bank_transfer_offered && bankAccount) {
               // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
+              // Customer may still choose bank transfer: keep the creation alert.
+              sendOwedOwnerOrderAlert();
 
               const orderSummary = getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
@@ -3171,6 +3235,8 @@ export const orderingFlow: FlowDefinition = {
 
           if (d.bank_transfer_offered) {
             // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
+            // Bank transfer only: the owner must verify it, so alert now.
+            sendOwedOwnerOrderAlert();
 
             const orderSummary = getOrderConfirmationMessage({
               businessName: ctx.business?.name || 'Shop',
@@ -3211,6 +3277,8 @@ export const orderingFlow: FlowDefinition = {
           }
 
           // Payment initialization failed — don't confirm without payment
+          // Route unknown: keep the creation alert.
+          sendOwedOwnerOrderAlert();
           return [
             {
               type: 'buttons',
@@ -3223,6 +3291,9 @@ export const orderingFlow: FlowDefinition = {
             },
           ];
         }
+
+        // Free order: no payment to wait for, so alert the owner now.
+        sendOwedOwnerOrderAlert();
 
         // Free order — decrement stock atomically via canonical RPC
         const { error: freeStockErr } = await ctx.supabase.rpc('apply_order_stock_once', {
@@ -3250,11 +3321,13 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const orderTips = getFlowCopy(ctx.copyLang, 'ordering.free_order_tips');
+        const navigation = transactionNextSteps('ordering', await isSharedConversation(ctx.supabase, d));
 
         return [
           {
             type: 'text',
             text: getOrderConfirmationMessage({
+              countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
               businessName: ctx.business?.name || 'Shop',
               items: cart,
               totalAmount: total,
@@ -3267,7 +3340,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               subscriptionTier: ctx.business?.subscription_tier,
               lang: ctx.copyLang,
-            }) + orderTips,
+            }) + orderTips + '\n\n' + navigation,
           },
           {
             type: 'buttons',
@@ -3452,16 +3525,19 @@ export const orderingFlow: FlowDefinition = {
           const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
           const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
 
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({
-              proof_type: 'screenshot',
-              proof_image_url: ctx.mediaUrl,
-              verified_by_ocr: ocrMatches,
-              ocr_result: ocrMatches ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, confidence: ocr.confidence } : null,
-            })
-            .eq('reference_code', transferRef)
-            .eq('status', 'pending');
+          // #736 Finding 2: Route through atomic submit_transfer_proof RPC
+          const proofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: transferRef, businessId: ctx.business!.id,
+            proofType: 'screenshot', proofImageUrl: ctx.mediaUrl, proofText: null,
+            ocrResult: ocr.confidence > 0 ? { amount: ocr.amount, reference: ocr.reference,
+              sender_name: ocr.senderName, bank_name: ocr.bankName, date: ocr.date,
+              confidence: ocr.confidence, fields_match: ocrMatches } : null,
+            verifiedByOcr: ocrMatches,
+          });
+          if (!proofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new order.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
 
           if (ctx.business) {
             const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
@@ -3487,7 +3563,7 @@ export const orderingFlow: FlowDefinition = {
             }).catch(err => logger.error('[ORDERING] Transfer notification error:', err));
           }
 
-          const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
+          const ocrHint = ocrMatches ? `\n\n🤖 _Receipt details match your payment reference._` : '';
           await ctx.sender.sendText({
             to: ctx.from,
             text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm your order shortly.\n\nRef: *${transferRef}*${ocrHint}\n\nSend *Hi* to continue.`),
@@ -3510,13 +3586,17 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
+        // #736 Finding 2: Route typed proof through atomic RPC
         if (d._awaiting_transfer_proof && text && !isIvePaidInput(text)) {
-          await ctx.supabase
-            .from('pending_transfers')
-            .update({ proof_type: 'text', proof_text: input.trim() })
-            .eq('reference_code', d.bank_transfer_reference as string)
-            .eq('status', 'pending');
-
+          const textProofResult = await submitTransferProof(ctx.supabase, {
+            referenceCode: d.bank_transfer_reference as string, businessId: ctx.business!.id,
+            proofType: 'text', proofImageUrl: null, proofText: input.trim(),
+            ocrResult: null, verifiedByOcr: false,
+          });
+          if (!textProofResult.submitted) {
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('This transfer has expired. Please start a new order.') });
+            return { valid: true, data: { _action: 'transfer_expired' } };
+          }
           await ctx.sender.sendText({
             to: ctx.from,
             text: await ctx.t(`✅ Transfer reference received. *${ctx.business?.name || 'The business'}* will review and confirm your order shortly.\n\nRef: *${d.bank_transfer_reference}*\n\nSend *Hi* to continue.`),

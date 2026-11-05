@@ -76,7 +76,6 @@ export default function AnalyticsPage() {
   const [botCompleted, setBotCompleted] = useState(0);
   const [botAbandoned, setBotAbandoned] = useState(0);
   const [botActive, setBotActive] = useState(0);
-  const [botCompletionRate, setBotCompletionRate] = useState(0);
   const [topIntents, setTopIntents] = useState<{ intent: string; count: number }[]>([]);
   const [avgConfidence, setAvgConfidence] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -248,7 +247,6 @@ export default function AnalyticsPage() {
       setBotCompleted(completed.length);
       setBotAbandoned(abandoned.length);
       setBotActive(active.length);
-      setBotCompletionRate(allSessions.length > 0 ? Math.round((completed.length / allSessions.length) * 100) : 0);
 
       // Intent distribution
       const intentMap = new Map<string, number>();
@@ -666,7 +664,7 @@ export default function AnalyticsPage() {
             <StatCard label="Inbound Messages" value={inboundMessages} sub="This month" />
             <StatCard label="Outbound Messages" value={outboundMessages} sub="This month" />
             <StatCard label="Bot Sessions" value={botTotalSessions} sub={`${totalConversations} conversations`} />
-            <StatCard label="Completion Rate" value={`${botCompletionRate}%`} sub={`${botCompleted} completed`} />
+            <StatCard label="Completion Rate" value="Not yet measured" sub="Successful customer actions are not measured yet." />
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-2">

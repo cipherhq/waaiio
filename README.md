@@ -162,7 +162,7 @@ Vercel Pro -- charges per deploy. Always ask before deploying.
 ## Key Conventions
 
 - **Always commit and push** after changes -- don't ask, just do it
-- **CHANGELOG.md** tracks every change with date, files, and impact
+- **Changelog:** every PR adds `changelog/unreleased/YYYY-MM-DD-<branch-name>.md` (date, files, impact); fragments are collected into `CHANGELOG.md` before each release (see `changelog/README.md`)
 - **Payment status enum:** `pending`, `success`, `failed`, `refunded` (not "completed")
 - **Booking status enum:** `pending`, `confirmed`, `in_progress`, `completed`, `no_show`, `cancelled`
 - **Bot escape words:** cancel, exit, quit, stop, restart, start over (6 languages)
@@ -218,7 +218,7 @@ Read [CLAUDE.md](./CLAUDE.md) before making changes. Key requirements:
 1. **Pre-change checklist:** Read the file, grep all callers, verify DB types, check two-function traps
 2. **Verify after changing:** `npx next build` + `npm run test` + trace every code path
 3. **Security lens:** RLS on new tables, no exposed secrets, sanitized filters, verified webhooks
-4. **Log in CHANGELOG.md:** Date, what changed, which files, what could break
+4. **Log in the changelog:** add a fragment in `changelog/unreleased/` with date, what changed, which files, what could break (CLAUDE.md rule 16)
 
 ### Common tasks
 

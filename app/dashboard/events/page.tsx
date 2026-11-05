@@ -30,6 +30,7 @@ interface EventItem {
   image_url: string | null;
   self_checkin_enabled: boolean;
   created_at: string;
+  updated_at: string | null;
 }
 
 interface TicketType {
@@ -98,16 +99,25 @@ export default function EventsPage() {
   });
   // Track the original date when editing (to detect past events)
   const [originalDate, setOriginalDate] = useState('');
+  const [originalStatus, setOriginalStatus] = useState<EventItem['status']>('published');
+  const [originalRevision, setOriginalRevision] = useState<string | null>(null);
+  const [cancellationUnknown, setCancellationUnknown] = useState(false);
+  const [cancellationCommitted, setCancellationCommitted] = useState<EventItem | null>(null);
+  const [eventMessage, setEventMessage] = useState('');
+  const cancellationRequest = useRef<Record<string, unknown> | null>(null);
 
   const loadEvents = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('events')
-      .select('id, name, slug, description, date, time, venue, price, total_tickets, tickets_sold, max_per_order, status, image_url, created_at')
+      .select('id, name, slug, description, date, time, venue, price, total_tickets, tickets_sold, max_per_order, status, image_url, created_at, updated_at')
       .eq('business_id', business.id)
       .order('date', { ascending: false });
-    setEvents((data || []) as EventItem[]);
     setLoading(false);
+    if (error) { setEventMessage('Could not refresh events. Your last loaded records are preserved.'); return null; }
+    const rows = (data || []) as EventItem[];
+    setEvents(rows);
+    return rows;
   }, [business.id]);
 
   useEffect(() => { loadEvents(); }, [loadEvents]);
@@ -281,6 +291,12 @@ export default function EventsPage() {
   }
 
   function openAdd() {
+    cancellationRequest.current = null;
+    setCancellationUnknown(false);
+    setCancellationCommitted(null);
+    setEventMessage('');
+    setOriginalStatus('published');
+    setOriginalRevision(null);
     setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false, image_url: null, refund_policy: 'refundable' });
     setOriginalDate('');
     setTicketTypes([]);
@@ -292,6 +308,12 @@ export default function EventsPage() {
   }
 
   function openEdit(event: EventItem) {
+    cancellationRequest.current = null;
+    setCancellationUnknown(false);
+    setCancellationCommitted(null);
+    setEventMessage('');
+    setOriginalStatus(event.status);
+    setOriginalRevision(event.updated_at);
     setForm({
       id: event.id,
       name: event.name,
@@ -357,35 +379,87 @@ export default function EventsPage() {
   }
 
   async function handleSave() {
-    if (!form.name.trim() || !form.date || !form.time) return;
+    if (saving || cancellationCommitted || !form.name.trim() || !form.date || !form.time) return;
     setSaving(true);
     const supabase = createClient();
 
-    // If status is being changed to 'cancelled' on an existing event, use the cancel API
-    if (view === 'edit' && form.status === 'cancelled') {
-      try {
-        const res = await fetch('/api/events/cancel', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event_id: form.id }),
-        });
-        const result = await res.json();
-        if (!res.ok) {
-          alert(result.error || 'Failed to cancel event');
+    if (view === 'edit' && originalStatus === 'cancelled' && form.status !== 'cancelled') {
+      setEventMessage('Cancellation is final. Create a new event to restart.');
+      setSaving(false);
+      return;
+    }
+    // Keep the original operation identity while a cancellation result is unknown.
+    if (view === 'edit' && ((form.status === 'cancelled' && originalStatus !== 'cancelled') || cancellationRequest.current)) {
+      if (!cancellationRequest.current) {
+        if (!originalRevision) {
+          setEventMessage('Refresh this event before cancelling; its revision is unavailable.');
           setSaving(false);
           return;
         }
-        if (result.cancelled_tickets > 0) {
-          alert(`Event cancelled. ${result.cancelled_tickets} ticket(s) invalidated, ${result.notified} holder(s) notified.${result.refunds_pending > 0 ? ` ${result.refunds_pending} refund(s) pending.` : ''}`);
+        if (!confirm('Cancel this event permanently? Valid tickets will be invalidated, holders will be notified where possible, and paid tickets will be flagged for refund follow-up. No automatic refund is made.')) {
+          setSaving(false);
+          return;
         }
-      } catch {
-        alert('Failed to cancel event. Please try again.');
-        setSaving(false);
-        return;
+        cancellationRequest.current = {
+          event_id: form.id, business_id: business.id, expected_updated_at: originalRevision,
+          operation_id: crypto.randomUUID(),
+          changes: { name: form.name, date: form.date, time: form.time || null, venue: form.venue || null, price: form.price, status: 'cancelled' },
+        };
       }
-      setSaving(false);
-      setView('list');
-      loadEvents();
+      const requestBody = cancellationRequest.current;
+      let committed = false;
+      try {
+        let res: Response | undefined;
+        if (cancellationUnknown) {
+          res = await fetch('/api/events/cancel?event_id=' + requestBody.event_id + '&operation_id=' + requestBody.operation_id);
+          if (res.status === 404) res = undefined;
+        }
+        res ??= await fetch('/api/events/cancel', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          if (res.status < 500) {
+            cancellationRequest.current = null;
+            setCancellationUnknown(false);
+            setEventMessage(result.error || 'The event was not cancelled.');
+          } else {
+            setCancellationUnknown(true);
+            setEventMessage('Cancellation outcome is unknown. Check the original request before making another change.');
+          }
+          return;
+        }
+        const saved = result.event as EventItem | undefined;
+        if (result.committed !== true || !saved || saved.id !== form.id || saved.status !== 'cancelled' || !saved.updated_at) {
+          setCancellationUnknown(true);
+          setEventMessage('Cancellation outcome is unknown. No persisted event was returned.');
+          return;
+        }
+        committed = true;
+        cancellationRequest.current = null;
+        setCancellationUnknown(false);
+        setCancellationCommitted(saved);
+        setOriginalStatus('cancelled');
+        setOriginalRevision(saved.updated_at);
+        setForm(prev => ({ ...prev, name: saved.name, date: saved.date, time: saved.time || '', venue: saved.venue || '', price: saved.price, status: 'cancelled' }));
+        const n = result.notifications;
+        const message = 'Event cancelled permanently. ' + (result.cancelled_tickets ?? 0) +
+          ' valid ticket(s) invalidated. ' + (result.refunds_pending ?? 0) +
+          ' paid ticket(s) flagged for refund follow-up; no refund has been executed. ' +
+          (n && n.unavailable !== true ? 'Notifications: ' + n.accepted + ' accepted by provider, ' + n.pending + ' pending, ' +
+            n.failed + ' failed, ' + n.ambiguous + ' needing reconciliation. Acceptance does not confirm delivery.' : 'Notification status is unavailable.');
+        setEventMessage(message);
+        const rows = await loadEvents();
+        if (!rows?.some(row => row.id === saved.id && row.updated_at === saved.updated_at)) {
+          setEventMessage(message + ' Saved, but the latest record could not be verified. Refresh before editing again.');
+          return;
+        }
+        setCancellationCommitted(null);
+        setView('list');
+      } catch {
+        setCancellationUnknown(!committed);
+        setEventMessage(committed ? 'Cancellation is saved, but refresh failed. Try refreshing again.' : 'Cancellation outcome is unknown. Check the original request before making another change.');
+      } finally { setSaving(false); }
       return;
     }
 
@@ -448,8 +522,38 @@ export default function EventsPage() {
     }
 
     setSaving(false);
+    if (view === 'edit' && originalStatus === 'cancelled') setEventMessage('Event saved.');
     setView('list');
     loadEvents();
+  }
+
+  async function reloadEventForEdit() {
+    if (saving || cancellationUnknown || cancellationCommitted || !form.id) return;
+    setSaving(true);
+    try {
+      const response = await fetch('/api/events/cancel?event_id=' + form.id);
+      const result = await response.json();
+      if (!response.ok || !result.event || result.event.id !== form.id) throw new Error('reload_failed');
+      const saved = result.event as EventItem;
+      setOriginalStatus(saved.status);
+      setOriginalRevision(saved.updated_at);
+      setForm(previous => ({ ...previous, name: saved.name, date: saved.date, time: saved.time || '', venue: saved.venue || '', price: saved.price, status: saved.status }));
+      setEventMessage('Latest event loaded. Review your changes before saving.');
+    } catch { setEventMessage('Could not reload this event. Your edits are preserved.'); }
+    finally { setSaving(false); }
+  }
+
+  async function refreshCancelledEvent() {
+    if (!cancellationCommitted || saving) return;
+    setSaving(true);
+    try {
+      const rows = await loadEvents();
+      if (rows?.some(row => row.id === cancellationCommitted.id && row.updated_at === cancellationCommitted.updated_at)) {
+        setCancellationCommitted(null);
+        setView('list');
+      } else setEventMessage('Cancellation is saved, but the latest record could not be verified. Try refreshing again.');
+    } catch { setEventMessage('Cancellation is saved, but refresh failed. Try refreshing again.'); }
+    finally { setSaving(false); }
   }
 
   async function handleDelete(id: string) {
@@ -489,7 +593,7 @@ export default function EventsPage() {
     return (
       <div>
         <div className="flex items-center gap-3">
-          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300">
+          <button aria-label="Go back" disabled={saving || cancellationUnknown || !!cancellationCommitted} onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300">
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
@@ -497,11 +601,12 @@ export default function EventsPage() {
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{view === 'add' ? 'Create Event' : 'Edit Event'}</h1>
         </div>
 
-        <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
+        {eventMessage && <p role="status" className="mt-3 text-sm text-gray-700 dark:text-gray-300">{eventMessage}</p>}
+        <fieldset disabled={saving || cancellationUnknown || !!cancellationCommitted} className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Event Name <span className="text-red-400">*</span></label>
-              <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Gospel Concert 2024" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" autoFocus />
+              <input type="text" aria-label="Event name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Gospel Concert 2024" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" autoFocus />
             </div>
 
             <div>
@@ -514,7 +619,7 @@ export default function EventsPage() {
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Date <span className="text-red-400">*</span></label>
                 {view === 'edit' && originalDate && new Date(originalDate + 'T23:59:59') < new Date() ? (
                   <div>
-                    <input type="date" value={form.date} disabled className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500 cursor-not-allowed" />
+                    <input type="date" aria-label="Event date" value={form.date} disabled className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500 cursor-not-allowed" />
                     <p className="mt-1 text-xs text-amber-600">Date locked — event has passed. Use &quot;Duplicate Event&quot; to reuse this template.</p>
                   </div>
                 ) : (
@@ -523,7 +628,7 @@ export default function EventsPage() {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Time <span className="text-red-400">*</span></label>
-                <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                <input type="time" aria-label="Event time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
               </div>
             </div>
 
@@ -765,15 +870,19 @@ export default function EventsPage() {
             <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
               <label className="mb-1 block text-sm font-medium text-gray-800 dark:text-gray-200">Status</label>
               <select
+                aria-label="Event status"
+                disabled={view === 'edit' && originalStatus === 'cancelled'}
                 value={form.status}
                 onChange={e => setForm({ ...form, status: e.target.value as EventItem['status'] })}
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               >
                 <option value="published">Published</option>
+                <option value="sold_out">Sold out</option>
                 <option value="draft">Draft</option>
                 <option value="cancelled">Cancelled</option>
                 <option value="completed">Completed</option>
               </select>
+              {view === 'edit' && originalStatus === 'cancelled' && <p className="mt-2 text-xs text-gray-500">Cancellation is final. Correct details here, or create a new event to restart.</p>}
             </div>
             <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
               <div className="mr-3">
@@ -850,7 +959,7 @@ export default function EventsPage() {
               );
             })()}
           </div>
-        </div>
+        </fieldset>
 
         {(() => {
           const isEventPast = form.date && new Date(form.date + 'T23:59:59') < new Date();
@@ -873,14 +982,16 @@ export default function EventsPage() {
               )}
               <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 dark:border-gray-700 pt-4">
                 {!isEventPast && (
-                  <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.date || !form.time} className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
-                    {saving ? 'Saving...' : view === 'add' ? 'Create Event' : 'Save Changes'}
+                  <button onClick={handleSave} disabled={saving || !!cancellationCommitted || !form.name.trim() || !form.date || !form.time} className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+                    {saving ? 'Saving...' : cancellationUnknown ? 'Check cancellation outcome' : view === 'add' ? 'Create Event' : 'Save Changes'}
                   </button>
                 )}
-                <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">{isEventPast ? 'Back' : 'Cancel'}</button>
-                {view === 'edit' && form.id && !isEventPast && (
+                <button disabled={saving || cancellationUnknown || !!cancellationCommitted} onClick={() => setView('list')} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">{isEventPast ? 'Back' : 'Cancel'}</button>
+                {view === 'edit' && form.id && !isEventPast && !cancellationUnknown && !cancellationCommitted && (
                   <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
                 )}
+                {eventMessage && view === 'edit' && !cancellationUnknown && !cancellationCommitted && <button onClick={reloadEventForEdit} disabled={saving} className="text-brand underline">Load latest event (discard edits)</button>}
+                {cancellationCommitted && <button onClick={refreshCancelledEvent} disabled={saving} className="text-brand underline">Refresh cancelled event</button>}
               </div>
             </>
           );
@@ -906,6 +1017,7 @@ export default function EventsPage() {
         </div>
       </div>
 
+      {eventMessage && <p role="status" className="mt-3 text-sm text-gray-700 dark:text-gray-300">{eventMessage}</p>}
       <PageHelp
         pageKey="events"
         title="Your Events"

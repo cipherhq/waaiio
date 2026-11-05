@@ -1,3 +1,4 @@
+import { repeatSessionData } from '../flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import type { FlowExecutor } from '../flows/executor';
@@ -403,7 +404,7 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
     // Get order items
     const { data: items } = await supabase
       .from('order_items')
-      .select('product_id, product_name, quantity, unit_price, variant_label')
+      .select('product_id, quantity, unit_price, variant_id, variant_label, addons')
       .eq('order_id', lastOrder.id);
 
     if (!items || items.length === 0) {
@@ -411,20 +412,41 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
       return { handled: true, session };
     }
 
-    // Pre-fill cart with last order items
-    const cart = items.map(i => ({
-      product_id: i.product_id,
-      name: i.product_name,
-      price: i.unit_price,
-      quantity: i.quantity,
-      variant: null,
-      variant_label: i.variant_label || null,
-    }));
-
-    const itemList = items.map(i => `• ${i.quantity}x ${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ''}`).join('\n');
-
-    // Start ordering flow with pre-filled cart
-    await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+    // Old add-ons and missing variant identities need a fresh product selection.
+    // Do not silently change a configured item into a different purchase.
+    if (items.some(i => !i.product_id || (i.variant_label && !i.variant_id) || (Array.isArray(i.addons) && i.addons.length > 0))) {
+      await sendText(from, 'Your previous order has options that need to be selected again. Type *order* to choose your items at current prices.');
+      return { handled: true, session };
+    }
+    const cart = [];
+    for (const item of items) {
+      const { data: product } = await supabase.from('products')
+        .select('id, name, price, is_active, deleted_at, has_variants, min_order_qty, track_inventory, stock_quantity')
+        .eq('id', item.product_id).eq('business_id', session.business_id).maybeSingle();
+      const { data: variant } = item.variant_id
+        ? await supabase.from('product_variants').select('id, price, is_active, stock_quantity')
+          .eq('id', item.variant_id).eq('product_id', item.product_id).maybeSingle()
+        : { data: null };
+      const { data: requiredAddons, error: addonsError } = await supabase.from('product_addons')
+        .select('id').eq('business_id', session.business_id).eq('product_id', item.product_id)
+        .eq('is_active', true).eq('is_required', true).limit(1);
+      if (addonsError || (requiredAddons?.length ?? 0) > 0) {
+        await sendText(from, 'This item needs its options selected again. Type *order* to review the current catalogue.');
+        return { handled: true, session };
+      }
+      if (!product?.is_active || product.deleted_at || item.quantity < (product.min_order_qty || 1) || (product.has_variants && !item.variant_id)
+          || (item.variant_id && !variant?.is_active)
+          || !Number.isInteger(item.quantity) || item.quantity <= 0
+          || (variant && variant.stock_quantity !== null && variant.stock_quantity < item.quantity)
+          || (!variant && product.track_inventory && (product.stock_quantity === null || product.stock_quantity < item.quantity))) {
+        await sendText(from, 'An item in your last order is no longer available in that quantity or option. Type *order* to review the current catalogue.');
+        return { handled: true, session };
+      }
+      cart.push({ product_id: product.id, name: product.name, quantity: item.quantity,
+        price: variant ? variant.price : product.price,
+        ...(variant ? { variant_id: variant.id, variant_label: item.variant_label } : {}) });
+    }
+    const itemList = cart.map(i => `• ${i.quantity}x ${i.name}${i.variant_label ? ` (${i.variant_label})` : ''}`).join('\n');
 
     const { data: biz } = await supabase
       .from('businesses')
@@ -432,7 +454,6 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
       .eq('id', session.business_id)
       .single();
 
-    const profile = await getProfile();
     // CAS-007: Use session's effective capabilities (tier-aware from Point A), not tier-blind getEnabledCapabilities
     const caps = (session.session_data?.capabilities as string[]) || [];
 
@@ -442,22 +463,24 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
       return { handled: true, session };
     }
 
-    const { data: newSession } = await supabase.from('bot_sessions').insert({
-      whatsapp_number: from, user_id: profile?.id || null, business_id: session.business_id,
-      current_step: 'continue_or_checkout',
-      session_data: { active_capability: 'ordering', capabilities: caps, cart, _reorder: true },
-      is_active: true,
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    }).select().single();
-
-    if (!newSession) {
-      await sendText(from, 'Something went wrong. Try again.');
+    if (!biz) {
+      await sendText(from, 'This business is unavailable. Type *menu* to see your options.');
       return { handled: true, session };
     }
-
-    await sendText(from, `Reordering from your last order (${lastOrder.reference_code}):\n\n${itemList}\n\nReady to checkout?`);
-    await flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
-    return { handled: true, session: newSession as BotSession };
+    // Keep the selected session ID so the shared-channel binding stays valid.
+    // CAS prevents two replies from replacing the draft concurrently.
+    const sessionData = { ...repeatSessionData(session.session_data), active_capability: 'ordering',
+      cart, _reorder: true, _step_history: ['select_capability', 'continue_or_checkout'] };
+    const { data: saved, error } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'continue_or_checkout', p_session_data: sessionData,
+    });
+    if (error) throw error;
+    if (!saved?.success) return { handled: true, session };
+    session = { ...session, current_step: 'continue_or_checkout', session_data: sessionData, version: saved.version };
+    await sendText(from, `Review your previous order (${lastOrder.reference_code}) at current prices:\n\n${itemList}\n\nNothing has been ordered or charged yet.`);
+    await flowExecutor.execute(from, '', session, biz as BusinessRecord);
+    return { handled: true, session };
   }
 
   // ── Subscriptions ──

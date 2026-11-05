@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { fastHash, getCachedSession, setCachedSession, shouldTouch } from '@/lib/security/session-check';
+import { isStagingTestMode } from '@/lib/staging-test-mode';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
@@ -56,6 +57,11 @@ async function isMaintenanceMode(supabase: ReturnType<typeof createServerClient>
 
 /** Apply common security headers to any response */
 function applySecurityHeaders(response: NextResponse): NextResponse {
+  // Staging must stay out of search engines. Production never matches
+  // isStagingTestMode(), so its robots.txt, sitemap and pages are unchanged.
+  if (isStagingTestMode()) {
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+  }
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-XSS-Protection', '1; mode=block');
@@ -119,6 +125,19 @@ function checkMiddlewareRateLimit(ip: string, limit: number, windowMs: number): 
 }
 
 export async function middleware(request: NextRequest) {
+  // Staging: block all crawlers and publish no sitemap.
+  if (isStagingTestMode()) {
+    if (request.nextUrl.pathname === '/robots.txt') {
+      return applySecurityHeaders(new NextResponse('User-agent: *\nDisallow: /\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+      }));
+    }
+    if (request.nextUrl.pathname === '/sitemap.xml') {
+      return applySecurityHeaders(new NextResponse(null, { status: 404 }));
+    }
+  }
+
   // Handle CORS preflight for admin API routes (called from admin.waaiio.com)
   if (request.method === 'OPTIONS' && request.nextUrl.pathname.startsWith('/api/admin/')) {
     const origin = request.headers.get('origin') || '';
@@ -135,7 +154,7 @@ export async function middleware(request: NextRequest) {
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Max-Age': '86400',
       },
@@ -358,7 +377,7 @@ export async function middleware(request: NextRequest) {
     ];
     if (allowedOrigins.includes(origin)) {
       supabaseResponse.headers.set('Access-Control-Allow-Origin', origin);
-      supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       supabaseResponse.headers.set('Access-Control-Allow-Credentials', 'true');
     }

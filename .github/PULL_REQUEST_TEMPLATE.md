@@ -22,7 +22,8 @@
 - [ ] Checked `supabase/migrations/` for version conflicts
 - [ ] Checked `docs/engineering-status.json` for milestone state
 - [ ] Checked `docs/MIGRATION_REGISTRY.md` for version reservations
-- [ ] Checked `CHANGELOG.md` for prior entries
+- [ ] Checked `CHANGELOG.md` and `changelog/unreleased/` for prior entries
+- [ ] Added a changelog fragment: `changelog/unreleased/YYYY-MM-DD-<branch-name>.md`, branch name in lowercase with `/`, `_`, `.` etc. as `-` (do not edit `CHANGELOG.md` directly)
 
 ## Impact Assessment
 

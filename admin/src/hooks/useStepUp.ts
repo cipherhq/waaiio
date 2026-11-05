@@ -129,8 +129,13 @@ export function useStepUp() {
 
       if (!verifyRes.ok) {
         const err = await verifyRes.json().catch(() => ({}));
-        // Stay in awaiting-code so user can retry
-        setState(s => ({ ...s, phase: 'awaiting-code', error: err.error || 'Verification failed' }));
+        // Keep the error visible so Cancel remains available. A bound attempt
+        // cannot be retried: clear its ID until the user prepares again.
+        const restart = err.code === 'STEP_UP_RESTART_REQUIRED';
+        setState(s => ({ ...s, phase: 'awaiting-code',
+          stepUpId: restart ? '' : s.stepUpId,
+          error: restart ? 'Verification failed. Cancel and restart this operation with a fresh code.' : err.error || 'Verification failed',
+        }));
         return;
       }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { createClient } from '@/lib/supabase/client';
@@ -76,7 +77,8 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
   const businessMeta = (business.metadata || {}) as Record<string, unknown>;
-  const [bankEnabled, setBankEnabled] = useState<boolean>(businessMeta.bank_transfer_enabled !== false);
+  // #736 Owner Option B: bank transfer OFF by default. Only explicit true enables it.
+  const [bankEnabled, setBankEnabled] = useState<boolean>(businessMeta.bank_transfer_enabled === true);
 
   // Validation
   const [errors, setErrors] = useState<{ bank?: string; number?: string; name?: string }>({});
@@ -437,6 +439,7 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
 }
 
 export function PaymentsTab({ business, capabilities, country, curr, saving, setSaving, saved, setSaved, openSections, toggleSection }: SettingsTabProps) {
+  const router = useRouter();
   const meta = (business.metadata || {}) as Record<string, unknown>;
 
   const [recurringEnabled, setRecurringEnabled] = useState(business.recurring_enabled ?? false);
@@ -1313,7 +1316,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               )}
             </div>
           )}
-          {capabilities.includes('payment') || capabilities.includes('crowdfunding') && (
+          {(capabilities.includes('payment') || capabilities.includes('crowdfunding') || capabilities.includes('giving')) && (
             <div>
               <button onClick={() => toggleSection('recurring')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
                 <h3 className="text-sm font-bold text-gray-900">Recurring Payments</h3>
@@ -1368,6 +1371,8 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                   .eq('id', business.id);
                 setSaving(false);
                 if (error) return;
+                // Reload the dashboard's business so Giving sees the new setting.
+                router.refresh();
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}

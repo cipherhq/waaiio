@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
@@ -55,6 +55,11 @@ export default function ResellerFinancials() {
   const [monthlyData, setMonthlyData] = useState<MonthlyBreakdown[]>([]);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
 
+  const [loadError, setLoadError] = useState('');
+  const [monthlyError, setMonthlyError] = useState('');
+  const overviewGeneration = useRef(0);
+  const monthlyGeneration = useRef(0);
+
   // Summary totals
   const totalPlatformRevenue = resellers.reduce((sum, r) => sum + r.total_revenue, 0);
   const totalCommissionEarned = resellers.reduce((sum, r) => sum + r.total_commission_earned, 0);
@@ -63,10 +68,16 @@ export default function ResellerFinancials() {
 
   useEffect(() => {
     loadFinancials();
+    return () => { overviewGeneration.current++; monthlyGeneration.current++; };
   }, []);
 
   async function loadFinancials() {
+    const generation = ++overviewGeneration.current;
+    monthlyGeneration.current++;
+    setSelected(null);
     setLoading(true);
+    setLoadError('');
+    setResellers([]);
     try {
       // Fetch all resellers
       const { data: rows, error } = await adminDb
@@ -74,22 +85,22 @@ export default function ResellerFinancials() {
         .select('id, company_name, billing_type, commission_percentage, status, created_at, tier')
         .order('created_at', { ascending: false });
 
-      if (error || !rows || rows.length === 0) {
-        if (error) console.error('Failed to load resellers:', error.message);
-        setResellers([]);
-        setLoading(false);
+      if (error || !Array.isArray(rows)) throw new Error('Resellers unavailable');
+      if (rows.length === 0) {
+        if (generation === overviewGeneration.current) setResellers([]);
         return;
       }
 
       const resellerIds = rows.map(r => r.id);
 
       // Count active sub-accounts per reseller
-      const { data: subAccounts } = await adminDb
+      const { data: subAccounts, error: subError } = await adminDb
         .from('businesses')
         .select('reseller_id')
         .in('reseller_id', resellerIds)
         .eq('status', 'active');
 
+      if (subError || !Array.isArray(subAccounts)) throw new Error('Sub-accounts unavailable');
       const subCountMap = new Map<string, number>();
       if (subAccounts) {
         for (const row of subAccounts) {
@@ -100,11 +111,12 @@ export default function ResellerFinancials() {
       }
 
       // Aggregate platform_fees by reseller_id
-      const { data: feeRows } = await adminDb
+      const { data: feeRows, error: feeError } = await adminDb
         .from('platform_fees')
         .select('reseller_id, transaction_amount, reseller_commission')
         .in('reseller_id', resellerIds);
 
+      if (feeError || !Array.isArray(feeRows)) throw new Error('Fees unavailable');
       const revenueMap = new Map<string, number>();
       const commissionMap = new Map<string, number>();
       if (feeRows) {
@@ -117,12 +129,13 @@ export default function ResellerFinancials() {
       }
 
       // Aggregate paid payouts per reseller
-      const { data: payoutRows } = await adminDb
+      const { data: payoutRows, error: payoutError } = await adminDb
         .from('reseller_payouts')
         .select('reseller_id, net_amount')
         .eq('status', 'paid')
         .in('reseller_id', resellerIds);
 
+      if (payoutError || !Array.isArray(payoutRows)) throw new Error('Payouts unavailable');
       const paidMap = new Map<string, number>();
       if (payoutRows) {
         for (const p of payoutRows) {
@@ -149,29 +162,27 @@ export default function ResellerFinancials() {
         };
       });
 
-      setResellers(enriched);
-    } catch (err) {
-      console.error('Failed to load reseller financials:', err);
+      if (generation === overviewGeneration.current) setResellers(enriched);
+    } catch {
+      if (generation === overviewGeneration.current) setLoadError('Financial overview unavailable. Retry to load a complete snapshot.');
     } finally {
-      setLoading(false);
+      if (generation === overviewGeneration.current) setLoading(false);
     }
   }
 
   async function loadMonthlyBreakdown(resellerId: string) {
+    const generation = ++monthlyGeneration.current;
+    setMonthlyError('');
     setMonthlyLoading(true);
     setMonthlyData([]);
     try {
-      const { data: feeRows } = await adminDb
+      const { data: feeRows, error: feeError } = await adminDb
         .from('platform_fees')
         .select('transaction_amount, reseller_commission, created_at')
         .eq('reseller_id', resellerId)
         .order('created_at', { ascending: true });
 
-      if (!feeRows || feeRows.length === 0) {
-        setMonthlyData([]);
-        setMonthlyLoading(false);
-        return;
-      }
+      if (feeError || !Array.isArray(feeRows)) throw new Error('Monthly fees unavailable');
 
       // Group by YYYY-MM
       const monthMap = new Map<string, { revenue: number; commission: number }>();
@@ -191,11 +202,11 @@ export default function ResellerFinancials() {
           commission: data.commission,
         }));
 
-      setMonthlyData(breakdown);
-    } catch (err) {
-      console.error('Failed to load monthly breakdown:', err);
+      if (generation === monthlyGeneration.current) setMonthlyData(breakdown);
+    } catch {
+      if (generation === monthlyGeneration.current) setMonthlyError('Monthly breakdown unavailable.');
     } finally {
-      setMonthlyLoading(false);
+      if (generation === monthlyGeneration.current) setMonthlyLoading(false);
     }
   }
 
@@ -236,7 +247,10 @@ export default function ResellerFinancials() {
         <p className="text-sm text-gray-500 mt-1">Financial overview of all reseller partners.</p>
       </div>
 
+      <button onClick={loadFinancials} className="text-sm text-brand">Refresh financials</button>
+      {loadError && <p role="alert">{loadError} <button onClick={loadFinancials}>Retry financials</button></p>}
       {/* Summary cards */}
+      {!loading && !loadError && (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Total Platform Revenue" value={fmtCurrency(totalPlatformRevenue / 100, 'USD')} icon={DollarSign} color="blue" />
         <SummaryCard label="Total Commission Earned" value={fmtCurrency(totalCommissionEarned / 100, 'USD')} icon={TrendingUp} color="green" />
@@ -244,6 +258,7 @@ export default function ResellerFinancials() {
         <SummaryCard label="Outstanding Balance" value={fmtCurrency(totalOutstanding / 100, 'USD')} icon={AlertCircle} color={totalOutstanding > 0 ? 'yellow' : 'green'} />
       </div>
 
+      )}
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -289,6 +304,8 @@ export default function ResellerFinancials() {
                   Loading financials...
                 </td>
               </tr>
+            ) : loadError ? (
+              <tr><td colSpan={7}>Financial data unavailable.</td></tr>
             ) : paginated.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
@@ -325,7 +342,7 @@ export default function ResellerFinancials() {
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
       {/* Detail Modal with Monthly Breakdown */}
-      <DetailModal open={!!selected} onClose={() => setSelected(null)} title="Reseller Financial Details" wide>
+      <DetailModal open={!!selected} onClose={() => { monthlyGeneration.current++; setSelected(null); }} title="Reseller Financial Details" wide>
         {selected && (
           <div className="space-y-5">
             <div className="space-y-3 text-sm">
@@ -349,6 +366,8 @@ export default function ResellerFinancials() {
               <h4 className="text-sm font-semibold text-gray-900 mb-3">Monthly Breakdown</h4>
               {monthlyLoading ? (
                 <p className="text-sm text-gray-400">Loading breakdown...</p>
+              ) : monthlyError ? (
+                <p role="alert">{monthlyError} <button onClick={() => loadMonthlyBreakdown(selected.id)}>Retry monthly breakdown</button></p>
               ) : monthlyData.length === 0 ? (
                 <p className="text-sm text-gray-400">No transaction data available.</p>
               ) : (

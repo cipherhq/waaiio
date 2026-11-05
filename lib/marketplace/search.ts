@@ -284,9 +284,9 @@ export async function searchMarketplace(
         ),
     );
 
-    // Category filter
+    // Category filter — uses computed text field (businesses.category is an enum)
     if (criteria.category) {
-      query = query.ilike('category', `%${criteria.category}%`);
+      query = query.ilike('category_text', `%${criteria.category}%`);
     }
 
     if (effectiveCountry) {
@@ -298,16 +298,22 @@ export async function searchMarketplace(
       query = query.not('id', 'in', '(' + criteria.excludeIds.join(',') + ')');
     }
 
-    // Parent-city AND address-hint, never same-state OR for neighborhoods.
-    if (resolvedCity) {
-      if (addressHint) {
-        query = query.ilike('city', '%' + resolvedCity + '%');
-      } else {
-        query = query.or('city.ilike.%' + resolvedCity + '%,state.ilike.%' + resolvedCity + '%');
-      }
-    }
-    if (addressHint) {
-      query = query.ilike('address', '%' + addressHint + '%');
+    // Location (#867). A neighborhood is always confirmed by its parent city, never
+    // by state alone: either city or address names the parent city and the address
+    // names the neighborhood, or the city field IS the neighborhood (how address
+    // autocomplete stores it) and state or address names the parent city.
+    // Both values come from the curated resolver and validateLocationToken.
+    if (resolvedCity && addressHint) {
+      query = query.or([
+        `and(city.ilike.%${resolvedCity}%,address.ilike.%${addressHint}%)`,
+        `and(address.ilike.%${resolvedCity}%,address.ilike.%${addressHint}%)`,
+        `and(city.ilike.%${addressHint}%,state.ilike.%${resolvedCity}%)`,
+        `and(city.ilike.%${addressHint}%,address.ilike.%${resolvedCity}%)`,
+      ].join(','));
+    } else if (resolvedCity) {
+      query = query.or(
+        `city.ilike.%${resolvedCity}%,state.ilike.%${resolvedCity}%,address.ilike.%${resolvedCity}%`,
+      );
     }
 
     // Delivery filter
@@ -324,11 +330,11 @@ export async function searchMarketplace(
     // Also expand synonyms: "massage" → search for category=spa.
     if (safeQuery) {
       const synonymCategories = detectCategoryIntent(safeQuery);
-      const categoryOrClauses = synonymCategories.map(c => `category.ilike.%${c}%`);
+      const categoryOrClauses = synonymCategories.map(c => `category_text.ilike.%${c}%`);
       const textClauses = [
         `name.ilike.%${safeQuery}%`,
         `description.ilike.%${safeQuery}%`,
-        `category.ilike.%${safeQuery}%`,
+        `category_text.ilike.%${safeQuery}%`,
         ...categoryOrClauses,
       ];
       query = query.or(textClauses.join(','));

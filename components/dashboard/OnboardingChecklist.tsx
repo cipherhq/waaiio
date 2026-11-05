@@ -5,6 +5,10 @@ import Link from 'next/link';
 import { useBusiness, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import type { BusinessCategoryKey } from '@/lib/constants';
+
+/** Food & drink categories that get the "Add your tables & sections" nudge. */
+const TABLE_NUDGE_CATEGORIES: readonly BusinessCategoryKey[] = ['restaurant', 'cafe', 'bar', 'lounge', 'bakery', 'catering', 'food_truck'];
 
 interface ChecklistItem {
   key: string;
@@ -15,6 +19,12 @@ interface ChecklistItem {
 }
 
 export function OnboardingChecklist() {
+  const business = useBusiness();
+  // A business switch must never render the previous business's checklist state.
+  return <BusinessOnboardingChecklist key={business.id} />;
+}
+
+function BusinessOnboardingChecklist() {
   const business = useBusiness();
   const capabilities = useCapabilities();
   const [completed, setCompleted] = useState<Record<string, boolean>>({});
@@ -103,8 +113,26 @@ export function OnboardingChecklist() {
     };
   };
 
+  // Owner decisions 2026-11-04: nudge Tables & Sections businesses that have
+  // not added a table yet, food & drink categories only. Hidden once one
+  // active seating resource exists.
+  const showTablesStep = hasCapability('table_reservation')
+    && (TABLE_NUDGE_CATEGORIES as readonly string[]).includes(String(business.category ?? ''));
+  const tablesStep: ChecklistItem[] = showTablesStep ? [{
+    key: 'tables',
+    label: 'Add your tables & sections',
+    description: 'Add the tables, booths, VIP areas or sections customers can reserve.',
+    href: '/dashboard/seating',
+    check: async () => {
+      const supabase = createClient();
+      const { count, error } = await supabase.from('seating_resources').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('is_active', true);
+      return !error && (count || 0) > 0;
+    },
+  }] : [];
+
   const items: ChecklistItem[] = [
     setupStep(),
+    ...tablesStep,
     {
       key: 'whatsapp',
       label: 'Connect your WhatsApp number',
@@ -129,8 +157,16 @@ export function OnboardingChecklist() {
       href: '/dashboard/whatsapp',
       check: async () => {
         const supabase = createClient();
-        const { count } = await supabase.from('chat_messages').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('direction', 'inbound');
-        return (count || 0) > 0;
+        // Inbound activity is evidence of a test, not proof of response delivery.
+        // Keep legacy chat evidence and include usage from any month.
+        const evidence = await Promise.allSettled([
+          supabase.from('conversation_usage').select('id', { count: 'exact', head: true })
+            .eq('business_id', business.id).gt('inbound_count', 0),
+          supabase.from('chat_messages').select('id', { count: 'exact', head: true })
+            .eq('business_id', business.id).eq('direction', 'inbound'),
+        ]);
+        return evidence.some(result => result.status === 'fulfilled'
+          && !result.value.error && (result.value.count || 0) > 0);
       },
     },
     {
@@ -147,6 +183,7 @@ export function OnboardingChecklist() {
   ];
 
   useEffect(() => {
+    let cancelled = false;
     // Check if dismissed
     const key = `waaiio-checklist-dismissed-${business.id}`;
     if (localStorage.getItem(key) === 'true') {
@@ -162,6 +199,7 @@ export function OnboardingChecklist() {
           try { results[item.key] = await item.check(); } catch { results[item.key] = false; }
         })
       );
+      if (cancelled) return;
       setCompleted(results);
       setLoading(false);
 
@@ -172,20 +210,23 @@ export function OnboardingChecklist() {
       }
     }
     checkAll();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 
   if (dismissed || loading) return null;
 
-  const completedCount = Object.values(completed).filter(Boolean).length;
-  const progress = Math.round((completedCount / items.length) * 100);
+  // The tables nudge disappears (rather than showing as done) once a table exists.
+  const visibleItems = items.filter(item => !(item.key === 'tables' && completed[item.key]));
+  const completedCount = visibleItems.filter(item => completed[item.key]).length;
+  const progress = Math.round((completedCount / visibleItems.length) * 100);
 
   return (
     <div className="mb-6 rounded-2xl border border-brand-100 bg-brand-50/50 p-5 dark:border-brand-900 dark:bg-brand-900/20">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Getting started with Waaiio</h3>
-          <p className="mt-0.5 text-xs text-gray-500">{completedCount} of {items.length} steps completed</p>
+          <p className="mt-0.5 text-xs text-gray-500">{completedCount} of {visibleItems.length} steps completed</p>
         </div>
         <button
           onClick={() => {
@@ -208,7 +249,7 @@ export function OnboardingChecklist() {
 
       {/* Checklist items */}
       <div className="mt-4 space-y-2">
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <Link
             key={item.key}
             href={item.href}

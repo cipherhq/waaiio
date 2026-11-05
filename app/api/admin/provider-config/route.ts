@@ -11,7 +11,7 @@
  * Server-side provider preflight is MANDATORY before every save/switch:
  * - Paystack: exists, not archived, monthly, exact DB currency, exact DB tier price in minor units
  * - Flutterwave: active, monthly, exact DB currency, exact DB tier price (accepted helper)
- * - Stripe: verifyStripeReadiness() for switch; no Stripe plan refs (inline price_data)
+ * - Stripe: read-only Price verification for refs; readiness for switch
  * - Provider/API unavailable = fail closed, zero RPC call
  */
 
@@ -24,6 +24,7 @@ import {
   verifyFlutterwavePlan,
   verifyPaystackPlan,
   verifyStripeReadiness,
+  verifyStripePrice,
 } from '@/lib/payments/provider-preflight';
 
 import { adminCorsHeaders } from '@/lib/admin-cors';
@@ -164,12 +165,16 @@ export async function POST(request: NextRequest) {
       }
 
       for (const [provider, ref] of Object.entries(tierRefs)) {
-        if (!ref || typeof ref !== 'string') continue;
-
-        // Stripe uses inline price_data — reject plan refs
         if (provider === 'stripe') {
-          return respond({ error: 'Stripe uses inline price_data and does not require plan refs' }, { status: 400 });
+          if (tier_prices !== undefined) return respond({ error: 'Stripe catalog saves must contain plan refs only' }, { status: 400 });
+          if (typeof ref !== 'string' || !ref) return respond({ error: 'Invalid Stripe Price reference' }, { status: 400 });
+          const stripeKey = process.env.STRIPE_SECRET_KEY;
+          if (!stripeKey) return respond({ error: 'STRIPE_SECRET_KEY not configured' }, { status: 503 });
+          const pf = await verifyStripePrice({ priceId: ref, expectedCurrency: dbCurrency, expectedAmountMajor: tierPrice, stripeKey });
+          if (!pf.ok) return respond({ error: 'Stripe ' + tier + ' Price preflight failed: ' + pf.reason }, { status: 400 });
         }
+
+        if (!ref || typeof ref !== 'string') continue;
 
         if (provider === 'paystack') {
           const psKey = process.env.PAYSTACK_SECRET_KEY;

@@ -1,3 +1,4 @@
+import { hasRecipientPermission, RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -76,6 +77,9 @@ export async function POST(request: NextRequest) {
 
     // Check storage quota
     const serviceClient = createServiceClient();
+    if (!await hasRecipientPermission(serviceClient, businessId, customerPhone, 'utility')) {
+      return NextResponse.json({ error: RECIPIENT_POLICY }, { status: 403 });
+    }
     const { data: usageData } = await serviceClient
       .from('customer_reports')
       .select('file_size')

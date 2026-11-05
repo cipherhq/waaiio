@@ -180,7 +180,11 @@ export async function processSuccessfulPayment(
     try {
       const { ensurePaidTicketState } = await import('./ticket-business-state');
       const ticketState = await ensurePaidTicketState(supabase, { paymentBookingId: payment.booking_id });
-      if (!ticketState.success) {
+      if (ticketState.outcome === 'cancelled_followup_recorded' && ticketState.followupRecorded === true) {
+        // Payment accounting still completes. Ticket fulfillment did NOT succeed:
+        // its durable cancellation/manual follow-up is resolved by Stage 3.
+        logger.info('[PROCESS-SUCCESS] Event cancellation follow-up recorded');
+      } else if (!ticketState.success) {
         criticalErrors.push(`ticket_business_state_failed:${ticketState.error}`);
       }
     } catch (err) {
