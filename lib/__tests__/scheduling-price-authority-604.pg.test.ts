@@ -109,6 +109,38 @@ suite('M518 final-state scheduling authority', () => {
  it.each(['anon','authenticated'])('denies the %s HTTP role at the RPC boundary',async role=>{
    await expect(rpc({},role)).rejects.toThrow(/permission denied/);
  });
+ it('books the live public-route payload unchanged through the untouched legacy function',async()=>{
+   // Live public route before this deploy: total = deposit = deposit x party, no expected terms.
+   await pool.query('UPDATE services SET price=5000,deposit_amount=1000,max_capacity=5 WHERE id=$1',[service]);
+   const client=await pool.connect();
+   try {
+     await client.query('BEGIN');
+     await client.query('SET LOCAL ROLE service_role');
+     const r=(await client.query(`SELECT * FROM public.book_slot_atomic(p_business_id=>$1,p_user_id=>$2,p_service_id=>$3,
+       p_staff_id=>NULL,p_date=>'2027-12-04',p_time=>'10:00',p_party_size=>2,p_max_capacity=>5,p_flow_type=>'scheduling',
+       p_deposit_amount=>2000,p_deposit_status=>'pending',p_status=>'pending',p_guest_name=>'Live',p_guest_phone=>'+2348000000606',
+       p_guest_email=>NULL,p_special_requests=>NULL,p_venue_address=>NULL,p_end_date=>NULL,p_addons_snapshot=>NULL,
+       p_promo_code_id=>NULL,p_total_amount=>2000,p_staff_name=>NULL)`,[business,user,service])).rows[0];
+     await client.query('COMMIT');
+     expect(r.slot_available).toBe(true);
+     const row=(await pool.query('SELECT total_amount::int,deposit_amount::int,status::text,metadata FROM bookings WHERE id=$1',[r.booking_id])).rows[0];
+     expect(row).toMatchObject({total_amount:2000,deposit_amount:2000,status:'pending'});
+     expect(row.metadata?.scheduling_authority_604).toBeUndefined();
+   } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+ });
+ it('keeps the new entry points service-role only and the old ones unchanged in place',async()=>{
+   const rows=(await pool.query(`SELECT p.proname, n.nspname,
+       has_function_privilege('anon',p.oid,'EXECUTE') anon, has_function_privilege('authenticated',p.oid,'EXECUTE') auth,
+       has_function_privilege('service_role',p.oid,'EXECUTE') svc
+     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+     WHERE p.proname IN ('book_slot_atomic','book_manual_slot_atomic','book_with_package_atomic',
+       'book_slot_authoritative_604','book_manual_slot_authoritative_604','book_with_package_authoritative_604',
+       'finalize_booking_promo_reservation') ORDER BY 1`)).rows;
+   expect(rows.map(r=>r.proname)).toEqual(['book_manual_slot_atomic','book_manual_slot_authoritative_604',
+     'book_slot_atomic','book_slot_authoritative_604','book_with_package_atomic','book_with_package_authoritative_604',
+     'finalize_booking_promo_reservation']);
+   for (const r of rows) expect(r).toMatchObject({nspname:'public',anon:false,auth:false,svc:true});
+ });
  it('preserves the exact legacy signature and direct-payment function',async()=>{
    const row=(await pool.query(`SELECT
     to_regprocedure('public.book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer)') IS NOT NULL AS legacy,

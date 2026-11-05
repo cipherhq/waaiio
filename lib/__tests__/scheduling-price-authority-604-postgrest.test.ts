@@ -65,6 +65,33 @@ suite('M518 real PostgREST old/new payload and schema compatibility',()=>{
    expect((await response.json()).code).toBe('PGRST202');
    expect((await oldDb.query('SELECT count(*)::int n FROM bookings WHERE business_id=$1',[business])).rows[0].n).toBe(0);
  });
+ it('leaves the three legacy booking functions identical to the pre-M518 schema, grants included',async()=>{
+   const sql=`SELECT p.oid::regprocedure::text sig, pg_get_functiondef(p.oid) def, p.proacl::text acl,
+       p.prosecdef, p.proconfig::text cfg
+     FROM pg_proc p WHERE p.pronamespace='public'::regnamespace
+       AND p.proname IN ('book_slot_atomic','book_manual_slot_atomic','book_with_package_atomic') ORDER BY 1`;
+   const before=(await oldDb.query(sql)).rows, after=(await db.query(sql)).rows;
+   expect(before).toHaveLength(3);
+   expect(after).toEqual(before);
+ });
+ it('books the live public-route payload the same with and without M518',async()=>{
+   const priced='00000000-0000-4000-a604-000000000104';
+   const live={...payload,p_service_id:priced,p_date:'2027-12-05',p_max_capacity:5,p_party_size:2,
+     p_deposit_amount:2000,p_total_amount:2000};
+   const outcomes=[];
+   for(const [pool,url] of [[oldDb,oldBase!],[db,base!]] as const){
+     await pool.query("INSERT INTO services(id,business_id,name,price,deposit_amount,is_active,max_capacity,duration_minutes) VALUES($1,$2,'Priced',5000,1000,true,5,30) ON CONFLICT(id) DO NOTHING",[priced,business]);
+     await pool.query('DELETE FROM bookings WHERE business_id=$1',[business]);
+     const response=await call('book_slot_atomic',live,'service_role',url);
+     expect(response.status).toBe(200);
+     const [row]=await response.json();
+     expect(row.slot_available).toBe(true);
+     outcomes.push((await pool.query('SELECT total_amount::int,deposit_amount::int,deposit_status::text,status::text FROM bookings WHERE id=$1',[row.booking_id])).rows[0]);
+     await pool.query('DELETE FROM bookings WHERE business_id=$1',[business]);
+   }
+   expect(outcomes[1]).toEqual(outcomes[0]);
+   expect(outcomes[0]).toEqual({total_amount:2000,deposit_amount:2000,deposit_status:'pending',status:'pending'});
+ });
  it('resolves the new manual wrapper with full value and zero upfront',async()=>{
    const response=await call('book_manual_slot_authoritative_604',{
      p_business_id:business,p_user_id:user,p_service_id:service,p_staff_id:null,
