@@ -265,6 +265,32 @@ describe('Powered by Waaiio.com footer on the next-steps menu (Owner 2026-11-05)
     expect(getPoweredByInteractiveFooter('free', null)).toBe('Powered by Waaiio.com');
   });
 
+  it('translated menu keeps the brand footer untranslated', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/bot/outbound-localizer', () => ({
+      localizeMessage: vi.fn(async (msg: any) => ({
+        ...msg,
+        body: `[FR] ${msg.body}`,
+        footer: msg.footer ? `[FR] ${msg.footer}` : msg.footer,
+        buttons: msg.buttons?.map((b: any) => ({ ...b, title: `[FR] ${b.title}` })),
+      })),
+    }));
+    try {
+      const { FlowExecutor } = await import('../flows/executor');
+      const { db } = database({ whatsapp_channels: { channel_type: 'dedicated' } });
+      const ctx = createMockContext({ supabase: db as any });
+      ctx.session.session_data = { active_capability: 'ordering', _detected_language: 'fr' };
+      const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
+      await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
+      const sent = vi.mocked(ctx.sender.sendButtons).mock.calls[0][0];
+      expect(sent.body.startsWith('[FR] ')).toBe(true);
+      expect(sent.footer).toBe('Powered by Waaiio.com');
+    } finally {
+      vi.doUnmock('@/lib/bot/outbound-localizer');
+      vi.resetModules();
+    }
+  });
+
   it('stale worker sends no menu and no footer', async () => {
     const { FlowExecutor } = await import('../flows/executor');
     const { db } = database({ whatsapp_channels: { channel_type: 'dedicated' } }, true);
