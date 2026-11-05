@@ -8,7 +8,7 @@ import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { validateAudienceExpression, type AudienceExpression } from '@/lib/engage/audience-dsl';
 import { resolveAudienceExpression, AudienceTooLargeError, AudienceCountUnavailableError, AudienceIncompleteError } from '@/lib/engage/audience-resolver';
 import {
-  MAX_RECIPIENTS_PER_SEND, MAX_TYPED_ENTRIES, TemplateLookupUnavailableError, loadInviteTemplate, normalizeRecipients, sendFormInvites, summarize,
+  MAX_RECIPIENTS_PER_SEND, MAX_TYPED_ENTRIES, SEND_TIME_BUDGET_MS, TemplateLookupUnavailableError, loadInviteTemplate, normalizeRecipients, sendFormInvites, summarize,
   type RecipientOutcome,
 } from '@/lib/forms/form-send';
 
@@ -22,6 +22,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * everyone gets an honest per-recipient result. Sending never writes form_responses.
  */
 export async function POST(request: NextRequest) {
+  // The time budget runs from the start of the request, so Audience and template
+  // lookups count against it too.
+  const deadline = Date.now() + SEND_TIME_BUDGET_MS;
   try {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'form-send'), 20, 60_000);
     if (rateLimit) return rateLimit;
@@ -47,7 +50,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'phones must be a list of phone numbers' }, { status: 400 });
     }
     if (typed.length > MAX_TYPED_ENTRIES) {
-      return NextResponse.json({ error: `You can send to at most ${MAX_RECIPIENTS_PER_SEND} people at a time.` }, { status: 400 });
+      return NextResponse.json({ error: `That list is too long. Paste at most ${MAX_TYPED_ENTRIES} numbers, and send to at most ${MAX_RECIPIENTS_PER_SEND} people at a time.` }, { status: 400 });
     }
     if (segmentId !== undefined && (typeof segmentId !== 'string' || !UUID_RE.test(segmentId))) {
       return NextResponse.json({ error: 'Invalid audience' }, { status: 400 });
@@ -144,7 +147,7 @@ export async function POST(request: NextRequest) {
       ...await sendFormInvites({
         db: service, resolved, businessId, businessName: biz.name,
         form: { id: form.id, title: form.title, description: form.description, token: form.token },
-        template, phones,
+        template, phones, deadline,
       }),
     ];
     const summary = summarize(outcomes);

@@ -20,7 +20,7 @@
   - it is shown unticked on the public form (`app/form/[token]/page.tsx`, `app/api/forms/public/[token]/route.ts`);
   - when ticked, `/api/forms/submit` appends a **pending** row to `customer_consents` (whatsapp / marketing / source `website`) and sets `form_responses.consent_given`;
   - nobody has proved they own the typed number, so pending is never sendable (`hasRecipientPermission` needs `granted`), and a tick never replaces a newer `granted` record. How a tick becomes confirmed is an open Owner decision (#591). Production has no consent records today, so nobody is sendable until a confirmed consent source exists.
-- **View Responses** hides the old empty "sent" rows and shows "Opted in to updates" on responses that opted in.
+- **View Responses** hides the old empty "sent" rows and marks responses that ticked the box as "not yet confirmed".
 
 **What it affects**
 - The Forms page and public forms.
