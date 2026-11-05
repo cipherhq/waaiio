@@ -206,11 +206,15 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     ticketCopyLang = ticketL10n.language;
   } catch { /* fall back to English */ }
 
-  // Fetch subscription tier for white-label branding
+  // Fetch subscription tier for white-label branding, plus organiser name and logo for the ticket
   let subscriptionTier: string | undefined;
+  let businessName: string | undefined;
+  let businessLogoUrl: string | undefined;
   try {
-    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', businessId).single();
+    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier, name, logo_url').eq('id', businessId).single();
     subscriptionTier = bizTier?.subscription_tier || 'free';
+    businessName = bizTier?.name || undefined;
+    businessLogoUrl = bizTier?.logo_url || undefined;
   } catch (err) { logger.warn('[TICKETS] Failed to fetch subscription tier, defaulting to free:', err); subscriptionTier = 'free'; }
 
   // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
@@ -228,6 +232,8 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
       price: opts.ticketPrice,
       countryCode: opts.countryCode,
       currencyCode: opts.currencyCode,
+      businessName,
+      businessLogoUrl,
       labels: ticketPdfLabels,
     });
 

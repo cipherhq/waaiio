@@ -1,3 +1,485 @@
+## 2026-11-05 — Escape the property name in the check-in QR print view; sanitize the phone in the invoice session filter
+
+- **What changed:**
+  1. `app/dashboard/properties/[id]/page.tsx`: the "Print QR" window now HTML-escapes the property name (title and heading), the QR image URL and the check-in URL before writing them. A property name is shown as text.
+  2. `lib/payments/send-confirmation.ts`: the invoice/campaign session-deactivation `.or()` filter now passes the stored customer phone through `sanitizeFilterValue()`, like the other phone filters in the same file. Both the manifest and legacy paths.
+- **Tests:** `lib/__tests__/property-checkin-qr-print-escape.test.tsx` (renders the page and checks the printed HTML), `lib/__tests__/payment-session-deactivation-filter.test.ts` (runs `sendProactiveConfirmation` for an invoice payment and checks the deactivation filter). Both fail on the previous code.
+- **Affects:** the property check-in QR print window; invoice/campaign payment confirmation's waiting-session close.
+- **Could break:** nothing expected. Normal phones contain no `,`, `(` or `)`, so the filter is unchanged for them (tested). Payment custody, fees, routes and confirmation order are unchanged.
+
+## 2026-11-05 — Dependency security upgrades: Sentry 11, Next.js 15.5.29, posthog-js, dompurify, undici
+
+- **What changed (Owner decisions 2026-11-05: "Yes, two PRs", "B: Sentry 11"):**
+  - `@sentry/nextjs` ^10.49.0 → ^11.10.0. `next.config.mjs` imports `withSentryConfig` from `@sentry/nextjs/config` (moved in v11).
+  - All three `Sentry.init` calls (`sentry.client.config.ts`, `sentry.server.config.ts`, `sentry.edge.config.ts`) set `dataCollection` to Sentry's documented v10-equivalent block. v11 otherwise collects more by default (user info, cookies, IP-related headers); this keeps collection as it was.
+  - `next` 15.5.27 → 15.5.29, still pinned exactly.
+  - `posthog-js` ^1.370.1 → ^1.445.2; override `dompurify` 3.4.16 → 3.4.17.
+  - New override `undici` 7.30.1 for the copy used by `jsdom` (test tooling). No new direct dependency.
+- **Why:** `npm audit` on main flagged these packages; after this change they are clear, except one moderate advisory reported through Sentry's build-time bundler plugin (transitive `glob`), which has no v11 fix.
+- **Files:** `package.json`, `package-lock.json`, `next.config.mjs`, `sentry.client.config.ts`, `sentry.server.config.ts`, `sentry.edge.config.ts`.
+- **Affects:** every app build and error reporting (server, edge, browser); analytics client.
+- **Could break:** Sentry 11 behaviour changes kept as defaults: span streaming, a stack trace on `captureMessage` and non-Error `captureException` (may create new issue groups), and `browserSessionIntegration` page lifecycle. The `environment` is set explicitly, so the v11 Vercel default change does not apply. Verify after deploy that a test error from `/api/admin/sentry-test` reaches Sentry.
+
+## 2026-11-05 — M516: optional photos column for tables and sections (#892, database PR)
+
+- **What changed:** migration `516_seating_resource_gallery.sql` adds `seating_resources.gallery_urls TEXT[] NOT NULL DEFAULT '{}'` with the named check `seating_resources_gallery_max_3` (at most 3 photos). Owner decisions 2026-11-05 (#892): photos are optional, max 3, stored in their own column and shown in the WhatsApp table booking after the customer taps the seat. The dashboard and bot changes ship in a separate app PR, after this migration is applied.
+- **Files:** `supabase/migrations/516_seating_resource_gallery.sql`, `supabase/catalog-deltas/516_seating_resource_gallery.json`, `lib/__tests__/seating-resource-gallery-516.pg.test.ts` (real PostgreSQL, 9 tests), `.github/workflows/ci.yml` (runs the new test in the disposable-PostgreSQL job and keeps it out of Main App), `docs/MIGRATION_REGISTRY.md` (516 reserved).
+- **What it affects:** `seating_resources` only. There is no grant or policy change: the existing table grants and owner RLS cover the new column, so owners can set photos only on their own business's seats. Existing rows read `{}`.
+- **What could break:** nothing in the live app reads or writes the column yet. The migration's self-check fails if the column shape, the check or the authenticated grants drift. It deliberately does not assert anon ACLs, which are #789's scope.
+
+## 2026-11-05 — Release V3: admin re-check accepts the unchanged pin, and recovery from the partial deploy of run 41937185420
+
+- **What changed:**
+  1. Deploy: after building the admin candidate with `vercel deploy --prod --skip-domain`, the re-check accepts the admin production target being exactly the approved pin or the new candidate, and still stops on any other value. Before, it required the target to move to the candidate, which Vercel does not do with `--skip-domain`.
+  2. Prepare: after an Owner-approved lock re-certification, merchant and admin may start from two different certified SHAs on one line of history. The change set, lane and included PRs are computed from the older one. Mixed baselines are refused when the baseline comes from a release record.
+  3. Lock: `certified` is now merchant `2b578c5b`, admin `bdc007a8` (what production serves after run 41937185420). Owner decision R1, 2026-11-05.
+- **Why:** deploy run 41937185420 deployed merchant `2b578c5b`, then stopped with "Admin production target changed" before the admin alias. Read-only check: admin `targets.production` was still the approved pin; production had not drifted. Without the lock change the next prepare would stop on the split state.
+- **Files:** `scripts/release-gate-v3.mjs`, `scripts/release-v3/lock.json`, `scripts/__tests__/release-v3-gate.test.ts` (fake models real `--skip-domain`; regression for run 41937185420; target-moves-to-candidate; mixed-baseline prepare; mixed baselines not on one line of history fail closed; uncertified mixed baseline still stale; deploy from a mixed-baseline packet), `scripts/__tests__/release-v3-admission.test.ts` (lock pin), `docs/RELEASE_V3_GATE.md`.
+- **Affects:** Release V3 prepare and deploy only. Approvals, lanes, database admission and hold checks are unchanged.
+- **Could break:** a later lock re-certification that names two SHAs not on one line of history fails closed. The next release's change set starts at `bdc007a8`, so it re-lists the PRs already shipped to merchant; their review records already exist.
+
+## 2026-11-05 — Escape structured data output on public pages
+
+- **What changed:** new `lib/utils/json-ld.ts` (`serializeJsonLd`) escapes `<`, `>`, `&`, U+2028 and U+2029 as `\uXXXX` when writing structured data (JSON-LD) into a `<script type="application/ld+json">` tag. Used by the public business page (`app/b/[slug]/page.tsx`), the public event page (`app/e/[slug]/page.tsx`) and the homepage (`app/(marketing)/page.tsx`) instead of plain `JSON.stringify`.
+- **Tests:** `lib/__tests__/structured-data-escaping.test.tsx` renders both public pages and checks the structured data stays inside its tag and parses to the same values; ordinary text is unchanged. The page tests fail on the previous code.
+- **Affects:** the structured data that search engines read on public business, event and home pages. The parsed values are identical.
+- **Could break:** nothing expected; the output is still valid JSON with the same parsed value.
+
+## 2026-11-05 — Discovery Profile: fill in the business Description on the page
+
+Owner decision (2026-11-05): add the field to the Discovery page, and make the Logo and Business Hours items link to Settings.
+
+What changed:
+- **Description field** (`app/dashboard/discovery/page.tsx`): Profile Details now has a "Description" box above the Short Listing Summary. It is the same business description as Settings → Business (`businesses.description`, also shown on the booking page). Saving the Discovery page now writes it, so the "Description" missing item can be cleared here. Previously the page only checked this field and could not edit it.
+- **Settings links**: the "Logo" and "Business Hours" missing items are now links, marked "(in Settings)". Logo opens Settings → Business. Business Hours opens Settings → Business with the Operating Hours section open.
+- **Fresh data after save:** after a successful save, the page calls `router.refresh()`, as Settings → Business already does. The dashboard's business data then reloads, so following an "(in Settings)" link and saving there does not write back the old description. Nothing is reloaded if the save fails.
+- **Settings** (`app/dashboard/settings/page.tsx`): `?tab=business&section=hours` opens the Operating Hours section as well as Profile.
+- **Tests:** new rendered test `lib/__tests__/discovery-description-field.test.tsx` (field shows, loads, saves `description` separately from `discovery_description`; dashboard data reloads only after a successful save; chip links). `lib/__tests__/discovery-settings-wiring-485.test.ts` used to pin "Discovery does not write `description`". It now checks that the payload writes it once, alongside `discovery_description`.
+
+Affects: the Discovery Profile page and the Settings deep link for operating hours. No database or API change; the save uses the same owner-scoped `businesses` update the page already used.
+
+Could break:
+- If someone edits the description in Settings in another **browser tab** and then saves an older Discovery page that is still open, the older text wins. This was already true for the address and other shared fields on this page. Moving between pages in the same tab is covered by the reload above.
+
+## 2026-11-05 — Dashboard cards say what they count; "today" uses the business's time zone (#899)
+
+Owner decision (2026-11-05, #899, option A; the usage bars keep the limit check's month). Labels and the "today" date only: every number still means what it meant.
+
+What changed (`app/dashboard/page.tsx`):
+- **Labels.** Shop-type categories (`entityName: 'order'`: shop, food delivery, Instagram vendor, mall vendor, pharmacy, catering, tailor, bakery, printing, supermarket, food truck) labelled the **bookings** cards as "orders", next to the real orders cards. Those cards now say "bookings": "Total bookings", "Pending bookings", "bookings this month" and "Recent bookings". Other categories keep their own word (for example "appointments").
+- **"Today's …" → "… scheduled today"** for every category. The card has always counted bookings whose date is today, not things paid today.
+- **Revenue.** When the business also takes orders, the all-payments card (`get_business_revenue`, which includes order payments) was labelled "<Entity> Revenue" or "Giving Revenue". It is now "Total revenue". "Order Revenue" and the plain "Revenue" card are unchanged.
+- **Time zone.** "Today" was the UTC date, so a Lagos business saw yesterday until 01:00.
+  - It is now the business's own date, using the existing `getLocalNow` and `timezoneFitsCountry` (`lib/bot/flows/shared/table-same-day.ts`).
+  - `businesses.timezone` is `NOT NULL DEFAULT 'Africa/Lagos'` and the app never sets it, so many US and GB businesses still carry the Lagos default. As in the bot (Owner decision 2026-11-04), the stored zone is trusted only when it fits the country:
+    - NG → Africa/Lagos;
+    - GH → Africa/Accra;
+    - GB → Europe/London;
+    - US and CA → America/*.
+  - Otherwise the card keeps the UTC date, as before. In practice Nigerian businesses on Lagos get their own date; US and GB businesses on the Lagos default are unchanged.
+- **Unchanged on purpose:**
+  - the monthly usage bars still count from UTC midnight on the 1st, matching the enforced limit in `lib/tier-limits.ts`;
+  - "Completion Rate" is untouched, pending a separate decision;
+  - no query shape, total or permission changes; only the date sent by the "scheduled today" count can differ, and only for businesses whose zone fits their country.
+- **Tests:** `lib/__tests__/dashboard-card-labels-899.test.tsx` renders the real page against a fake Supabase client. It checks the labels and the date the page queries for:
+  - Lagos (NG);
+  - New York (US);
+  - London (GB);
+  - US and GB on the Lagos default (UTC date);
+  - NG on UTC;
+  - missing and invalid zones;
+  - the month boundary.
+
+Affects: the merchant dashboard overview page only.
+
+Could break: anything that looks for the old card wording (none found in tests or e2e). Merchants used to "Today's orders" will see "Bookings scheduled today".
+
+## 2026-11-04 — Event ticket PDF redesigned as a real ticket: tear-off stub, barcode and QR
+
+**What changed** (Owner request with a sample image; Owner decisions 1A and 2A, 2026-11-04)
+
+- The ticket PDF sent on WhatsApp after a ticket purchase now looks like a printed event ticket. It is one landscape page per ticket (780 × 300 pt):
+  - a white tear-off **stub** on the left, holding:
+    - a vertical **Code 128 barcode** of the ticket code, with the code printed beside it;
+    - the booking reference and "Ticket n / total";
+    - the organiser's logo (a lettered circle if there is none) and name;
+    - "Powered by Waaiio" unless the tier is white-label;
+  - a scalloped tear line with notches;
+  - a **Waaiio-purple** body (decision 2A) with white text and white curved line art, holding:
+    - the organiser name;
+    - a large event title, with the ticket type beside or under it;
+    - attendee, price and seat;
+    - a bottom row of date, time and venue;
+    - a small **QR code** on the right (decision 1A), with "Scan to verify", the ticket code and "Ticket n / total".
+- The event flyer, when present, still shows as a faint background in the purple body.
+- **Files:**
+  - `lib/pdf/ticket-generator.ts` (layout);
+  - `lib/pdf/code128.ts` (new, a small Code 128 set B encoder);
+  - `lib/bot/flows/shared/send-tickets.ts`, which now also reads `businesses.name` and `logo_url` in its existing tier query and passes them to the PDF.
+
+**Check-in is unchanged**
+
+- The QR still holds exactly `<APP_URL>/tickets/<ticket_code>`, so phone-camera self-check-in and the public ticket page work as before.
+- The dashboard scanners (`app/dashboard/events/scan` and `checkin`, html5-qrcode with default formats) also read Code 128. The barcode text is the raw ticket code, which the scanners already accept and send to `/api/tickets/verify/<code>`.
+- The barcode runs vertically on the stub, as in the Owner's sample. html5-qrcode's own decoder reads 1-D codes only along horizontal lines (`TRY_HARDER` is off). So on browsers without a native barcode detector (iOS Safari, Firefox), staff must hold the ticket sideways to scan the barcode. Chrome on Android reads it either way.
+- The QR reads in any orientation and is the main check-in code.
+- Manual entry and WhatsApp `TK-` check-in are untouched.
+- No database, API or scanner change.
+
+**Logo and flyer handling** (reviewer claude-reviewer-891-b, P1-1, P2-3, P2-4)
+
+- The logo is fetched only from the public `business-documents` bucket of this project's Supabase URL, where `/api/business/upload-logo` stores it. The URL is parsed first, so `..` and `%2e%2e` are resolved, and the origin and path must match. Redirects are refused. Any other `logo_url` is ignored, so a hand-edited value can't make the server fetch an arbitrary address.
+- Logo and flyer downloads over 5 MB are ignored.
+- Both images are re-encoded with Sharp:
+  - logo: PNG, at most 256 px;
+  - flyer: JPEG, at most 1200 px.
+- This covers WebP, which uploads allow but PDFKit can't draw.
+- Each image is embedded once and reused on every page. A 4096² transparent logo on 10 tickets used to take about 84 s and produce a 717 KB PDF (measured by the reviewer under heavy machine load). It now takes about 1 s and produces 60 KB, so the PDF can't delay ticket delivery inside the 60 s payment webhook.
+- The text column is clipped, so a title Helvetica mis-measures (for example Yoruba diacritics) can't spill under the QR.
+- The flyer's drawing state is always restored.
+
+**Barcode vs QR** (reviewer claude-reviewer-891-b, P2-1)
+
+- The Code 128 barcode is sized for printed tickets and for scanning at normal print or screen resolution. It decodes at 2× and 3× render scale, not at 1×.
+- On a phone screen the QR, which decodes at 1×, is the check-in path. Both encode the same ticket code.
+- No CI test decodes the barcode from the rendered PDF, because CI has no canvas package. Rendered-pixel decoding was done locally with the stub rotated upright (reviewers A and B reproduced it).
+
+**Also fixed by the new layout:** the old design put its footer below the page's bottom margin, so PDFKit added a blank page after every ticket. The new layout has no margin overflow, and a test checks one page per ticket.
+
+**Tests:**
+- `lib/pdf/__tests__/ticket-stub-barcode.test.ts` (new). It:
+  - decodes the barcode with the zxing build bundled in html5-qrcode, the dashboard scanner's own decoder;
+  - extracts the PDF text with pdfjs-dist to check every detail and the page size and count;
+  - checks the QR payload, logo fetch and conversion, the logo allow-list, white-label and localized labels.
+- `lib/pdf/__tests__/delivery-wiring.test.ts` (new case) checks that the organiser name and logo come from the businesses row.
+
+**Could break:**
+- The ticket page is now wider and shorter, so anyone printing tickets gets a different page shape.
+- The Waaiio wordmark image is no longer fetched for the PDF; the "Powered by Waaiio" text remains.
+- Non-Latin characters (e.g. Yoruba diacritics) still use the built-in Helvetica, which can't draw them, the same as before. Fixing that needs an embedded Unicode font across all PDFs and is a separate follow-up.
+- The WhatsApp ticket *image* (`app/api/tickets/image`) is a separate design and is not changed here.
+
+## 2026-11-04 — M515: server-only owner consent answers on profiles (database only)
+
+Owner decision (2026-11-04, #878 Bug 2, Option A). This is PR A of two: the database change only. The app change (point `/api/account/consent` and `/api/onboarding/activate-admin-invite` at the new column) follows in a stacked PR B and ships only after this migration is in production.
+
+Why: both routes read and write `profiles.metadata.consent_preferences`, but `profiles.metadata` has never existed on staging or production. Settings → Account privacy preferences, the cookie banner's account sync and admin-assisted activation (#551) have always failed.
+
+What changed (`supabase/migrations/515_profile_consent_preferences.sql`):
+- New column `profiles.consent_preferences` (JSONB, nullable, no default) with a named check `profiles_consent_preferences_object_check` (NULL or a JSON object). Existing rows stay NULL.
+- No `INSERT` or `UPDATE` on the column for PUBLIC, `anon` or `authenticated` (the M428 pattern). Owners read their own row through the existing SELECT grant and RLS; only trusted server code (`service_role`) writes it. M353's six named-column UPDATE grants, the table ACL and every RLS policy are unchanged.
+- A self-check fails the migration if the column type, the check or the ACL contract drifts (for example a table-wide UPDATE grant to `authenticated`).
+- Idempotent; applied as one whole-file statement.
+- **Catalog delta:** `supabase/catalog-deltas/515_profile_consent_preferences.json`.
+- **Tests:** `lib/__tests__/profile-consent-preferences-515.pg.test.ts` (real PostgreSQL), added to the `ci.yml` pg-file guard and the unit-job exclude. Registry row 515 in `docs/MIGRATION_REGISTRY.md`.
+
+Affects: `public.profiles` only. The live app needs no change to keep working: no code reads or writes the new column yet, and none selects `profiles` `*` and writes the row back.
+
+Could break:
+- Any future client-side write that includes `consent_preferences` is refused (`42501`); that is intended.
+- Admin and support staff who can read other profiles (`admin_select_profiles`) can also read this column, as for every other profile column.
+
+## 2026-11-04 — Consent and admin-assisted activation read the new server-only consent column (#878 Bug 2, PR B)
+
+Owner decision (2026-11-04, #878, Option A). PR B of two, stacked on the M515 database PR. **Ships only after M515 is applied in production**; before that, both routes keep failing exactly as they do today.
+
+What changed:
+- `app/api/account/consent/route.ts`: GET and POST read `profiles.consent_preferences` instead of `profiles.metadata.consent_preferences` (a column that never existed). POST merges the new answers into the existing object, writes only `consent_preferences`, and returns what the database confirms. Response shapes, the 401/400/404/500 handling, the default answers, the version fallbacks and the terms-evidence merge rules from #768 are unchanged.
+- `app/api/onboarding/activate-admin-invite/route.ts`: reads `consent_preferences.consented_at` and `consent_preferences.terms_accepted_at` from the new column. Still refuses (409) without both.
+- Tests: `lib/__tests__/account-consent-route-762.test.ts`, `lib/__tests__/account-consent-settings-762.test.tsx` and `lib/__tests__/issue-551-admin-activation-route.test.ts` now model the live table: selecting or writing any profile column other than `consent_preferences` returns PostgREST `42703`, and a non-object value is refused like the M515 check.
+
+Affects: Settings → Account → Privacy preferences, the cookie banner's account sync (`components/marketing/CookieConsent.tsx`), and `/activate` (admin-assisted activation, #551).
+
+Could break:
+- Deployed before M515 is in production: the routes return 500 / 409, the same as today (no regression, no fix).
+- Owners start with no stored answers, so GET returns the existing defaults until they save once. Nothing was ever stored before, so there is nothing to migrate.
+
+## 2026-11-04 — WhatsApp ordering sends product gallery photos (#879)
+
+- **What changed:** when a customer opens a product in the WhatsApp ordering flow, the bot now sends the main image plus up to 3 photos from the product's gallery (`products.gallery_urls`). Each product's gallery is sent once per conversation; going back to the same product does not repeat it, and a different product still shows its own. Owner decision 2026-11-04 (option A), matching how services already send their gallery.
+- **Files:** `lib/bot/flows/ordering.flow.ts` (new `productGalleryMessages` helper, called after the main image in `select_option_axis` (first axis), `select_variant` and `select_quantity`); `lib/bot/flows/__tests__/ordering-product-gallery.test.ts` (new, 11 tests, 8 fail on the old code); `lib/__tests__/product-gallery-images.test.ts` (the old "bot must not read `gallery_urls`" check now expects the gallery read).
+- **What it affects:** product steps of the ordering flow only. New session key `_gallery_sent_product_ids` (list of product ids already shown). The lookup is scoped to the current business. URLs equal to the main or variant image, and duplicates, are skipped.
+- **What could break:** more WhatsApp messages per product view (at most 3 extra images). A broken gallery URL fails only that image: the executor already sends each message separately and logs failures. If the gallery lookup fails, the step sends the main image and list as before.
+- **Not changed:** quick-add products (added straight to the cart), custom-order mode and smart-intent auto-add show no product image today and still show no gallery. Open Owner question in #879.
+
+## 2026-11-04 — Parties: seat guests by tag or by their RSVP answer (app)
+
+Owner decision (2026-11-04, #874, D1–D8 as recommended). PR B of two. It needs M514 (PR A) in production first.
+
+What changed:
+- **Questions editor** (`app/dashboard/parties/components/PartyQuestionsEditor.tsx`): a "Tag guests with their answer" checkbox on single-choice questions. Ticking one unticks any other. It reports the current questions to the page after a load and after a save; only a save reloads the guest list (a save re-tags guests). A reply that lands after the organiser has moved to another party is ignored.
+- **Question contract** (`lib/parties/rsvp-questions.ts`): `parseQuestions` accepts the optional boolean `tag_answers`, on single-choice questions only, at most one per party (same rules as the database).
+- **Planner** (`lib/parties/seating-planner.ts`): guests whose tags have reserved tables are placed only at those tables (either tag's tables when they have two, D5), filling one table before the next (D6). Guests with fewer reserved tags are placed first, so a two-tag guest does not take the only seat a one-tag guest could use. Everyone else is placed only at unreserved tables. A new `warnings` list names pinned guests left at a table reserved for a tag they lack (D4); unlike conflicts, warnings do not block Confirm. With no reserved tables the plan is identical to before for the same seed (tested against the previous planner).
+- **Dashboard** (`app/dashboard/parties/page.tsx`):
+  - each table has a "Reserved for" dropdown (the tagging question's options plus existing tags), and shows a note when no guest has that tag yet;
+  - a reserved table's "+ tag" buttons offer only its tag;
+  - the guest-list table picker disables reserved tables for guests without the tag;
+  - the guest list shows each guest's RSVP answers and marks the tag that came from the RSVP;
+  - the seating preview shows each table's reserved tag, lists guests who don't fit per tag, and lists D4 warnings. The existing "Not placed by this plan" line is unchanged for other guests.
+- **CSV** (`lib/parties/guest-answers.ts`): the export adds one column per current question with the guest's answer. The export now lives in `guestListCsv`, and the page calls it. Name, Tags, Dietary Notes, the question headers and the answers go through the shared plain-text guard `neutralizeFormulaPrefix` (`lib/utils/csv-export.ts`, #713). This keeps #883's protection on the existing columns and applies the same rule to the new ones. Phone, Status, Plus Ones and Responded At are unchanged.
+- **Seating route** (`app/api/parties/[partyId]/seating/route.ts`): the database's "Table 1 is reserved for …" refusal is shown as the error message. Other `23514` errors keep the generic message.
+- **Tests:** `lib/__tests__/party-seating-by-tag-514.test.ts` (planner, contract, CSV, including header labels and the shared guard on every free-text column); #883's rendered export test `lib/__tests__/party-guest-csv-plain-text.test.tsx` passes unchanged, `lib/__tests__/party-seating-by-tag-ui-514.test.tsx` (rendered dashboard), and two cases added to `lib/__tests__/party-seating-route-762.test.ts`.
+
+Affects: the Parties dashboard (questions, tables, guest list, seating, CSV) and the seating route's error text. No bot change.
+
+Could break:
+- Deploying before M514 is in production: the guest-list query asks for `answer_tag` and the table query for `reserved_tag`, which would fail. Ship only after M514.
+- Plan hashes include the new `warnings` field, so a preview made just before the deploy and confirmed after it returns "Seating changed. Create a new preview."
+
+## 2026-11-04 — M514: seat party guests by tag or by their RSVP answer (database only)
+
+Owner decision (2026-11-04, #874, D1–D8 as recommended). This is PR A of two: the database change only. The app (questions checkbox, "Reserved for" on tables, planner, guest list and CSV) follows in a stacked PR B.
+
+What changed (`supabase/migrations/514_party_seating_by_tag.sql`):
+- **Answer → tag.** A single-choice question may set `tag_answers: true` (at most one per party, D1). When the RSVP authority (`complete_party_rsvp_489`, web and WhatsApp) saves an answer, a new trigger `party_answer_tag_514` adds the chosen option's trimmed label to `event_invites.tags` and records it in the new column `event_invites.answer_tag`. A changed answer swaps only that tag. A tag the organiser added by hand is never adopted or removed, even when it equals the answer. Only the answer authorities may change `answer_tag` (a direct write is refused, `42501`).
+  - Maybe and Decline do not change answers, so they do not change the tag.
+  - A guest seated by hand (`seating_pinned`) keeps an existing auto-tag when the answer changes (D2). One with no auto-tag yet still gets one.
+  - Saving questions re-applies the tags to existing answers (D3); renaming an option re-tags unpinned guests. Deleting the option a guest chose keeps their tag as an ordinary tag, as for D7.
+  - Unticking or deleting the question keeps the tags as ordinary tags and clears `answer_tag` (D7).
+- **Reserved tables.** New column `party_tables.reserved_tag` (NULL, or trimmed, 1–100 characters). A new trigger `party_reserved_table_514` refuses to seat a guest at a reserved table without that tag ("Table 1 is reserved for Groom's family", `23514`). It only ever names the guest's own party's table; another party's table is left to M457's rejection. It covers every path: the seating commit, manual seating, `assign_guest_to_table`, `bulk_assign_guests_to_table` (these two return their usual `{success:false,error}`) and direct updates. It checks only when the table changes, so tag edits and RSVPs are never blocked, and guests already seated stay when a table becomes reserved (D4).
+- **Replaced functions** (every attribute and grant restated):
+  - `private.validate_party_questions_489`: also accepts `tag_answers`.
+  - `private.party_questions_489`: after a save, re-applies answer tags under the existing party lock.
+  - `public.party_seating_snapshot_486`: adds guest `tags` and table `reserved_tag`, so a change to either makes an open preview stale.
+- **New functions:** `private.party_answer_tags_514` (the one tagging rule) and the two trigger functions. All are SECURITY INVOKER with `search_path = pg_catalog`, and executable by nobody except their owner. No new SECURITY DEFINER function, no table grant or RLS change.
+- **Catalog delta:** `supabase/catalog-deltas/514_party_seating_by_tag.json` (11 changes).
+- **Tests:** `lib/__tests__/party-seating-by-tag-514.pg.test.ts` (real PostgreSQL), added to the `ci.yml` pg-file guard and the unit-job exclude.
+
+Affects: party RSVPs, question saves and seating writes (web, WhatsApp, dashboard). The app needs no change to keep working: with no `tag_answers` and no `reserved_tag`, the new triggers change nothing.
+
+Could break:
+- The first seating preview opened before the migration and confirmed after it returns "Seating changed. Create a new preview." (the fingerprint now includes tags).
+- If the app is rolled back after an organiser has ticked "Tag guests with their answer", the old questions editor cannot load that party's questions. RSVPs keep working.
+- Saving questions and a direct guest edit (for example a dashboard tag edit) at the same moment can rarely deadlock; PostgreSQL aborts one side (`40P01`) and nothing is half-written. The M486 seating commit already has the same pattern.
+
+## 2026-11-04 — Orders paid online alert the owner once, after payment
+
+- Owner decision 2026-11-04 (option A). Before this change, the owner got a "new order" WhatsApp alert when a bot order was created and a second one after online payment (staging WA-OR-8782, Paystack saved card).
+- `lib/bot/flows/ordering.flow.ts` (`process_order`): a freshly created order now records that its creation alert is owed (`session_data._owner_order_alert_due`, the order id). The alert is sent only once the payment route is known:
+  - online only (payment link, saved card): not sent at creation. The owner gets the existing post-payment alert from `send-confirmation.ts`, which is unchanged;
+  - bank transfer only, zero total: sent, as before;
+  - ambiguous routes keep the alert: online and bank transfer offered together, or payment setup failed (no link, no transfer).
+- A saved-card skip keeps the owed marker, so a later bank-transfer offer for the same order still alerts once. Re-entry on an order the session did not just create never alerts, as before.
+- Unchanged: `send-confirmation.ts`, payment finalization and authority, the transfer-proof alert, both custody routes (merchant-connected and Waaiio-owned), fees and refunds.
+- Tests: new `lib/bot/flows/__tests__/order-owner-alert-routing.test.ts` (9 tests, real `process_order` and real `sendProactiveConfirmation`). `message-optimization.test.ts`: the online-only first-entry test now expects no creation alert.
+- Could break: when online and bank transfer are offered together and the customer pays online, the owner still gets two alerts (kept on purpose, route is ambiguous at creation). The creation alert now goes out after the payment link is set up, a moment later than before.
+
+## 2026-11-04 — Parties: guest-list export keeps free text as plain text
+
+Owner decision (2026-11-04).
+
+What changed:
+- `app/dashboard/parties/page.tsx` ("Export Guest List"): the **Name**, **Tags** and **Dietary Notes** cells are exported as plain text. They go through the shared `neutralizeFormulaPrefix` guard (`lib/utils/csv-export.ts`, #713), the rule the other CSV exports already use: a value whose first character after any leading whitespace is `=`, `+`, `-`, `@` or `|` gets a leading apostrophe, so a spreadsheet shows it as text instead of running it as a formula. Pure numbers such as `-5` are left as they are.
+- Test: `lib/__tests__/party-guest-csv-plain-text.test.tsx` (rendered export).
+
+Affects: only the CSV file the organiser downloads. Phone, Status, Plus Ones and Responded At, the column order and the quoting are unchanged. Ordinary values are unchanged.
+
+Could break: a name, tag or dietary note that really starts with one of those characters (for example "-Family") now shows a leading apostrophe in some spreadsheet apps. PR #880 (not merged) moves this export into `lib/parties/guest-answers.ts`; whichever merges second must keep this protection on these three cells (and #880 should use the same shared guard).
+
+## 2026-11-04 — Logo, staff photo and voice-note uploads work again; Seating form accepts typed numbers and explains the midnight rule (#878)
+
+**Uploads**
+
+
+- Found by the Owner on staging. The same bug is live in production. Settings → Business logo showed "Upload failed" because `POST /api/business/upload-logo` returned 500.
+- **Cause:** these routes upload to the public `business-documents` bucket with the owner's own Supabase client, at a path whose first folder was a fixed word: `logos/…`, `staff-photos/…`, `chat-audio/…`. The only owner write policy, "Business owners manage own documents" (M133), requires the first folder to be one of the owner's business IDs. M135 removed the permissive upload policy, so every such upload was denied. Product and service images already use `<business_id>/products/…` and `<business_id>/services/…`, and they work.
+- **Changed files:**
+  - `app/api/business/upload-logo/route.ts` now uploads to `<business_id>/logos/<timestamp>.<ext>`.
+  - `app/api/staff/upload-photo/route.ts` now uploads to `<business_id>/staff-photos/<timestamp>.<ext>`.
+  - `app/api/chat/upload-audio/route.ts` now uploads to `<business_id>/chat-audio/<timestamp>-<name>.<ext>`.
+- **Unchanged:**
+  - no storage policy change;
+  - the owner client and RLS tenancy, the ownership check, file checks and Sharp re-encode;
+  - the public URL saved to `logo_url` / `photo_url`, and the signed URL for audio.
+  - Readers use the stored full URL. The WhatsApp webhook's `chat-audio/…` writer uses the service client and was not changed.
+- **Tests:** `lib/__tests__/business-upload-paths-878.pg.test.ts` (new, real PostgreSQL, run by the `.pg.test.ts` job; `.github/workflows/ci.yml` excludes it from the plain test run and requires the file).
+  - It applies M033, M133, M135 and M492 from disk and checks the policy set matches production.
+  - It drives the three real route handlers. Before the fix all three returned 500; after it they succeed.
+  - It proves the old path shapes are denied, another tenant is denied, and the M492 verification guard still holds.
+- **Could break:** logos, staff photos and voice notes uploaded from now on use the new folders. Production has no objects under `logos/` or `staff-photos/`, so no existing logo or staff photo URL changes. The public form file upload (`app/form/[token]/page.tsx`, anonymous, `form-uploads/…`) is still denied by the same policy. It needs a server route and is tracked separately in #878.
+
+**Seating form** (`app/dashboard/seating/page.tsx`, Owner findings on staging 2026-11-04)
+
+- **Number fields:** Max Capacity, Min Party Size, Duration and Deposit could not be cleared. Each change fell back at once to 1, 1, 90 or 0, so clearing snapped back and typing produced values like "015".
+  - Each field now holds the text being typed and is checked on save, with clear messages: capacity 1–500, min party size at least 1 and not above capacity, duration 1–480 minutes (the database limits), deposit 0 or more, whole numbers only.
+  - A field left empty saves the value it used to fall back to (1, 1, 90, 0).
+- **Hours past midnight:** a table whose Available Until is at or before Available From (e.g. 22:00 → 02:30) showed the raw `seating_no_overnight` database error.
+  - The rule stays (M476, Owner decision M510): late-night bookings come from the business opening hours.
+  - The form now stops before saving and shows the Owner's wording, which points to Settings → Business → Operating Hours (the section's name in the app).
+  - A `seating_no_overnight` error from the database shows the same message. Other errors are shown as before.
+  - The "Uses business hours" hint is kept.
+- **Tests:** `lib/__tests__/seating-form-staging-fixes.test.tsx` (new, renders the real page): 9 of 13 failed before the change, 13 of 13 pass after it.
+- **Could break:** nothing else imports this page. Other dashboard forms still use the same snap-back number pattern; they are listed as follow-ups in the PR and not changed here.
+
+## 2026-11-04 — #878 storage test no longer fails CI at teardown with an uncaught 57P01
+
+- **What happened:** CI run 41947819942 (PR #882), job "P0 security ACL tests (disposable PG)", failed although all 15 tests in `lib/__tests__/business-upload-paths-878.pg.test.ts` passed. Vitest reported one uncaught `FATAL 57P01 terminating connection due to administrator command`, and the job exited 1. A rerun passed.
+- **Cause:** the file's `afterAll` ran `await h.pool.end()` and then `DROP DATABASE … WITH (FORCE)`. In pg-pool 3.14, `pool.end()` resolves as soon as it has told each idle client to close, before their sockets have actually closed. When the forced drop reaches one of those backends first, Postgres sends that client 57P01. The pool's idle-client listener re-emits it as a pool `'error'`, nothing listens, and it becomes an uncaught exception. Under CPU load it reproduced locally in 2 of 40 runs of the unchanged file.
+- **Change:** `lib/__tests__/business-upload-paths-878.pg.test.ts` only. `afterAll` now waits for the pool's `'remove'` event for every open client (emitted once that client's socket has closed) before the forced drop. No error is ignored or swallowed; no test, assertion, CI step or zero-skip guard changed.
+- **Other files checked:** 8 other `.pg.test.ts` files also run `DROP DATABASE … WITH (FORCE)`, but each uses single `pg.Client` connections, and `await client.end()` waits for the socket to close, so they do not have this race. 9 other files use a `pg.Pool`, but none drops the database the pool was connected to, so nothing forcibly ends their connections. None of them changed.
+- **Could break:** if a pooled client never finishes closing, `afterAll` would wait until Vitest's hook timeout and fail visibly instead of passing silently.
+
+## 2026-11-04 — Release V3: staging lock records the release robot's access to schema public
+
+- Owner decision 2026-11-04 (option A). The first prepare run stopped because staging revoked PUBLIC `USAGE` on schema `public` and production did not. The read-only `release_observer` therefore saw `public` types schema-qualified on staging, and about 928 catalog digests differed from the lock.
+- Staging only, Owner-approved: `GRANT USAGE ON SCHEMA public TO release_observer;`. It resolves names only; it grants no table access.
+- `scripts/release-v3/lock.json` and `lock-catalog-staging.json`: the staging entry records the changed `schema:public` digest. The staging catalog is 6400 objects, `12ff1745…` (was `80f4ec20…`). `observed.staging_public_usage` keeps the previous values. Production is unchanged.
+- Verified read-only: live staging as `postgres` and as `release_observer` both read `c0d2774c…`, which is this lock plus the 509 and 510 deltas.
+- `docs/RELEASE_V3_GATE.md`: documents the grant and that it must not be applied to production.
+- Tests: the release-v3 admission test pins the new staging digest and the recorded previous values.
+- Could break: #872 also edits the staging lock map and must be rebased onto this change.
+
+## 2026-11-04 — Settings: owners can see and correct City and State (#867, part 2)
+
+- Problem: Settings → Business showed only one Address field. `city` was set silently from address autocomplete, and typing an address blanked it. `state` was never editable outside onboarding, so wrong values such as a Lagos business stored as state "Maryland" could not be fixed. Directory location search reads these columns.
+- `app/dashboard/settings/tabs/BusinessTab.tsx`:
+  - new editable "City or area" (max 50) and "State" (max 100) fields under Address, with help text linked to both;
+  - picking an address suggestion fills both;
+  - typing an address by hand still clears City and State, along with the coordinates (#485 kept), and the owner re-enters them;
+  - `businesses.city` is NOT NULL, so saving with City empty now shows "Enter your city or area before saving." instead of a failed save. On main, a manual address edit followed by save sent `city: null` and failed;
+  - State saves trimmed, or null when empty.
+- `components/ui/PlacesAutocomplete.tsx`: place data now also carries `state` (Google `administrative_area_level_1`). It is optional, so other users of the component are unchanged.
+- `components/dashboard/DashboardProvider.tsx`: `Business` type gains optional `state` (the row was already loaded with `select('*')`).
+- Tests:
+  - `app/dashboard/settings/tabs/__tests__/business-tab-city-state-867.test.tsx` (6, rendered).
+  - `address-forms-751`, `discovery-settings-wiring-485` and `places-autocomplete-751` were updated to the required-City rule and the extra `state` field. Their #485 intent, that a manual edit invalidates coordinates and city, is kept.
+- Not changed:
+  - the Discovery Profile page (still writes city only; follow-up);
+  - onboarding;
+  - the guarded server-only columns (`city` and `state` are owner-writable today);
+  - State is free text, not a dropdown, because the code has no complete state list per country.
+- Could break: owners now see City and State values that autocomplete chose and may edit them; directory location search uses what they save.
+
+## 2026-11-04 — Directory search finds businesses by area, as customers type it (#867, part 1)
+
+- Problem: in production, "Shop in ikoyi" returned 0 results although an eligible Ikoyi shop is listed. Address autocomplete stores the area in `city` ("Ikoyi") and the metro in `state` ("Lagos") with a bare street address. The search needed city = Lagos AND an address mentioning Ikoyi, so such businesses never matched.
+- `lib/marketplace/search.ts`:
+  - An area search now matches when city or address names the parent city and the address names the area, or when the city field is the area and state or address names the parent city.
+  - State is never used on its own, so a business with only a wrong state stays excluded, as #584 required.
+  - A city search ("shop in Lagos") also matches the address.
+- `lib/marketplace/query-parser.ts`: "shops Ikoyi" and "Ikoyi shop" now read like "shop in Ikoyi". This applies only to messages of 2-5 words, where one side is a category or generic word and the other exactly names a curated city or area. Substrings such as "shop a" or "Salon East" are left alone.
+- `lib/bot/handlers/directory-search.ts`: "businesses in Ikoyi" and "Ikoyi" search the place instead of looking for that literal phrase in names. "boutique in Ikoyi" searches the name "boutique". Text is dropped only when the place is a city or area. A bare word, a state ("Oyo") or a country ("Nigeria") keeps its text, so a search never lists a whole country (review r2 P1-1).
+- Tests:
+  - `lib/bot/__tests__/directory-search-867.test.ts` (new, 8);
+  - new cases in `query-parser.test.ts` and `discovery-search-query.test.ts`. The test double now evaluates nested `and(...)` filters, and the real-client test checks the serialized filter.
+  - 15 tests fail on the previous code.
+- Not changed: the "did you mean" fallback (`search_businesses_fuzzy`, M447), the web directory, the settings page (#867 part 2), eligibility rules, ranking.
+- Could break: area and city searches return more matches than before (businesses whose city or address names the place). The wrong-state exclusion is kept.
+
+## 2026-11-04 — M510: late-night table bookings fit inside the business's open time (database only)
+
+Owner decision (2026-11-04, revised; table bookings only). It replaces the earlier "must start before midnight" rule:
+- A table booking is allowed when it fits completely inside the business's open time (`businesses.operating_hours`).
+- A closing time earlier than or equal to the opening time closes the next day. Equal open and close (for example `00:00`/`00:00`, not marked closed) means open 24 hours from that time.
+- Bookings are stored on their real calendar date and time. Starts after midnight are allowed when the business is open then. Example: open Mon 22:00 to Tue 06:00 accepts Tue 01:00–02:30, stored as Tuesday 01:00.
+- Back-to-back open days join up. Fri and Sat both `00:00`/`00:00` allow Fri 23:30–01:00. Fri 18:00–02:00 plus Sat 02:00–06:00 is one stretch to Sat 06:00.
+- A closed day (`closed: true` / `is_open: false`) contributes no open time. A Tue 01:00 booking is allowed only through Monday's overnight hours: with Monday closed it is refused, even if Tuesday opens at 22:00.
+- No usable hours for the booking's date (`{}` hours, day missing, malformed values): no business-hours check, and an end past 24:00 is `past_midnight`, exactly as before. Many businesses have `{}` hours, and the Owner has not decided to block them.
+
+What changed (`supabase/migrations/510_table_overnight_reservations.sql`, `CREATE OR REPLACE` of `public.book_table_atomic`, M476 body otherwise verbatim):
+- **Weekday entries.** Each is read as one of:
+  - **closed**: an object with `closed` = JSON `true` or `is_open` = JSON `false`;
+  - **open**: an object, `closed` absent or JSON `false`, `is_open` absent or JSON `true`, and `open`/`close` both match `^([01]\d|2[0-3]):[0-5]\d$`;
+  - **unknown**: anything else, including string flags such as `"true"`.
+- **One minute axis.** The open time of the booking's date (D), D-1 and D+1 is placed on one axis relative to D, and stretches that touch or overlap are joined. The booking `[start, start + duration]` must lie inside one stretch.
+- **Whose hours decide.** Whether there is a check at all depends on D's own entry only. With Mon 22:00–06:00 and Tuesday missing, Tue 12:00 is not checked.
+- **Error codes** (no new codes; the bot already shows its "time not available" message for all three):
+  - starts inside open time but ends after it → `after_closing` ("…past closing time 06:00");
+  - starts outside open time while the business still opens later that day → `before_opening` ("Earliest reservation time is 22:00");
+  - starts outside open time with no later opening that day → `day_unavailable` ("The business is closed on Tuesday" when D is closed, otherwise "The business is not open at that time on Tuesday");
+  - a start of `24:00` → `past_midnight` (it is not a time on D);
+  - an end after 2880 minutes (D+2 00:00) → `after_closing` ("…past closing time 00:00 (end of the next day)"), even inside joined open time. The overlap check only reads D-1..D+1, so a longer booking could otherwise be double-booked (review finding: Fri 18:00/18:00 + Sat 18:00–06:00, a direct 1800-minute call at Fri 23:00 ran to Sun 05:00 and a Sun 01:00 booking was also accepted). The bot cannot reach this, because table durations are 1–480. Not added for days with no usable hours, where an end past 1440 is already `past_midnight`.
+- **Order of checks.** Business hours are checked after the table's own `available_from` and before its `available_to`. The table's own `available_days` / `available_from` / `available_to` checks are unchanged. Table windows stay non-overnight (`seating_no_overnight` unchanged), so a table with `available_to` cannot take a booking that crosses midnight.
+- **Lock.** The advisory lock is per (business, table), not per date, so bookings on neighbouring dates of the same table serialise. The key is `abs(hashtext(...)::bigint)`: `abs()` of the int4 value -2147483648 raised "integer out of range", and one unlucky table would always have failed.
+- **Overlap.** Overlap uses one minute axis over `b.date` from D-1 to D+1, with the same statuses as M476 (`pending`, `confirmed`, `in_progress`). A booking running past midnight blocks the next day's early bookings, and the other way round.
+- **Catalog delta.** `supabase/catalog-deltas/510_table_overnight_reservations.json` has exactly one `modify`, of `book_table_atomic`: new body hash; ACL, owner, INVOKER and no config unchanged. The replay's pre-510 digest of this function equals the production and staging lock digest.
+- **Tests.** `lib/__tests__/table-overnight-510.pg.test.ts` has 75 cases on real PostgreSQL, including that reproduction and the exact-2880 boundary. `ci.yml` has the pg-file guard and the unit-job exclude.
+
+Unchanged: the 18-argument signature, return shape, SECURITY INVOKER, no SET/proconfig, grants (restated: service_role only), idempotency, deposit and duration revalidation, payments and deposits, insert columns, `book_slot_atomic`, `reschedule_booking_atomic`, `seating_no_overnight`, the 1–480 duration CHECK.
+
+Could break:
+- Businesses with usable hours now get table bookings refused outside their open time, even when the table has no window. This includes a daytime business at 23:30, which was `past_midnight` before and is now `day_unavailable`.
+- A table whose own window reaches outside the business hours can be offered times the database now refuses. The bot builds table slots from the table's window when it has one (`lib/bot/flows/shared/table-same-day.ts`).
+- The bot does not offer overnight or after-midnight slots yet; that is a separate app change.
+- The RPC reads `businesses`, which service_role already has. If that read is denied, the booking errors and is refused.
+- All bookings for one table queue on one lock instead of one per date.
+- Not applied anywhere. Staging and production need their own Owner approvals.
+
+## 2026-11-04 — Per-PR changelog fragments (no more CHANGELOG.md conflicts)
+
+- Owner decisions (2026-11-04):
+  - Each PR records its changelog entry as its own file, `changelog/unreleased/YYYY-MM-DD-<branch-name>.md` (branch name with `/` as `-`), instead of editing the top of `CHANGELOG.md`.
+  - Fragments count as docs for the Release V3 lane.
+  - The orchestrating session collects fragments into `CHANGELOG.md` before each release.
+- Why: every PR edited the same lines of `CHANGELOG.md`, so each merge made other open PRs conflict. The fix changed their heads and invalidated exact-head review approvals. On 2026-11-04 that forced extra review rounds on #851, #854, #855, #858, #860, #861, #862, #853, #864 and #865.
+- `scripts/changelog/collect.mjs`:
+  - `check` validates every fragment:
+    - name pattern and a real date;
+    - a regular file (not a folder or symlink); dotfiles are ignored;
+    - a `## YYYY-MM-DD — title` heading matching the file name;
+    - some entry text.
+  - `collect [--dry-run]` prepends fragments to `CHANGELOG.md`, ordered by fragment date, newest first, then by file name. It writes atomically, then deletes the fragments. If any fragment is malformed, it changes nothing.
+  - The command-line entry check uses the real file URL, so the check also runs from paths with spaces, unicode or symlinks.
+- `scripts/release-v3/classify.mjs`:
+  - Correctly named fragments and `changelog/README.md` count as docs (standard lane, 1 review).
+  - The collector reads them, so this is a narrow carve-out (`CHANGELOG_TOOL_DOCS`), tested by the drift test. That test now also scans `scripts/changelog/`.
+  - Any other file under `changelog/` stays full lane.
+- `docs/RELEASE_V3_GATE.md`:
+  - New step 0, "Collect changelog fragments": a docs-only collect PR merges before prepare, and is skipped when there are no fragments.
+  - The Lane row now documents the carve-out.
+- `.github/workflows/ci.yml`: the "Engineering governance" job runs `collect.mjs check`.
+- `scripts/filter-secret-scan-false-positives.mjs`: fragments may contain SHA-256 values in prose, the same as `CHANGELOG.md`. Only `changelog/unreleased/<file>.md` qualifies, not nested paths.
+- Docs point to fragments and say to check `changelog/unreleased/` as well as `CHANGELOG.md`:
+  - `CLAUDE.md` rule 16
+  - `.github/PULL_REQUEST_TEMPLATE.md`
+  - `changelog/README.md` (new)
+  - `README.md`
+  - `docs/ENGINEERING_WORKFLOW.md`
+  - `docs/BRANCH-PROTECTION.md`
+  - `.agents/skills/waaiio-dev/SKILL.md`
+  - `.agents/skills/TEAM-PROTOCOL.md`
+- Tests:
+  - `scripts/__tests__/changelog-collect.test.ts` (21, including real CLI runs from paths with spaces, unicode and symlinks);
+  - `release-v3-classify` (2 new cases, plus the extended drift test);
+  - `secret-scanner-migration-json` (3 new cases).
+- Not changed:
+  - existing `CHANGELOG.md` history;
+  - retired release-target JSON files that pin a `CHANGELOG.md` hash.
+- Open PRs that already edit `CHANGELOG.md` can still merge.
+- Could break: a malformed fragment fails the "Engineering governance" check until it is fixed.
+
+## 2026-11-04 — Changelog fragments: review follow-ups
+
+- Follow-ups from the #866 and #864 reviews:
+  - `scripts/changelog/collect.mjs`:
+    - `check` now rejects fragments that still contain a merge-conflict line (`<<<<<<<`, `=======`, `>>>>>>>`). One slipped into #864's fragment and was caught by review.
+    - The repo root now comes from the script's own location, not the current folder. Running it from a subfolder used to report "OK (0)".
+  - Docs (`CLAUDE.md`, `changelog/README.md`, PR template): in the fragment name, every character other than letters, digits and `-` in the branch name becomes `-` (for example `/`, `_` and `.`).
+  - `docs/RELEASE_V3_GATE.md` step 0: the collect PR runs after the last PR for the release has merged, immediately before prepare. Its merge commit becomes the prepare target.
+  - `RELEASE_GATE_V2.md` §9.3: one line records the Owner-approved carve-out for changelog files.
+- Tests: `scripts/__tests__/changelog-collect.test.ts`, 5 new cases:
+  - 3 conflict-marker cases;
+  - running from a subfolder;
+  - a Markdown `---` rule is still fine.
+- Could break: a fragment with a leftover conflict line now fails the "Engineering governance" check.
+
+## 2026-11-04 — Dashboard calendar: show every booking; full-day grids open at opening time
+
+Owner decisions (2026-11-04), from the #863 reviews.
+
+- **Show every booking.** The week and day views now stretch their hour rows to include every timed entry in view, even outside business hours (e.g. a 06:00 or 20:00 booking on the default 08:00–20:00 grid).
+  - Before: those entries were silently left out. A read-only production query on 2026-11-04 found 73 timed entries hidden across 9 businesses; one church had dozens of 06:00 and 20:00 bookings.
+  - New: `lib/calendar/hour-range.ts` `hoursIncludingEntries()`.
+- **Full-day grids open at opening time.** When the grid covers the whole day (some day runs past midnight), the week and day views open scrolled to the earliest opening hour instead of 12AM. `calendarHourRange()` now also returns `openHour` and `overnight`.
+- `app/dashboard/calendar/page.tsx`:
+  - the week view uses `weekHours`, built from the 7 days in view, and the day view uses `dayHours`;
+  - hour rows carry `data-hour`;
+  - the scroll boxes have refs, and an effect sets the scroll position after loading.
+  - Month view is unchanged.
+- Review fix: `calendarHourRange()` now skips days marked closed (`closed: true` or `is_open: false`). Before, a 22:00–06:00 restaurant whose closed days are stored as 00:00–00:00 got opening hour 0, so its grid still opened at 12AM. A read-only production check on 2026-11-04 found that only that restaurant's opening hour changes (0 → 22); no daytime business's grid changes.
+- Tests: 10 new `hour-range` cases: show-all stretching, malformed times, HH:MM:SS, openHour/overnight, and closed days including the production restaurant's hours. 58/58 pass with the existing calendar tests.
+- Could break: nothing in data. Calendars with out-of-hours bookings show more rows.
+
 ## 2026-11-04 — Release V3 docs: setup step 0 in the role file; 65-minute residual risk stated precisely
 
 - Follow-up to the #860 review notes (P2, optional). Comments and docs only; no code behavior changes.

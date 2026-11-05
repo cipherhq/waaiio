@@ -6,6 +6,9 @@ import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
+import { hasRecipientPermission, RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+
+export const maxDuration = 60;
 
 /** POST — schedule a broadcast for future delivery */
 export async function POST(request: NextRequest) {
@@ -27,7 +30,7 @@ export async function POST(request: NextRequest) {
       audience_filter?: Record<string, unknown>;
     };
 
-    if (!business_id || !message || !phones?.length || !scheduled_at) {
+    if (!business_id || !message || !Array.isArray(phones) || !phones.length || !scheduled_at) {
       return NextResponse.json({ message: 'Missing required fields' }, { status: 400 });
     }
 
@@ -56,6 +59,16 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!business) return NextResponse.json({ message: 'Business not found' }, { status: 404 });
+
+    // Preserve the submitted audience: refuse the whole schedule if anyone is ineligible.
+    // Dispatch rechecks permission because consent may be revoked before the due time.
+    for (let i = 0; i < phones.length; i += 5) {
+      const allowed = await Promise.all(phones.slice(i, i + 5).map(phone =>
+        hasRecipientPermission(service, business_id, phone, 'marketing')));
+      if (allowed.some(value => !value)) {
+        return NextResponse.json({ message: RECIPIENT_POLICY }, { status: 403 });
+      }
+    }
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
     // Guard already authorized. For free-tier with trial/override, use growth limits.

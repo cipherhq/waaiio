@@ -34,8 +34,8 @@ One approval covers Operating Order gates 5, 7 and 9 for that packet (§9.4). It
 |---|---|
 | Owner dispatch | `workflow_dispatch` by `cipherhq` on `refs/heads/main`, trusted clean checkout |
 | Target | protected-main commit; newest exact push-main CI run green, every job successful and the 15 required jobs present by name (they include the payment suites for both custody routes) (a random red from the flaky pg test, issue #845, stops prepare; re-run that CI run, never bypass it) |
-| Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`) |
-| Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate |
+| Baseline | merchant and admin serve the same SHA, equal to the last certified release (record of the last successful deploy run; before any, the lock's `certified`). Only a lock re-certification after a partial deploy may certify two different SHAs on one line of history; the release then counts every change since the older one |
+| Admin pin | always the admin project's `targets.production.id`, never the newest deployment in a list (regression for run 41706465115); a production target newer than the serving deployment stops the gate. During deploy, `vercel deploy --prod --skip-domain` leaves the admin production target on the approved pin (run 41937185420). Before the admin build the re-checks accept only the pin; after it they accept exactly the pin or the gate's own new candidate, and stop on anything else |
 | Merchant target | equal to serving, or a newer canceled ignored-build-step Git attempt |
 | Runtime identity | merchant `/api/release-identity` must report the exact SHA, project, deployment and the environment's Supabase project (production `cxcmiqotkowhxinjbytg`, staging `tqjvrzopvtczxfxiwmnz`) |
 | Project policy | production framework, root and build settings unchanged |
@@ -104,10 +104,16 @@ Applying it is a separate Owner approval per environment, staging first. Run it 
 
 The gate refuses a URL whose login or project does not match its environment, a session that is not read-only, a privileged role or one that is a member of any other role, or a server other than PostgreSQL 17.
 
+## Staging admin behind Vercel's login
+
+When Vercel Authentication covers admin-staging.waaiio.com, the gate's staging admin health check (`checkServing`) sends Vercel's automation bypass header, `x-vercel-protection-bypass`, from the secret `VERCEL_ADMIN_STAGING_BYPASS`. No other check ever sends it.
+- The Owner creates the bypass secret on the admin-staging Vercel project and stores it in the GitHub environment **`release-observer`** (deployment branches restricted to `main`), not as a repository secret.
+- Without the secret, the gate stops with "staging admin needs VERCEL_ADMIN_STAGING_BYPASS". With a wrong or rotated secret, it stops with "staging admin rejected VERCEL_ADMIN_STAGING_BYPASS". Rotate it in both places together.
+
 ## The lock and the catalog oracle
 
 Production cannot be rebuilt by replaying migrations (irregular ledger, historic ACL repairs; M419 even asserts an ACL production does not reach by replay). So the catalog check is differential:
-- `scripts/release-v3/lock.json` is the Owner-approved bootstrap: production and staging catalog and ledger digests read on 2026-11-03 after M508 (read-only connector), and the certified SHA `bdc007a8` for both projects. It bootstraps from the state of the schema 9 bot-code-lock release.
+- `scripts/release-v3/lock.json` is the Owner-approved bootstrap: production and staging catalog and ledger digests read on 2026-11-03 after M508 (read-only connector), and the certified SHA `bdc007a8` for both projects. It bootstraps from the state of the schema 9 bot-code-lock release. After the partial deploy of run 41937185420 (Owner decision R1, 2026-11-05) the lock certifies merchant `2b578c5b` and admin `bdc007a8`.
 - `scripts/release-v3/catalog-v3.sql` reads every app-owned object in `public`, `private`, `accounting_private` and `subscription_private`, app policies on `storage.objects` and realtime publication membership. Extension-owned objects are excluded. Each object's digest is the sha256 of its canonical jsonb text.
 - `scripts/release-v3/catalog-oracle.mjs` replays migrations in disposable PostgreSQL 17 exactly as CI does (no default privileges, M430 skipped). It then switches on production's default privileges and applies each migration from 508 onward as one whole-file statement, recording what it adds, modifies or removes. CI job **Catalog oracle (PostgreSQL 17)** regenerates every delta and the M430 list, and requires byte equality. It runs under the required "Migration validation" check.
 - `supabase/catalog-deltas/508_business_control_columns_guard.json` is the standing proof. It has exactly the 3 M508 changes, with values equal to those measured in production and digests equal to live production's.
@@ -129,7 +135,24 @@ The lock is tied to the Owner-approved schema 9 bot-code-lock release (manifest 
 
 `lock.json` records this under `observed`.
 
+**Staging lock update for #813 (Owner decision 2026-11-04: option A, staging plan S1).**
+- **Why:** staging applied #813's M499 and M502 before the lock was taken, and #813 now moves them above the lock as 511 and 512 (its unapplied 510 becomes 513).
+- **What changed:** the staging entry now leaves out those 91 catalog objects and their 2 ledger rows. The new values are 6309 objects, `feeb53c0…`, and 442 rows, `dca1b4e0…`. Production is unchanged.
+- **Staging step:** `scripts/release-v3/staging-813-teardown.sql` removes the same objects and rows. It needs its own Owner approval, runs on staging only, and refuses to run anywhere else.
+- **Verification:**
+  - before the update, live staging minus those objects already read exactly the predicted values (read-only);
+  - after the teardown, a read-only reading must equal this lock plus the 509 and 510 deltas.
+- **Merge order:** the update merges only after both checks pass. Between the teardown and the merge no release can pass the gate (staging matches neither lock), so the two happen back to back. To undo the teardown, re-run #813's 499 and 502 bytes and re-insert the two ledger rows exported beforehand.
+
 To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `mode: lock-map`. It writes fresh maps only while the live catalog still equals the lock.
+
+**Staging `public` schema access (Owner decision 2026-11-04, option A).**
+- **Why:** staging revoked PUBLIC `USAGE` on schema `public`; production keeps it. Without `USAGE`, `release_observer` sees `public` types schema-qualified (`public.reservation_status`), so about 928 catalog digests differed from the lock. That made the first prepare stop.
+- **Fix, on staging only:** `GRANT USAGE ON SCHEMA public TO release_observer;`. This lets it resolve names, not read tables.
+- **Lock update:** the staging lock records the one changed object, `schema:public` (`070c88e2…` → `a895bb3a…`), for a staging catalog of 6400 objects, `12ff1745…`.
+- **Verification (read-only):** live staging read as `postgres` and as `release_observer` gives the same fingerprint, `c0d2774c…`, equal to this lock plus the 509 and 510 deltas.
+- **Production:** do not grant this there. Production already gives `USAGE` to PUBLIC, and a grant would change its `schema:public` digest.
+- **Recreating the staging login:** repeat this grant.
 
 ## Migrations (authors)
 
@@ -156,6 +179,8 @@ Each successful deploy uploads a release record (kept 90 days). The next prepare
 ## Recovery
 
 The gate stops; it never rolls back. After a partial deploy (for example merchant deployed, admin failed), production no longer serves the certified release, so the next prepare fails until the Owner decides the recovery. Only the Owner authorizes a rollback (§6.3). A manual rollback or re-certification needs a reviewed lock update.
+
+Re-certification sets the lock's `certified` to what each project actually serves. If the two differ, one must be an ancestor of the other. Prepare then computes the change set, lane and included pull requests from the older SHA, so every change that either project lacks is classified and needs its review records. Each project's deploy still checks its own serving deployment. Mixed baselines are accepted only from the lock, never from a release record. First use: run 41937185420 deployed merchant and stopped before the admin alias, so the lock certifies merchant `2b578c5b` and admin `bdc007a8`.
 
 ## Retiring old profiles
 

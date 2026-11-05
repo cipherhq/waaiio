@@ -60,6 +60,7 @@ export default function ChatHistory() {
   // Bot session state
   const [botSessions, setBotSessions] = useState<BotSession[]>([]);
   const [botLoading, setBotLoading] = useState(true);
+  const [botError, setBotError] = useState<string | null>(null);
   const [botPage, setBotPage] = useState(1);
   const [botSearch, setBotSearch] = useState('');
   const [selectedBot, setSelectedBot] = useState<BotSession | null>(null);
@@ -90,13 +91,15 @@ export default function ChatHistory() {
   /* ── Load bot sessions ── */
   async function loadBot() {
     setBotLoading(true);
+    setBotError(null);
     try {
-      const { data: sessions } = await adminDb
+      const { data: sessions, error: queryError } = await adminDb
         .from('bot_sessions')
-        .select('id, whatsapp_number, business_id, flow_type, current_step, is_active, conversation_log, created_at, last_active_at')
+        .select('id, whatsapp_number, business_id, session_data, current_step, is_active, conversation_log, created_at, last_active_at')
         .order('last_active_at', { ascending: false })
         .limit(500);
 
+      if (queryError) throw queryError;
       const rows = sessions || [];
       const bizIds = [...new Set(rows.map(s => s.business_id).filter(Boolean))];
       const { data: businesses } = bizIds.length
@@ -104,8 +107,17 @@ export default function ChatHistory() {
         : { data: [] };
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name || 'Unknown']));
 
-      setBotSessions(rows.map(s => ({ ...s, business_name: s.business_id ? bizMap.get(s.business_id) || 'Unknown' : '—' })));
-    } catch { /* ignore */ } finally { setBotLoading(false); }
+      setBotSessions(rows.map(s => {
+        const data = s.session_data || {};
+        const flow = typeof data.active_capability === 'string' && data.active_capability
+          ? data.active_capability
+          : typeof data.business_category === 'string' ? data.business_category : null;
+        return { ...s, flow_type: flow, business_name: s.business_id ? bizMap.get(s.business_id) || 'Unknown' : '—' };
+      }));
+    } catch {
+      setBotSessions([]);
+      setBotError('Unable to load bot sessions. Refresh the page to try again.');
+    } finally { setBotLoading(false); }
   }
 
   async function loadMessages(conversationId: string) {
@@ -162,7 +174,7 @@ export default function ChatHistory() {
           className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${tab === 'bot' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
           <Bot className="h-4 w-4" />
-          Bot Sessions ({botSessions.length})
+          Bot Sessions ({botError ? 'unavailable' : botSessions.length})
         </button>
         <button
           onClick={() => setTab('chat')}
@@ -185,7 +197,9 @@ export default function ChatHistory() {
           </div>
 
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-            {botItems.length === 0 ? (
+            {botError ? (
+              <div role="alert" className="p-4 text-red-700">{botError}</div>
+            ) : botItems.length === 0 ? (
               <div className="py-16 text-center">
                 <Bot className="mx-auto h-10 w-10 text-gray-300" />
                 <p className="mt-3 text-sm text-gray-500">No bot sessions found</p>

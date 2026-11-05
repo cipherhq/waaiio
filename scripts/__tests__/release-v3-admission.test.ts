@@ -27,11 +27,24 @@ const m509 = { name: '509_add_b', path: 'supabase/migrations/509_add_b.sql', sha
 
 describe('committed lock, oracle outputs and the M508 spike regression', () => {
   const lock = loadLock();
-  it('the lock is the post-M508 bootstrap with the current queries and certified bdc007a8', () => {
+  it('the lock is the post-M508 bootstrap with the current queries; certified merchant 2b578c5b (deploy run 41937185420) and admin bdc007a8', () => {
     expect(lock.bootstrap_migration).toBe('508_business_control_columns_guard.sql');
-    expect(lock.certified).toEqual({ merchant: 'bdc007a8f93febeee8ce054d075d48894afd37bb', admin: 'bdc007a8f93febeee8ce054d075d48894afd37bb' });
+    expect(lock.certified).toEqual({ merchant: '2b578c5bef4411aaf35bc6b60f61237620915c3a', admin: 'bdc007a8f93febeee8ce054d075d48894afd37bb' });
     expect(lock.environments.production).toMatchObject({ project_ref: 'cxcmiqotkowhxinjbytg', catalog: { count: 6288 }, ledger: { count: 406 } });
-    expect(lock.environments.staging).toMatchObject({ project_ref: 'tqjvrzopvtczxfxiwmnz', catalog: { count: 6400 }, ledger: { count: 444 } });
+    // Owner decision 2026-11-04 (option A): staging grants release_observer USAGE on schema public, so the
+    // staging lock records the new schema:public ACL (#875).
+    expect(lock.observed.staging_public_usage).toMatchObject({ changed_identity: 'schema:public',
+      previous_digest: '070c88e2814f7ad1e4866a6498450d699904a0ba6fc4dcf9808f521beda0fe62',
+      new_digest: 'a895bb3ae86a9e04638d702d3b81c31efe1cb633fc434372a367cf3037a59f2f',
+      previous_catalog: { count: 6400, sha256: '80f4ec206aa8cd301e76a46b0095e05c395ef3ea7f9b4b22db0a91425111354f' } });
+    // Owner decision 2026-11-04 (#813 option A, staging plan S1): the staging entry then leaves out #813's
+    // 91 catalog objects and 2 ledger rows (scripts/release-v3/staging-813-teardown.sql removes them).
+    expect(lock.environments.staging).toEqual({ project_ref: 'tqjvrzopvtczxfxiwmnz', catalog_map: 'scripts/release-v3/lock-catalog-staging.json',
+      catalog: { count: 6309, sha256: 'feeb53c0fdfa155aa3bf3453925c8c2f67d3c1f03cfb62176710006ece524180' },
+      ledger: { count: 442, sha256: 'dca1b4e090e9876be8f73d210771c905234c2d473f4b98fa15aa7966e74fe5b6' } });
+    expect(lock.observed.staging_813_teardown.previous).toEqual({
+      catalog: { count: 6400, sha256: '12ff1745a19c0fda57d11971782d58cca353c0fd9f73b438786de899d69df463' },
+      ledger: { count: 444, sha256: 'adcdf3e9893b6ea4fd5940a66375af4a96ba963ba4efaad9f1ad38fe17ab9be5' } });
   });
   it('rejects a lock made with another catalog query or with extra keys', () => {
     const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
@@ -58,7 +71,10 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
   });
   it('the lock maps match the approved lock digests, and the lock records the schema 9 tie-out', () => {
     expect(loadLockMap(lock.environments.production).size).toBe(6288);
-    expect(loadLockMap(lock.environments.staging).size).toBe(6400);
+    const stagingMap = loadLockMap(lock.environments.staging);
+    expect(stagingMap.size).toBe(6309);
+    expect(stagingMap.get('schema:public')).toBe('a895bb3ae86a9e04638d702d3b81c31efe1cb633fc434372a367cf3037a59f2f');
+    expect([...stagingMap.keys()].filter(id => /merchant_notification|merchant_(order|booking|reservation|payment)_alert|merchant_(recipient|delivery)_owner_read/.test(id))).toEqual([]);
     expect(lock.observed.bootstrap_release).toMatchObject({ manifest_sha256: 'efd245eba525d00d561621d43b0be513e984e7626e95498b365f97ac46206a50', deploy_run_id: 41749354633 });
     const edited = JSON.parse(readFileSync('scripts/release-v3/lock-catalog-production.json', 'utf8'));
     edited.objects['table:public.businesses'] = 'f'.repeat(64);

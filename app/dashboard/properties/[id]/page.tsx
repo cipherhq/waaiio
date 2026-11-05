@@ -122,14 +122,16 @@ function CheckInQRSection({ propertyId, propertyName }: { propertyId: string; pr
     if (!canvasRef.current) return;
     const win = window.open('', '_blank');
     if (!win) return;
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const safeCanvas = canvasRef.current.toDataURL('image/png');
     win.document.write(`
-      <html><head><title>Check-in QR - ${propertyName}</title>
+      <html><head><title>Check-in QR - ${esc(propertyName)}</title>
       <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;text-align:center}img{max-width:300px}h2{margin-top:24px}p{color:#666;font-size:14px;margin-top:8px}</style></head>
       <body>
-        <img src="${canvasRef.current.toDataURL('image/png')}" />
-        <h2>${propertyName}</h2>
+        <img src="${esc(safeCanvas)}" />
+        <h2>${esc(propertyName)}</h2>
         <p>Scan this QR code to check in</p>
-        <p style="font-size:12px;color:#999;margin-top:16px">${qrUrl}</p>
+        <p style="font-size:12px;color:#999;margin-top:16px">${esc(qrUrl)}</p>
       </body></html>
     `);
     win.document.close();

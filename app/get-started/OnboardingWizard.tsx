@@ -247,6 +247,7 @@ function OnboardingWizard() {
   const [pinId, setPinId] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
 
@@ -671,7 +672,7 @@ function OnboardingWizard() {
         const stagingSignupRes = await fetch('/api/auth/staging-signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ email, password, inviteCode: inviteCode.trim() }),
         });
 
         if (!stagingSignupRes.ok) {
@@ -1105,6 +1106,7 @@ function OnboardingWizard() {
                 setEmailSent={setEmailSent}
                 handleEmailSignup={handleEmailSignup}
                 setAuthLoading={setAuthLoading}
+                {...(isStagingEmailSignupClient() ? { inviteCode, setInviteCode } : {})}
               />
             )}
 
