@@ -7,7 +7,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getPrecedingCompletedWeek } from '@/lib/payouts/period';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { getPrecedingCompletedWeek, createPrecedingWeekResolver } from '@/lib/payouts/period';
 
 describe('getPrecedingCompletedWeek', () => {
   // ── Basic Monday invocation ──
@@ -216,5 +218,84 @@ describe('getPrecedingCompletedWeek', () => {
       // Sunday check
       expect(end.getUTCDay()).toBe(0);
     }
+  });
+});
+
+// ── Weekly cron schedule (vercel.json) never skips or repeats a merchant week ──
+// Owner decision 2026-11-05 (#796): the auto-payout cron runs Monday 12:00 UTC.
+// At 06:00 UTC it was still Sunday in US/Canada Mountain time, so one local week
+// was skipped every spring and one repeated every autumn.
+
+
+// One zone per distinct offset/DST rule in Waaiio's five countries (NG, GH, GB, US, CA).
+const SUPPORTED_COUNTRY_ZONES = [
+  'Africa/Lagos', 'Africa/Accra', 'Europe/London', 'America/St_Johns', 'America/Halifax',
+  'America/New_York', 'America/Chicago', 'America/Regina', 'America/Denver', 'America/Edmonton',
+  'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
+];
+
+/** Weekly runs from `fromMonday` for `weeks` weeks at hh:mm UTC; returns local week starts. */
+function weeklyRunStarts(tz: string, hourUtc: number, minuteUtc: number, fromMonday: string, weeks: number): string[] {
+  const base = Date.parse(`${fromMonday}T00:00:00Z`) + (hourUtc * 60 + minuteUtc) * 60000;
+  const starts: string[] = [];
+  for (let i = 0; i < weeks; i++) {
+    const r = getPrecedingCompletedWeek(new Date(base + i * 7 * 86400000), tz);
+    if (!r.success) throw new Error(`${tz}: ${r.error}`);
+    starts.push(r.period.periodStart);
+  }
+  return starts;
+}
+
+/** Problems where consecutive runs do not advance by exactly one local week. */
+function weekProblems(tz: string, hourUtc: number, minuteUtc: number): string[] {
+  const problems: string[] = [];
+  // Runs spanning the 2027 clock changes: US/CA 14 Mar and 7 Nov, UK 28 Mar and 31 Oct.
+  for (const [from, weeks] of [['2027-03-01', 5], ['2027-10-25', 3]] as const) {
+    const starts = weeklyRunStarts(tz, hourUtc, minuteUtc, from, weeks);
+    for (let i = 1; i < starts.length; i++) {
+      const days = (Date.parse(starts[i]) - Date.parse(starts[i - 1])) / 86400000;
+      if (days !== 7) problems.push(`${tz}: ${starts[i - 1]} -> ${starts[i]}`);
+    }
+  }
+  return problems;
+}
+
+describe('auto-payout weekly schedule', () => {
+  const vercel = JSON.parse(readFileSync(join(process.cwd(), 'vercel.json'), 'utf8'));
+  const cron = (vercel.crons as { path: string; schedule: string }[]).find(c => c.path === '/api/cron/auto-payout');
+
+  it('runs once a week on Monday at a fixed UTC time', () => {
+    expect(cron?.schedule).toMatch(/^\d{1,2} \d{1,2} \* \* 1$/);
+  });
+
+  it('covers every merchant week exactly once in all supported-country zones', () => {
+    const [minute, hour] = cron!.schedule.split(' ').map(Number);
+    const problems = SUPPORTED_COUNTRY_ZONES.flatMap(tz => weekProblems(tz, hour, minute));
+    expect(problems).toEqual([]);
+  }, 180000);
+
+  it('control: the old Monday 06:00 UTC time skipped a Mountain-time week', () => {
+    expect(weekProblems('America/Denver', 6, 0).length).toBeGreaterThan(0);
+    expect(weekProblems('America/Edmonton', 6, 0).length).toBeGreaterThan(0);
+  }, 120000);
+});
+
+describe('createPrecedingWeekResolver', () => {
+  it('returns the same result as getPrecedingCompletedWeek for each timezone, computed once', () => {
+    const now = new Date('2027-03-15T12:00:00Z');
+    const periodFor = createPrecedingWeekResolver(now);
+    for (const tz of ['Africa/Lagos', 'America/Denver', 'Pacific/Auckland']) {
+      const first = periodFor(tz);
+      expect(first).toEqual(getPrecedingCompletedWeek(now, tz));
+      expect(periodFor(tz)).toBe(first); // cached object, not recomputed
+    }
+    expect(periodFor('America/Denver')).not.toEqual(periodFor('Pacific/Auckland'));
+  });
+
+  it('keeps invalid timezones fail-closed', () => {
+    const periodFor = createPrecedingWeekResolver(new Date('2027-03-15T12:00:00Z'));
+    expect(periodFor('Not/AZone').success).toBe(false);
+    expect(periodFor('').success).toBe(false);
+    expect(periodFor(undefined as unknown as string).success).toBe(false);
   });
 });

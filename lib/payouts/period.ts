@@ -114,6 +114,27 @@ export function getPrecedingCompletedWeek(
   };
 }
 
+/**
+ * Returns a lookup that computes each timezone's period once for one captured
+ * instant and reuses it. One week calculation creates a few hundred Intl
+ * formatters (DST probing in naiveToUtc), so per-business calls would be slow
+ * for runs over many merchants that mostly share a few timezones.
+ */
+export function createPrecedingWeekResolver(
+  now: Date,
+): (timezone: string) => PeriodSuccess | PeriodError {
+  const cache = new Map<string, PeriodSuccess | PeriodError>();
+  return (timezone: string) => {
+    const key = String(timezone);
+    let result = cache.get(key);
+    if (!result) {
+      result = getPrecedingCompletedWeek(now, timezone);
+      cache.set(key, result);
+    }
+    return result;
+  };
+}
+
 // ── Internal helpers ──
 
 /** Day of week: 0=Sunday, 1=Monday, ..., 6=Saturday (Tomohiko Sakamoto) */

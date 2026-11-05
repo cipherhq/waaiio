@@ -16,7 +16,7 @@ import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
-import { getPrecedingCompletedWeek, type PayoutPeriod } from '@/lib/payouts/period';
+import { createPrecedingWeekResolver, type PayoutPeriod } from '@/lib/payouts/period';
 
 /**
  * GET /api/cron/auto-payout
@@ -232,6 +232,7 @@ export async function GET(request: NextRequest) {
 
     // Capture a single instant for all period calculations
     const now = new Date();
+    const periodFor = createPrecedingWeekResolver(now);
 
     // Get all active platform-managed businesses
     const { data: businesses } = await supabase
@@ -252,7 +253,7 @@ export async function GET(request: NextRequest) {
     const bizPeriodMap = new Map<string, PayoutPeriod>();
 
     for (const biz of businesses) {
-      const result = getPrecedingCompletedWeek(now, biz.timezone);
+      const result = periodFor(biz.timezone);
       if (!result.success) {
         logger.error('[AUTO-PAYOUT] Invalid timezone — business skipped', { business_id: biz.id, timezone: biz.timezone, error: result.error });
         invalidTimezoneBizIds.add(biz.id);

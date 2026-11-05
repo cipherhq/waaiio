@@ -11,7 +11,7 @@ import { logAdminAudit } from '@/lib/admin-audit';
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
-import { getPrecedingCompletedWeek } from '@/lib/payouts/period';
+import { createPrecedingWeekResolver } from '@/lib/payouts/period';
 
 interface Flag {
   type: string;
@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
 
     // Capture a single instant for all period calculations
     const now = new Date();
+    const periodFor = createPrecedingWeekResolver(now);
 
     // Get all active platform-managed businesses with verification info
     const { data: businesses, error: bizError } = await supabase
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
       } catch { failed++; continue; }
 
       // Compute per-business merchant-local preceding completed week
-      const periodResult = getPrecedingCompletedWeek(now, biz.timezone);
+      const periodResult = periodFor(biz.timezone);
       if (!periodResult.success) {
         logger.error('[PAYOUT] Invalid timezone — business skipped', { business_id: biz.id, timezone: biz.timezone, error: periodResult.error });
         failed++;
