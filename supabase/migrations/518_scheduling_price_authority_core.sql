@@ -6,9 +6,8 @@
 -- exactly as today. New app code uses the *_authoritative_604 functions below.
 -- A later migration drops the old functions once no deployed code calls them.
 BEGIN;
-CREATE SCHEMA IF NOT EXISTS scheduling_private_604;
-REVOKE ALL ON SCHEMA scheduling_private_604 FROM PUBLIC, anon, authenticated;
-GRANT USAGE ON SCHEMA scheduling_private_604 TO service_role;
+-- Helpers live in the existing `private` schema (service_role USAGE only, M481),
+-- which the Release V3 catalog covers.
 
 ALTER TABLE public.promo_reservations ALTER COLUMN order_id DROP NOT NULL;
 ALTER TABLE public.promo_reservations ADD COLUMN booking_id uuid REFERENCES public.bookings(id) ON DELETE CASCADE;
@@ -18,7 +17,7 @@ CREATE UNIQUE INDEX promo_reservations_booking_604 ON public.promo_reservations(
 
 -- Called in the same transaction as slot allocation; callers provide expected
 -- terms only. They never supply the authoritative price, discount or capacity.
-CREATE FUNCTION scheduling_private_604.quote(
+CREATE FUNCTION private.scheduling_604_quote(
   p_business uuid, p_service uuid, p_appointment uuid, p_party integer,
   p_addons jsonb, p_promo uuid, p_expected jsonb
 ) RETURNS jsonb
@@ -28,6 +27,7 @@ DECLARE
   unit_price integer; unit_deposit integer; discount integer := 0;
   addon_total bigint := 0; total bigint; due bigint; reserved bigint;
   mode text; prepay boolean; item_id uuid := COALESCE(p_service,p_appointment);
+  raw_price numeric; raw_deposit numeric; variable boolean; bot_claim boolean;
 BEGIN
   IF p_party IS NULL OR p_party < 1 OR p_party > 50 THEN RAISE EXCEPTION 'invalid_party_size'; END IF;
   IF p_service IS NOT NULL AND p_appointment IS NOT NULL THEN RAISE EXCEPTION 'invalid_booking_item'; END IF;
@@ -43,16 +43,23 @@ BEGIN
   IF item IS NULL OR (item->>'is_active')::boolean IS NOT TRUE OR item->>'deleted_at' IS NOT NULL THEN
     RAISE EXCEPTION 'item_unavailable';
   END IF;
-  unit_price := COALESCE((item->>'price')::integer,0);
-  unit_deposit := COALESCE((item->>'deposit_amount')::integer,0);
+  -- appointments.price/deposit_amount are numeric: accept whole amounts such as 1500.00.
+  raw_price := COALESCE((item->>'price')::numeric,0);
+  raw_deposit := COALESCE((item->>'deposit_amount')::numeric,0);
+  IF raw_price<>trunc(raw_price) OR raw_deposit<>trunc(raw_deposit)
+     OR raw_price>2147483647 OR raw_deposit>2147483647 THEN RAISE EXCEPTION 'invalid_item_terms'; END IF;
+  unit_price := raw_price::integer;
+  unit_deposit := raw_deposit::integer;
+  variable := COALESCE((item->>'price_is_variable')::boolean,false);
+  -- Set only by create_booking from the bot session's confirmation claim; callers cannot set it.
+  bot_claim := p_expected->>'bot_claim' = 'true';
   -- "Price varies" items (Owner decision 2026-11-05, option A):
   --  * WhatsApp bookings carry a confirmed session claim; the confirmed amount is
   --    used, never below the stored starting price.
   --  * Public page and dashboard bookings have no claim and book at the stored
   --    starting price, as before M518. The terms check below then requires the
   --    caller's expected price to equal that stored price.
-  IF COALESCE((item->>'price_is_variable')::boolean,false)
-     AND p_expected->>'verified_variable_intent' = 'true' THEN
+  IF variable AND bot_claim THEN
     IF (p_expected->>'price')::integer IS NULL OR (p_expected->>'price')::integer<unit_price THEN
        RAISE EXCEPTION 'verified_quote_required';
     END IF;
@@ -82,7 +89,9 @@ BEGIN
     END IF;
     addon_total := addon_total + addon.price;
   END LOOP;
-  IF EXISTS (SELECT 1 FROM public.service_addons a WHERE a.business_id=p_business AND a.is_active
+  -- Required add-ons are offered and chosen only in the WhatsApp flow. The public
+  -- page and dashboard never collected them, and keep booking such services as before.
+  IF bot_claim AND EXISTS (SELECT 1 FROM public.service_addons a WHERE a.business_id=p_business AND a.is_active
       AND a.is_required AND (a.service_id IS NULL OR a.service_id=p_service)
       AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(p_addons,'[]')) x WHERE x->>'id'=a.id::text)) THEN
     RAISE EXCEPTION 'required_addon_missing';
@@ -114,13 +123,18 @@ BEGIN
     'tutor','photographer','car_wash','laundry','coworking']));
   IF p_expected->>'source'='public' THEN due:=COALESCE(NULLIF(unit_deposit,0),unit_price)::bigint*p_party;
   ELSIF mode='free' THEN due:=0;
-  ELSIF unit_deposit>0 THEN due:=LEAST(unit_deposit,total);
+  -- Fixed price: deposit capped at the discounted service value, add-ons excluded
+  -- (resolveRuntimeDeposit, #376). "Price varies": the configured deposit, uncapped.
+  ELSIF unit_deposit>0 THEN due:=CASE WHEN variable THEN unit_deposit
+    ELSE LEAST(unit_deposit,(unit_price::bigint-discount)*p_party) END;
   ELSIF COALESCE(b.deposit_per_guest,0)>0 THEN due:=b.deposit_per_guest::bigint*p_party;
   ELSIF prepay THEN due:=total;
   ELSE due:=0; END IF;
-  IF item_id IS NULL AND total=0 THEN total:=due; END IF;
-  IF total>2147483647 OR due>2147483647 OR due>total THEN RAISE EXCEPTION 'invalid_booking_amount'; END IF;
-  RETURN jsonb_build_object('total',total,'deposit',due,'price',unit_price,
+  -- The final total/due relation is settled in create_booking, after manual and
+  -- package bookings set the amount due to zero.
+  IF total>2147483647 OR due>2147483647 THEN RAISE EXCEPTION 'invalid_booking_amount'; END IF;
+  RETURN jsonb_build_object('total',total,'deposit',due,'price',unit_price,'variable',variable,
+    'zero_item',NOT variable AND unit_price=0 AND unit_deposit=0,
     'item_deposit',unit_deposit,'discount',discount,'country',b.country_code,
     'capacity',CASE WHEN item->'metadata'->>'is_dropoff'='true' THEN 9999 ELSE COALESCE((item->>'max_capacity')::integer,1) END,
     'buffer',COALESCE((item->>'buffer_minutes')::integer,(item->'metadata'->>'buffer_minutes')::integer,0),
@@ -128,11 +142,11 @@ BEGIN
     'auto_approve',COALESCE((item->>'auto_approve')::boolean,true));
 END;
 $$;
-REVOKE ALL ON FUNCTION scheduling_private_604.quote(uuid,uuid,uuid,integer,jsonb,uuid,jsonb) FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION private.scheduling_604_quote(uuid,uuid,uuid,integer,jsonb,uuid,jsonb) FROM PUBLIC,anon,authenticated,service_role;
 
 
 
-CREATE FUNCTION scheduling_private_604.create_booking(p jsonb, p_mode text DEFAULT 'customer', p_enrollment uuid DEFAULT NULL)
+CREATE FUNCTION private.scheduling_604_create_booking(p jsonb, p_mode text DEFAULT 'customer', p_enrollment uuid DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions AS $$
 DECLARE
   b public.bookings%ROWTYPE; existing public.bookings%ROWTYPE;
@@ -151,10 +165,11 @@ BEGIN
       OR ltrim(session_row.whatsapp_number,'+') IS DISTINCT FROM ltrim(b.guest_phone,'+')) THEN
       RAISE EXCEPTION 'booking_identity_mismatch';
     END IF;
-    SELECT * INTO existing FROM public.bookings WHERE bot_session_id=b.bot_session_id;
+    SELECT * INTO existing FROM public.bookings WHERE bot_session_id=b.bot_session_id
+      AND status::text IN ('pending','confirmed')
+      ORDER BY created_at DESC, id DESC LIMIT 1;
     IF FOUND THEN
       IF existing.metadata->'scheduling_authority_604'->'request' IS DISTINCT FROM p
-        OR existing.status::text NOT IN ('pending','confirmed','in_progress','completed')
         OR existing.metadata->'scheduling_authority_604'->>'enrollment' IS DISTINCT FROM p_enrollment::text THEN
         RAISE EXCEPTION 'booking_intent_changed';
       END IF;
@@ -169,7 +184,7 @@ BEGIN
       OR claim->>'time' IS DISTINCT FROM b.time::text
       OR claim->'terms' IS DISTINCT FROM expected THEN RAISE EXCEPTION 'booking_confirmation_required'; END IF;
   END IF;
-  q := scheduling_private_604.quote(b.business_id,b.service_id,b.appointment_id,b.party_size,b.addons_snapshot,b.promo_code_id,expected||jsonb_build_object('verified_variable_intent',claim IS NOT NULL));
+  q := private.scheduling_604_quote(b.business_id,b.service_id,b.appointment_id,b.party_size,b.addons_snapshot,b.promo_code_id,expected||jsonb_build_object('bot_claim',claim IS NOT NULL));
   IF p_enrollment IS NOT NULL THEN
     IF b.service_id IS NULL OR b.appointment_id IS NOT NULL THEN RAISE EXCEPTION 'package_service_required'; END IF;
     SELECT * INTO enrollment FROM public.package_enrollments WHERE id=p_enrollment FOR UPDATE;
@@ -187,6 +202,12 @@ BEGIN
   total := (q->>'total')::integer;
   due := (q->>'deposit')::integer;
   IF p_mode='manual' OR p_enrollment IS NOT NULL THEN due:=0; END IF;
+  -- Totals as the bot computed them before M518 (scheduling.flow.ts bookingTotalAmount):
+  --  * "price varies": at least the amount due upfront (also today's public page);
+  --  * no price and no item deposit (e.g. a per-guest business deposit): the amount due.
+  IF (q->>'variable')::boolean AND due>total THEN total:=due; END IF;
+  IF (q->>'zero_item')::boolean THEN total:=due; END IF;
+  IF due>total THEN RAISE EXCEPTION 'invalid_booking_amount'; END IF;
   IF b.total_amount IS DISTINCT FROM total OR b.deposit_amount IS DISTINCT FROM due THEN RAISE EXCEPTION 'terms_changed'; END IF;
   IF b.class_session_id IS NOT NULL THEN
     SELECT * INTO cs FROM public.class_sessions WHERE id=b.class_session_id FOR SHARE;
@@ -226,8 +247,8 @@ BEGIN
     'committed_total',total,'committed_deposit',due,'package_covered',p_enrollment IS NOT NULL,'success',true);
 END;
 $$;
-REVOKE ALL ON FUNCTION scheduling_private_604.create_booking(jsonb,text,uuid) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION scheduling_private_604.create_booking(jsonb,text,uuid) TO service_role;
+REVOKE ALL ON FUNCTION private.scheduling_604_create_booking(jsonb,text,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION private.scheduling_604_create_booking(jsonb,text,uuid) TO service_role;
 CREATE FUNCTION public.book_slot_authoritative_604(
   p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid,
   p_date date, p_time text, p_party_size int, p_max_capacity int,
@@ -244,7 +265,7 @@ CREATE FUNCTION public.book_slot_authoritative_604(
 LANGUAGE sql SECURITY INVOKER SET search_path=public,extensions AS $$
  SELECT (r->>'booking_id')::uuid,r->>'reference_code',(r->>'slot_available')::boolean,
  (r->>'committed_total')::integer,(r->>'committed_deposit')::integer
- FROM (SELECT scheduling_private_604.create_booking(jsonb_build_object('business_id',p_business_id,'user_id',p_user_id,'service_id',p_service_id,'staff_id',p_staff_id,'date',p_date,'time',p_time,'party_size',p_party_size,'flow_type',p_flow_type,'deposit_amount',p_deposit_amount,'deposit_status',p_deposit_status,'status',p_status,'guest_name',p_guest_name,'guest_phone',p_guest_phone,'guest_email',p_guest_email,'special_requests',p_special_requests,'venue_address',p_venue_address,'end_date',p_end_date,'addons_snapshot',p_addons_snapshot,'promo_code_id',p_promo_code_id,'total_amount',p_total_amount,'staff_name',p_staff_name,'location_id',p_location_id,'appointment_id',p_appointment_id,'bot_session_id',p_bot_session_id,'class_session_id',p_class_session_id,'expected_terms',p_expected_terms)) AS r) result;
+ FROM (SELECT private.scheduling_604_create_booking(jsonb_build_object('business_id',p_business_id,'user_id',p_user_id,'service_id',p_service_id,'staff_id',p_staff_id,'date',p_date,'time',p_time,'party_size',p_party_size,'flow_type',p_flow_type,'deposit_amount',p_deposit_amount,'deposit_status',p_deposit_status,'status',p_status,'guest_name',p_guest_name,'guest_phone',p_guest_phone,'guest_email',p_guest_email,'special_requests',p_special_requests,'venue_address',p_venue_address,'end_date',p_end_date,'addons_snapshot',p_addons_snapshot,'promo_code_id',p_promo_code_id,'total_amount',p_total_amount,'staff_name',p_staff_name,'location_id',p_location_id,'appointment_id',p_appointment_id,'bot_session_id',p_bot_session_id,'class_session_id',p_class_session_id,'expected_terms',p_expected_terms)) AS r) result;
 $$;
 REVOKE ALL ON FUNCTION public.book_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.book_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer,jsonb) TO service_role;
@@ -259,7 +280,7 @@ CREATE FUNCTION public.book_manual_slot_authoritative_604(
 LANGUAGE sql SECURITY INVOKER SET search_path=public,extensions AS $$
  SELECT (r->>'booking_id')::uuid,r->>'reference_code',(r->>'slot_available')::boolean,
  (r->>'committed_total')::integer,(r->>'committed_deposit')::integer
- FROM (SELECT scheduling_private_604.create_booking(jsonb_build_object('business_id',p_business_id,'user_id',p_user_id,'service_id',p_service_id,'staff_id',p_staff_id,'date',p_date,'time',p_time,'party_size',p_party_size,'guest_name',p_guest_name,'guest_phone',p_guest_phone,'guest_email',p_guest_email,'notes',p_notes,'total_amount',p_total_amount,'staff_name',p_staff_name,'appointment_id',p_appointment_id,'class_session_id',p_class_session_id,'expected_terms',p_expected_terms,
+ FROM (SELECT private.scheduling_604_create_booking(jsonb_build_object('business_id',p_business_id,'user_id',p_user_id,'service_id',p_service_id,'staff_id',p_staff_id,'date',p_date,'time',p_time,'party_size',p_party_size,'guest_name',p_guest_name,'guest_phone',p_guest_phone,'guest_email',p_guest_email,'notes',p_notes,'total_amount',p_total_amount,'staff_name',p_staff_name,'appointment_id',p_appointment_id,'class_session_id',p_class_session_id,'expected_terms',p_expected_terms,
  'flow_type','scheduling','deposit_amount',0),'manual') AS r) result;
 $$;
 REVOKE ALL ON FUNCTION public.book_manual_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,integer,integer,uuid,uuid,jsonb) FROM PUBLIC,anon,authenticated;
@@ -281,12 +302,12 @@ CREATE FUNCTION public.book_with_package_authoritative_604(
   p_enrollment_id uuid DEFAULT NULL,
  p_class_session_id uuid DEFAULT NULL, p_expected_terms jsonb DEFAULT NULL
 ) RETURNS jsonb LANGUAGE sql SECURITY INVOKER SET search_path=public,extensions AS $$
- SELECT scheduling_private_604.create_booking(jsonb_build_object('business_id',p_business_id,'user_id',p_user_id,'service_id',p_service_id,'staff_id',p_staff_id,'date',p_date,'time',p_time,'party_size',p_party_size,'flow_type',p_flow_type,'deposit_amount',p_deposit_amount,'deposit_status',p_deposit_status,'status',p_status,'guest_name',p_guest_name,'guest_phone',p_guest_phone,'guest_email',p_guest_email,'special_requests',p_special_requests,'venue_address',p_venue_address,'end_date',p_end_date,'addons_snapshot',p_addons_snapshot,'promo_code_id',p_promo_code_id,'total_amount',p_total_amount,'staff_name',p_staff_name,'location_id',p_location_id,'appointment_id',p_appointment_id,'bot_session_id',p_bot_session_id,'class_session_id',p_class_session_id,'expected_terms',p_expected_terms),'customer',p_enrollment_id);
+ SELECT private.scheduling_604_create_booking(jsonb_build_object('business_id',p_business_id,'user_id',p_user_id,'service_id',p_service_id,'staff_id',p_staff_id,'date',p_date,'time',p_time,'party_size',p_party_size,'flow_type',p_flow_type,'deposit_amount',p_deposit_amount,'deposit_status',p_deposit_status,'status',p_status,'guest_name',p_guest_name,'guest_phone',p_guest_phone,'guest_email',p_guest_email,'special_requests',p_special_requests,'venue_address',p_venue_address,'end_date',p_end_date,'addons_snapshot',p_addons_snapshot,'promo_code_id',p_promo_code_id,'total_amount',p_total_amount,'staff_name',p_staff_name,'location_id',p_location_id,'appointment_id',p_appointment_id,'bot_session_id',p_bot_session_id,'class_session_id',p_class_session_id,'expected_terms',p_expected_terms),'customer',p_enrollment_id);
 $$;
 REVOKE ALL ON FUNCTION public.book_with_package_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,uuid,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.book_with_package_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,uuid,jsonb) TO service_role;
 
-CREATE FUNCTION scheduling_private_604.finalize_booking_promo(p_booking_id uuid,p_payment_id uuid)
+CREATE FUNCTION private.scheduling_604_finalize_booking_promo(p_booking_id uuid,p_payment_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions AS $$
 DECLARE b record; pay record; res record;
 BEGIN
@@ -314,24 +335,32 @@ BEGIN
  RETURN jsonb_build_object('finalized',true);
 END;
 $$;
-REVOKE ALL ON FUNCTION scheduling_private_604.finalize_booking_promo(uuid,uuid) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION scheduling_private_604.finalize_booking_promo(uuid,uuid) TO service_role;
+REVOKE ALL ON FUNCTION private.scheduling_604_finalize_booking_promo(uuid,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION private.scheduling_604_finalize_booking_promo(uuid,uuid) TO service_role;
 CREATE FUNCTION public.finalize_booking_promo_reservation(p_booking_id uuid,p_payment_id uuid)
 RETURNS jsonb LANGUAGE sql SECURITY INVOKER SET search_path=public,extensions AS $$
- SELECT scheduling_private_604.finalize_booking_promo(p_booking_id,p_payment_id);
+ SELECT private.scheduling_604_finalize_booking_promo(p_booking_id,p_payment_id);
 $$;
 REVOKE ALL ON FUNCTION public.finalize_booking_promo_reservation(uuid,uuid) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.finalize_booking_promo_reservation(uuid,uuid) TO service_role;
 
 -- Raw cancellation/expiry updates use the same durable reservation transition.
 -- This does not replace M357's owner checks, package release or slot accounting.
-CREATE FUNCTION scheduling_private_604.booking_promo_transition()
+CREATE FUNCTION private.scheduling_604_booking_promo_transition()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions AS $$
-DECLARE result jsonb;
+DECLARE result jsonb; paid_payment uuid;
 BEGIN
  IF NEW.metadata->'scheduling_authority_604' IS NULL OR NEW.promo_code_id IS NULL THEN RETURN NEW; END IF;
  IF NEW.deposit_status::text='paid' AND OLD.deposit_status::text IS DISTINCT FROM 'paid' THEN
-   result:=scheduling_private_604.finalize_booking_promo(NEW.id,NEW.payment_id);
+   -- bookings.payment_id can point at a newer, unpaid checkout (initializePayment
+   -- repoints it), so use a successful payment of this booking. Prefer the linked one.
+   SELECT p.id INTO paid_payment FROM public.payments p
+     WHERE p.booking_id=NEW.id AND p.business_id=NEW.business_id AND p.status::text='success'
+     ORDER BY (p.id IS NOT DISTINCT FROM NEW.payment_id) DESC, p.created_at, p.id LIMIT 1;
+   -- No successful payment row (for example a manual status edit): leave the promo
+   -- reserved. It still counts against max_uses; payment finalization completes it.
+   IF paid_payment IS NULL THEN RETURN NEW; END IF;
+   result:=private.scheduling_604_finalize_booking_promo(NEW.id,paid_payment);
    IF result->>'finalized' IS DISTINCT FROM 'true' THEN RAISE EXCEPTION 'booking_promo_finalization_failed'; END IF;
  ELSIF NEW.status::text='cancelled' AND OLD.status::text IS DISTINCT FROM 'cancelled'
        AND OLD.deposit_status::text IS DISTINCT FROM 'paid' THEN
@@ -342,15 +371,15 @@ BEGIN
  RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION scheduling_private_604.booking_promo_transition() FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION private.scheduling_604_booking_promo_transition() FROM PUBLIC,anon,authenticated,service_role;
 CREATE TRIGGER booking_promo_transition_604 AFTER UPDATE OF status,deposit_status ON public.bookings
- FOR EACH ROW EXECUTE FUNCTION scheduling_private_604.booking_promo_transition();
+ FOR EACH ROW EXECUTE FUNCTION private.scheduling_604_booking_promo_transition();
 
 DO $$
 DECLARE f record;
 BEGIN
  FOR f IN SELECT p.oid,p.prosecdef,p.proconfig,p.proname FROM pg_proc p
-   JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='scheduling_private_604'
+   JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='private' AND p.proname LIKE 'scheduling\_604\_%'
  LOOP
    IF f.prosecdef
       AND NOT ('search_path=public, extensions'=ANY(f.proconfig)) THEN

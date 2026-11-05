@@ -54,8 +54,20 @@ suite('M518 final-state scheduling authority', () => {
      VALUES($1,'Core604','core604','1 Test','Lagos','VI','+2348000000604','NG',$2,'active','{"prepay_mode":"full"}')`,[business,user]);
    await pool.query("INSERT INTO services(id,business_id,name,price,deposit_amount,is_active,max_capacity,duration_minutes) VALUES($1,$2,'Service',1000,0,true,1,30)",[service,business]);
  },200000);
+ /** A WhatsApp session whose confirm step stored the claim the RPC must match. */
+ async function botSession(terms: Record<string,unknown>, claim: Record<string,unknown> = {}) {
+   const sid=randomUUID();
+   await pool.query(`INSERT INTO bot_sessions(id,whatsapp_number,business_id,user_id,session_data)
+     VALUES($1,'2348000000604',$2,$3,$4)`,[sid,business,user,JSON.stringify({_604_confirmation:{
+       service_id:service,date:'2027-12-01',time:'10:00:00',party_size:1,terms,...claim}})]);
+   return sid;
+ }
  beforeEach(async()=>{
+   await pool.query('UPDATE bookings SET payment_id=NULL WHERE business_id=$1',[business]);
+   await pool.query('DELETE FROM payments WHERE business_id=$1',[business]);
    await pool.query('DELETE FROM bookings WHERE business_id=$1',[business]);
+   await pool.query('DELETE FROM bot_sessions WHERE business_id=$1',[business]);
+   await pool.query('DELETE FROM appointments WHERE business_id=$1',[business]);
    await pool.query('DELETE FROM service_addons WHERE business_id=$1',[business]);
    await pool.query('DELETE FROM promo_codes WHERE business_id=$1',[business]);
    await pool.query("UPDATE businesses SET metadata='{\"prepay_mode\":\"full\"}',deposit_per_guest=0 WHERE id=$1",[business]);
@@ -115,6 +127,92 @@ suite('M518 final-state scheduling authority', () => {
      await client.query('COMMIT');
      expect(r).toMatchObject({slot_available:true,committed_total:1000,committed_deposit:0});
    } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+ });
+ it('books a "price varies" item with a deposit above its starting price from the public page',async()=>{
+   await pool.query('UPDATE services SET price_is_variable=true,deposit_amount=5000 WHERE id=$1',[service]);
+   expect(await rpc({p_total_amount:5000,p_deposit_amount:5000,
+     p_expected_terms:{price:1000,deposit:5000,discount:0,country:'NG',quantity:1,source:'public'}}))
+     .toMatchObject({slot_available:true,committed_total:5000,committed_deposit:5000});
+ });
+ it('books a "price varies" item with a deposit above its starting price from WhatsApp',async()=>{
+   await pool.query('UPDATE services SET price_is_variable=true,deposit_amount=5000 WHERE id=$1',[service]);
+   const terms={price:1000,deposit:5000,discount:0,country:'NG'};
+   const sid=await botSession(terms);
+   expect(await rpc({p_bot_session_id:sid,p_total_amount:5000,p_deposit_amount:5000,p_expected_terms:terms}))
+     .toMatchObject({slot_available:true,committed_total:5000,committed_deposit:5000});
+ });
+ it('keeps public and dashboard bookings of a service with a required add-on working',async()=>{
+   await pool.query("INSERT INTO service_addons(id,business_id,service_id,name,price,is_active,is_required) VALUES($1,$2,$3,'Required',100,true,true)",[addon,business,service]);
+   expect(await rpc({p_expected_terms:{price:1000,deposit:0,discount:0,country:'NG',quantity:1,source:'public'}}))
+     .toMatchObject({slot_available:true,committed_total:1000});
+ });
+ it('still requires the required add-on in WhatsApp bookings',async()=>{
+   await pool.query("INSERT INTO service_addons(id,business_id,service_id,name,price,is_active,is_required) VALUES($1,$2,$3,'Required',100,true,true)",[addon,business,service]);
+   const terms={price:1000,deposit:0,discount:0,country:'NG'};
+   const sid=await botSession(terms);
+   await expect(rpc({p_bot_session_id:sid,p_expected_terms:terms})).rejects.toThrow('required_addon_missing');
+ });
+ it('books a free service at a business with a per-guest deposit, as the bot did',async()=>{
+   await pool.query('UPDATE services SET price=0,max_capacity=5 WHERE id=$1',[service]);
+   await pool.query('UPDATE businesses SET deposit_per_guest=500 WHERE id=$1',[business]);
+   expect(await rpc({p_party_size:2,p_total_amount:1000,p_deposit_amount:1000,
+     p_expected_terms:{price:0,deposit:0,discount:0,country:'NG'}}))
+     .toMatchObject({slot_available:true,committed_total:1000,committed_deposit:1000});
+ });
+ it('books an appointment whose numeric price is stored with decimals',async()=>{
+   const appt=randomUUID();
+   await pool.query("INSERT INTO appointments(id,business_id,name,price,deposit_amount,is_active,duration_minutes,max_capacity) VALUES($1,$2,'Appt',1500.00,0.00,true,30,1)",[appt,business]);
+   expect(await rpc({p_service_id:null,p_appointment_id:appt,p_total_amount:1500,p_deposit_amount:1500,
+     p_expected_terms:{price:1500,deposit:0,discount:0,country:'NG'}}))
+     .toMatchObject({slot_available:true,committed_total:1500,committed_deposit:1500});
+ });
+ it('lets a WhatsApp customer rebook in the same session after cancelling an unpaid booking',async()=>{
+   await pool.query('UPDATE services SET max_capacity=5 WHERE id=$1',[service]);
+   const terms={price:1000,deposit:0,discount:0,country:'NG'};
+   const sid=await botSession(terms);
+   const first=await rpc({p_bot_session_id:sid,p_expected_terms:terms});
+   expect((await rpc({p_bot_session_id:sid,p_expected_terms:terms})).booking_id).toBe(first.booking_id);
+   await pool.query("UPDATE bookings SET status='cancelled' WHERE id=$1",[first.booking_id]);
+   await pool.query(`UPDATE bot_sessions SET session_data=jsonb_set(session_data,'{_604_confirmation,date}','"2027-12-02"') WHERE id=$1`,[sid]);
+   const second=await rpc({p_bot_session_id:sid,p_date:'2027-12-02',p_expected_terms:terms});
+   expect(second).toMatchObject({slot_available:true});
+   expect(second.booking_id).not.toBe(first.booking_id);
+ });
+ it('reserves a promo, then counts it once on payment even when another checkout is linked',async()=>{
+   await pool.query("INSERT INTO promo_codes(id,business_id,code,discount_type,discount_value,max_uses,current_uses,is_active) VALUES($1,$2,'P604','fixed',100,5,0,true)",[promo,business]);
+   const r=await rpc({p_promo_code_id:promo,p_total_amount:900,p_deposit_amount:900,
+     p_expected_terms:{price:1000,deposit:0,discount:100,country:'NG'}});
+   expect(r).toMatchObject({committed_total:900,committed_deposit:900});
+   expect((await pool.query('SELECT state FROM promo_reservations WHERE booking_id=$1',[r.booking_id])).rows).toEqual([{state:'reserved'}]);
+   const pay1=randomUUID(), pay2=randomUUID();
+   for (const [pid,ref] of [[pay1,'core604-a'],[pay2,'core604-b']]) {
+     await pool.query("INSERT INTO payments(id,booking_id,business_id,amount,gateway_reference,status) VALUES($1,$2,$3,900,$4,'pending')",[pid,r.booking_id,business,ref]);
+   }
+   // initializePayment repointed the booking at the newer checkout; the earlier one is paid.
+   await pool.query('UPDATE bookings SET payment_id=$2 WHERE id=$1',[r.booking_id,pay2]);
+   await pool.query("UPDATE payments SET status='success' WHERE id=$1",[pay1]);
+   await pool.query("UPDATE bookings SET deposit_status='paid',status='confirmed',confirmed_at=now() WHERE id=$1 AND status='pending'",[r.booking_id]);
+   const after=async()=>(await pool.query(`SELECT b.status::text,b.deposit_status::text,pr.state,pc.current_uses
+     FROM bookings b JOIN promo_reservations pr ON pr.booking_id=b.id JOIN promo_codes pc ON pc.id=pr.promo_code_id WHERE b.id=$1`,[r.booking_id])).rows[0];
+   expect(await after()).toEqual({status:'confirmed',deposit_status:'paid',state:'finalized',current_uses:1});
+   const client=await pool.connect();
+   try {
+     await client.query('BEGIN'); await client.query('SET LOCAL ROLE service_role');
+     const f=(await client.query('SELECT public.finalize_booking_promo_reservation($1,$2) AS f',[r.booking_id,pay1])).rows[0].f;
+     await client.query('COMMIT');
+     expect(f).toMatchObject({finalized:true});
+   } finally { client.release(); }
+   expect(await after()).toEqual({status:'confirmed',deposit_status:'paid',state:'finalized',current_uses:1});
+ });
+ it('releases the promo when an unpaid booking is cancelled',async()=>{
+   await pool.query("INSERT INTO promo_codes(id,business_id,code,discount_type,discount_value,max_uses,current_uses,is_active) VALUES($1,$2,'P604','fixed',100,1,0,true)",[promo,business]);
+   const terms={price:1000,deposit:0,discount:100,country:'NG'};
+   const r=await rpc({p_promo_code_id:promo,p_total_amount:900,p_deposit_amount:900,p_expected_terms:terms});
+   await expect(rpc({p_promo_code_id:promo,p_guest_phone:'+2348000000609',p_time:'11:00',p_total_amount:900,p_deposit_amount:900,p_expected_terms:terms}))
+     .rejects.toThrow('promo_exhausted');
+   await pool.query("UPDATE bookings SET status='cancelled' WHERE id=$1",[r.booking_id]);
+   expect((await pool.query('SELECT state FROM promo_reservations WHERE booking_id=$1',[r.booking_id])).rows).toEqual([{state:'released'}]);
+   expect((await pool.query('SELECT current_uses FROM promo_codes WHERE id=$1',[promo])).rows[0].current_uses).toBe(0);
  });
  it('derives addon value from its locked row',async()=>{
    await pool.query("INSERT INTO service_addons(id,business_id,service_id,name,price,is_active,is_required) VALUES($1,$2,$3,'Addon',100,true,false)",[addon,business,service]);

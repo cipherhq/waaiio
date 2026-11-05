@@ -333,7 +333,9 @@ export async function POST(request: NextRequest) {
         p_end_date: null,
         p_addons_snapshot: null,
         p_promo_code_id: null,
-        p_total_amount: itemPrice * partySize,
+        // "Price varies" items may carry a deposit above the starting price;
+        // the total is then the deposit, as M518 commits it.
+        p_total_amount: Math.max(itemPrice * partySize, totalDeposit),
         p_staff_name: autoStaffName,
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,

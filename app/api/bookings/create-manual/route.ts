@@ -213,6 +213,9 @@ export async function POST(request: NextRequest) {
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
     if (slotError || !slotResult) {
+      if ((slotError as { message?: string } | null)?.message?.includes('terms_changed')) {
+        return NextResponse.json({ code: 'terms_changed', error: 'This service changed. Refresh the page and try again.' }, { status: 409 });
+      }
       logger.error('[MANUAL BOOKING] Atomic booking RPC error:', slotError);
       return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
     }
