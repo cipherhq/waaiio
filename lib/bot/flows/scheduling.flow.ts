@@ -28,7 +28,8 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
-import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow } from './shared/table-same-day';
+import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow, type BusinessLocalNow } from './shared/table-same-day';
+import { parseTypedDate, isCalendarDate } from './shared/typed-date';
 import { seatingGalleryMessages } from './table-reservation.flow';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
@@ -80,6 +81,142 @@ function getDatePrompt(category: string, lang?: string): string {
     default:
       return getFlowCopy(lang, 'booking.date_default');
   }
+}
+
+/** WhatsApp lists hold at most 10 rows. */
+const DATE_LIST_MAX_ROWS = 10;
+
+type DateRow = { title: string; postbackText: string };
+
+/**
+ * Every open date in the booking window, in order (#916). The date list and
+ * the check on a typed date both use it: the service's available days, closed
+ * days, today for tables (a slot must be left), and fully booked days.
+ * Bookings for the whole window are read in one query, as before.
+ */
+async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNow | null): Promise<DateRow[]> {
+  const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+  const maxAdvanceDays = (meta.max_advance_days as number) || 30;
+  const availableDays = (ctx.session.session_data._service_available_days as string[]) || [];
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dates: DateRow[] = [];
+
+  const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
+  const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
+  const staffId = ctx.session.session_data.staff_id as string | null;
+  const durationMin = (ctx.session.session_data._service_duration as number) || 30;
+  const slotInterval = (meta.slot_interval_minutes as number) || durationMin;
+
+  const isTableRes = ctx.session.session_data._is_table_reservation === true;
+  const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
+
+  // Pre-fetch all bookings for the next maxAdvanceDays to filter fully-booked dates
+  const todayStr = tableLocalNow ? tableLocalNow.date : new Date().toISOString().split('T')[0];
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
+  const futureDateStr = tableLocalNow ? addDaysToDateStr(tableLocalNow.date, maxAdvanceDays) : futureDate.toISOString().split('T')[0];
+
+  let bookingsQuery = ctx.supabase
+    .from('bookings')
+    .select('date, time')
+    .eq('business_id', ctx.business!.id)
+    .in('status', ['confirmed', 'pending', 'in_progress'])
+    .gte('date', todayStr)
+    .lte('date', futureDateStr);
+
+  // Table reservations: scope to selected resource so other tables don't block dates
+  if (isTableRes && dateSeatingResourceId) {
+    bookingsQuery = bookingsQuery.eq('seating_resource_id', dateSeatingResourceId);
+  } else {
+    // Non-table bookings: exclude table reservations from capacity count
+    bookingsQuery = bookingsQuery.is('seating_resource_id', null);
+    if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+  }
+  const { data: allBookings } = await bookingsQuery.limit(2000);
+
+  // Count bookings per date+time
+  const bookingsByDate = new Map<string, number>();
+  for (const b of allBookings || []) {
+    if (b.date) {
+      const key = b.date;
+      bookingsByDate.set(key, (bookingsByDate.get(key) || 0) + 1);
+    }
+  }
+
+  // Scan up to maxAdvanceDays. The list pages through the result (#916).
+  // Tables with a known timezone start at today (i = 0), in local calendar days.
+  for (let i = tableLocalNow ? 0 : 1; i <= maxAdvanceDays; i++) {
+    let d: Date;
+    let dateStr: string;
+    if (tableLocalNow) {
+      dateStr = addDaysToDateStr(tableLocalNow.date, i);
+      d = new Date(dateStr + 'T00:00');
+    } else {
+      d = new Date();
+      d.setDate(d.getDate() + i);
+      dateStr = d.toISOString().split('T')[0];
+    }
+    const dayOfWeek = dayNames[d.getDay()];
+
+    // Filter by service available days
+    if (availableDays.length > 0 && !availableDays.includes(dayOfWeek)) continue;
+
+    // Filter by business operating hours (skip closed days)
+    if (opHours[dayOfWeek]?.closed) continue;
+
+    // Today (tables only): offer it only while a slot after the current local time is free
+    if (tableLocalNow && i === 0) {
+      if (!(await hasTableSlotLeftToday(ctx, tableLocalNow))) continue;
+    }
+
+    // Filter fully-booked dates: count available slots vs bookings
+    const openTime = opHours[dayOfWeek]?.open || '08:00';
+    const closeTime = opHours[dayOfWeek]?.close || '18:00';
+    // Handle midnight-crossing hours (e.g., 22:00-06:00)
+    let openMin = timeToMinutes(openTime);
+    let closeMin = timeToMinutes(closeTime);
+    if (closeMin <= openMin) closeMin += 24 * 60;
+    const totalSlots = Math.max(1, Math.floor(
+      (closeMin - openMin) / slotInterval
+    ));
+    const bookedCount = bookingsByDate.get(dateStr) || 0;
+    const maxBookingsForDate = totalSlots * maxCapacity;
+    if (bookedCount >= maxBookingsForDate) continue; // fully booked
+
+    const label = d.toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
+    dates.push({ title: label, postbackText: dateStr });
+  }
+  return dates;
+}
+
+/**
+ * One page of the date list (#916). Ten or fewer dates: one page, unchanged.
+ * More: page 0 has 9 dates and "Later dates"; later pages start with
+ * "Earlier dates" and hold 8 dates and "Later dates", the last up to 9.
+ * Page rows are tapped as `dates_page_<n>` (not `date_`, which is a date).
+ */
+function pageDateRows(dates: DateRow[], requestedPage: number, lang: string | undefined): DateRow[] {
+  if (dates.length <= DATE_LIST_MAX_ROWS) return dates;
+  const pages: Array<[number, number]> = [[0, DATE_LIST_MAX_ROWS - 1]];
+  let start = DATE_LIST_MAX_ROWS - 1;
+  while (start < dates.length) {
+    const remaining = dates.length - start;
+    const size = remaining <= DATE_LIST_MAX_ROWS - 1 ? remaining : DATE_LIST_MAX_ROWS - 2;
+    pages.push([start, start + size]);
+    start += size;
+  }
+  const page = Math.min(Math.max(0, Math.floor(requestedPage) || 0), pages.length - 1);
+  const [from, to] = pages[page];
+  const items: DateRow[] = [];
+  if (page > 0) items.push({ title: getFlowCopy(lang, 'booking.earlier_dates'), postbackText: `dates_page_${page - 1}` });
+  items.push(...dates.slice(from, to));
+  if (page < pages.length - 1) items.push({ title: getFlowCopy(lang, 'booking.later_dates'), postbackText: `dates_page_${page + 1}` });
+  return items;
+}
+
+/** The date prompt plus the "Or type a date" line (#916). */
+function datePromptWithHint(category: string, lang: string | undefined): string {
+  return `${getDatePrompt(category, lang)}\n\n${getFlowCopy(lang, 'booking.type_date_hint')}`;
 }
 
 /** Category-aware staff prompt */
@@ -892,18 +1029,9 @@ export const schedulingFlow: FlowDefinition = {
         // Table bookings: photos of the tapped table or section (#892)
         messages.push(...await seatingGalleryMessages(ctx));
 
-        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        const dateRange = (meta.date_range_days as number) || 7;
-        const maxAdvanceDays = (meta.max_advance_days as number) || 30;
         const availableDays = (ctx.session.session_data._service_available_days as string[]) || [];
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-        const dates: Array<{ title: string; postbackText: string }> = [];
-
-        const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
         const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
-        const staffId = ctx.session.session_data.staff_id as string | null;
-        const durationMin = (ctx.session.session_data._service_duration as number) || 30;
-        const slotInterval = (meta.slot_interval_minutes as number) || durationMin;
 
         const isTableRes = ctx.session.session_data._is_table_reservation === true;
         const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
@@ -917,82 +1045,8 @@ export const schedulingFlow: FlowDefinition = {
         // Without a readable timezone, tables keep the tomorrow-first list.
         const tableLocalNow = isTableRes ? await resolveBusinessLocalNow(ctx) : null;
 
-        // Pre-fetch all bookings for the next maxAdvanceDays to filter fully-booked dates
-        const todayStr = tableLocalNow ? tableLocalNow.date : new Date().toISOString().split('T')[0];
-        const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
-        const futureDateStr = tableLocalNow ? addDaysToDateStr(tableLocalNow.date, maxAdvanceDays) : futureDate.toISOString().split('T')[0];
-
-        let bookingsQuery = ctx.supabase
-          .from('bookings')
-          .select('date, time')
-          .eq('business_id', ctx.business!.id)
-          .in('status', ['confirmed', 'pending', 'in_progress'])
-          .gte('date', todayStr)
-          .lte('date', futureDateStr);
-
-        // Table reservations: scope to selected resource so other tables don't block dates
-        if (isTableRes && dateSeatingResourceId) {
-          bookingsQuery = bookingsQuery.eq('seating_resource_id', dateSeatingResourceId);
-        } else {
-          // Non-table bookings: exclude table reservations from capacity count
-          bookingsQuery = bookingsQuery.is('seating_resource_id', null);
-          if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
-        }
-        const { data: allBookings } = await bookingsQuery.limit(2000);
-
-        // Count bookings per date+time
-        const bookingsByDate = new Map<string, number>();
-        for (const b of allBookings || []) {
-          if (b.date) {
-            const key = b.date;
-            bookingsByDate.set(key, (bookingsByDate.get(key) || 0) + 1);
-          }
-        }
-
-        // Scan up to maxAdvanceDays but collect max 10 matching dates.
-        // Tables with a known timezone start at today (i = 0), in local calendar days.
-        for (let i = tableLocalNow ? 0 : 1; i <= maxAdvanceDays && dates.length < 10; i++) {
-          let d: Date;
-          let dateStr: string;
-          if (tableLocalNow) {
-            dateStr = addDaysToDateStr(tableLocalNow.date, i);
-            d = new Date(dateStr + 'T00:00');
-          } else {
-            d = new Date();
-            d.setDate(d.getDate() + i);
-            dateStr = d.toISOString().split('T')[0];
-          }
-          const dayOfWeek = dayNames[d.getDay()];
-
-          // Filter by service available days
-          if (availableDays.length > 0 && !availableDays.includes(dayOfWeek)) continue;
-
-          // Filter by business operating hours (skip closed days)
-          if (opHours[dayOfWeek]?.closed) continue;
-
-          // Today (tables only): offer it only while a slot after the current local time is free
-          if (tableLocalNow && i === 0) {
-            if (!(await hasTableSlotLeftToday(ctx, tableLocalNow))) continue;
-          }
-
-          // Filter fully-booked dates: count available slots vs bookings
-          const openTime = opHours[dayOfWeek]?.open || '08:00';
-          const closeTime = opHours[dayOfWeek]?.close || '18:00';
-          // Handle midnight-crossing hours (e.g., 22:00-06:00)
-          let openMin = timeToMinutes(openTime);
-          let closeMin = timeToMinutes(closeTime);
-          if (closeMin <= openMin) closeMin += 24 * 60;
-          const totalSlots = Math.max(1, Math.floor(
-            (closeMin - openMin) / slotInterval
-          ));
-          const bookedCount = bookingsByDate.get(dateStr) || 0;
-          const maxBookingsForDate = totalSlots * maxCapacity;
-          if (bookedCount >= maxBookingsForDate) continue; // fully booked
-
-          const label = d.toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
-          dates.push({ title: label, postbackText: dateStr });
-        }
+        // Every open date in the booking window; the list pages through them (#916)
+        const dates = await collectOpenDates(ctx, tableLocalNow);
 
         if (dates.length === 0) {
           // Offer waitlist if capability enabled
@@ -1059,25 +1113,30 @@ export const schedulingFlow: FlowDefinition = {
             shortcuts.push({ id: 'pick_date', title: getFlowCopy(ctx.copyLang, 'booking.pick_a_date') });
             messages.push({
               type: 'buttons' as const,
-              body: getDatePrompt(ctx.business?.category || 'other', ctx.copyLang),
+              body: datePromptWithHint(ctx.business?.category || 'other', ctx.copyLang),
               buttons: shortcuts,
             });
             return messages;
           }
         }
 
-        // Full date list (default fallback or after "Pick a Date" tapped)
+        // Full date list (default fallback or after "Pick a Date" / a page row was tapped).
+        // The page set by a "Later dates"/"Earlier dates" tap applies only with the flag.
+        const requestedPage = ctx.session.session_data._show_full_date_list
+          ? Number(ctx.session.session_data._date_page) || 0
+          : 0;
         // Reset the flag so next time we show shortcuts again
         if (ctx.session.session_data._show_full_date_list) {
           delete ctx.session.session_data._show_full_date_list;
         }
+        const dateItems = pageDateRows(dates, requestedPage, ctx.copyLang);
 
         messages.push({
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'booking.select_date'),
-          body: getDatePrompt(ctx.business?.category || 'other', ctx.copyLang),
+          body: datePromptWithHint(ctx.business?.category || 'other', ctx.copyLang),
           buttonLabel: getFlowCopy(ctx.copyLang, 'booking.choose_date'),
-          items: dates,
+          items: dateItems,
         });
         return messages;
       },
@@ -1093,9 +1152,29 @@ export const schedulingFlow: FlowDefinition = {
         // Handle "Pick a Date" button — show full date list on re-prompt
         if (input === 'pick_date') {
           ctx.session.session_data._show_full_date_list = true;
+          delete ctx.session.session_data._date_page;
           await ctx.supabase.from('bot_sessions').update({ session_data: ctx.session.session_data }).eq('id', ctx.session.id);
           return { valid: false, errorMessage: undefined };
         }
+
+        // "Later dates" / "Earlier dates" rows: show that page of the list (#916)
+        const pageTap = /^dates_page_(\d{1,3})$/.exec(input);
+        if (pageTap) {
+          ctx.session.session_data._date_page = Number(pageTap[1]);
+          ctx.session.session_data._show_full_date_list = true;
+          return { valid: false, errorMessage: undefined, persistSessionDataOnFailure: true };
+        }
+
+        // Every date error re-shows the full date list from the first page,
+        // so the customer can always tap a date (#916)
+        const fail = (errorMessage: string): ValidationResult => {
+          ctx.session.session_data._show_full_date_list = true;
+          delete ctx.session.session_data._date_page;
+          return { valid: false, errorMessage };
+        };
+
+        const notARealDate = "That date doesn't look right. Try a date like *20 Dec*, or tap one from the list.";
+        const unreadable = 'Try typing a date like *20 Dec*, a day like *Saturday*, or *tomorrow*. Or tap a date from the list.';
 
         // Same-day is for tables only, in the business timezone (null → tomorrow-first rule)
         const isTableRes = ctx.session.session_data._is_table_reservation === true;
@@ -1110,6 +1189,11 @@ export const schedulingFlow: FlowDefinition = {
           // Natural language date parsing — tolerant of surrounding text (e.g., "tomorrow at 6pm")
           const lower = input.toLowerCase().trim();
           const now = new Date();
+          // Typed calendar dates: "Dec 20", "20 Dec", "20th December", "20/12", "20/12/2026" (#916).
+          // Slash dates are day/month; month/day for US businesses.
+          const monthFirst = (ctx.business?.country_code || '').toUpperCase() === 'US';
+          const serverToday = now.toISOString().split('T')[0];
+          const looksTyped = parseTypedDate(input, { today: serverToday, monthFirst }) !== null;
           if (/\b(today|2day|todey)\b/.test(lower)) {
             dateStr = tableLocalNow ? tableLocalNow.date : now.toISOString().split('T')[0];
           } else if (/\b(tomorrow|2moro|2morrow|tmrw|tmr|2mr|2mrw)\b/.test(lower)) {
@@ -1118,6 +1202,14 @@ export const schedulingFlow: FlowDefinition = {
           } else if (/\bnext\s*week\b/.test(lower)) {
             const nw = new Date(now); nw.setDate(nw.getDate() + 7);
             dateStr = nw.toISOString().split('T')[0];
+          } else if (looksTyped) {
+            // A date without a year is the next one not before today, in the business's local calendar
+            const localToday = tableLocalNow?.date ?? (await resolveBusinessLocalNow(ctx))?.date ?? serverToday;
+            const typed = parseTypedDate(input, { today: localToday, monthFirst });
+            if (!typed || typed.kind === 'invalid') {
+              return fail(notARealDate);
+            }
+            dateStr = typed.date;
           } else if (/^(mon|tue|wed|thu|fri|sat|sun)/i.test(lower) || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower)) {
             const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
             const dayMatch = lower.match(/\b(sun|mon|tue|wed|thu|fri|sat)\w*/i);
@@ -1131,12 +1223,13 @@ export const schedulingFlow: FlowDefinition = {
               }
             }
           } else {
-            const parsed = new Date(input);
-            if (isNaN(parsed.getTime())) {
-              return { valid: false, errorMessage: 'Try typing *tomorrow*, a day like *Saturday*, or tap a date option.' };
-            }
-            dateStr = parsed.toISOString().split('T')[0];
+            // The old `new Date(input)` fallback read "Dec 20" as 2001-12-20; unknown text now gets help instead
+            return fail(unreadable);
           }
+        }
+
+        if (!isCalendarDate(dateStr)) {
+          return fail(/^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? notARealDate : unreadable);
         }
 
         const selected = new Date(dateStr + 'T00:00');
@@ -1146,22 +1239,42 @@ export const schedulingFlow: FlowDefinition = {
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxAdvanceDays = (meta.max_advance_days as number) || BOOKING_DEFAULTS.maxAdvanceDays;
+        const tooFarMessage = `Bookings open up to ${maxAdvanceDays} days ahead. Please pick an earlier date.`;
 
         if (tableLocalNow) {
           // Tables: today onwards in the business's local calendar
-          if (dateStr < tableLocalNow.date) return { valid: false, errorMessage: 'That date has passed. Try *tomorrow* or pick a future date.' };
+          if (dateStr < tableLocalNow.date) return fail('That date has passed. Try *tomorrow* or pick a future date.');
           if (dateStr === tableLocalNow.date && !(await hasTableSlotLeftToday(ctx, tableLocalNow))) {
-            return { valid: false, errorMessage: 'There are no more times left today. Try *tomorrow* or pick a future date.' };
+            return fail('There are no more times left today. Try *tomorrow* or pick a future date.');
           }
-          if (dateStr > addDaysToDateStr(tableLocalNow.date, maxAdvanceDays)) return { valid: false, errorMessage: `Bookings can only be made up to ${maxAdvanceDays} days in advance.` };
+          if (dateStr > addDaysToDateStr(tableLocalNow.date, maxAdvanceDays)) return fail(tooFarMessage);
         } else {
-          if (selected < tomorrow) return { valid: false, errorMessage: 'That date has passed. Try *tomorrow* or pick a future date.' };
+          if (selected < tomorrow) return fail('That date has passed. Try *tomorrow* or pick a future date.');
 
           const maxDate = new Date();
           maxDate.setDate(maxDate.getDate() + maxAdvanceDays);
-          if (selected > maxDate) return { valid: false, errorMessage: `Bookings can only be made up to ${maxAdvanceDays} days in advance.` };
+          if (selected > maxDate) return fail(tooFarMessage);
         }
 
+        // The same rules as the date list (#916): closed days, the service's days, fully booked
+        if (isTableRes && !ctx.session.session_data.seating_resource_id) {
+          return fail('Please select a table first. Send *Hi* to start over.');
+        }
+        const openDates = await collectOpenDates(ctx, tableLocalNow);
+        if (!openDates.some(d => d.postbackText === dateStr)) {
+          const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const dayName = dayNames[selected.getDay()];
+          const dayPlural = `${dayName.charAt(0).toUpperCase()}${dayName.slice(1)}s`;
+          const opHours = (ctx.business?.operating_hours || {}) as Record<string, { closed?: boolean }>;
+          if (opHours[dayName]?.closed) return fail(`We're closed on ${dayPlural}. Please pick another date.`);
+          const availDays = (ctx.session.session_data._service_available_days as string[]) || [];
+          if (availDays.length > 0 && !availDays.includes(dayName)) {
+            return fail(`This service isn't available on ${dayPlural}. Please pick another date.`);
+          }
+          return fail('That day is fully booked. Please pick another date.');
+        }
+
+        delete ctx.session.session_data._date_page;
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { date: dateStr } };
       },

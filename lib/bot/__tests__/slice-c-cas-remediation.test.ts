@@ -1422,7 +1422,8 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     expect(msgs).toHaveLength(1);
     const msg = msgs[0] as Record<string, unknown>;
     expect(msg['type']).toBe('buttons');
-    expect(msg['body']).toBe('When would you like to book?');
+    // #916: the date prompt now ends with the "type a date" hint
+    expect(msg['body']).toBe('When would you like to book?\n\nOr type a date, like *20 Dec*.');
     const btns = msg['buttons'] as Array<{ id: string; title: string }>;
     expect(btns).toEqual([
       { id: 'date_' + tomorrowStr, title: 'Tomorrow (' + dayLabel + ')' },
