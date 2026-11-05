@@ -312,6 +312,8 @@ export async function GET(request: NextRequest) {
     }
 
     // FIN-002: One eligible Paystack payout account per business.
+    // The DB unique index enforces at most one active account per business,
+    // but we must also verify gateway=paystack, verified_at, and bank fields.
     const payoutAccountByBiz = new Map<string, PayoutAccountRow>();
     for (const row of (allPayoutAccountRows || [])) {
       if (!payoutAccountByBiz.has(row.business_id)) {
