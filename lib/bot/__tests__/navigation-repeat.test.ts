@@ -212,7 +212,7 @@ describe('Powered by Waaiio.com footer on the next-steps menu (Owner 2026-11-05)
     const { FlowExecutor } = await import('../flows/executor');
     const { db } = database({ whatsapp_channels: { channel_type: channelType } });
     const ctx = createMockContext({ supabase: db as any });
-    ctx.business.subscription_tier = subscriptionTier;
+    ctx.business!.subscription_tier = subscriptionTier;
     ctx.session.session_data = { _inbound_channel_id: 'channel-a', active_capability: 'ordering' };
     const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
     await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
@@ -242,6 +242,27 @@ describe('Powered by Waaiio.com footer on the next-steps menu (Owner 2026-11-05)
     } finally {
       tiers.business.whitelabel = original;
     }
+  });
+
+  it.each(['shared', 'dedicated'] as const)('%s completion menu omits the footer when the business itself is white-label', async channelType => {
+    const { FlowExecutor } = await import('../flows/executor');
+    const { db } = database({ whatsapp_channels: { channel_type: channelType } });
+    const ctx = createMockContext({ supabase: db as any });
+    ctx.business!.is_whitelabel = true;
+    ctx.session.session_data = { _inbound_channel_id: 'channel-a', active_capability: 'ordering' };
+    const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
+    await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
+    const sent = channelType === 'shared'
+      ? vi.mocked(ctx.sender.sendList).mock.calls[0][0]
+      : vi.mocked(ctx.sender.sendButtons).mock.calls[0][0];
+    expect(sent.footer).toBeUndefined();
+  });
+
+  it('business switch set to false keeps the footer, matching the greeting rule', async () => {
+    const { getPoweredByInteractiveFooter } = await import('@/lib/whitelabel');
+    expect(getPoweredByInteractiveFooter('free', false)).toBe('Powered by Waaiio.com');
+    expect(getPoweredByInteractiveFooter('free', true)).toBeUndefined();
+    expect(getPoweredByInteractiveFooter('free', null)).toBe('Powered by Waaiio.com');
   });
 
   it('stale worker sends no menu and no footer', async () => {

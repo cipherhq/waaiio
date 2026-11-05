@@ -22,9 +22,16 @@ export function getPoweredByFooter(subscriptionTier: string | null | undefined):
  * Footer line for WhatsApp interactive messages (buttons/lists, max 60 chars)
  * under a completed transaction's next-steps menu, or undefined for
  * white-label accounts. Owner decision 2026-11-05.
+ *
+ * `businessIsWhitelabel` is the per-business `businesses.is_whitelabel` switch.
+ * When known it wins over the plan, the same rule the greeting uses
+ * (`checkTierLimitsFromBusiness`: `isWhitelabel ?? tier.whitelabel`).
  */
-export function getPoweredByInteractiveFooter(subscriptionTier: string | null | undefined): string | undefined {
-  if (isWhiteLabel(subscriptionTier)) return undefined;
+export function getPoweredByInteractiveFooter(
+  subscriptionTier: string | null | undefined,
+  businessIsWhitelabel?: boolean | null,
+): string | undefined {
+  if (businessIsWhitelabel ?? isWhiteLabel(subscriptionTier)) return undefined;
   return 'Powered by Waaiio.com';
 }
 

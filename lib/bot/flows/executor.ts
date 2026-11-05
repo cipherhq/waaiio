@@ -1258,7 +1258,7 @@ export class FlowExecutor {
 
     // Brand line under every completed transaction's menu. Added after
     // localization so "Waaiio.com" is never translated; hidden for white-label plans.
-    const footer = getPoweredByInteractiveFooter(ctx.business?.subscription_tier);
+    const footer = getPoweredByInteractiveFooter(ctx.business?.subscription_tier, ctx.business?.is_whitelabel);
     const s = sender || this.sender;
     if (localizedMsg.type === 'buttons') {
       await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons, footer });
