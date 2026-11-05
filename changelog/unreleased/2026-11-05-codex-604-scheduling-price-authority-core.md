@@ -1,4 +1,4 @@
-## 2026-11-05 — Migration 518: the database sets scheduling booking prices (#604, PR #806)
+## 2026-11-05 — Migration 518: the database sets scheduling booking prices (#602, PR #806)
 
 **What changed**
 - New migration `supabase/migrations/518_scheduling_price_authority_core.sql` (renumbered from draft 497, which sat below the Release V3 lock).
