@@ -35,7 +35,7 @@ const NUMERIC = new RegExp(`^(?:on\\s+)?${WEEKDAY_PREFIX}(\\d{1,2})([/.-])(\\d{1
 const YEAR_FIRST = /^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/;
 
 export type TypedDateResult =
-  /** A real calendar date. `rolledOver`: no year was typed and this year's date had passed. */
+  /** A real calendar date. `rolledOver`: no year was typed and this year's date had just passed. */
   | { kind: 'date'; date: string; rolledOver?: true }
   /** Looks like a date but does not exist (31 Feb, 13/13) */
   | { kind: 'invalid' };
@@ -52,7 +52,17 @@ function toDateStr(year: number, month: number, day: number): string | null {
   return `${year}-${pad(month)}-${pad(day)}`;
 }
 
-/** Next occurrence of month/day on or after `today` (YYYY-MM-DD). */
+/** Whole days from `a` to `b` (both YYYY-MM-DD). */
+function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}
+
+/**
+ * Next occurrence of month/day on or after `today` (YYYY-MM-DD).
+ * `rolledOver` marks a day that most likely just passed: this year's date is
+ * nearer behind today than the next one is ahead ("4 Nov" on 5 Nov, not
+ * "Feb 14" on 5 Nov, which is an upcoming date).
+ */
 function nextOccurrence(month: number, day: number, today: string): TypedDateResult {
   const thisYear = Number(today.slice(0, 4));
   const thisYearDate = toDateStr(thisYear, month, day);
@@ -60,7 +70,9 @@ function nextOccurrence(month: number, day: number, today: string): TypedDateRes
   for (let year = thisYear; year <= thisYear + 8; year++) {
     const candidate = toDateStr(year, month, day);
     if (candidate && candidate >= today) {
-      return thisYearDate && thisYearDate < today ? { kind: 'date', date: candidate, rolledOver: true } : { kind: 'date', date: candidate };
+      const justPassed = !!thisYearDate && thisYearDate < today
+        && daysBetween(thisYearDate, today) < daysBetween(today, candidate);
+      return justPassed ? { kind: 'date', date: candidate, rolledOver: true } : { kind: 'date', date: candidate };
     }
   }
   return { kind: 'invalid' };

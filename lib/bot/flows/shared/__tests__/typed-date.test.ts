@@ -56,9 +56,11 @@ describe('parseTypedDate — year', () => {
 
   it('December rollover: January dates go to next year', () => {
     const dec20 = { today: '2026-12-20', monthFirst: false };
-    expect(parseTypedDate('5 Jan', dec20)).toEqual(rolled('2027-01-05'));
-    expect(parseTypedDate('Jan 5', dec20)).toEqual(rolled('2027-01-05'));
-    expect(parseTypedDate('05/01', dec20)).toEqual(rolled('2027-01-05'));
+    // Upcoming, not "passed": early January is nearer ahead than behind (review r3 P3-A)
+    expect(parseTypedDate('5 Jan', dec20)).toEqual(date('2027-01-05'));
+    expect(parseTypedDate('Jan 5', dec20)).toEqual(date('2027-01-05'));
+    expect(parseTypedDate('05/01', dec20)).toEqual(date('2027-01-05'));
+    expect(parseTypedDate('Feb 14', NG)).toEqual(date('2027-02-14'));
     expect(parseTypedDate('Dec 31', dec20)).toEqual(date('2026-12-31'));
     expect(parseTypedDate('Dec 19', dec20)).toEqual(rolled('2027-12-19'));
   });

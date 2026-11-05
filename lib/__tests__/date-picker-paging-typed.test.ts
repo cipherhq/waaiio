@@ -267,6 +267,15 @@ describe('A2 select_date — typed dates', () => {
     }
   });
 
+  it('an upcoming date past the window says "too far ahead", not "passed" (review r3 P3-A)', async () => {
+    const step = await dateStep();
+    expect((await step.validate('Feb 14', ctxFor({}))).errorMessage).toBe('Bookings open up to 30 days ahead. Please pick an earlier date.');
+    vi.setSystemTime(new Date('2026-12-20T12:00:00Z'));
+    for (const input of ['Jan 25', '25/01', 'Feb 14']) {
+      expect((await step.validate(input, ctxFor({}))).errorMessage).toBe('Bookings open up to 30 days ahead. Please pick an earlier date.');
+    }
+  });
+
   it('a day that just passed, typed without a year, says it has passed (review r1 P3-1)', async () => {
     const step = await dateStep();
     const r = await step.validate('4 Nov', ctxFor({}));
@@ -294,10 +303,12 @@ describe('A8 select_date — US businesses read slash dates as month/day', () =>
     }
   });
 
-  it('04/12 means 4 December in NG and 12 April (already passed this year) in the US', async () => {
+  it('04/12 means 4 December in NG and 12 April (next April, too far ahead) in the US', async () => {
     const step = await dateStep();
     expect(await step.validate('04/12', ctxFor({ country: 'NG' }))).toEqual({ valid: true, data: { date: '2026-12-04' } });
-    expect((await step.validate('04/12', ctxFor({ country: 'US' }))).errorMessage).toContain('That date has passed');
+    expect((await step.validate('04/12', ctxFor({ country: 'US' }))).errorMessage).toContain('Bookings open up to 30 days ahead');
+    // A day that just passed this year
+    expect((await step.validate('11/04', ctxFor({ country: 'US' }))).errorMessage).toContain('That date has passed');
     // Not yet passed this year, but too far ahead
     expect(await step.validate('12/20', ctxFor({ country: 'US' }))).toEqual({ valid: false, errorMessage: 'Bookings open up to 30 days ahead. Please pick an earlier date.' });
   });
@@ -555,5 +566,35 @@ describe('typed dates and page rows pass the executor pre-checks untouched', () 
     }
     // A time typed with the date still pre-fills the time step
     expect(extractEntitiesOnly('Dec 20 at 6pm').specificTime).toBe('18:00');
+  });
+});
+
+describe('date row labels', () => {
+  it('match the previous toLocaleDateString labels, per country', async () => {
+    const step = await dateStep();
+    for (const country of ['NG', 'US', 'GB']) {
+      const items = listOf(await step.prompt(ctxFor({ country, sessionData: { _show_full_date_list: true } })))!.items;
+      const { getLocale } = await import('@/lib/constants');
+      for (const item of items.filter(i => isDate(i.postbackText))) {
+        expect(item.title).toBe(new Date(item.postbackText + 'T00:00').toLocaleDateString(getLocale(country as never), { weekday: 'short', day: 'numeric', month: 'short' }));
+      }
+    }
+  });
+
+  it('a 365-day window pages through every date with at most 10 rows', async () => {
+    const step = await dateStep();
+    const ctx = ctxFor({ metadata: { max_advance_days: 365 } });
+    const seen: string[] = [];
+    for (let page = 0; page < 60; page++) {
+      await step.validate(`dates_page_${page}`, ctx);
+      const ids = rowIds(await step.prompt(ctx));
+      expect(ids.length).toBeLessThanOrEqual(10);
+      seen.push(...ids.filter(isDate));
+      if (!ids.some(id => id === `dates_page_${page + 1}`)) break;
+    }
+    expect(seen).toHaveLength(365);
+    expect(new Set(seen).size).toBe(365);
+    expect(seen[0]).toBe('2026-11-06');
+    expect(seen[364]).toBe('2027-11-05');
   });
 });

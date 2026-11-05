@@ -109,6 +109,8 @@ async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNo
 
   const isTableRes = ctx.session.session_data._is_table_reservation === true;
   const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
+  // One formatter for the whole scan (same output as toLocaleDateString); windows can be 365 days
+  const labelFormat = new Intl.DateTimeFormat(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
 
   // Pre-fetch all bookings for the next maxAdvanceDays to filter fully-booked dates
   const todayStr = tableLocalNow ? tableLocalNow.date : new Date().toISOString().split('T')[0];
@@ -183,8 +185,7 @@ async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNo
     const maxBookingsForDate = totalSlots * maxCapacity;
     if (bookedCount >= maxBookingsForDate) continue; // fully booked
 
-    const label = d.toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
-    dates.push({ title: label, postbackText: dateStr });
+    dates.push({ title: labelFormat.format(d), postbackText: dateStr });
   }
   return dates;
 }
