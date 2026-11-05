@@ -5,6 +5,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
+import { paymentNextStepsMenuSent } from '@/lib/payments/next-steps-menu';
 import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
 import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
@@ -881,7 +882,14 @@ export class FlowExecutor {
       const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
-        await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
+        // The payment confirmation (Stage 3) sends its own next-steps menu once it
+        // is accepted. When it already went out for this payment, end the session
+        // instead of sending the customer a second menu.
+        if (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd)) {
+          await this.deactivateSession(session.id);
+        } else {
+          await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
+        }
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
         // State-neutral navigation also covers free cancellations and payment-pending exits.
