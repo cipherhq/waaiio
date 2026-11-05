@@ -467,7 +467,10 @@ describe('Ordering process_order — real flow step execution', () => {
     // R6-Gap5: ALL creation-only side effects fire exactly once
     expect(mockEvaluateRules).toHaveBeenCalledTimes(1);
     expect(mockTriggerSequences).toHaveBeenCalledTimes(1);
-    expect(notifyOwnerNewOrder).toHaveBeenCalledTimes(1);
+    // Owner decision 2026-11-04 (option A): this order is paid online (payment link,
+    // no bank transfer), so the owner is alerted only after payment succeeds.
+    // Creation-alert routes are covered in order-owner-alert-routing.test.ts.
+    expect(notifyOwnerNewOrder).not.toHaveBeenCalled();
     // Customer profile upsert via RPC
     const profileRpcs = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls
       .filter((c: unknown[]) => c[0] === 'upsert_customer_profile');

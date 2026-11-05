@@ -2978,8 +2978,21 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        // Notify business owner (guarded by freshlyCreated — authoritative creation evidence)
+        // Owner "new order" alert (Owner decision 2026-11-04, option A).
+        // The order exists before the customer picks how to pay, so the alert is
+        // owed here (guarded by freshlyCreated) but sent only once the route is known:
+        //   - online only (payment link, saved card): never sent here; the owner is
+        //     alerted after payment succeeds by send-confirmation.ts.
+        //   - bank transfer, zero total, or still ambiguous (online + bank offered
+        //     together, payment setup failed): sent below.
+        // The owed marker survives a saved-card skip, so a later bank-transfer
+        // offer for the same order still alerts the owner once.
         if (ctx.business && freshlyCreated) {
+          d._owner_order_alert_due = order.id;
+        }
+        const sendOwedOwnerOrderAlert = () => {
+          if (!ctx.business || d._owner_order_alert_due !== order.id) return;
+          delete d._owner_order_alert_due;
           notifyOwnerNewOrder({
             supabase: ctx.supabase,
             sender: ctx.sender,
@@ -2993,7 +3006,7 @@ export const orderingFlow: FlowDefinition = {
             deliveryAddress: (d.delivery_address as string) || undefined,
             paymentPending: total > 0,
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
-        }
+        };
 
         // ACC-008: Promo usage is RESERVED (not finalized) inside create_order_atomic.
         // promo_reservations row inserted atomically with order creation.
@@ -3076,6 +3089,8 @@ export const orderingFlow: FlowDefinition = {
 
             if (d.bank_transfer_offered && bankAccount) {
               // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
+              // Customer may still choose bank transfer: keep the creation alert.
+              sendOwedOwnerOrderAlert();
 
               const orderSummary = getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
@@ -3172,6 +3187,8 @@ export const orderingFlow: FlowDefinition = {
 
           if (d.bank_transfer_offered) {
             // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
+            // Bank transfer only: the owner must verify it, so alert now.
+            sendOwedOwnerOrderAlert();
 
             const orderSummary = getOrderConfirmationMessage({
               businessName: ctx.business?.name || 'Shop',
@@ -3212,6 +3229,8 @@ export const orderingFlow: FlowDefinition = {
           }
 
           // Payment initialization failed — don't confirm without payment
+          // Route unknown: keep the creation alert.
+          sendOwedOwnerOrderAlert();
           return [
             {
               type: 'buttons',
@@ -3224,6 +3243,9 @@ export const orderingFlow: FlowDefinition = {
             },
           ];
         }
+
+        // Free order: no payment to wait for, so alert the owner now.
+        sendOwedOwnerOrderAlert();
 
         // Free order — decrement stock atomically via canonical RPC
         const { error: freeStockErr } = await ctx.supabase.rpc('apply_order_stock_once', {
