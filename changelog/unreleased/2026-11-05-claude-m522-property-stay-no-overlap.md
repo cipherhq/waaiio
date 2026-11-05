@@ -2,7 +2,7 @@
 
 - **What changed:** new migration `supabase/migrations/522_property_stay_no_overlap.sql`. It adds the exclusion constraint `reservations_no_overlapping_stay` on `public.reservations`, keyed on `(business_id, property_id, nights)`.
   - **Which stays it covers:** within one business and property, two stays cannot share a night unless one is `cancelled`, `no_show`, `checked_out` or `completed`. The rule is a deny-list, so any other status holds its nights.
-  - **Nights:** stored as `[check_in, check_out)`, so a check-out and a check-in on the same day are fine. A refused write fails with `23P01`.
+  - **Nights:** stored as `[check_in, check_out)`, so a check-out and a check-in on the same day are fine. A refused write fails with `23P01`; under simultaneous claims a loser can instead be aborted as a deadlock (`40P01`). Either way it holds no nights.
   - **Not covered:** rows without `property_id`. These are 2 legacy production rows, both in the past.
   - **Nothing else changes:** no function, grant, RLS, policy or trigger change.
   - **Fails closed:** it installs nothing if `btree_gist` is missing, if live stays already overlap, or if a constraint with this name exists with a different definition. A re-run does nothing.

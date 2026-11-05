@@ -56,6 +56,9 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
   async function connect(name: string): Promise<pg.Client> {
     const target = new URL(url!); target.pathname = `/${name}`;
     const db = new pg.Client({ connectionString: target.toString() }); await db.connect();
+    // An idle extra connection closed from outside (server restart, forced drop) must not crash
+    // the run; a failing query still rejects its own promise and fails its own test.
+    db.on('error', () => {});
     extra.push(db);
     return db;
   }
@@ -144,15 +147,16 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
     await c2.query('BEGIN');
     await stay(c1, PROP_B, '2026-12-10', '2026-12-13');
     // c2 overlaps c1's uncommitted nights: it must wait for c1, then be refused.
+    // The outcome is captured as soon as it settles, so an early refusal is never an unhandled rejection.
     let c2Settled = false;
-    const c2Claim = stay(c2, PROP_B, '2026-12-12', '2026-12-15').then(
-      r => { c2Settled = true; return r; },
-      e => { c2Settled = true; throw e; },
+    const c2Claim: Promise<DbError> = stay(c2, PROP_B, '2026-12-12', '2026-12-15').then(
+      () => { c2Settled = true; return {}; },
+      (e: DbError) => { c2Settled = true; return e; },
     );
     await new Promise(resolve => setTimeout(resolve, 300));
     expect(c2Settled).toBe(false);
     await c1.query('COMMIT');
-    const err = await errorOf(() => c2Claim);
+    const err = await c2Claim;
     expect(err.code).toBe('23P01');
     expect(err.message).toContain('reservations_no_overlapping_stay');
     await c2.query('ROLLBACK');
@@ -165,10 +169,11 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
     const [c1, c2] = [await connect(database), await connect(database)];
     await c1.query('BEGIN');
     await stay(c1, PROP_B, '2027-01-10', '2027-01-12');
-    const c2Claim = stay(c2, PROP_B, '2027-01-11', '2027-01-13'); // autocommit, waits for c1
+    const c2Claim: Promise<DbError | null> = stay(c2, PROP_B, '2027-01-11', '2027-01-13') // autocommit, waits for c1
+      .then(() => null, (e: DbError) => e);
     await new Promise(resolve => setTimeout(resolve, 200));
     await c1.query('ROLLBACK');
-    await expect(c2Claim).resolves.toBeTruthy();
+    expect(await c2Claim).toBeNull();
     const held = await q(`SELECT check_in::text FROM public.reservations WHERE property_id = $1 AND check_in >= '2027-01-01'`, [PROP_B]);
     expect(held.rows).toEqual([{ check_in: '2027-01-11' }]);
   });
@@ -181,7 +186,9 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
     const lost = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     expect(won).toHaveLength(1);
     expect(lost).toHaveLength(7);
-    for (const l of lost) expect((l.reason as DbError).code).toBe('23P01');
+    // A loser is refused (23P01) or, when two losers wait on each other, aborted as a deadlock (40P01).
+    // Either way it holds no nights; the exactly-one-stay count below is the claim.
+    for (const l of lost) expect(['23P01', '40P01']).toContain((l.reason as DbError).code);
     const n = await q(`SELECT count(*)::int AS n FROM public.reservations WHERE property_id = $1`, [PROP]);
     expect(n.rows[0].n).toBe(1);
   }, 30_000); // opening 8 connections can be slow on a busy CI runner
@@ -264,7 +271,7 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
       await db.end();
       await control.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
     }
-  });
+  }, 30_000); // creates and drops its own database
 
   it('A3: fails closed when a constraint with this name exists with a different definition', async () => {
     const name = `${database}_drift`;
@@ -279,7 +286,7 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
       await db.end();
       await control.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
     }
-  });
+  }, 30_000); // creates and drops its own database
 
   it('A3: fails closed when btree_gist is missing', async () => {
     const name = `${database}_nogist`;
@@ -293,5 +300,5 @@ suite('M522 property stays never share a night (real PostgreSQL)', () => {
       await db.end();
       await control.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
     }
-  });
+  }, 30_000); // creates and drops its own database
 });

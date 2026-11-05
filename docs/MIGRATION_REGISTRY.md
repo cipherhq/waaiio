@@ -246,7 +246,7 @@ M494 `business_status_step_up` reserved by Codex on `codex/admin-merchant-save-t
 | 517 | form_sends (#591 scheduled form sends) | claude/forms-send-m517 | claude | 2026-11-05 |
 | 518 | scheduling_price_authority_core (#602, PR #806) | codex/604-scheduling-price-authority-core | claude | 2026-11-05 |
 | 521 | payout_covered_range (#796, Owner decision 2026-11-05 Option A) | claude/m521-payout-covered-range | claude | 2026-11-05 |
-| 522 | property_stay_no_overlap (#922, from #921 item 3) | claude/property-stay-atomic-claim | claude | 2026-11-05 |
+| 522 | property_stay_no_overlap (#922, from #921 item 3; PR #924) | claude/m522-property-stay-no-overlap | claude | 2026-11-05 |
 
 ### Stranded Reservations (PR #21)
 
