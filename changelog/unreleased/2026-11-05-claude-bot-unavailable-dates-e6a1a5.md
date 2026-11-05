@@ -1,0 +1,21 @@
+## 2026-11-05 — Bot never offers or accepts a date or time that is already taken (#919)
+
+**What changed** (`lib/bot/flows/scheduling.flow.ts`, shared by scheduling, appointment and table reservation)
+- **One availability rule** (new `lib/bot/flows/shared/slot-availability.ts`). A start time is open when it passes the time list's existing rule (a booking blocks the start times inside its length, up to the capacity) **and** the booking function's rule: `book_slot_atomic` (M477) — exact-time capacity, and with a service buffer no overlapping booking at another time; `book_table_atomic` (M510) — no overlap on the table, including a booking from the night before. It only removes times; nothing the list hid before is shown.
+- **Time list** (`select_time.prompt`) builds its times through the new `candidateTimes()` / `openTimesForDate()` (the slot code moved there unchanged) and that rule. Times the booking function would refuse (e.g. 09:00 for a 60-min service with a 15-min buffer before a 10:00 booking; 18:30 before a 19:00 table reservation) are no longer shown.
+- **Typed or tapped time** (`select_time.validate`): must be one of the open times (with or without the morning/afternoon/evening preference). Before, only bookings at that exact minute were checked, so "10:30" next to a 60-min 10:00 booking, or "3am", was accepted. New message for a time that is not a list time: "That time isn't available. Please pick a time from the list." Booked: `booking.time_taken` / the table message, as before.
+- **Pre-filled time** (`select_time.skipIf`): a booked or non-list time now shows the time list (it was skipped).
+- **Date list, tapped / typed date** (`collectOpenDates`, #916): a date is shown only when the time list would have a time on it. Before, the day count used `_service_duration`, a key that is never set, so every service was counted in 30-min slots: a 60-min service with every hour booked still showed the day. When the staff member is still to be chosen after the date (service requires staff, none chosen yet) the old per-day count is kept, because capacity is then per staff member.
+- **Pre-filled date** (`select_date.skipIf`): a fully booked pre-filled date now shows the date list (bookings were not checked).
+- **Taken at the last moment** (`create_booking`): when `book_slot_atomic`, `book_table_atomic` or the package claim refuses the time, the customer gets "Sorry, this time slot just got booked. Please choose another time." (existing `booking.time_taken`, all locales) and the open times on that date again (or "fully booked" with "Pick another date"). A new time goes back to the summary to confirm, then straight to booking; name, referral and email are not asked again. Before: "Send *Hi* to pick a different time" and the next reply ended the flow. After 3 refusals in one session the old message is kept (no loop). Classes keep their own full/waitlist messages.
+- New session keys `_slot_taken_return`, `_slot_taken_count`; cleared on a capability switch (`lib/bot/flows/shared/capability-transition.ts`).
+
+**Unchanged**: `book_slot_atomic` / `book_table_atomic` (the authority), classes, drop-off services, property reservations (`reservation.flow.ts`), payments and price authority, #916 paging and typed dates, quick date buttons, waitlist. No migration.
+
+**Tests**: `lib/__tests__/bot-unavailable-dates-919.test.ts` (the rule; real `select_date` / `select_time` / `confirmation` / `create_booking` steps with a frozen clock; the real `FlowExecutor` for a refused claim). Source-text checks in `p1-staff-booking-authority.test.ts` (21) and `table-reservation-730.test.ts` (2) now point at the moved code.
+
+**What could break**
+- Fewer times can be shown: with a buffer, times whose length runs into a later booking; for tables, times that run into a later reservation or follow one from the night before.
+- A typed time between list times (e.g. 10:15 on an hourly list) is now refused.
+- A day can disappear from the date list sooner (it is judged by the real time list). Days for services whose staff member is chosen after the date are judged as before.
+- The time step and a pre-filled date now read the staff schedule / bookings once more; the date list judges each day without extra queries.

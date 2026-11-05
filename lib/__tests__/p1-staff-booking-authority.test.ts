@@ -178,9 +178,15 @@ describe('P1-STAFF-1: source verification', () => {
       schedulingFlow.indexOf("id: 'select_time'"),
       schedulingFlow.indexOf("id: 'select_addons'"),
     );
-    expect(timeSection).toContain('getStaffDaySchedule');
-    expect(timeSection).toContain('staffOpen');
-    expect(timeSection).toContain('staffClose');
+    // #919: select_time builds its list through openTimesForDate → candidateTimes
+    expect(timeSection).toContain('openTimesForDate(ctx, dateStr');
+    const candidateSection = schedulingFlow.slice(
+      schedulingFlow.indexOf('function candidateTimes('),
+      schedulingFlow.indexOf('interface OpenTimesInputs'),
+    );
+    expect(candidateSection).toContain('getStaffDaySchedule');
+    expect(candidateSection).toContain('staffOpen');
+    expect(candidateSection).toContain('staffClose');
   });
 
   // ── Manual booking validation ──
@@ -289,7 +295,7 @@ describe('P1-STAFF-1: source verification', () => {
 
   // ── Bot slot duration vs staff end ──
   it('40. bot filters slots where duration extends past staff end', () => {
-    expect(schedulingFlow).toContain('staffDayForDuration');
+    expect(schedulingFlow).toContain('staffSchedule && serviceDuration && staffDay?.end');
     expect(schedulingFlow).toContain('slotStart + serviceDuration <= staffEndMin');
   });
 

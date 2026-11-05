@@ -57,6 +57,9 @@ const SHARED_SELECTION_KEYS = [
   'date',
   'time',
   'party_size',
+  // Time taken at the final claim (#919): back-to-time-list markers
+  '_slot_taken_return',
+  '_slot_taken_count',
 ] as const;
 
 /**
