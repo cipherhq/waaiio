@@ -57,6 +57,134 @@
       "grantee": "postgres",
       "grantor": "postgres",
       "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "195d24479058cc30d628eeaada10853c523fdb39bc3a4d1a63dd163180d80cfd",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "ed74837cb12c09d64f781880234dbd2ba627d1b3c9f06dcea6f840c25b149696",
+   "identity": "function:private.scheduling_604_booking_promo_transition()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p jsonb, p_mode text DEFAULT 'customer'::text, p_enrollment uuid DEFAULT NULL::uuid",
+    "body_sha256": "0435f8a4a6112469137f5791606ef92cddb6c4fa07cc6e6c560478ac28c05f8f",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f8626c615527e5ca755fb01b92686929d9dfc15e30e127bb57b54dee145d77f6",
+   "identity": "function:private.scheduling_604_create_booking(p jsonb, p_mode text, p_enrollment uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_booking_id uuid, p_payment_id uuid",
+    "body_sha256": "1225fd5b06a65033c4567d5ecc2d0bc5a5677896e723f2e04a3008dffc8ba9d3",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "fd3609055dd55809784b546d30e52c4a68b519fccf2f71e2376281355c62f8e4",
+   "identity": "function:private.scheduling_604_finalize_booking_promo(p_booking_id uuid, p_payment_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business uuid, p_service uuid, p_appointment uuid, p_party integer, p_addons jsonb, p_promo uuid, p_expected jsonb",
+    "body_sha256": "92975f3d7a7408734d23c252c15d613e5601ad32a7d2dc56545032bd741d6b78",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "0f8d99694745fd485d6d927fed0904727790f9f3963e3bd3eb62ff0f914589c1",
+   "identity": "function:private.scheduling_604_quote(p_business uuid, p_service uuid, p_appointment uuid, p_party integer, p_addons jsonb, p_promo uuid, p_expected jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
      },
      {
       "grantable": false,
@@ -66,7 +194,7 @@
      }
     ],
     "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount integer, p_staff_name text, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_appointment_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_terms jsonb DEFAULT NULL::jsonb",
-    "body_sha256": "b3d6022720dae269845c8a4903c4784987a2c6f698de2d951e2ce8873b32629d",
+    "body_sha256": "241d648fef79d29592b8f6b4266b2e53762002f525f10596e0e18780cfcbf631",
     "config": [
      "search_path=public, extensions"
     ],
@@ -80,7 +208,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "febdcd3edc32306a11a3f4aa8333aff15d8ca1e9ab4ea4ca1df74d719ef56b91",
+   "after_sha256": "048fe17cd5693882a1b01b839d40e6e9b4572c198d82399e1e7adf4889873195",
    "identity": "function:public.book_manual_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount integer, p_staff_name text, p_buffer_minutes integer, p_duration integer, p_appointment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
    "operation": "add"
   },
@@ -101,7 +229,7 @@
      }
     ],
     "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_price integer DEFAULT NULL::integer, p_expected_deposit integer DEFAULT NULL::integer, p_expected_terms jsonb DEFAULT NULL::jsonb",
-    "body_sha256": "a90d385c155503f095c8a9f21ce7a392e74b65ce92d14f6871ef90750d1fcea6",
+    "body_sha256": "78036213f4ee7a304c519a460b08be8b067462bc8bf6a98a045947f043a9cddb",
     "config": [
      "search_path=public, extensions"
     ],
@@ -115,7 +243,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "b69ca9f0e8c4e6b7a149bb86ede47ca2f2a360865776d2148535f62adc6410c3",
+   "after_sha256": "d44042c6bb1c4404b1533017ab76e518e3574ab0b48578a8c9ec92878380e62e",
    "identity": "function:public.book_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer, p_expected_terms jsonb)",
    "operation": "add"
   },
@@ -136,7 +264,7 @@
      }
     ],
     "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_enrollment_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_terms jsonb DEFAULT NULL::jsonb",
-    "body_sha256": "c12ab1a7e1561e21d7a02239909cd69b59b8a720ab0f1ddefc2561d87d86abb8",
+    "body_sha256": "e8dcc91cc488555eb290edc872c59dfd650e018dee29d5224a38e52a3f8537c8",
     "config": [
      "search_path=public, extensions"
     ],
@@ -150,7 +278,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "22db527fd2081f6245c5aad35549a3d33dab761f92b0d226674c5f6ac82fffaa",
+   "after_sha256": "3f96f059e92d08e1f3ac15031c72ee6dbf43500deefdde9f74254460f9ddb5a4",
    "identity": "function:public.book_with_package_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_enrollment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
    "operation": "add"
   },
@@ -171,7 +299,7 @@
      }
     ],
     "arguments": "p_booking_id uuid, p_payment_id uuid",
-    "body_sha256": "a068aa2abd77cb45375fbdaccaaa95a831bdc37f91efb2f18eeeb30808222e0b",
+    "body_sha256": "ae5915cc8ad38ec17a6e1383b1342e2a096fad8dd2dac8b0dc579226fb289194",
     "config": [
      "search_path=public, extensions"
     ],
@@ -185,7 +313,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "fba15da311f30fc93114cd07cf67e69a68db7084765767fc01ecf3d66d0d7d97",
+   "after_sha256": "d09f7f5f997314c4316f88efb88bc709e5006f389853ea83c0d6e2ae1551ef50",
    "identity": "function:public.finalize_booking_promo_reservation(p_booking_id uuid, p_payment_id uuid)",
    "operation": "add"
   },
@@ -204,16 +332,16 @@
   },
   {
    "after": {
-    "definition": "CREATE TRIGGER booking_promo_transition_604 AFTER UPDATE OF status, deposit_status ON bookings FOR EACH ROW EXECUTE FUNCTION scheduling_private_604.booking_promo_transition()",
+    "definition": "CREATE TRIGGER booking_promo_transition_604 AFTER UPDATE OF status, deposit_status ON bookings FOR EACH ROW EXECUTE FUNCTION private.scheduling_604_booking_promo_transition()",
     "enabled": "O"
    },
-   "after_sha256": "7a4585b966c07167baf64cb79db954028421726c60f5e4fe34c12221b2d96fce",
+   "after_sha256": "08911528a5241b259f00a2a8a383d3d86b041504ae6aee496a0b58d13b1a3161",
    "identity": "trigger:public.bookings.booking_promo_transition_604",
    "operation": "add"
   }
  ],
  "migration": "518_scheduling_price_authority_core.sql",
- "migration_sha256": "d3340d41b79a59b29580c7c2a1f42141213f0832be3c62a9f47865234436401d",
+ "migration_sha256": "47ecdfbc6991c71b6a799a2204c9b190f93704ae380a0f7fb38f1d87206dab3a",
  "postgres_major": 17,
  "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
  "schema_version": 1
