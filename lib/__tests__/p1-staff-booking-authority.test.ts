@@ -203,7 +203,7 @@ describe('P1-STAFF-1: source verification', () => {
     expect(manualRoute).toContain('requires_staff');
     expect(manualRoute).toContain('This service requires a staff member to be assigned');
     // requires_staff is included in the item SELECT, not a separate query
-    expect(manualRoute).toContain("'name, price, duration_minutes, max_capacity, buffer_minutes, requires_staff'");
+    expect(manualRoute).toContain("'name, price, deposit_amount, duration_minutes, max_capacity, buffer_minutes, requires_staff'");
   });
 
   it('25. manual route no direct INSERT into bookings', () => {
@@ -240,7 +240,7 @@ describe('P1-STAFF-1: source verification', () => {
   });
 
   it('32. MK-3: manual route still calls book_manual_slot_atomic', () => {
-    expect(manualRoute).toContain("rpc('book_manual_slot_atomic'");
+    expect(manualRoute).toContain("rpc('book_manual_slot_authoritative_604'");
   });
 
   it('33. CONFLICT-1: public slot route still uses cross-service capacity', () => {

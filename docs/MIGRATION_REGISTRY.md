@@ -42,12 +42,13 @@ Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan 
 |---------|------|--------|-------|
 | 499 | `merchant_notifications` | Superseded by 511 (PR #813) | Verified multi-recipient enrollment and durable merchant alert dispatch. |
 | 498 | `manual_settlement_rejection_guard` | Reserved; source only, not applied | Locks and rejects already-approved manual payouts before rejection or adjustment release. Requires M440/M444 final state. |
-| 497 | `scheduling_price_authority_core` | Reserved by PR #806 | Separate work; reservation preserved. |
+| 518 | `scheduling_price_authority_core` | Reserved by PR #806 | Separate work; renumbered from 497 (2026-11-05). |
 
 ## Current State
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
+| 518 | `scheduling_price_authority_core` | RESERVED — NOT APPLIED | #806 (issue #602) | Core price authority; configurable modes excluded. Owner: codex/604-scheduling-price-authority-core. Renumbered from 497 to 518 on 2026-11-05 (497 is below the Release V3 lock at 508; 511–513 are #813's). Supersedes the stale M495 coordination allocation; preserves occupied M495/M496. |
 | 496 | `channel_number_continuity` | SOURCE ONLY — NOT APPLIED | #799 | Channel number continuity & recovery: merchant_step_up_authorizations, channel_change_approvals (two-admin), channel_transition_audit (append-only), atomic promotion/disconnect/execution wrappers, admin step-up CHECK extension. Disposable PG only. |
 | 495 | `embedded_signup_sessions` | MERGED — rollout not verified here | #805 | Embedded Signup session binding; preserved when renumbering continuity to M496. |
 | 490 | `party_reminder_delivery` | SOURCE ONLY — NOT APPLIED | #762 / #785 | Party reminder dispatch records and service-only inbound transport receipts; requires whatsapp_channels; disposable PG only. |
@@ -243,6 +244,7 @@ M494 `business_status_step_up` reserved by Codex on `codex/admin-merchant-save-t
 | 515 | profile_consent_preferences (#878 Bug 2) | claude/profile-consent-515 | claude | 2026-11-04 |
 | 516 | seating_resource_gallery (#892) | claude/seating-section-photos | claude | 2026-11-05 |
 | 517 | form_sends (#591 scheduled form sends) | claude/forms-send-m517 | claude | 2026-11-05 |
+| 518 | scheduling_price_authority_core (#602, PR #806) | codex/604-scheduling-price-authority-core | claude | 2026-11-05 |
 | 521 | payout_covered_range (#796, Owner decision 2026-11-05 Option A) | claude/m521-payout-covered-range | claude | 2026-11-05 |
 
 ### Stranded Reservations (PR #21)

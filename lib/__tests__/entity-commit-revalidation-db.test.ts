@@ -1241,7 +1241,11 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       try {
         // ── Step 1: Apply 001-382 (skip 383) ──
         const files = fs.readdirSync(migDir)
-          .filter((f: string) => f.endsWith('.sql') && !f.startsWith('383'))
+          .filter((f: string) => {
+            const prefix = f.match(/^(\d+)/);
+            const migrationNumber = prefix ? Number(prefix[1]) : NaN;
+            return f.endsWith('.sql') && migrationNumber >= 1 && migrationNumber < 383;
+          })
           .sort();
         for (const f of files) {
           execSync(`psql "${r90url}" -q -v ON_ERROR_STOP=1 -f "${pathMod.join(migDir, f)}"`, {

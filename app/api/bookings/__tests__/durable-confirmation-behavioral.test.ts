@@ -185,7 +185,7 @@ function setupDefaultMocks() {
 
   // Default RPC handler
   mockRpc.mockImplementation((name: string) => {
-    if (name === 'book_manual_slot_atomic') {
+    if (name === 'book_manual_slot_authoritative_604') {
       return { single: vi.fn().mockResolvedValue({ data: { booking_id: BOOKING_ID, reference_code: 'REF123', slot_available: true }, error: null }) };
     }
     if (name === 'claim_booking_confirmation') {
@@ -225,7 +225,7 @@ describe('#244 create-manual route — durable confirmation', () => {
 
   it('booking succeeds even when claim RPC fails', async () => {
     mockRpc.mockImplementation((name: string) => {
-      if (name === 'book_manual_slot_atomic') {
+      if (name === 'book_manual_slot_authoritative_604') {
         return { single: vi.fn().mockResolvedValue({ data: { booking_id: BOOKING_ID, reference_code: 'REF123', slot_available: true }, error: null }) };
       }
       if (name === 'claim_booking_confirmation') {
@@ -277,7 +277,7 @@ describe('#244 create-manual route — durable confirmation', () => {
     const callOrder: string[] = [];
     mockRpc.mockImplementation((name: string) => {
       callOrder.push(name);
-      if (name === 'book_manual_slot_atomic') {
+      if (name === 'book_manual_slot_authoritative_604') {
         return { single: vi.fn().mockResolvedValue({ data: { booking_id: BOOKING_ID, reference_code: 'REF123', slot_available: true }, error: null }) };
       }
       if (name === 'claim_booking_confirmation') {
@@ -299,7 +299,7 @@ describe('#244 create-manual route — durable confirmation', () => {
     const data = await response.json();
 
     expect(data.success).toBe(true);
-    expect(callOrder).toContain('book_manual_slot_atomic');
+    expect(callOrder).toContain('book_manual_slot_authoritative_604');
     expect(callOrder).toContain('claim_booking_confirmation');
     expect(callOrder).toContain('mark_booking_confirmation_dispatched');
     expect(callOrder).toContain('record_booking_confirmation_outcome');
