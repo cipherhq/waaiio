@@ -196,7 +196,20 @@ suite('#878 dashboard uploads under the real business-documents policies', () =>
   }, 60_000);
 
   afterAll(async () => {
-    await h.pool?.end();
+    // pool.end() resolves before the pooled sockets have closed. If the forced
+    // DROP below reaches one of those backends first, Postgres sends it FATAL
+    // 57P01 and the pool re-emits that as an uncaught error. So wait until
+    // every pooled connection has actually closed before dropping.
+    if (h.pool) {
+      const pool = h.pool;
+      let open = pool.totalCount;
+      const allClosed = new Promise<void>(resolve => {
+        if (open === 0) resolve();
+        pool.on('remove', () => { if (--open === 0) resolve(); });
+      });
+      await pool.end();
+      await allClosed;
+    }
     await control?.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     await control?.end();
   });
