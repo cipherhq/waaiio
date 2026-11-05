@@ -115,6 +115,37 @@ describe('Forms send panel', () => {
     expect(await screen.findByText(/Skipped — Has not opted in to updates/)).toBeTruthy();
   });
 
+  it('schedules for later, shows the summary, and lets the owner cancel a scheduled send', async () => {
+    const sends = [
+      { id: 's1', status: 'scheduled', scheduled_at: '2026-12-01T09:00:00.000Z', sent_count: 0, failed_count: 0, skipped_count: 0, error_message: null },
+      { id: 's0', status: 'sent', scheduled_at: '2026-11-01T09:00:00.000Z', sent_count: 1, failed_count: 0, skipped_count: 1, error_message: null,
+        results: [{ phone: '+2348031111111', status: 'sent', via: 'template' }, { phone: '+2348032222222', status: 'skipped', reason: 'opted_out' }] },
+    ];
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/forms/recipients')) return json({ contacts: [{ phone: '+2348031111111', name: 'Ada' }], truncated: false });
+      if (url.startsWith('/api/forms/sends') && init?.method === 'DELETE') return json({ cancelled: true });
+      if (url.startsWith('/api/forms/sends')) return json({ sends });
+      if (url === '/api/forms/send') return json({ scheduled: true, id: 's1', scheduledAt: '2026-12-01T09:00:00.000Z', recipients: 1, skipped: 0, results: [] });
+      return json({}, 404);
+    });
+    render(<FormSendPanel businessId="biz-a" formId="form-a" onClose={() => {}} />);
+    fireEvent.click(await screen.findByText(/Select all \(1\)/));
+    fireEvent.click(screen.getByLabelText('Later'));
+    expect((screen.getByRole('button', { name: 'Schedule' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Send at'), { target: { value: '2026-12-01T10:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(await screen.findByText(/Scheduled for .*: 1 person · Skipped 0/)).toBeTruthy();
+    const body = JSON.parse(fetchMock.mock.calls.find(c => c[0] === '/api/forms/send')![1].body);
+    expect(body.scheduledAt).toBe(new Date('2026-12-01T10:00').toISOString());
+    // Past sends say who was not sent and why.
+    fireEvent.click(await screen.findByText('Who wasn’t sent'));
+    expect(screen.getByText(/\+2348032222222: Opted out of messages/)).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(c => c[1]?.method === 'DELETE')).toBe(true));
+    const del = fetchMock.mock.calls.find(c => c[1]?.method === 'DELETE')!;
+    expect(JSON.parse(del[1].body)).toEqual({ id: 's1', businessId: 'biz-a' });
+  });
+
   it('shows that no audiences are available when the account cannot read them', async () => {
     route({});
     render(<FormSendPanel businessId="biz-a" formId="form-a" onClose={() => {}} />);

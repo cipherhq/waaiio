@@ -31,7 +31,7 @@ export const MAX_TYPED_ENTRIES = 500;
 /** Stop starting new recipients after this long, well inside the 60s function limit. */
 export const SEND_TIME_BUDGET_MS = 40_000;
 
-export type SkipReason = 'invalid_phone' | 'opted_out' | 'no_consent' | 'check_failed' | 'not_attempted';
+export type SkipReason = 'invalid_phone' | 'opted_out' | 'no_consent' | 'check_failed' | 'not_attempted' | 'stopped';
 export type FailReason = 'no_template' | 'provider_error' | 'blocked';
 export type RecipientOutcome =
   | { phone: string; status: 'sent'; via: 'text' | 'template' }
@@ -47,6 +47,7 @@ export const SKIP_REASON_TEXT: Record<SkipReason | FailReason, string> = {
   no_consent: 'Has not opted in to updates',
   check_failed: 'Consent could not be checked',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
+  stopped: 'Not sent: the send stopped early',
   no_template: 'Outside the 24-hour window and no approved template',
   provider_error: 'WhatsApp did not confirm it accepted the message',
   blocked: 'Sending is paused for this account',
@@ -127,11 +128,13 @@ const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
  * is missing or unsuitable; throws TemplateLookupUnavailableError when WhatsApp
  * could not be asked, so callers never mistake an outage for a bad template.
  */
-export async function loadInviteTemplate(resolved: ResolvedChannel, name: string | null | undefined): Promise<InviteTemplate | null> {
+export async function loadInviteTemplate(resolved: ResolvedChannel, name: string | null | undefined, deadline?: number): Promise<InviteTemplate | null> {
   if (!name || !TEMPLATE_NAME.test(name) || !resolved.cloud || !resolved.sender.sendTemplate) return null;
   try {
     let after: string | undefined;
     for (let page = 0; page < 10; page++) {
+      // Paging must not eat the whole time budget; out of time counts as "could not check".
+      if (deadline !== undefined && Date.now() >= deadline) throw new Error('Template lookup ran out of time');
       const result = await resolved.cloud.getTemplates({ limit: 100, after });
       const t = result.data.find(x => x.name === name && x.language === 'en_US');
       if (t) return isInviteCompatible(t) ? { name, category: t.category === 'UTILITY' ? 'utility' : 'marketing' } : null;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { isInviteCompatible, type InviteTemplateShape } from '@/lib/forms/invite-template';
 
 /** Server cap per send (lib/forms/form-send.ts MAX_RECIPIENTS_PER_SEND). */
@@ -19,12 +19,28 @@ const REASON_TEXT: Record<string, string> = {
   no_consent: 'Has not opted in to updates',
   check_failed: 'Consent could not be checked',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
+  stopped: 'Not sent: the send stopped early',
   no_template: 'Hasn’t messaged you in 24 hours and no template was chosen',
   provider_error: 'WhatsApp did not confirm it accepted the message',
   blocked: 'Sending is paused for this account',
 };
 
 type Mode = 'contacts' | 'audience' | 'numbers';
+
+/** Earliest pickable time (2 minutes from now), in the datetime-local format. */
+function localMin(): string {
+  const d = new Date(Date.now() + 2 * 60_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+type SendRow = {
+  id: string; status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled'; scheduled_at: string;
+  sent_count: number; failed_count: number; skipped_count: number; error_message: string | null;
+  results?: Result[] | null;
+};
+const STATUS_TEXT: Record<SendRow['status'], string> = {
+  scheduled: 'Scheduled', sending: 'Sending', sent: 'Sent', failed: 'Not sent', cancelled: 'Cancelled',
+};
 
 /**
  * Send one form on WhatsApp. Only opted-in people receive it; everyone else is
@@ -44,6 +60,24 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState<{ sent: number; failed: number; skipped: number; results: Result[] } | null>(null);
+  const [later, setLater] = useState(false);
+  const [when, setWhen] = useState('');
+  const [scheduled, setScheduled] = useState<{ at: string; recipients: number; skipped: number; results: Result[] } | null>(null);
+  const [history, setHistory] = useState<SendRow[]>([]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/forms/sends?businessId=${encodeURIComponent(businessId)}&formId=${encodeURIComponent(formId)}`, { cache: 'no-store' });
+      if (r.ok) setHistory((await r.json()).sends || []);
+    } catch { /* history is informational */ }
+  }, [businessId, formId]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  async function cancelSend(id: string) {
+    const r = await fetch('/api/forms/sends', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, businessId }) });
+    if (!r.ok) setError((await r.json().catch(() => ({}))).error || 'Could not cancel');
+    loadHistory();
+  }
 
   useEffect(() => {
     let live = true;
@@ -78,10 +112,14 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   const typedNumbers = numbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
   const count = mode === 'contacts' ? picked.size : mode === 'numbers' ? typedNumbers.length : 0;
   const tooMany = count > MAX_PER_SEND;
-  const canSend = !sending && !tooMany && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
+  const canSend = !sending && !tooMany && (!later || !!when) && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
 
   async function send() {
-    setSending(true); setError(''); setResults(null);
+    // Browsers without a date picker can produce text that is not a date.
+    const whenDate = later && when ? new Date(when) : null;
+    if (whenDate && Number.isNaN(whenDate.getTime())) { setError('Enter a valid date and time.'); return; }
+    const whenIso = whenDate ? whenDate.toISOString() : null;
+    setSending(true); setError(''); setResults(null); setScheduled(null);
     try {
       const res = await fetch('/api/forms/send', {
         method: 'POST',
@@ -92,6 +130,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
           ...(mode === 'numbers' ? { phones: typedNumbers } : {}),
           ...(mode === 'audience' ? { segmentId } : {}),
           ...(templateName ? { templateName } : {}),
+          ...(whenIso ? { scheduledAt: whenIso } : {}),
         }),
       });
       const data = await res.json().catch(() => null);
@@ -101,10 +140,12 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
       } else if (!res.ok) {
         setError(data.error || 'Could not send the form');
       } else {
-        setResults(data);
+        if (data.scheduled) setScheduled({ at: data.scheduledAt, recipients: data.recipients, skipped: data.skipped, results: data.results || [] });
+        else setResults(data);
         // Clear the selection so a second click cannot resend to the same people.
-        setPicked(new Set()); setNumbers(''); setSegmentId('');
+        setPicked(new Set()); setNumbers(''); setSegmentId(''); setWhen('');
       }
+      loadHistory();
     } catch {
       setError('We could not reach the server. Some messages may already have been sent, so check before sending again.');
     }
@@ -188,14 +229,46 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         <p className="mt-1 text-xs text-gray-400">WhatsApp needs an approved template to reach people who haven’t messaged you in the last 24 hours.</p>
       </div>
 
+      <fieldset className="space-y-1">
+        <legend className="mb-1 text-xs font-medium text-gray-700">When</legend>
+        <label className="mr-4 inline-flex items-center gap-1 text-xs text-gray-700">
+          <input type="radio" name={`when-${formId}`} checked={!later} onChange={() => setLater(false)} /> Now
+        </label>
+        <label className="inline-flex items-center gap-1 text-xs text-gray-700">
+          <input type="radio" name={`when-${formId}`} checked={later} onChange={() => setLater(true)} /> Later
+        </label>
+        {later && (
+          <div>
+            <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} aria-label="Send at" min={localMin()}
+              className="mt-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+            <p className="mt-1 text-xs text-gray-400">Uses your device’s time zone. Usually goes out within a few minutes of this time; busy times can take longer. Opt-ins are checked again when it sends.</p>
+          </div>
+        )}
+      </fieldset>
+
       {tooMany && <p role="alert" className="text-xs text-red-600">You can send to at most {MAX_PER_SEND} people at a time. You picked {count}.</p>}
 
       {error && <p role="alert" className="rounded bg-red-50 p-2 text-xs text-red-700">{error}</p>}
 
       <button type="button" onClick={send} disabled={!canSend}
         className="rounded-lg bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50">
-        {sending ? 'Sending…' : 'Send now'}
+        {sending ? 'Working…' : later ? 'Schedule' : 'Send now'}
       </button>
+
+      {scheduled && (
+        <div role="status" className="rounded-lg border border-gray-200 bg-white p-3 text-xs">
+          <p className="font-medium text-gray-900">
+            Scheduled for {new Date(scheduled.at).toLocaleString()}: {scheduled.recipients} {scheduled.recipients === 1 ? 'person' : 'people'} · Skipped {scheduled.skipped}
+          </p>
+          {scheduled.results.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {scheduled.results.map(r => (
+                <li key={r.phone} className="text-gray-600">{r.phone}: Skipped — {'reason' in r ? REASON_TEXT[r.reason] || r.reason : ''}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {results && (
         <div role="status" className="rounded-lg border border-gray-200 bg-white p-3 text-xs">
@@ -211,6 +284,38 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
               ))}
             </ul>
           )}
+        </div>
+      )}
+      {history.length > 0 && (
+        <div>
+          <h5 className="mb-1 text-xs font-semibold text-gray-700">Sends</h5>
+          <ul className="divide-y divide-gray-100 rounded border border-gray-200 bg-white text-xs" aria-label="Sends">
+            {history.map(h => (
+              <li key={h.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                <span>
+                  <span className="font-medium text-gray-900">{STATUS_TEXT[h.status]}</span>{' '}
+                  <span className="text-gray-500">{new Date(h.scheduled_at).toLocaleString()}</span>
+                  {h.status !== 'scheduled' && (h.status !== 'cancelled' || h.sent_count > 0) && (
+                    <span className="text-gray-500"> · Sent {h.sent_count} · Failed {h.failed_count} · Skipped {h.skipped_count}</span>
+                  )}
+                  {h.error_message && <span className="block text-gray-400">{h.error_message}</span>}
+                  {(h.results || []).some(r => r.status !== 'sent') && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-gray-500">Who wasn’t sent</summary>
+                      <ul className="mt-1 space-y-0.5">
+                        {(h.results || []).filter(r => r.status !== 'sent').map(r => (
+                          <li key={r.phone} className="text-gray-500">{r.phone}: {'reason' in r ? REASON_TEXT[r.reason] || r.reason : ''}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </span>
+                {h.status === 'scheduled' && (
+                  <button type="button" onClick={() => cancelSend(h.id)} className="text-red-500 hover:text-red-700">Cancel</button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
