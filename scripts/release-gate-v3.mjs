@@ -142,8 +142,16 @@ export async function prepare({ env = process.env, control, now = Date.now(), fe
     if (!isAncestor(control, serving.sha, target)) fail(`Production ${kind} baseline is not an ancestor of the target`);
   }
   // Single-SHA provenance: both projects release from one baseline to one target.
-  if (production.merchant.serving.sha !== production.admin.serving.sha) fail('Merchant and admin baselines differ');
-  const baseline = production.merchant.serving.sha;
+  // The one exception is an Owner-approved lock re-certification after a partial
+  // deploy (docs: "Recovery"): then the release counts every change since the
+  // older baseline, so nothing either project lacks goes unreviewed.
+  const merchantSha = production.merchant.serving.sha, adminSha = production.admin.serving.sha;
+  let baseline = merchantSha;
+  if (merchantSha !== adminSha) {
+    if (certified.source !== 'lock') fail('Merchant and admin baselines differ');
+    if (isAncestor(control, adminSha, merchantSha)) baseline = adminSha;
+    else if (!isAncestor(control, merchantSha, adminSha)) fail('Merchant and admin baselines are not on one line of history');
+  }
   if (baseline === target) fail('Target is already in production');
 
   const changes = collectChanges(control, baseline, target);
@@ -226,7 +234,7 @@ async function loadApprovedPacket({ gh, env, control, fetchImpl, now }) {
 }
 
 // Production state before a mutation. `expected` holds the deployment hash each
-// project must serve and the admin production-target descriptor hash.
+// project must serve and the admin production-target descriptor hashes allowed.
 async function recheckProduction({ vercel, env, control, packet, lock, migrations, m430, expected, observe }) {
   const observation = observe('production', env);
   const admitted = admitDatabase({ observation, lock, migrations, lockMap: loadLockMap(lock.environments.production, pathToFileURL(`${control}/`)), m430 });
@@ -235,7 +243,7 @@ async function recheckProduction({ vercel, env, control, packet, lock, migration
   for (const kind of KINDS) {
     const observed = await observeProject(vercel, 'production', kind);
     if (hashId(observed.serving.id) !== expected[kind].serving) fail(`Production ${kind} serving deployment changed`);
-    if (kind === 'admin' && canonicalDigest(observed.target) !== expected.admin.target) fail('Admin production target changed');
+    if (kind === 'admin' && !expected.admin.targets.includes(canonicalDigest(observed.target))) fail('Admin production target changed');
     if (kind === 'merchant' && !expected.merchantDeployed) checkProductionConsistency(observed);
   }
   const holds = await Promise.all(KINDS.map(kind => observeHoldFlags(vercel, kind)));
@@ -286,7 +294,7 @@ export async function deploy({ env = process.env, control, sources, now = Date.n
   const stagingDb = admitDatabase({ observation: observe('staging', env), lock, migrations, lockMap: loadLockMap(lock.environments.staging, pathToFileURL(`${control}/`)), m430 });
   if (stagingDb.ledger.sha256 !== packet.database.staging.ledger.sha256 || stagingDb.catalog.sha256 !== packet.database.staging.catalog.sha256) fail('Staging database changed since the packet was approved');
 
-  const expected = { merchant: { serving: packet.baseline.merchant.deployment_sha256 }, admin: { serving: packet.baseline.admin.deployment_sha256, target: packet.admin_pin.descriptor_sha256 }, merchantDeployed: false };
+  const expected = { merchant: { serving: packet.baseline.merchant.deployment_sha256 }, admin: { serving: packet.baseline.admin.deployment_sha256, targets: [packet.admin_pin.descriptor_sha256] }, merchantDeployed: false };
   const context = { vercel, env, control, packet, lock, migrations, m430, expected, observe };
   const created = {};
   for (const kind of KINDS) {
@@ -307,8 +315,10 @@ export async function deploy({ env = process.env, control, sources, now = Date.n
       await waitForServing(vercel, 'merchant', deployment, fetchImpl, pause);
       expected.merchant.serving = hashId(deployment.id); expected.merchantDeployed = true;
     } else {
-      // The admin candidate is now the production target; nothing else changed.
-      expected.admin.target = canonicalDigest(deployment);
+      // `--skip-domain` does not move the admin project's production target
+      // (run 41937185420: it stayed on the approved pin). Accept exactly the
+      // approved pin or this new candidate; anything else is a change.
+      expected.admin.targets = [packet.admin_pin.descriptor_sha256, canonicalDigest(deployment)];
       await recheckProduction(context);
       // One alias assignment. No retry, including on an uncertain outcome.
       const assigned = await fetchImpl(`https://api.vercel.com/v2/deployments/${deployment.id}/aliases?teamId=${TEAM}`, {
