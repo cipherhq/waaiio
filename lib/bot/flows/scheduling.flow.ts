@@ -30,6 +30,7 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow, type BusinessLocalNow } from './shared/table-same-day';
 import { parseTypedDate, isCalendarDate } from './shared/typed-date';
+import { openTimesOnDate, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
 import { seatingGalleryMessages } from './table-reservation.flow';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
@@ -83,6 +84,293 @@ function getDatePrompt(category: string, lang?: string): string {
   }
 }
 
+type StaffSchedule = Record<string, { start?: string; end?: string }>;
+
+/**
+ * Bookings that can take this customer's times, from `fromDate` to `toDate`
+ * (#919): the chosen table's bookings, or else the non-table bookings (of the
+ * chosen staff member, when there is one). The same scope as the booking functions.
+ */
+async function fetchSlotBookings(ctx: FlowContext, fromDate: string, toDate: string, limit?: number): Promise<SlotBookingRow[]> {
+  const d = ctx.session.session_data;
+  const seatingResourceId = d.seating_resource_id as string | null;
+  const staffId = d.staff_id as string | null;
+  let bookingsQuery = ctx.supabase
+    .from('bookings')
+    .select('date, time, staff_id, metadata, services(duration_minutes, buffer_minutes)')
+    .eq('business_id', ctx.business!.id);
+  bookingsQuery = fromDate === toDate
+    ? bookingsQuery.eq('date', fromDate)
+    : bookingsQuery.gte('date', fromDate).lte('date', toDate);
+  bookingsQuery = bookingsQuery.in('status', ['confirmed', 'pending', 'in_progress']);
+  if (d._is_table_reservation === true && seatingResourceId) {
+    // Table reservations: filter by specific resource to show resource-level availability
+    bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId);
+  } else {
+    // Non-table bookings: exclude table reservations from capacity count (M477)
+    bookingsQuery = bookingsQuery.is('seating_resource_id', null);
+    if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+  }
+  const { data } = limit ? await bookingsQuery.limit(limit) : await bookingsQuery;
+  return (data || []) as unknown as SlotBookingRow[];
+}
+
+/** The chosen staff member's weekly schedule, or null (none chosen or none set). */
+async function loadStaffSchedule(ctx: FlowContext): Promise<StaffSchedule | null> {
+  const staffId = ctx.session.session_data.staff_id as string | null;
+  if (!staffId) return null;
+  const { data: staffRow } = await ctx.supabase
+    .from('business_staff')
+    .select('schedule')
+    .eq('id', staffId)
+    .maybeSingle();
+  return (staffRow?.schedule as StaffSchedule | null) || null;
+}
+
+/**
+ * Start times the time list offers on a date before bookings are counted:
+ * service, staff and business hours, slot interval, the customer's
+ * morning/afternoon/evening preference, the booking length within staff or
+ * table closing time, and (tables, today) only times after now.
+ * `extraTime`: a typed or pre-filled time between list times, added when it
+ * falls inside the opening hours, then judged by the same filters (#919).
+ */
+function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffSchedule | null, localNow: BusinessLocalNow | null, pref?: string, extraTime?: string): string[] {
+  const d = ctx.session.session_data;
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayIdx = new Date(dateStr + 'T00:00').getDay();
+  const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
+  const dayHours = opHours[dayNames[dayIdx]];
+
+  const serviceFrom = d._service_available_from as string | null;
+  const serviceTo = d._service_available_to as string | null;
+  let openTime = serviceFrom || (dayHours && !dayHours.closed && dayHours.open ? dayHours.open : '08:00');
+  let closeTime = serviceTo || (dayHours && !dayHours.closed && dayHours.close ? dayHours.close : '22:00');
+
+  // Narrow time window by staff schedule when a staff member is assigned
+  const staffDay = staffSchedule ? getStaffDaySchedule(staffSchedule, dayIdx) : undefined;
+  if (staffDay?.start) {
+    // Use the more restrictive of business/service vs staff hours
+    const staffOpen = staffDay.start;
+    const staffClose = staffDay.end || '23:59';
+    if (timeToMinutes(staffOpen) > timeToMinutes(openTime)) openTime = staffOpen;
+    if (timeToMinutes(staffClose) < timeToMinutes(closeTime)) closeTime = staffClose;
+  }
+
+  // Use service duration or business metadata for slot interval (default 60)
+  const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+  const serviceDuration = d.service_duration as number | undefined;
+  const slotInterval = (meta.slot_interval_minutes as number) || serviceDuration || 60;
+
+  // Opening and closing at the same time means open 24 hours, as book_table_atomic
+  // reads business hours (M510); generateTimeSlots alone returns no times for it.
+  const openMin = timeToMinutes(openTime);
+  const allDay = openMin === timeToMinutes(closeTime);
+  const lastMinute = (openMin + 24 * 60 - 1) % (24 * 60);
+  const listClose = allDay
+    ? `${String(Math.floor(lastMinute / 60)).padStart(2, '0')}:${String(lastMinute % 60).padStart(2, '0')}`
+    : closeTime;
+  let slots = generateTimeSlots(openTime, listClose, slotInterval);
+
+  // Filter by time preference if smart intent set one
+  if (pref === 'morning') {
+    slots = generateTimeSlots(openTime, '12:00', slotInterval);
+  } else if (pref === 'afternoon') {
+    slots = generateTimeSlots('12:00', '17:00', slotInterval);
+  } else if (pref === 'evening') {
+    slots = generateTimeSlots('17:00', closeTime, slotInterval);
+  }
+
+  if (extraTime && !slots.includes(extraTime)) {
+    // Inside [open, close), the same window generateTimeSlots uses (close after midnight too)
+    const t = timeToMinutes(extraTime);
+    const closeMin = timeToMinutes(closeTime);
+    const inside = allDay || (closeMin > openMin ? t >= openMin && t < closeMin : t >= openMin || t < closeMin);
+    if (inside) slots = [...slots, extraTime];
+  }
+
+  // Filter slots where booking duration would extend past staff end
+  if (staffSchedule && serviceDuration && staffDay?.end) {
+    const staffEndMin = timeToMinutes(staffDay.end);
+    slots = slots.filter(slot => {
+      const slotStart = timeToMinutes(slot);
+      return slotStart + serviceDuration <= staffEndMin;
+    });
+  }
+
+  // Filter table-reservation slots where reservation end exceeds closing time
+  const isTableRes = d._is_table_reservation === true;
+  if (isTableRes && serviceDuration) {
+    const seatingTo = d._seating_available_to as string | null;
+    let closeMin = timeToMinutes(seatingTo || closeTime);
+    // Business hours that close at or after midnight run into the next day, as
+    // book_table_atomic reads them (M510). A table's own closing time is
+    // compared as it is, like book_table_atomic does.
+    const overnight = !seatingTo && closeMin <= openMin;
+    if (overnight) closeMin += 24 * 60;
+    slots = slots.filter(slot => {
+      let start = timeToMinutes(slot);
+      if (overnight && start < openMin) start += 24 * 60;
+      return start + serviceDuration <= closeMin;
+    });
+  }
+
+  // Same-day tables: only times after the current time in the business timezone
+  if (isTableRes && localNow && dateStr === localNow.date) slots = filterSlotsAfterNow(slots, localNow.minutes);
+  return slots;
+}
+
+interface OpenTimesInputs {
+  pref?: string;
+  /** A typed or pre-filled time to judge as well (candidateTimes). */
+  extraTime?: string;
+  /** Bookings around the date (prefetched by the date list). */
+  rows?: SlotBookingRow[];
+  staffSchedule?: StaffSchedule | null;
+  localNow?: BusinessLocalNow | null;
+}
+
+/** Bookings needed to judge one date: that date, and the dates either side for tables (M510). */
+function slotBookingRange(ctx: FlowContext, dateStr: string): [string, string] {
+  return ctx.session.session_data._is_table_reservation === true
+    ? [addDaysToDateStr(dateStr, -1), addDaysToDateStr(dateStr, 1)]
+    : [dateStr, dateStr];
+}
+
+/** Times that can be booked on a date (#919): the time list's rules and the booking function's. */
+async function openTimesForDate(ctx: FlowContext, dateStr: string, inputs: OpenTimesInputs = {}): Promise<OpenTime[]> {
+  const d = ctx.session.session_data;
+  const isTableRes = d._is_table_reservation === true;
+  const staffSchedule = inputs.staffSchedule !== undefined ? inputs.staffSchedule : await loadStaffSchedule(ctx);
+  const localNow = inputs.localNow !== undefined ? inputs.localNow : (isTableRes ? await resolveBusinessLocalNow(ctx) : null);
+  const rows = inputs.rows ?? await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
+  const slots = candidateTimes(ctx, dateStr, staffSchedule, localNow, inputs.pref, inputs.extraTime);
+  return openTimesOnDate(slots, rows, {
+    date: dateStr,
+    isTable: isTableRes,
+    maxCapacity: (d._service_max_capacity as number) || 1,
+    fallbackDuration: (d.service_duration as number) || 30,
+    // The lengths and buffer create_booking sends to book_table_atomic / book_slot_atomic
+    candidateDuration: isTableRes ? ((d._seating_duration as number) || 90) : ((d.service_duration as number) || 30),
+    bufferMinutes: isTableRes ? 0 : ((d._service_buffer_minutes as number) || 0),
+  });
+}
+
+/**
+ * Whether `time` (HH:MM) can be booked on `dateStr` (#919): 'open' when the
+ * time list's rules and the booking function's allow it (a list time, or a
+ * time between list times inside the hours; with or without the customer's
+ * time preference), 'taken' when it is inside the hours but booked,
+ * 'not_offered' otherwise (outside the hours).
+ */
+async function checkTimeOpen(ctx: FlowContext, dateStr: string, time: string): Promise<'open' | 'taken' | 'not_offered'> {
+  const isTableRes = ctx.session.session_data._is_table_reservation === true;
+  const pref = ctx.session.session_data._time_preference as string | undefined;
+  const staffSchedule = await loadStaffSchedule(ctx);
+  const localNow = isTableRes ? await resolveBusinessLocalNow(ctx) : null;
+  const rows = await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
+  const runs: OpenTimesInputs[] = [{ extraTime: time }, ...(pref ? [{ pref }] : [])];
+  for (const run of runs) {
+    const open = await openTimesForDate(ctx, dateStr, { ...run, rows, staffSchedule, localNow });
+    if (open.some(s => s.time === time)) return 'open';
+  }
+  const offered = runs.some(run => candidateTimes(ctx, dateStr, staffSchedule, localNow, run.pref, run.extraTime).includes(time));
+  return offered ? 'taken' : 'not_offered';
+}
+
+/**
+ * The date list's exact "fully booked" check applies (#919) when no staff
+ * member is chosen after the date: tables, and services without staff. Else
+ * capacity is per staff member and select_staff runs again after every date
+ * (a staff_id already in the session is not final), so the old per-day count
+ * is kept and the time list judges the day.
+ */
+function usesExactDateCheck(ctx: FlowContext): boolean {
+  const d = ctx.session.session_data;
+  return d._is_table_reservation === true || d._service_requires_staff === false;
+}
+
+/**
+ * Whether a date still has a time to offer (#919). `rows` are the bookings on
+ * and around the date (slotBookingRange); `staffSchedule` is used by the exact check.
+ */
+async function dateHasRoom(ctx: FlowContext, dateStr: string, rows: SlotBookingRow[], staffSchedule: StaffSchedule | null, localNow: BusinessLocalNow | null): Promise<boolean> {
+  if (usesExactDateCheck(ctx)) {
+    return (await openTimesForDate(ctx, dateStr, { rows, staffSchedule, localNow })).length > 0;
+  }
+  // Staff still to be chosen: count available slots vs bookings (unchanged)
+  const d = ctx.session.session_data;
+  const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+  const maxCapacity = (d._service_max_capacity as number) || 1;
+  const durationMin = (d._service_duration as number) || 30;
+  const slotInterval = (meta.slot_interval_minutes as number) || durationMin;
+  const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
+  const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(dateStr + 'T00:00').getDay()];
+  const openTime = opHours[dayOfWeek]?.open || '08:00';
+  const closeTime = opHours[dayOfWeek]?.close || '18:00';
+  // Handle midnight-crossing hours (e.g., 22:00-06:00)
+  const openMin = timeToMinutes(openTime);
+  let closeMin = timeToMinutes(closeTime);
+  if (closeMin <= openMin) closeMin += 24 * 60;
+  const totalSlots = Math.max(1, Math.floor(
+    (closeMin - openMin) / slotInterval
+  ));
+  const bookedCount = rows.filter(r => r.date === dateStr).length;
+  const maxBookingsForDate = totalSlots * maxCapacity;
+  return bookedCount < maxBookingsForDate;
+}
+
+/** Times a final claim may be refused in one session before the old "Send Hi" message (no loop). */
+const MAX_SLOT_TAKEN_RETRIES = 2;
+
+/**
+ * create_booking was reached while a new time is still to be picked and
+ * confirmed after a taken one (#919), e.g. by "back" from the re-shown summary
+ * or after "Change date". Never claim then: show the time list again (or the
+ * date list when the date was cleared); nextAfterPrompt waits there.
+ */
+async function reshowPickerAfterTakenTime(ctx: FlowContext): Promise<PromptMessage[]> {
+  const stepId = ctx.session.session_data.date ? 'select_time' : 'select_date';
+  const step = schedulingFlow.steps.find(s => s.id === stepId);
+  const messages = step ? await step.prompt(ctx) : [];
+  // The time list is the last message; table photos before it were already seen
+  return stepId === 'select_time' ? messages.slice(-1) : messages;
+}
+
+/**
+ * A reply that reaches create_booking while that picker is showing ("back"
+ * keeps current_step on create_booking; the executor's BACK handler does not
+ * apply nextAfterPrompt): it is the customer's tap on the time (or date)
+ * list, so that step validates it and decides the next step (#919).
+ */
+function pickerAfterTakenTime(ctx: FlowContext) {
+  const stepId = ctx.session.session_data.date ? 'select_time' : 'select_date';
+  return { stepId, step: schedulingFlow.steps.find(s => s.id === stepId) };
+}
+
+/**
+ * The time was taken after the customer picked it (#919): say so and send the
+ * open times on the same date again (or "fully booked" with "Pick another
+ * date"). After a new time, select_time goes back to the summary to confirm.
+ * Null when it does not apply (drop-off, or refused too often); the caller then
+ * keeps its old message.
+ */
+async function backToTimeList(ctx: FlowContext): Promise<PromptMessage[] | null> {
+  const d = ctx.session.session_data;
+  if ((d._service_metadata as Record<string, unknown> | undefined)?.is_dropoff) return null;
+  const refusals = ((d._slot_taken_count as number) || 0) + 1;
+  d._slot_taken_count = refusals;
+  if (refusals > MAX_SLOT_TAKEN_RETRIES) return null;
+  const timeStep = schedulingFlow.steps.find(s => s.id === 'select_time');
+  if (!timeStep) return null;
+  // The taken time stays until a new one is picked, so "back" still shows a whole summary
+  d._slot_taken_return = true;
+  const timeMessages = await timeStep.prompt(ctx);
+  // The last message is the time list; table photos before it were already seen
+  const timeList = timeMessages[timeMessages.length - 1];
+  return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.time_taken') }, ...(timeList ? [timeList] : [])];
+}
+
 /** WhatsApp lists hold at most 10 rows. */
 const DATE_LIST_MAX_ROWS = 10;
 
@@ -93,6 +381,11 @@ type DateRow = { title: string; postbackText: string };
  * the check on a typed date both use it: the service's available days, closed
  * days, today for tables (a slot must be left), and fully booked days.
  * Bookings for the whole window are read in one query, as before.
+ *
+ * Fully booked (#919): a date is kept only when the time list would show a
+ * time on it (openTimesForDate). While the staff member is still to be chosen
+ * after the date, the old per-day count is kept: capacity is then per staff
+ * member, and the time list judges it once one is chosen.
  */
 async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNow | null): Promise<DateRow[]> {
   const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -101,11 +394,7 @@ async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNo
   const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const dates: DateRow[] = [];
 
-  const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
   const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
-  const staffId = ctx.session.session_data.staff_id as string | null;
-  const durationMin = (ctx.session.session_data._service_duration as number) || 30;
-  const slotInterval = (meta.slot_interval_minutes as number) || durationMin;
 
   const isTableRes = ctx.session.session_data._is_table_reservation === true;
   const dateSeatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
@@ -118,32 +407,17 @@ async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNo
   futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
   const futureDateStr = tableLocalNow ? addDaysToDateStr(tableLocalNow.date, maxAdvanceDays) : futureDate.toISOString().split('T')[0];
 
-  let bookingsQuery = ctx.supabase
-    .from('bookings')
-    .select('date, time')
-    .eq('business_id', ctx.business!.id)
-    .in('status', ['confirmed', 'pending', 'in_progress'])
-    .gte('date', todayStr)
-    .lte('date', futureDateStr);
+  // Table reservations: scope to selected resource so other tables don't block dates.
+  // Tables also read the day before: a late booking can run past midnight (M510).
+  const fetchFrom = isTableRes && dateSeatingResourceId ? addDaysToDateStr(todayStr, -1) : todayStr;
+  const allBookings = await fetchSlotBookings(ctx, fetchFrom, futureDateStr, 2000);
 
-  // Table reservations: scope to selected resource so other tables don't block dates
-  if (isTableRes && dateSeatingResourceId) {
-    bookingsQuery = bookingsQuery.eq('seating_resource_id', dateSeatingResourceId);
-  } else {
-    // Non-table bookings: exclude table reservations from capacity count
-    bookingsQuery = bookingsQuery.is('seating_resource_id', null);
-    if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+  // Bookings per date
+  const rowsByDate = new Map<string, SlotBookingRow[]>();
+  for (const b of allBookings) {
+    if (b.date) rowsByDate.set(b.date, [...(rowsByDate.get(b.date) || []), b]);
   }
-  const { data: allBookings } = await bookingsQuery.limit(2000);
-
-  // Count bookings per date+time
-  const bookingsByDate = new Map<string, number>();
-  for (const b of allBookings || []) {
-    if (b.date) {
-      const key = b.date;
-      bookingsByDate.set(key, (bookingsByDate.get(key) || 0) + 1);
-    }
-  }
+  const staffSchedule = usesExactDateCheck(ctx) ? await loadStaffSchedule(ctx) : null;
 
   // Scan up to maxAdvanceDays. The list pages through the result (#916).
   // Tables with a known timezone start at today (i = 0), in local calendar days.
@@ -171,19 +445,11 @@ async function collectOpenDates(ctx: FlowContext, tableLocalNow: BusinessLocalNo
       if (!(await hasTableSlotLeftToday(ctx, tableLocalNow))) continue;
     }
 
-    // Filter fully-booked dates: count available slots vs bookings
-    const openTime = opHours[dayOfWeek]?.open || '08:00';
-    const closeTime = opHours[dayOfWeek]?.close || '18:00';
-    // Handle midnight-crossing hours (e.g., 22:00-06:00)
-    let openMin = timeToMinutes(openTime);
-    let closeMin = timeToMinutes(closeTime);
-    if (closeMin <= openMin) closeMin += 24 * 60;
-    const totalSlots = Math.max(1, Math.floor(
-      (closeMin - openMin) / slotInterval
-    ));
-    const bookedCount = bookingsByDate.get(dateStr) || 0;
-    const maxBookingsForDate = totalSlots * maxCapacity;
-    if (bookedCount >= maxBookingsForDate) continue; // fully booked
+    // Filter fully-booked dates: no time left that the time list would show (#919)
+    const [from, to] = slotBookingRange(ctx, dateStr);
+    const days = from === to ? [dateStr] : [from, dateStr, to];
+    const rows = days.flatMap(day => rowsByDate.get(day) || []);
+    if (!(await dateHasRoom(ctx, dateStr, rows, staffSchedule, tableLocalNow))) continue;
 
     dates.push({ title: labelFormat.format(d), postbackText: dateStr });
   }
@@ -1019,6 +1285,18 @@ export const schedulingFlow: FlowDefinition = {
         const availDays = (ctx.session.session_data._service_available_days as string[]) || [];
         if (availDays.length > 0 && !availDays.includes(dayName)) { delete ctx.session.session_data.date; return false; }
 
+        // Not fully booked: the date list's check (#919)
+        const isTableSkip = ctx.session.session_data._is_table_reservation === true;
+        if (!isTableSkip || ctx.session.session_data.seating_resource_id) {
+          const rows = await fetchSlotBookings(ctx, ...slotBookingRange(ctx, preDate));
+          const staffSchedule = usesExactDateCheck(ctx) ? await loadStaffSchedule(ctx) : null;
+          const localNow = isTableSkip ? await resolveBusinessLocalNow(ctx) : null;
+          if (!(await dateHasRoom(ctx, preDate, rows, staffSchedule, localNow))) {
+            delete ctx.session.session_data.date;
+            return false;
+          }
+        }
+
         return true;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
@@ -1369,150 +1647,22 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
+        // Booked, or not a time the list offers: show the time list instead (#919)
+        if (await checkTimeOpen(ctx, dateStr, preTime.slice(0, 5)) !== 'open') {
+          delete ctx.session.session_data.time;
+          return false;
+        }
+
         return true;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const dateStr = ctx.session.session_data.date as string;
         const dateLabel = new Date(dateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'short' });
 
-        // Read hours: service-level override > staff schedule > business operating hours
-        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-        const selectedDay = dayNames[new Date(dateStr + 'T00:00').getDay()];
-        const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
-        const dayHours = opHours[selectedDay];
-
-        const serviceFrom = ctx.session.session_data._service_available_from as string | null;
-        const serviceTo = ctx.session.session_data._service_available_to as string | null;
-
-        let openTime = serviceFrom || (dayHours && !dayHours.closed && dayHours.open ? dayHours.open : '08:00');
-        let closeTime = serviceTo || (dayHours && !dayHours.closed && dayHours.close ? dayHours.close : '22:00');
-
-        // Narrow time window by staff schedule when a staff member is assigned
-        const assignedStaffId = ctx.session.session_data.staff_id as string | null;
-        let staffScheduleForSlots: Record<string, { start?: string; end?: string }> | null = null;
-        if (assignedStaffId) {
-          const { data: staffRow } = await ctx.supabase
-            .from('business_staff')
-            .select('schedule')
-            .eq('id', assignedStaffId)
-            .maybeSingle();
-          if (staffRow?.schedule) {
-            staffScheduleForSlots = staffRow.schedule as Record<string, { start?: string; end?: string }>;
-            const dayIdx = new Date(dateStr + 'T00:00').getDay();
-            const staffDay = getStaffDaySchedule(staffScheduleForSlots, dayIdx);
-            if (staffDay?.start) {
-              // Use the more restrictive of business/service vs staff hours
-              const staffOpen = staffDay.start;
-              const staffClose = staffDay.end || '23:59';
-              if (timeToMinutes(staffOpen) > timeToMinutes(openTime)) openTime = staffOpen;
-              if (timeToMinutes(staffClose) < timeToMinutes(closeTime)) closeTime = staffClose;
-            }
-          }
-        }
-
-        // Use service duration or business metadata for slot interval (default 60)
-        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        const serviceDuration = ctx.session.session_data.service_duration as number | undefined;
-        const slotInterval = (meta.slot_interval_minutes as number) || serviceDuration || 60;
-
-        let allSlots = generateTimeSlots(openTime, closeTime, slotInterval);
-
-        // Filter by time preference if smart intent set one
+        // Open times: the time list's rules and the booking function's (#919)
         const pref = ctx.session.session_data._time_preference as string | undefined;
-        if (pref === 'morning') {
-          allSlots = generateTimeSlots(openTime, '12:00', slotInterval);
-        } else if (pref === 'afternoon') {
-          allSlots = generateTimeSlots('12:00', '17:00', slotInterval);
-        } else if (pref === 'evening') {
-          allSlots = generateTimeSlots('17:00', closeTime, slotInterval);
-        }
-
-        // Filter slots where booking duration would extend past staff end
-        if (assignedStaffId && staffScheduleForSlots && serviceDuration) {
-          const dayIdx = new Date(dateStr + 'T00:00').getDay();
-          const staffDayForDuration = getStaffDaySchedule(staffScheduleForSlots, dayIdx);
-          if (staffDayForDuration?.end) {
-            const staffEndMin = timeToMinutes(staffDayForDuration.end);
-            allSlots = allSlots.filter(slot => {
-              const slotStart = timeToMinutes(slot);
-              return slotStart + serviceDuration <= staffEndMin;
-            });
-          }
-        }
-
-        // Filter table-reservation slots where reservation end exceeds closing time
-        const isTableResPrompt = ctx.session.session_data._is_table_reservation === true;
-        if (isTableResPrompt && serviceDuration) {
-          const tableCloseTo = ctx.session.session_data._seating_available_to as string | null;
-          const effectiveClose = tableCloseTo || closeTime;
-          const closeMin = timeToMinutes(effectiveClose);
-          allSlots = allSlots.filter(slot => {
-            const slotStart = timeToMinutes(slot);
-            return slotStart + serviceDuration <= closeMin;
-          });
-        }
-
-        // Same-day tables: only times after the current time in the business timezone
-        if (isTableResPrompt) {
-          const local = await resolveBusinessLocalNow(ctx);
-          if (local && dateStr === local.date) allSlots = filterSlotsAfterNow(allSlots, local.minutes);
-        }
-
-        // ── Availability check: remove fully booked slots ──
-        const staffId = ctx.session.session_data.staff_id as string | null;
         const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
-
-        // Fetch existing bookings for this date (include duration + buffer for overlap detection)
-        const isTableRes = ctx.session.session_data._is_table_reservation === true;
-        const seatingResourceId = ctx.session.session_data.seating_resource_id as string | null;
-        let bookingsQuery = ctx.supabase
-          .from('bookings')
-          .select('time, staff_id, metadata, services(duration_minutes, buffer_minutes)')
-          .eq('business_id', ctx.business!.id)
-          .eq('date', dateStr)
-          .in('status', ['confirmed', 'pending', 'in_progress']);
-
-        if (isTableRes && seatingResourceId) {
-          // Table reservations: filter by specific resource to show resource-level availability
-          bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId);
-        } else {
-          // Non-table bookings: exclude table reservations from capacity count
-          bookingsQuery = bookingsQuery.is('seating_resource_id', null);
-          if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
-        }
-
-        const { data: existingBookings } = await bookingsQuery;
-
-        // Count bookings per time slot — accounting for service duration + buffer overlap
-        // A 60-min booking with 10-min buffer at 8:00 blocks 8:00, 8:30, 9:00 (70 min total)
-        const slotCounts = new Map<string, number>();
-        for (const b of existingBookings || []) {
-          if (b.time) {
-            const bookingStart = timeToMinutes(b.time.slice(0, 5));
-            const svc = b.services as unknown as { duration_minutes?: number; buffer_minutes?: number } | null;
-            const bMeta = b.metadata as Record<string, unknown> | null;
-            const fallbackDuration = (ctx.session.session_data.service_duration as number) || 30;
-            // Table reservations store duration in metadata; services use service.duration_minutes
-            const bookingDuration = (bMeta?.duration_minutes as number) || (svc?.duration_minutes || fallbackDuration) + (svc?.buffer_minutes || 0);
-
-            // Block all slots that overlap with this booking's time range (duration + buffer)
-            for (const slot of allSlots) {
-              const slotStart = timeToMinutes(slot);
-              if (slotStart >= bookingStart && slotStart < bookingStart + bookingDuration) {
-                slotCounts.set(slot, (slotCounts.get(slot) || 0) + 1);
-              }
-            }
-          }
-        }
-
-        // Filter out fully booked slots and add availability info
-        const availableSlots = allSlots
-          .map(t => {
-            const booked = slotCounts.get(t) || 0;
-            const remaining = maxCapacity - booked;
-            return { time: t, remaining };
-          })
-          .filter(s => s.remaining > 0);
+        const availableSlots = await openTimesForDate(ctx, dateStr, { pref });
 
         if (availableSlots.length === 0) {
           // All slots fully booked — show buttons to pick new date or cancel
@@ -1611,52 +1761,22 @@ export const schedulingFlow: FlowDefinition = {
           if (local && dateStr === local.date && timeToMinutes(input) <= local.minutes) {
             return { valid: false, errorMessage: 'That time has already passed today. Pick a later time.' };
           }
+        }
 
-          // Table reservations: duration-aware overlap check against SAME resource
-          // (authoritative concurrency is in book_table_atomic; this is UX-level)
-          const resDuration = (ctx.session.session_data._seating_duration as number) || 90;
-          const reqStartMin = timeToMinutes(input);
-          const reqEndMin = reqStartMin + resDuration;
-
-          const { data: existingRes } = await ctx.supabase
-            .from('bookings')
-            .select('time, metadata')
-            .eq('seating_resource_id', valSeatingResourceId)
-            .eq('date', dateStr)
-            .in('status', ['confirmed', 'pending', 'in_progress']);
-
-          const hasOverlap = (existingRes || []).some(b => {
-            if (!b.time) return false;
-            const bStartMin = timeToMinutes(b.time.slice(0, 5));
-            const bMeta = b.metadata as Record<string, unknown> | null;
-            const bDuration = (bMeta?.duration_minutes as number) || resDuration;
-            const bEndMin = bStartMin + bDuration;
-            return reqStartMin < bEndMin && reqEndMin > bStartMin;
-          });
-
-          if (hasOverlap) {
-            return { valid: false, errorMessage: 'That time is already reserved for this table. Try a different time.' };
-          }
-        } else {
-          // Standard service/appointment: exclude table reservations from capacity count
-          const staffId = ctx.session.session_data.staff_id as string | null;
-          const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
-
-          let checkQuery = ctx.supabase
-            .from('bookings')
-            .select('id', { count: 'exact', head: true })
-            .eq('business_id', ctx.business!.id)
-            .eq('date', dateStr)
-            .eq('time', input)
-            .in('status', ['confirmed', 'pending', 'in_progress'])
-            .is('seating_resource_id', null); // Exclude table reservations
-
-          if (staffId) checkQuery = checkQuery.eq('staff_id', staffId);
-
-          const { count } = await checkQuery;
-          if ((count || 0) >= maxCapacity) {
-            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.time_taken') };
-          }
+        // Only a time the list would offer now: open hours, not booked, and the
+        // booking function's overlap rules (#919). Authoritative concurrency stays
+        // in book_slot_atomic / book_table_atomic; this is UX-level.
+        const timeCheck = await checkTimeOpen(ctx, dateStr, input);
+        if (timeCheck === 'taken') {
+          return {
+            valid: false,
+            errorMessage: isTableRes && valSeatingResourceId
+              ? 'That time is already reserved for this table. Try a different time.'
+              : getFlowCopy(ctx.copyLang, 'booking.time_taken'),
+          };
+        }
+        if (timeCheck === 'not_offered') {
+          return { valid: false, errorMessage: "That time isn't available. Please pick a time from the list." };
         }
 
         ctx.intelligence.resetAbuse(ctx.from);
@@ -1666,6 +1786,7 @@ export const schedulingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         if (d._time_action === 'change_date') {
           delete d.date;
+          delete d.time; // a time kept after it was taken (#919) is not for the new date
           delete d._time_action;
           return 'select_date';
         }
@@ -1673,6 +1794,8 @@ export const schedulingFlow: FlowDefinition = {
           delete d._time_action;
           return null; // end session cleanly
         }
+        // New time after the last one was taken: show the summary again to confirm (#919)
+        if (d._slot_taken_return) return 'confirmation';
         return 'select_addons';
       },
     },
@@ -2615,7 +2738,12 @@ export const schedulingFlow: FlowDefinition = {
         return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._action === 'cancel') return 'select_capability';
+        const d = ctx.session.session_data;
+        const backFromTakenTime = d._slot_taken_return === true;
+        delete d._slot_taken_return;
+        if (d._action === 'cancel') return 'select_capability';
+        // New time after the last was taken (#919): name, referral and email were already given
+        if (backFromTakenTime) return 'create_booking';
         return 'collect_name';
       },
     },
@@ -2767,6 +2895,8 @@ export const schedulingFlow: FlowDefinition = {
       id: 'create_booking',
       nextAfterPrompt(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        // The time was just taken: the time (or date) list was sent, wait for a new pick (#919)
+        if (d._slot_taken_return) return d.date ? 'select_time' : 'select_date';
         // Saved-card offer presented (separate step handles the button taps)
         if (d._saved_method_id && !d._skip_saved_card && !d.payment_reference && !d.bank_transfer_reference) {
           return 'saved_card_prompt';
@@ -2780,6 +2910,9 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         clearTablePromoState(ctx);
+        // A new time after a taken one must be picked and confirmed first (#919).
+        // confirmation.next clears the flag; reaching here with it set (e.g. "back") never claims.
+        if (d._slot_taken_return) return await reshowPickerAfterTakenTime(ctx);
 
         // ── Reschedule existing booking via atomic RPC ──
         if (d._reschedule_booking_id) {
@@ -3104,6 +3237,8 @@ export const schedulingFlow: FlowDefinition = {
             }
 
             if (!tableResult.slot_available) {
+              const backToTimes = await backToTimeList(ctx);
+              if (backToTimes) return backToTimes;
               return [{ type: 'text', text: await ctx.t('Sorry, that table is already reserved for this time. Send *Hi* to pick a different time or table.') }];
             }
 
@@ -3150,6 +3285,8 @@ export const schedulingFlow: FlowDefinition = {
             if (pkgError || !pkgResult?.success) {
               const reason = pkgResult?.reason || 'unknown';
               if (reason === 'slot_full') {
+                const backToTimes = await backToTimeList(ctx);
+                if (backToTimes) return backToTimes;
                 return [{ type: 'text', text: await ctx.t('Sorry, that slot was just taken. Send *Hi* to pick a different time.') }];
               }
               logger.error('[SCHEDULING] Package booking failed', { op: 'package-booking', reason });
@@ -3253,12 +3390,16 @@ export const schedulingFlow: FlowDefinition = {
                   }
                   return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.class_full') }];
                 }
+                const backToTimes = await backToTimeList(ctx);
+                if (backToTimes) return backToTimes;
                 return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.slot_taken') }];
               }
 
               booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
             }
           }
+
+          delete d._slot_taken_count;
 
           // Save pre-booking question answers if any — MERGE into existing metadata
           // (table reservations store duration_minutes; must not be erased)
@@ -3753,6 +3894,13 @@ export const schedulingFlow: FlowDefinition = {
         return [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (ctx.session.session_data._slot_taken_return) {
+          const { stepId, step } = pickerAfterTakenTime(ctx);
+          if (step) {
+            const result = await step.validate(input, ctx);
+            return result.valid ? { ...result, data: { ...(result.data || {}), _slot_taken_picker: stepId } } : result;
+          }
+        }
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
@@ -3794,6 +3942,14 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        // "back" landed here while a new time is still to be picked (#919): the
+        // picker step validated the reply above and decides the next step
+        if (d._slot_taken_return) {
+          const pickerId = d._slot_taken_picker as string | undefined;
+          delete d._slot_taken_picker;
+          const step = pickerId ? schedulingFlow.steps.find(s => s.id === pickerId) : undefined;
+          return step ? step.next(ctx) : (d.date ? 'select_time' : 'select_date');
+        }
         // Cancelled booking — end flow
         if (d._action === 'cancel') return 'select_capability';
         // After accepting/cancelling terms via fallback T&C gate, re-enter to proceed.

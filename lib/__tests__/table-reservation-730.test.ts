@@ -572,10 +572,13 @@ describe('#730: Admin API and security', () => {
     const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
 
     // validate must scope to resource for table reservations
+    // (#919: through checkTimeOpen → fetchSlotBookings, the time list's own query)
     expect(code).toContain('valSeatingResourceId');
-    expect(code).toContain("eq('seating_resource_id', valSeatingResourceId)");
-    // Must use duration-aware overlap, not simple count
-    expect(code).toContain('reqStartMin < bEndMin && reqEndMin > bStartMin');
+    expect(code).toContain('checkTimeOpen(ctx, dateStr, input)');
+    expect(code).toContain("bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId)");
+    // Must use duration-aware overlap, not simple count (book_table_atomic's rule)
+    const shared = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/shared/slot-availability.ts'), 'utf-8');
+    expect(shared).toContain('s < b.start + length && s + o.candidateDuration > b.start');
   });
 
   it('clearStaleCapabilityState removes table state when switching away', async () => {
@@ -943,9 +946,11 @@ describe('#730: Admin API and security', () => {
     const code = fs.readFileSync(path.join(process.cwd(), 'lib/bot/flows/scheduling.flow.ts'), 'utf-8');
 
     // Must scope date availability to resource for table reservations
-    expect(code).toContain("eq('seating_resource_id', dateSeatingResourceId)");
+    // (#919: collectOpenDates reads bookings through fetchSlotBookings)
+    expect(code).toMatch(/async function collectOpenDates[\s\S]*?fetchSlotBookings\(ctx/);
+    expect(code).toContain("bookingsQuery = bookingsQuery.eq('seating_resource_id', seatingResourceId)");
     // Must check _is_table_reservation before applying staff filter
-    expect(code).toMatch(/isTableRes && dateSeatingResourceId[\s\S]*?eq\('seating_resource_id'/);
+    expect(code).toMatch(/_is_table_reservation === true && seatingResourceId[\s\S]*?eq\('seating_resource_id'/);
   });
 
   it('select_date.prompt: busy Table B does not hide free Table A dates', async () => {
