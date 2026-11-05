@@ -58,7 +58,12 @@ describe('Forms send panel', () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/forms/recipients')) return json({ contacts: [{ phone: '+2348031111111', name: 'Ada' }, { phone: '+2348032222222', name: null }], truncated: false });
       if (url.startsWith('/api/engage/segments')) return json({ error: 'Forbidden' }, 403);
-      if (url.startsWith('/api/whatsapp/templates')) return json({ data: [{ name: 'feedback_request', status: 'APPROVED', language: 'en_US', category: 'MARKETING' }, { name: 'draft_one', status: 'PENDING', language: 'en_US', category: 'MARKETING' }] });
+      if (url.startsWith('/api/whatsapp/templates')) return json({ data: [
+        { name: 'feedback_request', status: 'APPROVED', language: 'en_US', category: 'MARKETING', components: [{ type: 'BODY', text: '{{1}} would like your feedback! {{2}}' }] },
+        { name: 'draft_one', status: 'PENDING', language: 'en_US', category: 'MARKETING', components: [{ type: 'BODY', text: '{{1}} {{2}}' }] },
+        { name: 'three_slots', status: 'APPROVED', language: 'en_US', category: 'MARKETING', components: [{ type: 'BODY', text: '{{1}} {{2}} {{3}}' }] },
+        { name: 'login_code', status: 'APPROVED', language: 'en_US', category: 'AUTHENTICATION', components: [{ type: 'BODY', text: '{{1}} {{2}}' }] },
+      ] });
       return json(sendResponse);
     });
   }
@@ -71,15 +76,34 @@ describe('Forms send panel', () => {
     render(<FormSendPanel businessId="biz-a" formId="form-a" onClose={() => {}} />);
     fireEvent.click(await screen.findByText(/Select all \(2\)/));
     await screen.findByRole('option', { name: /feedback_request/ });
-    expect(screen.queryByRole('option', { name: /draft_one/ })).toBeNull();
+    for (const hidden of [/draft_one/, /three_slots/, /login_code/]) expect(screen.queryByRole('option', { name: hidden })).toBeNull();
     fireEvent.change(screen.getByLabelText('WhatsApp template'), { target: { value: 'feedback_request' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
     expect(await screen.findByText('Sent 1 · Failed 1 · Skipped 0')).toBeTruthy();
-    expect(screen.getByText(/WhatsApp did not accept the message/)).toBeTruthy();
+    expect(screen.getByText(/WhatsApp did not confirm it accepted the message/)).toBeTruthy();
     const sendCall = fetchMock.mock.calls.find(c => c[0] === '/api/forms/send')!;
     expect(JSON.parse(sendCall[1].body)).toEqual({
       formId: 'form-a', businessId: 'biz-a', phones: ['+2348031111111', '+2348032222222'], templateName: 'feedback_request',
     });
+    // The selection is cleared so a second click cannot resend to the same people.
+    expect((screen.getByRole('button', { name: 'Send now' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('blocks more than 100 people and warns when results cannot be read', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/forms/recipients')) return json({ contacts: [], truncated: false });
+      if (url === '/api/forms/send') return Promise.resolve(new Response('<html>timeout</html>', { status: 504 }));
+      return json({}, 404);
+    });
+    render(<FormSendPanel businessId="biz-a" formId="form-a" onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Type numbers' }));
+    const many = Array.from({ length: 101 }, (_, i) => `0803${String(i).padStart(7, '0')}`).join('\n');
+    fireEvent.change(screen.getByLabelText('Phone numbers'), { target: { value: many } });
+    expect(screen.getByText(/at most 100 people at a time. You picked 101/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Send now' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Phone numbers'), { target: { value: '08031111111' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/Some messages may already have been sent/)).toBeTruthy();
   });
 
   it('typed numbers go through the same consent checks and skip reasons are shown', async () => {

@@ -8,7 +8,7 @@ import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { validateAudienceExpression, type AudienceExpression } from '@/lib/engage/audience-dsl';
 import { resolveAudienceExpression, AudienceTooLargeError, AudienceCountUnavailableError, AudienceIncompleteError } from '@/lib/engage/audience-resolver';
 import {
-  MAX_RECIPIENTS_PER_SEND, classifyRecipient, loadInviteTemplate, normalizeRecipients, sendFormInvites, summarize,
+  MAX_RECIPIENTS_PER_SEND, MAX_TYPED_ENTRIES, TemplateLookupUnavailableError, classifyRecipient, loadInviteTemplate, normalizeRecipients, sendFormInvites, summarize,
   type RecipientOutcome,
 } from '@/lib/forms/form-send';
 
@@ -55,6 +55,9 @@ export async function POST(request: NextRequest) {
     ];
     if (typed.some(p => typeof p !== 'string')) {
       return NextResponse.json({ error: 'phones must be a list of phone numbers' }, { status: 400 });
+    }
+    if (typed.length > MAX_TYPED_ENTRIES) {
+      return NextResponse.json({ error: `You can send to at most ${MAX_RECIPIENTS_PER_SEND} people at a time.` }, { status: 400 });
     }
     if (segmentId !== undefined && (typeof segmentId !== 'string' || !UUID_RE.test(segmentId))) {
       return NextResponse.json({ error: 'Invalid audience' }, { status: 400 });
@@ -127,7 +130,14 @@ export async function POST(request: NextRequest) {
 
     let template = null;
     if (templateName) {
-      template = await loadInviteTemplate(resolved, templateName);
+      try {
+        template = await loadInviteTemplate(resolved, templateName);
+      } catch (err) {
+        if (err instanceof TemplateLookupUnavailableError) {
+          return NextResponse.json({ error: 'Could not check templates with WhatsApp right now. Nothing was sent. Please try again shortly.' }, { status: 503 });
+        }
+        throw err;
+      }
       if (!template) {
         return NextResponse.json({
           error: 'That template cannot carry a form link. Choose an approved template that takes the business name and one message line.',

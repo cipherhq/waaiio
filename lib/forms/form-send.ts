@@ -11,7 +11,9 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
-import type { MessageTemplate } from '@/lib/channels/meta-cloud';
+import { GateBlockError } from '@/lib/channels/attempt-recording';
+import { MessagingSuspendedError } from '@/lib/channels/send-guard';
+import { isInviteCompatible } from './invite-template';
 import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
 import { logger } from '@/lib/logger';
@@ -24,9 +26,13 @@ export const FORM_INVITE_PURPOSE = 'marketing' as const;
 
 /** Interim per-send cap (Owner decision pending on limits). */
 export const MAX_RECIPIENTS_PER_SEND = 100;
+/** Most typed entries one request may carry, valid or not. */
+export const MAX_TYPED_ENTRIES = 500;
+/** Stop starting new recipients after this long, well inside the 60s function limit. */
+export const SEND_TIME_BUDGET_MS = 40_000;
 
-export type SkipReason = 'invalid_phone' | 'opted_out' | 'no_consent' | 'check_failed';
-export type FailReason = 'no_template' | 'provider_error';
+export type SkipReason = 'invalid_phone' | 'opted_out' | 'no_consent' | 'check_failed' | 'not_attempted';
+export type FailReason = 'no_template' | 'provider_error' | 'blocked';
 export type RecipientOutcome =
   | { phone: string; status: 'sent'; via: 'text' | 'template' }
   | { phone: string; status: 'failed'; reason: FailReason }
@@ -40,9 +46,15 @@ export const SKIP_REASON_TEXT: Record<SkipReason | FailReason, string> = {
   opted_out: 'Opted out of messages',
   no_consent: 'Has not opted in to updates',
   check_failed: 'Consent could not be checked',
+  not_attempted: 'Not attempted: ran out of time. Send again to these people',
   no_template: 'Outside the 24-hour window and no approved template',
-  provider_error: 'WhatsApp did not accept the message',
+  provider_error: 'WhatsApp did not confirm it accepted the message',
+  blocked: 'Sending is paused for this account',
 };
+
+export class TemplateLookupUnavailableError extends Error {
+  constructor() { super('Templates could not be checked with WhatsApp right now.'); this.name = 'TemplateLookupUnavailableError'; }
+}
 
 export function formUrl(token: string): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
@@ -72,13 +84,13 @@ export function inviteTemplateParams(form: InviteForm, businessName: string): [s
 /** Normalize to E.164 with the business country, dropping duplicates. Invalid entries are kept as skips. */
 export function normalizeRecipients(raw: string[], countryCode: string): { phones: string[]; invalid: string[] } {
   const phones = new Set<string>();
-  const invalid: string[] = [];
+  const invalid = new Set<string>();
   for (const value of raw) {
     const e164 = typeof value === 'string' ? normalizeEngagePhone(value, countryCode) : null;
     if (e164) phones.add(e164);
-    else invalid.push(typeof value === 'string' ? value.slice(0, 30) : '');
+    else invalid.add(typeof value === 'string' ? value.slice(0, 30) : '');
   }
-  return { phones: Array.from(phones), invalid };
+  return { phones: Array.from(phones), invalid: Array.from(invalid) };
 }
 
 /** Opt-out first (for a precise reason), then the shared permission helper (which re-checks it). */
@@ -110,23 +122,11 @@ export async function hasServiceWindow(db: SupabaseClient, channelId: string | u
 
 const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
 
-/** A template works for form invites when its body takes exactly {{1}} and {{2}}. */
-export function isInviteCompatible(t: Pick<MessageTemplate, 'status' | 'category' | 'language' | 'components'>): boolean {
-  if (t.status !== 'APPROVED' || t.language !== 'en_US') return false;
-  if (t.category !== 'MARKETING' && t.category !== 'UTILITY') return false;
-  const body = t.components.find(c => c.type === 'BODY');
-  if (!body?.text) return false;
-  for (const c of t.components) {
-    if (c.type === 'BODY' || c.type === 'FOOTER') continue;
-    // A static text header is fine; anything that needs its own parameters is not.
-    if (c.type === 'HEADER' && c.format === 'TEXT' && !/\{\{/.test(c.text || '')) continue;
-    return false;
-  }
-  const slots = [...body.text.matchAll(/\{\{(\d+)\}\}/g)].map(m => m[1]);
-  return slots.length === 2 && slots[0] === '1' && slots[1] === '2';
-}
-
-/** Looks the template up on the WABA that will actually send. Unknown means unavailable. */
+/**
+ * Looks the template up on the WABA that will actually send. Returns null when it
+ * is missing or unsuitable; throws TemplateLookupUnavailableError when WhatsApp
+ * could not be asked, so callers never mistake an outage for a bad template.
+ */
 export async function loadInviteTemplate(resolved: ResolvedChannel, name: string | null | undefined): Promise<InviteTemplate | null> {
   if (!name || !TEMPLATE_NAME.test(name) || !resolved.cloud || !resolved.sender.sendTemplate) return null;
   try {
@@ -140,6 +140,7 @@ export async function loadInviteTemplate(resolved: ResolvedChannel, name: string
     }
   } catch (err) {
     logger.warn('[FORMS] Template lookup unavailable:', (err as Error).message);
+    throw new TemplateLookupUnavailableError();
   }
   return null;
 }
@@ -168,9 +169,11 @@ export async function deliverInvite(opts: {
     await logAttempt(db, businessId, phone, form, 'sent');
     return { phone, status: 'sent', via: inWindow ? 'text' : 'template' };
   } catch (err) {
+    // A gate or suspension block is not a WhatsApp rejection; say which it was.
+    const reason: FailReason = err instanceof GateBlockError || err instanceof MessagingSuspendedError ? 'blocked' : 'provider_error';
     logger.warn(`[FORMS] Invite not accepted for ...${to.slice(-4)}:`, (err as Error).message);
-    await logAttempt(db, businessId, phone, form, 'failed', SKIP_REASON_TEXT.provider_error);
-    return { phone, status: 'failed', reason: 'provider_error' };
+    await logAttempt(db, businessId, phone, form, 'failed', SKIP_REASON_TEXT[reason]);
+    return { phone, status: 'failed', reason };
   }
 }
 
@@ -185,13 +188,22 @@ async function logAttempt(db: SupabaseClient, businessId: string, phone: string,
   } catch { /* log only */ }
 }
 
-/** Classify then deliver every recipient, a few at a time. */
+/**
+ * Classify then deliver every recipient, a few at a time. Stops starting new
+ * recipients once the deadline passes, so a slow provider can never leave the
+ * merchant without results; those people are reported as not attempted.
+ */
 export async function sendFormInvites(opts: {
   db: SupabaseClient; resolved: ResolvedChannel; businessId: string; businessName: string;
-  form: InviteForm; template: InviteTemplate | null; phones: string[];
+  form: InviteForm; template: InviteTemplate | null; phones: string[]; deadline?: number;
 }): Promise<RecipientOutcome[]> {
+  const deadline = opts.deadline ?? Date.now() + SEND_TIME_BUDGET_MS;
   const outcomes: RecipientOutcome[] = [];
   for (let i = 0; i < opts.phones.length; i += 5) {
+    if (Date.now() >= deadline) {
+      for (const phone of opts.phones.slice(i)) outcomes.push({ phone, status: 'skipped', reason: 'not_attempted' });
+      break;
+    }
     const batch = await Promise.all(opts.phones.slice(i, i + 5).map(async (phone): Promise<RecipientOutcome> => {
       const skip = await classifyRecipient(opts.db, opts.businessId, phone);
       if (skip) return { phone, status: 'skipped', reason: skip };
