@@ -66,6 +66,20 @@ describe('generateReceiptPdf: Waaiio logo and business logo', () => {
     expect(imageCount(wl)).toBe(1); // business logo only
   });
 
+  it('a very long business name stays on one line, with or without a logo', async () => {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const longName = 'Redeemed Christian Assembly of the Living Waters International Lekki Phase One Lagos';
+    for (const logoUrl of [undefined, LOGO_URL]) {
+      const pdf = await pdfjs.getDocument({ data: new Uint8Array(await generateReceiptPdf({ ...BASE, businessName: longName, logoUrl })), verbosity: 0 }).promise;
+      expect(pdf.numPages).toBe(1);
+      const items = (await (await pdf.getPage(1)).getTextContent()).items as Array<{ str: string; transform: number[] }>;
+      const nameItems = items.filter(i => i.str.trim() && longName.includes(i.str.replace('…', '').trim()));
+      expect(nameItems.length).toBeGreaterThan(0);
+      expect(new Set(nameItems.map(i => Math.round(i.transform[5]))).size).toBe(1); // one line
+      expect(items.some(i => i.str.includes('…'))).toBe(true);
+    }
+  });
+
   it('logo URLs outside the business-documents bucket are never fetched', async () => {
     for (const url of ['http://169.254.169.254/latest/meta-data/', `${SUPABASE}/storage/v1/object/public/other/x.png`, 'https://example.com/logo.png']) {
       const pdf = await generateReceiptPdf({ ...BASE, logoUrl: url });

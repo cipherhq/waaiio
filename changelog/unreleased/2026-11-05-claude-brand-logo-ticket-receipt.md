@@ -36,6 +36,7 @@ This fixes receipt Bug D from #889 (WebP logos silently missing). Logos stored a
 - Red check: against `main`'s generators, 8 of these tests fail.
 
 **Could break:**
-- Every non-white-label ticket and receipt PDF gains one small image (about 10 KB).
+- Every non-white-label ticket and receipt PDF grows by about 18 KB: the 10.7 KB wordmark PNG becomes an image plus a transparency mask, embedded once per PDF.
+- On the receipt, the business name is now a single line; very long names (over about 55 characters) end in "…" instead of wrapping into the status badge (reviewers 901-a and 901-b, P2).
 - A receipt whose `logo_url` points outside the bucket no longer shows that logo.
 - The website's browser-tab and app icons (still the green bubble) are not changed here.

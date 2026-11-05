@@ -140,17 +140,19 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   doc.fontSize(11).font('Helvetica').fillColor(TEXT_SECONDARY);
   let nameDrawn = false;
   if (businessLogo) {
-    // Business's own logo, small, beside its name; the pair is centred.
+    // Business's own logo, small, beside its name; the pair is centred. One line only (long names
+    // end in "…"), kept inside the margins so it never runs into the status pill below.
     try {
       const size = 18;
       const nameW = Math.min(doc.widthOfString(data.businessName), contentWidth - size - 6);
-      const startX = (pageWidth - (size + 6 + nameW)) / 2;
+      const startX = Math.max(margin, (pageWidth - (size + 6 + nameW)) / 2);
+      const textX = startX + size + 6;
       doc.image(businessLogo, startX, headerY - 4, { fit: [size, size], align: 'center', valign: 'center' });
-      doc.text(data.businessName, startX + size + 6, headerY, { width: nameW + 1, lineBreak: false });
+      doc.text(data.businessName, textX, headerY, { width: pageWidth - margin - textX, height: 13, ellipsis: true });
       nameDrawn = true;
     } catch { /* name only */ }
   }
-  if (!nameDrawn) doc.text(data.businessName, margin, headerY, { width: contentWidth, align: 'center' });
+  if (!nameDrawn) doc.text(data.businessName, margin, headerY, { width: contentWidth, align: 'center', height: 13, ellipsis: true });
   headerY += 18;
 
   const sColor = statusColor(data.paymentStatus);
