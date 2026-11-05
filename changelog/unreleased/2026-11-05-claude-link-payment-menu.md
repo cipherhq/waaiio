@@ -14,5 +14,5 @@
 - **Affects:** every customer WhatsApp payment confirmation from Stage 3, and the completion of paid chat flows.
 - **Product note:** a customer whose "I've Paid" tap triggers the confirmation now sees the confirmation's menu (history, view options, directory) instead of the chat's menu, which also had "Book/Order/Give again".
 - **What could break:**
-  - Payments confirmed before this deploy have an accepted confirmation but no menu. A customer who taps "I've Paid" for one of those after the deploy gets no menu, and still has the text hints.
+  - Payments confirmed before this deploy got the confirmation text without a menu. A later "I've Paid" tap for one of them still gets the chat menu, because only a confirmation sent during that same tap counts.
   - If WhatsApp delivers the two messages out of order, the menu could appear above the confirmation.
