@@ -147,20 +147,36 @@ export type CoveredRangeResult =
   | { success: true; coveredFrom: string; coveredTo: string }
   | { success: false; error: string };
 
+/**
+ * How far back anchorCoveredRange looks for the business's last recorded payout:
+ * 53 weeks. A quiet stretch longer than that (no payout row for over a year)
+ * restarts at local Monday 00:00.
+ */
+export const PAYOUT_HISTORY_LOOKBACK_DAYS = 371;
+
+/**
+ * Rows a single payout-history read may return before it is treated as not
+ * reliably enumerable. PostgREST caps responses at 1000 rows (max_rows), so a
+ * full page may be silently truncated: callers fail closed at this size.
+ */
+export const PAYOUT_HISTORY_MAX_ROWS = 1000;
+
 /** Lower bound (DATE label) for the payout rows anchorCoveredRange needs to see. */
 export function recentPayoutRowsFrom(period: PayoutPeriod): string {
-  return shiftDateLabel(period.periodStart, -8);
+  return shiftDateLabel(period.periodStart, -PAYOUT_HISTORY_LOOKBACK_DAYS);
 }
 
 /**
  * Exact half-open UTC range of platform_fees.created_at a payout for `period`
- * may count, given the business's recent payout rows (period_end on or after
- * recentPayoutRowsFrom(period)). Owner decision 2026-11-05 (#796, Option A):
+ * may count, given the business's payout rows with period_end on or after
+ * recentPayoutRowsFrom(period). Owner decisions 2026-11-05 (#796, Option A, and
+ * "fix it in #796 now"):
  *   - a week that already has a payout row (another currency) reuses that range;
- *   - otherwise, when the immediately preceding week recorded where it ended
- *     (covered_to), the new range starts exactly there, so a timezone change
- *     can neither double-count nor skip fees between consecutive weeks;
- *   - otherwise it starts at local Monday 00:00 (period.queryStart).
+ *   - otherwise the range starts exactly at the latest recorded end (covered_to)
+ *     of any earlier week, so a timezone change can neither double-count nor skip
+ *     fees, and fees from weeks that made no payout (no sales, below the minimum,
+ *     accounting hold) roll into this one;
+ *   - with no recorded earlier payout, it starts at local Monday 00:00 (period.queryStart).
  * It always ends at the next local Monday 00:00 (period.queryEnd). Fails
  * closed when the range would be empty or overlap any other recorded payout.
  */
@@ -178,10 +194,9 @@ export function anchorCoveredRange(period: PayoutPeriod, rows: CoveredPayoutRow[
       return { success: false, error: `Payout rows for ${period.periodStart}..${period.periodEnd} record different ranges` };
     }
   } else {
-    const previousWeekEnd = shiftDateLabel(period.periodStart, -1);
-    const previous = others.filter(r => r.period_end === previousWeekEnd);
-    fromMs = previous.length > 0
-      ? Math.max(...previous.map(r => Date.parse(r.covered_to!)))
+    const earlier = others.filter(r => r.period_end < period.periodStart);
+    fromMs = earlier.length > 0
+      ? Math.max(...earlier.map(r => Date.parse(r.covered_to!)))
       : Date.parse(period.queryStart);
     toMs = Date.parse(period.queryEnd);
   }

@@ -313,8 +313,8 @@ describe('anchorCoveredRange', () => {
     ({ period_start: p.periodStart, period_end: p.periodEnd, covered_from: from, covered_to: to });
   const prevLabels = { periodStart: '2026-10-26', periodEnd: '2026-11-01' };
 
-  it('reads rows from 8 days before the week start', () => {
-    expect(recentPayoutRowsFrom(lagos)).toBe('2026-10-25');
+  it('reads payout history from 53 weeks before the week start', () => {
+    expect(recentPayoutRowsFrom(lagos)).toBe('2025-10-27');
   });
 
   it('with no earlier payouts, covers the local week exactly', () => {
@@ -343,6 +343,29 @@ describe('anchorCoveredRange', () => {
     expect(r).toEqual({ success: true, coveredFrom: '2026-11-01T10:00:00.000Z', coveredTo: lagos.queryEnd });
   });
 
+  it('after a week with no payout, starts at the last recorded end, so quiet weeks roll forward', () => {
+    // Paid through Lagos week 2026-10-19..25 (ended Sun 2026-10-25 23:00 UTC); week 10-26..11-01
+    // made no payout (e.g. below the minimum). This week's payout counts both weeks.
+    const r = anchorCoveredRange(lagos, [row({ periodStart: '2026-10-19', periodEnd: '2026-10-25' }, '2026-10-18T23:00:00.000Z', '2026-10-25T23:00:00.000Z')]);
+    expect(r).toEqual({ success: true, coveredFrom: '2026-10-25T23:00:00.000Z', coveredTo: lagos.queryEnd });
+  });
+
+  it('after a week with no payout and a move west, nothing is skipped (review r3/r4-796 P2-1)', () => {
+    // Paid through a Lagos week ending Sun 2026-10-25 23:00 UTC; quiet week; now America/Los_Angeles.
+    const la = week('2026-11-09T12:00:00Z', 'America/Los_Angeles');
+    const r = anchorCoveredRange(la, [row({ periodStart: '2026-10-19', periodEnd: '2026-10-25' }, '2026-10-18T23:00:00.000Z', '2026-10-25T23:00:00.000Z')]);
+    expect(r).toEqual({ success: true, coveredFrom: '2026-10-25T23:00:00.000Z', coveredTo: la.queryEnd });
+  });
+
+  it('uses the latest recorded end when there are several earlier payouts', () => {
+    const r = anchorCoveredRange(lagos, [
+      row({ periodStart: '2026-10-12', periodEnd: '2026-10-18' }, '2026-10-11T23:00:00.000Z', '2026-10-18T23:00:00.000Z'),
+      row(prevLabels, '2026-10-18T23:00:00.000Z', lagos.queryStart),
+      row({ periodStart: '2026-10-05', periodEnd: '2026-10-11' }, '2026-10-04T23:00:00.000Z', '2026-10-11T23:00:00.000Z'),
+    ]);
+    expect(r).toEqual({ success: true, coveredFrom: lagos.queryStart, coveredTo: lagos.queryEnd });
+  });
+
   it('a second currency in the same week reuses that week\'s recorded range', () => {
     const r = anchorCoveredRange(lagos, [row(lagos, '2026-11-01T10:00:00.000Z', '2026-11-08T23:00:00.000Z')]);
     expect(r).toEqual({ success: true, coveredFrom: '2026-11-01T10:00:00.000Z', coveredTo: '2026-11-08T23:00:00.000Z' });
@@ -369,15 +392,19 @@ describe('anchorCoveredRange', () => {
   });
 
   it('a merchant switching between far-west and far-east timezones every week is never counted twice or skipped', () => {
-    // The reviewers' scenario: Etc/GMT+12 one week, Pacific/Kiritimati the next, repeatedly.
-    const zones = ['Etc/GMT+12', 'Pacific/Kiritimati', 'Etc/GMT+12', 'Pacific/Kiritimati', 'Africa/Lagos', 'Pacific/Pago_Pago'];
+    // The reviewers' scenario: Etc/GMT+12 one week, Pacific/Kiritimati the next, repeatedly,
+    // with some quiet weeks that make no payout (null), including before a move west.
+    const zones = ['Etc/GMT+12', 'Pacific/Kiritimati', null, 'Etc/GMT+12', 'Pacific/Kiritimati', null, null, 'Pacific/Pago_Pago', 'Africa/Lagos', null, 'America/Los_Angeles'];
     const rows: CoveredPayoutRow[] = [];
+    let tz = 'Africa/Lagos';
     for (let i = 0; i < zones.length; i++) {
-      const p = week(new Date(Date.parse('2026-11-09T12:00:00Z') + i * 7 * 86400000).toISOString(), zones[i]);
+      const paid = zones[i] !== null;
+      if (paid) tz = zones[i]!;
+      const p = week(new Date(Date.parse('2026-11-09T12:00:00Z') + i * 7 * 86400000).toISOString(), tz);
       const r = anchorCoveredRange(p, rows.filter(x => x.period_end >= recentPayoutRowsFrom(p)));
       expect(r.success).toBe(true);
       if (!r.success) return;
-      rows.push(row(p, r.coveredFrom, r.coveredTo));
+      if (paid) rows.push(row(p, r.coveredFrom, r.coveredTo));
     }
     // Every range starts exactly where the previous one ended: no overlap, no gap.
     for (let i = 1; i < rows.length; i++) {

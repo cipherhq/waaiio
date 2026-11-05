@@ -28,8 +28,8 @@ const PAGO_START = '2026-10-19';
 const PAGO_END = '2026-10-25';
 const PAGO_Q_START = '2026-10-19T11:00:00.000Z'; // Mon 00:00 SST = Mon 11:00 UTC
 const PAGO_Q_END = '2026-10-26T11:00:00.000Z';
-const LAGOS_RECENT_FROM = '2026-10-18'; // LAGOS_START - 8 days (M521 recent-payout read)
-const PAGO_RECENT_FROM = '2026-10-11';  // PAGO_START - 8 days
+const LAGOS_RECENT_FROM = '2025-10-20'; // LAGOS_START - 53 weeks (M521 payout-history read)
+const PAGO_RECENT_FROM = '2025-10-13';  // PAGO_START - 53 weeks
 
 // ── Shared mock infrastructure ──
 
@@ -218,6 +218,31 @@ describe('payouts/generate: merchant-local period', () => {
     expect(seen.inserts[0].covered_to).toBe(LAGOS_Q_END);
   });
 
+  it('M521: after a week with no payout, counts from the last recorded end (quiet weeks roll forward)', async () => {
+    // Paid through 2026-10-12..18 (ended Sun 2026-10-18 23:00 UTC); 10-19..25 made no payout.
+    const seen = mockGenerateWithRecent([
+      { id: 'older', currency: 'NGN', period_start: '2026-10-12', period_end: '2026-10-18', covered_from: '2026-10-11T23:00:00.000Z', covered_to: '2026-10-18T23:00:00.000Z' },
+    ]);
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(makePostRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }));
+    expect(res.status).toBe(200);
+    expect(seen.feesGte).toBe('2026-10-18T23:00:00.000Z');
+    expect(seen.feesLt).toBe(LAGOS_Q_END);
+    expect(seen.inserts[0].covered_from).toBe('2026-10-18T23:00:00.000Z');
+  });
+
+  it('M521: a full payout-history page (API row cap) fails closed: no fee read, no insert', async () => {
+    const page = Array.from({ length: 1000 }, (_, i) => ({ id: `h${i}`, currency: 'NGN', period_start: '2026-01-05', period_end: '2026-01-11', covered_from: null, covered_to: null }));
+    const seen = mockGenerateWithRecent(page);
+    generateModule = await import('@/app/api/admin/payouts/generate/route');
+    const res = await generateModule.POST(makePostRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }));
+    const body = await res.json();
+    expect(res.status).toBe(207);
+    expect(body.failed).toBe(1);
+    expect(seen.feesGte).toBeNull();
+    expect(seen.inserts).toHaveLength(0);
+  });
+
   it('M521: a range overlapping another recorded payout fails closed (HTTP 207, no insert, no fee read)', async () => {
     const seen = mockGenerateWithRecent([
       { id: 'later', currency: 'NGN', period_start: '2026-11-02', period_end: '2026-11-08', covered_from: '2026-11-01T10:00:00.000Z', covered_to: '2026-11-08T10:00:00.000Z' },
@@ -319,10 +344,10 @@ describe('cron/auto-payout: merchant-local period', () => {
           // Legacy payouts (period-independent)
           c.limit = vi.fn().mockResolvedValue({ data: [], error: null });
         } else if (idx <= 2) {
-          // Per-group dedup + M521 anchor read: .in(ids).gte('period_end', week start - 8 days).limit()
+          // Per-business dedup + M521 anchor read: .eq(biz).gte('period_end', week start - 53 weeks).limit()
           let capturedBizIds: string[] = [];
           let capturedRecentFrom = '';
-          c.in = vi.fn().mockImplementation((_col: string, ids: string[]) => { capturedBizIds = ids; return c; });
+          c.eq = vi.fn().mockImplementation((col: string, id: string) => { if (col === 'business_id') capturedBizIds = [id]; return c; });
           c.gte = vi.fn().mockImplementation((_col: string, val: string) => {
             if (_col === 'period_end') capturedRecentFrom = val;
             return c;
@@ -477,12 +502,14 @@ describe('cron/auto-payout: merchant-local period', () => {
         const idx = bpCallIdx++;
         if (idx === 0) {
           c.limit = vi.fn().mockResolvedValue({ data: [], error: null }); // legacy preflight
-        } else if (idx === 1) {
-          // Per-group dedup + anchor read: conflict-biz has a later-labelled payout whose
-          // recorded range starts inside this Lagos week.
-          c.limit = vi.fn().mockResolvedValue({ data: [
+        } else if (idx <= 2) {
+          // Per-business dedup + anchor reads: conflict-biz has a later-labelled payout whose
+          // recorded range starts inside this Lagos week; ok-biz has no history.
+          let bizId = '';
+          c.eq = vi.fn().mockImplementation((col: string, id: string) => { if (col === 'business_id') bizId = id; return c; });
+          c.limit = vi.fn().mockImplementation(() => Promise.resolve({ data: bizId === 'conflict-biz' ? [
             { business_id: 'conflict-biz', currency: 'NGN', period_start: '2026-11-02', period_end: '2026-11-08', covered_from: '2026-11-01T10:00:00.000Z', covered_to: '2026-11-08T10:00:00.000Z' },
-          ], error: null });
+          ] : [], error: null }));
         } else if (!heldPayoutsQueried) {
           heldPayoutsQueried = true;
           c.eq = vi.fn().mockResolvedValue({ data: [

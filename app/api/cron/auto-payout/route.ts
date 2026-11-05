@@ -16,7 +16,7 @@ import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
-import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom, type PayoutPeriod, type CoveredPayoutRow } from '@/lib/payouts/period';
+import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom, PAYOUT_HISTORY_MAX_ROWS, type PayoutPeriod, type CoveredPayoutRow } from '@/lib/payouts/period';
 
 /**
  * GET /api/cron/auto-payout
@@ -323,11 +323,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Period-dependent batch queries: per timezone group.
-    // M521 (#796 Option A): one read per group returns this week's payout rows (dedup)
-    // and the previous week's (anchor). Each business's exact fee range starts where its
-    // previous week's payout ended, so a timezone change cannot double-count or skip fees.
-    // A range that cannot be worked out safely excludes the business from generation
-    // and release, like an invalid timezone (fail closed).
+    // M521 (#796 Option A): each business's payout history (up to 53 weeks) gives this
+    // week's rows (dedup) and its latest recorded end (anchor). Its fee range starts
+    // exactly there, so a timezone change cannot double-count or skip fees, and fees
+    // from weeks without a payout roll forward. History is read per business so the
+    // API's 1000-row page cap cannot silently truncate it. A business whose range
+    // cannot be worked out safely is excluded from generation and release, like an
+    // invalid timezone (fail closed).
     const alreadyHasPayout = new Set<string>();
     type FeeRow = { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined; currency: string | null };
     const feesByBiz = new Map<string, FeeRow[]>();
@@ -336,34 +338,34 @@ export async function GET(request: NextRequest) {
 
     for (const [, group] of tzGroups) {
       const { period } = group;
-      const { data: recentPayoutRows, error: recentPayoutError } = await supabase
+      const historyFrom = recentPayoutRowsFrom(period);
+      const histories = await Promise.all(group.bizIds.map(bizId => supabase
         .from('business_payouts')
         .select('business_id, currency, period_start, period_end, covered_from, covered_to')
-        .in('business_id', group.bizIds)
-        .gte('period_end', recentPayoutRowsFrom(period))
-        .limit(5000);
-      if (recentPayoutError || (recentPayoutRows || []).length >= 5000) {
-        throw new Error('[AUTO-PAYOUT] Payout history not reliably enumerable; stopping safely');
-      }
+        .eq('business_id', bizId)
+        .gte('period_end', historyFrom)
+        .limit(PAYOUT_HISTORY_MAX_ROWS)));
 
-      const recentRowsByBiz = new Map<string, CoveredPayoutRow[]>();
-      for (const row of (recentPayoutRows || [])) {
-        if (row.period_start === period.periodStart && row.period_end === period.periodEnd) {
-          alreadyHasPayout.add(`${row.business_id}:${row.currency ?? '__legacy__'}`);
+      group.bizIds.forEach((bizId, i) => {
+        const { data: history, error: historyError } = histories[i];
+        if (historyError || (history || []).length >= PAYOUT_HISTORY_MAX_ROWS) {
+          logger.error('[AUTO-PAYOUT] Payout history not reliably enumerable — business skipped', { business_id: bizId, error: historyError?.message });
+          rangeConflictBizIds.add(bizId);
+          return;
         }
-        const list = recentRowsByBiz.get(row.business_id) ?? [];
-        list.push(row);
-        recentRowsByBiz.set(row.business_id, list);
-      }
-      for (const bizId of group.bizIds) {
-        const range = anchorCoveredRange(period, recentRowsByBiz.get(bizId) ?? []);
+        for (const row of (history || [])) {
+          if (row.period_start === period.periodStart && row.period_end === period.periodEnd) {
+            alreadyHasPayout.add(`${bizId}:${row.currency ?? '__legacy__'}`);
+          }
+        }
+        const range = anchorCoveredRange(period, (history || []) as CoveredPayoutRow[]);
         if (!range.success) {
           logger.error('[AUTO-PAYOUT] Payout range conflict — business skipped', { business_id: bizId, error: range.error });
           rangeConflictBizIds.add(bizId);
-          continue;
+          return;
         }
         bizRangeMap.set(bizId, { coveredFrom: range.coveredFrom, coveredTo: range.coveredTo });
-      }
+      });
 
       const groupBizIds = group.bizIds.filter(id => bizRangeMap.has(id));
       if (groupBizIds.length === 0) continue;

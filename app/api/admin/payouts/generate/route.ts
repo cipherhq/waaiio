@@ -11,7 +11,7 @@ import { logAdminAudit } from '@/lib/admin-audit';
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
-import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom } from '@/lib/payouts/period';
+import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom, PAYOUT_HISTORY_MAX_ROWS } from '@/lib/payouts/period';
 
 interface Flag {
   type: string;
@@ -89,17 +89,18 @@ export async function POST(request: NextRequest) {
       const { periodStart: periodStartStr, periodEnd: periodEndStr } = periodResult.period;
       processedPeriods.add(`${periodStartStr}:${periodEndStr}`);
 
-      // One read gives this week's payout rows (dedup) and the previous week's
-      // covered range (M521 anchor, used below).
+      // One read gives this week's payout rows (dedup) and the latest recorded
+      // payout end within 53 weeks (M521 anchor, used below).
       const { data: recentPayouts, error: existingError } = await supabase
         .from('business_payouts')
         .select('id, currency, period_start, period_end, covered_from, covered_to')
         .eq('business_id', biz.id)
         .gte('period_end', recentPayoutRowsFrom(periodResult.period))
-        .limit(1000);
+        .limit(PAYOUT_HISTORY_MAX_ROWS);
 
-      // Fail closed: if we can't check for duplicates, count as failed
-      if (existingError || (recentPayouts || []).length >= 1000) {
+      // Fail closed: if we can't check for duplicates, count as failed. A full page
+      // may be truncated by the API's row cap, so it counts as unreadable too.
+      if (existingError || (recentPayouts || []).length >= PAYOUT_HISTORY_MAX_ROWS) {
         logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError?.message });
         failed++;
         continue;
@@ -115,8 +116,9 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // M521 (#796 Option A): count exactly from where the previous week's payout
-      // ended, so a timezone change cannot double-count or skip fees. Fail closed.
+      // M521 (#796 Option A): count exactly from where the latest earlier payout
+      // ended, so a timezone change cannot double-count or skip fees, and fees from
+      // weeks without a payout roll forward. Fail closed.
       const range = anchorCoveredRange(periodResult.period, recentPayouts || []);
       if (!range.success) {
         logger.error('[PAYOUT] Payout range conflict — business skipped', { business_id: biz.id, error: range.error });
