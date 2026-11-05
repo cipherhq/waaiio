@@ -353,7 +353,7 @@ export default function FormsPage() {
                         <p className="font-medium text-gray-900">{r.customer_name || 'Anonymous'}</p>
                         {r.customer_phone && <p className="text-xs text-gray-400">{r.customer_phone}</p>}
                         {r.customer_email && <p className="text-xs text-gray-400">{r.customer_email}</p>}
-                        {r.consent_given === true && <p className="text-xs text-green-600">Opted in to updates</p>}
+                        {r.consent_given === true && <p className="text-xs text-gray-500">Ticked “send me updates” (not yet confirmed)</p>}
                       </td>
                       {selectedForm.fields.slice(0, 5).map(f => (
                         <td key={f.id} className="px-4 py-3 text-gray-700 max-w-[200px] truncate">
@@ -530,7 +530,7 @@ export default function FormsPage() {
             <span>
               Ask for updates
               <span className="block text-xs text-gray-500">
-                Adds an unticked “Yes, send me updates” box. People who tick it can later be sent forms and updates on WhatsApp.
+                Adds an unticked “Yes, send me updates” box. Ticks are saved as waiting for confirmation and can’t be messaged yet.
                 {!hasPhoneField && ' Add a Phone field first.'}
               </span>
             </span>

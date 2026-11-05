@@ -265,7 +265,7 @@ describe('POST /api/forms/send — honest delivery status', () => {
     const data = await res.json();
     expect(data).toMatchObject({ success: false, sent: 0, failed: 1 });
     expect(data.results[0]).toEqual({ phone: P1, status: 'failed', reason: 'provider_error' });
-    expect(m.db.tables.notifications[0]).toMatchObject({ status: 'failed', failed_reason: expect.stringContaining('did not accept') });
+    expect(m.db.tables.notifications[0]).toMatchObject({ status: 'failed', failed_reason: expect.stringContaining('did not confirm') });
   });
 
   it('reports a mixed batch per recipient', async () => {
@@ -293,6 +293,49 @@ describe('POST /api/forms/send — honest delivery status', () => {
     const many = Array.from({ length: 101 }, (_, i) => `+23480300${String(i).padStart(5, '0')}`);
     expect((await send(post('/api/forms/send', sendBody({ phones: many })))).status).toBe(400);
     expect(m.text).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/forms/send — limits and failure modes', () => {
+  it('refuses an oversized typed list before parsing it', async () => {
+    const junk = Array.from({ length: 501 }, (_, i) => `x${i}`);
+    expect((await send(post('/api/forms/send', sendBody({ phones: junk })))).status).toBe(400);
+  });
+
+  it('a template lookup outage is a 503 with nothing sent, not "bad template"', async () => {
+    m.getTemplates.mockRejectedValue(new Error('Meta down'));
+    const res = await send(post('/api/forms/send', sendBody({ phone: P1, templateName: 'feedback_request' })));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/Nothing was sent/);
+    expect(m.template).not.toHaveBeenCalled();
+  });
+
+  it('a gate or suspension block is reported as blocked, not as a WhatsApp rejection', async () => {
+    const { MessagingSuspendedError } = await import('@/lib/channels/send-guard');
+    m.template.mockRejectedValue(new MessagingSuspendedError(BIZ, 'suspended'));
+    const data = await (await send(post('/api/forms/send', sendBody({ phone: P1, templateName: 'feedback_request' })))).json();
+    expect(data.results[0]).toEqual({ phone: P1, status: 'failed', reason: 'blocked' });
+  });
+
+  it('stops starting new recipients after the time budget and reports them as not attempted', async () => {
+    const { sendFormInvites } = await import('@/lib/forms/form-send');
+    const phones = Array.from({ length: 7 }, (_, i) => `+23480300000${i}`);
+    for (const p of phones) m.db.tables.customer_consents.push(consent(p));
+    const resolved = { channel: { id: `chan-${BIZ}` }, cloud: { getTemplates: m.getTemplates }, sender: { sendText: m.text, sendTemplate: m.template } };
+    const realNow = Date.now;
+    let calls = 0;
+    // First batch starts before the deadline; the second batch starts after it.
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (calls++ > 0 && m.template.mock.calls.length >= 5 ? 60_000 : 0));
+    try {
+      const out = await sendFormInvites({
+        db: m.db as never, resolved: resolved as never, businessId: BIZ, businessName: 'Ada Salon',
+        form: { id: FORM, title: 'Guest list', description: null, token: 'tokA' },
+        template: { name: 'feedback_request', category: 'marketing' }, phones, deadline: realNow() + 30_000,
+      });
+      expect(out.slice(0, 5).every(o => o.status === 'sent')).toBe(true);
+      expect(out.slice(5)).toEqual(phones.slice(5).map(phone => ({ phone, status: 'skipped', reason: 'not_attempted' })));
+      expect(m.template).toHaveBeenCalledTimes(5);
+    } finally { spy.mockRestore(); }
   });
 });
 
@@ -360,18 +403,32 @@ describe('Optional "Yes, send me updates" on the public form', () => {
     expect(m.db.tables.form_responses[0]).toMatchObject({ consent_given: false, status: 'submitted' });
   });
 
-  it('records WhatsApp marketing consent for this business through the existing consent store when ticked', async () => {
+  it('records a ticked box as pending in the existing consent store, which is never sendable', async () => {
     m.db.tables.forms[0].settings = { marketing_opt_in: true };
     const res = await submit(post('/api/forms/submit', submitBody({ marketing_opt_in: true, customer_phone: '0803 222 2222' })));
-    expect(await res.json()).toEqual({ success: true, optInRecorded: true });
+    expect(await res.json()).toEqual({ success: true, optInPending: true });
     expect(consents()).toEqual([expect.objectContaining({ kind: 'insert', row: expect.objectContaining({
-      business_id: BIZ, phone: P2, channel: 'whatsapp', purpose: 'marketing', status: 'granted', source: 'website', evidence_reference: `form:${FORM}`,
+      business_id: BIZ, phone: P2, channel: 'whatsapp', purpose: 'marketing', status: 'pending', source: 'website', evidence_reference: `form:${FORM}`,
     }) })]);
+    expect(consents().some(w => w.row.status === 'granted')).toBe(false);
     expect(m.db.tables.form_responses[0]).toMatchObject({ consent_given: true });
-    // The person can now be sent a form.
+    // Nobody proved they own the typed number, so it cannot be messaged, even inside the window.
     m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-${BIZ}`, sender_phone: P2.slice(1), provider_timestamp: hourAgo() });
     const sent = await (await send(post('/api/forms/send', sendBody({ phone: P2 })))).json();
-    expect(sent.results[0]).toEqual({ phone: P2, status: 'sent', via: 'text' });
+    expect(sent.results[0]).toEqual({ phone: P2, status: 'skipped', reason: 'no_consent' });
+    expect(m.text).not.toHaveBeenCalled();
+    // And it is not offered in the opted-in contacts picker.
+    const listed = await (await contacts(new NextRequest(`https://example.test/api/forms/recipients?businessId=${BIZ}`))).json();
+    expect(listed.contacts.map((c: { phone: string }) => c.phone)).toEqual([P1]);
+  });
+
+  it('a web tick never replaces (and so withdraws) a real permission', async () => {
+    m.db.tables.forms[0].settings = { marketing_opt_in: true };
+    await submit(post('/api/forms/submit', submitBody({ marketing_opt_in: true, customer_phone: P1 })));
+    expect(consents()).toEqual([]);
+    m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-${BIZ}`, sender_phone: P1.slice(1), provider_timestamp: hourAgo() });
+    const sent = await (await send(post('/api/forms/send', sendBody({ phone: P1 })))).json();
+    expect(sent.results[0]).toEqual({ phone: P1, status: 'sent', via: 'text' });
   });
 
   it('refuses a ticked box without a valid phone, saving nothing', async () => {

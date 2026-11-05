@@ -1,6 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { isInviteCompatible, type InviteTemplateShape } from '@/lib/forms/invite-template';
+
+/** Server cap per send (lib/forms/form-send.ts MAX_RECIPIENTS_PER_SEND). */
+const MAX_PER_SEND = 100;
 
 type Contact = { phone: string; name: string | null };
 type Segment = { id: string; name: string };
@@ -14,8 +18,10 @@ const REASON_TEXT: Record<string, string> = {
   opted_out: 'Opted out of messages',
   no_consent: 'Has not opted in to updates',
   check_failed: 'Consent could not be checked',
+  not_attempted: 'Not attempted: ran out of time. Send again to these people',
   no_template: 'Hasn’t messaged you in 24 hours and no template was chosen',
-  provider_error: 'WhatsApp did not accept the message',
+  provider_error: 'WhatsApp did not confirm it accepted the message',
+  blocked: 'Sending is paused for this account',
 };
 
 type Mode = 'contacts' | 'audience' | 'numbers';
@@ -56,9 +62,10 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
       .then(async r => {
         if (!r.ok || !live) return;
         const data = await r.json();
-        setTemplates((data.data || data || [])
-          .filter((t: { status: string; language?: string }) => t.status === 'APPROVED' && (!t.language || t.language === 'en_US'))
-          .map((t: Template) => ({ name: t.name, category: t.category })));
+        // Only templates the server will accept for a form link.
+        setTemplates(((data.data || data || []) as Array<InviteTemplateShape & { name: string }>)
+          .filter(t => Array.isArray(t.components) && isInviteCompatible(t))
+          .map(t => ({ name: t.name, category: t.category })));
       })
       .catch(() => { /* templates are optional */ });
     return () => { live = false; };
@@ -69,7 +76,9 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   }
 
   const typedNumbers = numbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
-  const canSend = !sending && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
+  const count = mode === 'contacts' ? picked.size : mode === 'numbers' ? typedNumbers.length : 0;
+  const tooMany = count > MAX_PER_SEND;
+  const canSend = !sending && !tooMany && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
 
   async function send() {
     setSending(true); setError(''); setResults(null);
@@ -85,11 +94,19 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
           ...(templateName ? { templateName } : {}),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) setError(data.error || 'Could not send the form');
-      else setResults(data);
+      const data = await res.json().catch(() => null);
+      if (!data) {
+        // e.g. a timeout page: some invites may already have gone out.
+        setError('We could not get the results. Some messages may already have been sent, so check with your customers before sending again.');
+      } else if (!res.ok) {
+        setError(data.error || 'Could not send the form');
+      } else {
+        setResults(data);
+        // Clear the selection so a second click cannot resend to the same people.
+        setPicked(new Set()); setNumbers(''); setSegmentId('');
+      }
     } catch {
-      setError('Network error. Please try again.');
+      setError('We could not reach the server. Some messages may already have been sent, so check before sending again.');
     }
     setSending(false);
   }
@@ -121,7 +138,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         <div>
           {contacts === null ? <p className="text-xs text-gray-400">Loading contacts…</p>
             : contactsError ? <p role="alert" className="text-xs text-red-600">{contactsError}</p>
-            : contacts.length === 0 ? <p className="text-xs text-gray-500">No opted-in contacts yet. Turn on “Ask for updates” on a form to collect opt-ins.</p>
+            : contacts.length === 0 ? <p className="text-xs text-gray-500">No opted-in contacts yet. Only people with confirmed permission to receive updates on WhatsApp are listed here.</p>
             : (
               <>
                 <label className="mb-1 flex items-center gap-2 text-xs text-gray-600">
@@ -170,6 +187,8 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         </select>
         <p className="mt-1 text-xs text-gray-400">WhatsApp needs an approved template to reach people who haven’t messaged you in the last 24 hours.</p>
       </div>
+
+      {tooMany && <p role="alert" className="text-xs text-red-600">You can send to at most {MAX_PER_SEND} people at a time. You picked {count}.</p>}
 
       {error && <p role="alert" className="rounded bg-red-50 p-2 text-xs text-red-700">{error}</p>}
 

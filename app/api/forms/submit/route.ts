@@ -2,8 +2,31 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import { grantConsent } from '@/lib/growth/consent-service';
 import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
+
+/**
+ * Append a 'pending' WhatsApp marketing consent row for a ticked web opt-in. Never
+ * written over a newer 'granted' record: an unverified web tick must not be able
+ * to replace (and so withdraw) a real permission. Never blocks the saved response.
+ */
+async function recordPendingOptIn(db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string): Promise<boolean> {
+  try {
+    const digits = e164.replace(/\D/g, '');
+    const { data: latest, error } = await db.from('customer_consents').select('status')
+      .eq('business_id', businessId).in('phone', [digits, `+${digits}`])
+      .eq('channel', 'whatsapp').eq('purpose', 'marketing')
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(1).maybeSingle();
+    if (error) return false;
+    if (latest?.status === 'granted' || latest?.status === 'pending') return true;
+    const { error: insertError } = await db.from('customer_consents').insert({
+      business_id: businessId, phone: e164, channel: 'whatsapp', purpose: 'marketing',
+      status: 'pending', source: 'website', evidence_reference: `form:${formId}`,
+    });
+    if (insertError) logger.warn('[FORMS] Opt-in not recorded:', insertError.message);
+    return !insertError;
+  } catch { return false; }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,7 +86,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Optional "Yes, send me updates" box (#591). Only offered when the merchant turned it
-    // on, unticked by default, and recorded only for a valid phone the customer typed.
+    // on, unticked by default, and only for a valid phone. Nobody has proved they own the
+    // typed number, so the tick is recorded as *pending*, which is never sendable
+    // (hasRecipientPermission needs 'granted'). Owner decision pending on confirmation.
     const offersOptIn = (form.settings as Record<string, unknown> | null)?.marketing_opt_in === true;
     const optIn = offersOptIn && marketing_opt_in === true;
     let optInPhone: string | null = null;
@@ -141,20 +166,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to submit response' }, { status: 500 });
     }
 
-    let optInRecorded: boolean | undefined;
+    let optInPending: boolean | undefined;
     if (optIn && optInPhone) {
-      // Existing append-only consent store; never blocks the saved response.
-      const granted = await grantConsent(supabase, {
-        phone: optInPhone, businessId: form.business_id, channel: 'whatsapp', purpose: 'marketing',
-        source: 'website', evidenceReference: `form:${form.id}`,
-      });
-      optInRecorded = granted.success;
+      optInPending = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
     }
 
     // Atomic increment — prevents race condition with concurrent submissions
     await supabase.rpc('increment_form_response_count', { p_form_id: form.id });
 
-    return NextResponse.json({ success: true, ...(optInRecorded !== undefined ? { optInRecorded } : {}) });
+    return NextResponse.json({ success: true, ...(optInPending !== undefined ? { optInPending } : {}) });
   } catch (error) {
     logger.error('[FORMS] Submit error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
