@@ -8,55 +8,66 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), info: vi.fn() } }));
 
 import { GET, POST } from '@/app/api/account/consent/route';
 
-type Metadata = Record<string, unknown>;
-type DbResult = { data: { metadata?: Metadata; value?: string } | null; error: { message: string } | null };
+type Consent = Record<string, unknown>;
+/** A live profiles row (M515): consent lives in its own column; other columns must never be touched. */
+type Row = { consent_preferences: Consent | null; first_name: string };
+type DbError = { code?: string; message: string };
+type DbResult = { data: { consent_preferences?: Consent | null; value?: string } | null; error: DbError | null };
 const db = {
   user: 'owner-762' as string | null,
-  rows: new Map<string, Metadata>(),
+  rows: new Map<string, Row>(),
   readFailure: '' as '' | 'returned' | 'thrown',
   writeFailure: '' as '' | 'returned' | 'thrown' | 'zero',
   versions: { privacy_version: '"privacy-v2"', terms_version: '"terms-v2"' } as Record<string, string>,
-  writes: [] as Array<{ id: string; metadata: Metadata }>,
+  writes: [] as Array<{ id: string; consent_preferences: Consent }>,
   filters: [] as Array<{ table: string; key: string; value: unknown }>,
-  persistedConsent: null as Metadata | null,
+  persistedConsent: null as Consent | null,
 };
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const row = (consent: Consent | null = null, firstName = 'Ada'): Row => ({ consent_preferences: consent, first_name: firstName });
 function resetDb() {
-  db.user = 'owner-762'; db.rows = new Map([['owner-762', {}], ['other-762', { untouched: true }]]);
+  db.user = 'owner-762'; db.rows = new Map([['owner-762', row()], ['other-762', row({ untouched: true }, 'Bola')]]);
   db.readFailure = ''; db.writeFailure = ''; db.writes = []; db.filters = []; db.persistedConsent = null;
   db.versions = { privacy_version: '"privacy-v2"', terms_version: '"terms-v2"' };
 }
+// PostgREST answers for columns the live table does not have (profiles.metadata never existed).
+const missingColumn = (column: string): DbResult => ({ data: null, error: { code: '42703', message: `column profiles.${column} does not exist` } });
+const isObject = (value: unknown) => typeof value === 'object' && value !== null && !Array.isArray(value);
 function service() {
   return { from(table: string) {
-    let id = ''; let key = ''; let payload: { metadata: Metadata } | null = null; let returned = false;
+    let id = ''; let key = ''; let columns = ''; let payload: Record<string, unknown> | null = null; let returned = false;
     async function execute(): Promise<DbResult> {
       if (table === 'platform_settings') {
         return { data: db.versions[key] ? { value: db.versions[key] } : null, error: null };
       }
       if (table !== 'profiles') throw new Error('Unexpected table: ' + table);
+      if (columns !== 'consent_preferences') return missingColumn(columns);
       if (!payload) {
         if (db.readFailure === 'thrown') throw new Error('Read failed');
         if (db.readFailure === 'returned') return { data: null, error: { message: 'Read failed' } };
-        return { data: db.rows.has(id) ? { metadata: copy(db.rows.get(id)!) } : null, error: null };
+        return { data: db.rows.has(id) ? { consent_preferences: copy(db.rows.get(id)!.consent_preferences) } : null, error: null };
       }
+      const written = Object.keys(payload).find(column => column !== 'consent_preferences');
+      if (written) return missingColumn(written);
+      // M515 CHECK: NULL or a JSON object.
+      if (!isObject(payload.consent_preferences)) return { data: null, error: { code: '23514', message: 'profiles_consent_preferences_object_check' } };
       if (db.writeFailure === 'thrown') throw new Error('Write failed');
       if (db.writeFailure === 'returned') return { data: null, error: { message: 'Write failed' } };
       if (db.writeFailure === 'zero' || !db.rows.has(id)) return { data: null, error: null };
-      const metadata = copy(payload.metadata);
-      if (db.persistedConsent) metadata.consent_preferences = copy(db.persistedConsent);
-      db.rows.set(id, metadata);
-      db.writes.push({ id, metadata: copy(metadata) });
-      return { data: returned ? { metadata: copy(metadata) } : null, error: null };
+      const consent = copy(db.persistedConsent ?? payload.consent_preferences) as Consent;
+      db.rows.set(id, { ...db.rows.get(id)!, consent_preferences: consent });
+      db.writes.push({ id, consent_preferences: copy(consent) });
+      return { data: returned ? { consent_preferences: copy(consent) } : null, error: null };
     }
     const query = {
-      select(_columns: string) { if (payload) returned = true; return query; },
+      select(selected: string) { if (payload) returned = true; columns = selected; return query; },
       eq(column: string, value: unknown) {
         db.filters.push({ table, key: column, value });
         if (column === 'id') id = String(value);
         if (column === 'key') key = String(value);
         return query;
       },
-      update(value: { metadata: Metadata }) { payload = value; return query; },
+      update(value: Record<string, unknown>) { payload = value; return query; },
       maybeSingle: execute,
       then(resolve: (result: DbResult) => unknown, reject?: (reason: unknown) => unknown) { return execute().then(resolve, reject); },
     };
@@ -84,17 +95,17 @@ describe('W27 account consent persistence through actual handlers', () => {
     expect(db.writes).toEqual([]);
   });
 
-  it('saves then GET reads the durable values, preserving unrelated metadata', async () => {
-    db.rows.set('owner-762', { display: { theme: 'dark' }, consent_preferences: { custom: 'keep' } });
+  it('saves then GET reads the durable values, preserving other columns and unrelated consent keys', async () => {
+    db.rows.set('owner-762', row({ custom: 'keep' }, 'Adaeze'));
     const response = await POST(request({ ...preferences, user_id: 'other-762', business_id: 'other-business' }));
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.success).toBe(true);
     expect(result.consent).toEqual(db.rows.get('owner-762')!.consent_preferences);
     expect((await (await GET()).json()).consent).toEqual(result.consent);
-    expect(db.rows.get('owner-762')!.display).toEqual({ theme: 'dark' });
+    expect(db.rows.get('owner-762')!.first_name).toBe('Adaeze');
     expect(result.consent.custom).toBe('keep');
-    expect(db.rows.get('other-762')).toEqual({ untouched: true });
+    expect(db.rows.get('other-762')).toEqual(row({ untouched: true }, 'Bola'));
     expect(db.writes).toHaveLength(1);
     expect(db.filters.filter(f => f.table === 'profiles')).toEqual([
       { table: 'profiles', key: 'id', value: 'owner-762' },
@@ -128,13 +139,13 @@ describe('W27 account consent persistence through actual handlers', () => {
 
   it.each([
     ['GET', 'returned'], ['GET', 'thrown'], ['POST', 'returned'], ['POST', 'thrown'],
-  ] as const)('%s rejects %s metadata read failure without writes', async (method, failure) => {
-    db.rows.set('owner-762', { preserved: true });
+  ] as const)('%s rejects %s consent read failure without writes', async (method, failure) => {
+    db.rows.set('owner-762', row({ preserved: true }));
     db.readFailure = failure;
     const response = method === 'GET' ? await GET() : await POST(request(preferences));
     expect(response.status).toBe(500);
     expect(db.writes).toEqual([]);
-    expect(db.rows.get('owner-762')).toEqual({ preserved: true });
+    expect(db.rows.get('owner-762')).toEqual(row({ preserved: true }));
   });
 
   it.each(['returned', 'thrown'] as const)('rejects %s update failure', async failure => {
@@ -162,7 +173,7 @@ describe('W27 account consent persistence through actual handlers', () => {
   });
 
   it.each([undefined, false])('preserves terms evidence when terms_accepted=%s', async accepted => {
-    db.rows.set('owner-762', { consent_preferences: { terms_accepted_at: 'prior-time', terms_version: 'prior-version', custom: 'keep' } });
+    db.rows.set('owner-762', row({ terms_accepted_at: 'prior-time', terms_version: 'prior-version', custom: 'keep' }));
     const response = await POST(request({ ...preferences, terms_accepted: accepted }));
     expect(response.status).toBe(200);
     expect((await response.json()).consent).toMatchObject({
@@ -182,7 +193,7 @@ describe('W27 account consent persistence through actual handlers', () => {
   });
 
   it('accepts the CookieConsent payload without erasing recorded acceptance', async () => {
-    db.rows.set('owner-762', { consent_preferences: { terms_accepted_at: 'accepted', terms_version: 'v1' } });
+    db.rows.set('owner-762', row({ terms_accepted_at: 'accepted', terms_version: 'v1' }));
     const response = await POST(request({ marketing_emails: true, analytics: true, ai_processing: true }));
     expect(response.status).toBe(200);
     expect((await response.json()).consent).toMatchObject({ marketing_emails: true, analytics: true, ai_processing: true, terms_accepted_at: 'accepted', terms_version: 'v1' });
@@ -199,5 +210,19 @@ describe('W27 account consent persistence through actual handlers', () => {
     db.versions = { privacy_version: 'privacy-raw', terms_version: 'terms-raw' };
     const response = await POST(request({ ...preferences, terms_accepted: true }));
     expect((await response.json()).consent).toMatchObject({ policy_version: 'privacy-raw', terms_version: 'terms-raw' });
+  });
+
+  it('#878: reads and writes only profiles.consent_preferences (profiles.metadata never existed)', async () => {
+    expect((await GET()).status).toBe(200);
+    const response = await POST(request(preferences));
+    expect(response.status).toBe(200);
+    expect(db.writes).toEqual([{ id: 'owner-762', consent_preferences: (await response.json()).consent }]);
+  });
+
+  it('#878: an existing owner with stored answers sees them on GET', async () => {
+    db.rows.set('owner-762', row({ marketing_emails: true, analytics: true, ai_processing: false, terms_accepted_at: 't' }));
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect((await response.json()).consent).toEqual({ marketing_emails: true, analytics: true, ai_processing: false, terms_accepted_at: 't' });
   });
 });
