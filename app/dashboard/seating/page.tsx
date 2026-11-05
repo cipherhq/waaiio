@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -37,14 +37,33 @@ const RESOURCE_TYPES = [
 
 const DAYS_OF_WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
+// A table's own window stays within one day (seating_no_overnight, M476/M510).
+// Late-night bookings come from the business opening hours instead.
+const OVERNIGHT_MESSAGE = (
+  <>
+    A table&apos;s own hours can&apos;t run past midnight. To take late-night bookings, leave <strong>Available From</strong> and{' '}
+    <strong>Available Until</strong> empty so this table follows your business opening hours (Settings → Business → Operating Hours).
+    Tables can&apos;t be booked outside your opening hours.
+  </>
+);
+
+/** Empty text saves as `fallback`; anything that is not a whole number returns null. */
+function parseWholeNumber(value: string, fallback: number): number | null {
+  if (value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+// Number fields hold the text being typed, so a merchant can clear and retype them.
+// They are parsed and checked on save.
 const defaultForm = {
   name: '',
   resource_type: 'table',
-  capacity: 4,
-  min_party_size: 1,
+  capacity: '4',
+  min_party_size: '1',
   section: '',
-  reservation_duration_minutes: 90,
-  deposit_amount: 0,
+  reservation_duration_minutes: '90',
+  deposit_amount: '0',
   is_active: true,
   sort_order: 0,
   description: '',
@@ -63,7 +82,7 @@ export default function SeatingPage() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ReactNode>('');
 
   const loadResources = useCallback(async () => {
     setLoading(true);
@@ -95,11 +114,11 @@ export default function SeatingPage() {
     setForm({
       name: r.name,
       resource_type: r.resource_type,
-      capacity: r.capacity,
-      min_party_size: r.min_party_size,
+      capacity: String(r.capacity),
+      min_party_size: String(r.min_party_size),
       section: r.section || '',
-      reservation_duration_minutes: r.reservation_duration_minutes,
-      deposit_amount: r.deposit_amount,
+      reservation_duration_minutes: String(r.reservation_duration_minutes),
+      deposit_amount: String(r.deposit_amount),
       is_active: r.is_active,
       sort_order: r.sort_order,
       description: r.description || '',
@@ -113,7 +132,20 @@ export default function SeatingPage() {
 
   const handleSave = async () => {
     if (!form.name.trim()) { setError('Name is required'); return; }
-    if (form.min_party_size > form.capacity) { setError('Minimum party size cannot exceed capacity'); return; }
+    // Empty fields keep the values they used to snap back to: 1, 1, 90 and 0.
+    const capacity = parseWholeNumber(form.capacity, 1);
+    const minPartySize = parseWholeNumber(form.min_party_size, 1);
+    const duration = parseWholeNumber(form.reservation_duration_minutes, 90);
+    const deposit = parseWholeNumber(form.deposit_amount, 0);
+    if (capacity === null || capacity < 1 || capacity > 500) { setError('Max capacity must be a whole number from 1 to 500'); return; }
+    if (minPartySize === null || minPartySize < 1) { setError('Min party size must be a whole number of at least 1'); return; }
+    if (minPartySize > capacity) { setError('Minimum party size cannot exceed capacity'); return; }
+    if (duration === null || duration < 1 || duration > 480) { setError('Duration must be a whole number of minutes from 1 to 480'); return; }
+    if (deposit === null || deposit < 0) { setError('Deposit must be a whole number of 0 or more'); return; }
+    if (form.available_from && form.available_to && form.available_to.slice(0, 5) <= form.available_from.slice(0, 5)) {
+      setError(OVERNIGHT_MESSAGE);
+      return;
+    }
     setSaving(true);
     setError('');
 
@@ -122,11 +154,11 @@ export default function SeatingPage() {
       business_id: business.id,
       name: form.name.trim(),
       resource_type: form.resource_type,
-      capacity: form.capacity,
-      min_party_size: form.min_party_size,
+      capacity,
+      min_party_size: minPartySize,
       section: form.section.trim() || null,
-      reservation_duration_minutes: form.reservation_duration_minutes,
-      deposit_amount: form.deposit_amount,
+      reservation_duration_minutes: duration,
+      deposit_amount: deposit,
       is_active: form.is_active,
       sort_order: form.sort_order,
       description: form.description.trim() || null,
@@ -135,12 +167,14 @@ export default function SeatingPage() {
       available_to: form.available_to || null,
     };
 
-    if (editId) {
-      const { error: err } = await supabase.from('seating_resources').update(payload).eq('id', editId);
-      if (err) { setError(err.message); setSaving(false); return; }
-    } else {
-      const { error: err } = await supabase.from('seating_resources').insert(payload);
-      if (err) { setError(err.message); setSaving(false); return; }
+    const { error: err } = editId
+      ? await supabase.from('seating_resources').update(payload).eq('id', editId)
+      : await supabase.from('seating_resources').insert(payload);
+    if (err) {
+      // The database check still guards a bypassed client check; show the same guidance, not the raw error.
+      setError(err.message?.includes('seating_no_overnight') ? OVERNIGHT_MESSAGE : err.message);
+      setSaving(false);
+      return;
     }
 
     setSaving(false);
@@ -205,12 +239,12 @@ export default function SeatingPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Max Capacity</label>
-              <input type="number" min={1} max={500} value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: parseInt(e.target.value) || 1 }))}
+              <input type="number" min={1} max={500} value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Min Party Size</label>
-              <input type="number" min={1} max={form.capacity} value={form.min_party_size} onChange={e => setForm(f => ({ ...f, min_party_size: parseInt(e.target.value) || 1 }))}
+              <input type="number" min={1} max={form.capacity} value={form.min_party_size} onChange={e => setForm(f => ({ ...f, min_party_size: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
             </div>
           </div>
@@ -219,15 +253,15 @@ export default function SeatingPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Duration (minutes)</label>
               <input type="number" min={15} max={480} step={15} value={form.reservation_duration_minutes}
-                onChange={e => setForm(f => ({ ...f, reservation_duration_minutes: parseInt(e.target.value) || 90 }))}
+                onChange={e => setForm(f => ({ ...f, reservation_duration_minutes: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Deposit ({country})</label>
               <input type="number" min={0} step={100} value={form.deposit_amount}
-                onChange={e => setForm(f => ({ ...f, deposit_amount: parseInt(e.target.value) || 0 }))}
+                onChange={e => setForm(f => ({ ...f, deposit_amount: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
-              {form.deposit_amount > 0 && <p className="text-xs text-gray-500 mt-1">{formatCurrency(form.deposit_amount, country)}</p>}
+              {Number(form.deposit_amount) > 0 && <p className="text-xs text-gray-500 mt-1">{formatCurrency(Number(form.deposit_amount), country)}</p>}
             </div>
           </div>
 

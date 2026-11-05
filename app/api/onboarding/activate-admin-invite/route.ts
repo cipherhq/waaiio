@@ -13,8 +13,8 @@ export async function POST(_request: NextRequest) {
   const { data: onboarding } = await service.from('admin_onboarding_invites').select('*')
     .eq('target_user_id', user.id).eq('status', 'customer_action_required').maybeSingle();
   if (!onboarding?.business_id) return NextResponse.json({ error: 'Pending onboarding not found' }, { status: 404 });
-  const { data: profile } = await service.from('profiles').select('metadata').eq('id', user.id).maybeSingle();
-  const consent = (profile?.metadata as { consent_preferences?: { consented_at?: string; terms_accepted_at?: string } } | null)?.consent_preferences;
+  const { data: profile } = await service.from('profiles').select('consent_preferences').eq('id', user.id).maybeSingle();
+  const consent = (profile as { consent_preferences?: { consented_at?: string; terms_accepted_at?: string } | null } | null)?.consent_preferences;
   if (!consent?.consented_at || !consent.terms_accepted_at) return NextResponse.json({ error: 'Terms and privacy consent are required' }, { status: 409 });
 
   const { data: business } = await service.from('businesses').select('id, status, owner_id, subscription_tier')
