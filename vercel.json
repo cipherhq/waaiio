@@ -75,7 +75,7 @@
     },
     {
       "path": "/api/cron/scheduled-form-sends",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/data-retention",

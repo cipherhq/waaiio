@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Owner check shared by both handlers. Returns the user id or a response to send back. */
 async function owner(businessId: unknown): Promise<string | NextResponse> {
   const supabase = await createClient();
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
   const formId = request.nextUrl.searchParams.get('formId');
   const auth = await owner(businessId);
   if (auth instanceof NextResponse) return auth;
-  if (!formId) return NextResponse.json({ error: 'formId required' }, { status: 400 });
+  if (!formId || !UUID_RE.test(formId)) return NextResponse.json({ error: 'formId required' }, { status: 400 });
 
   const { data, error } = await createServiceClient().from('form_sends')
     .select('id, status, scheduled_at, completed_at, template_name, sent_count, failed_count, skipped_count, results, error_message, created_at')
@@ -38,10 +40,12 @@ export async function GET(request: NextRequest) {
 
 /** DELETE /api/forms/sends { id, businessId } — cancel a send that has not started. */
 export async function DELETE(request: NextRequest) {
+  const limited = await rateLimitResponseAsync(getRateLimitKey(request, 'form-sends-cancel'), 30, 60_000);
+  if (limited) return limited;
   const body = await request.json().catch(() => null) as { id?: unknown; businessId?: unknown } | null;
   const auth = await owner(body?.businessId);
   if (auth instanceof NextResponse) return auth;
-  if (typeof body?.id !== 'string') return NextResponse.json({ error: 'id required' }, { status: 400 });
+  if (typeof body?.id !== 'string' || !UUID_RE.test(body.id)) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const { data, error } = await createServiceClient().from('form_sends')
     .update({ status: 'cancelled', completed_at: new Date().toISOString(), updated_at: new Date().toISOString(), error_message: 'Cancelled by the business' })

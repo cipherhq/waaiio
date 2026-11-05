@@ -5,6 +5,8 @@
  * filters used by the code under test; unknown filters throw so a test cannot
  * silently pass on an unfiltered read.
  */
+import { randomUUID } from 'node:crypto';
+
 type Row = Record<string, unknown>;
 type Pred = (r: Row) => boolean;
 
@@ -52,7 +54,10 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
 
       const run = () => {
         if (mode === 'insert') {
-          const list = (Array.isArray(payload) ? payload : [payload!]).map(r => ({ id: `${table}-${rows().length + 1}`, created_at: new Date(Date.now() + rows().length).toISOString(), ...r }));
+          const list = (Array.isArray(payload) ? payload : [payload!]).map((r, i) => {
+            const stamp = new Date(Date.now() + rows().length + i).toISOString();
+            return { id: randomUUID(), created_at: stamp, updated_at: stamp, ...r };
+          });
           rows().push(...list);
           for (const r of list) db.writes.push({ table, kind: 'insert', row: r });
           return { data: returning ? (list.length === 1 ? list[0] : list) : null, error: null };

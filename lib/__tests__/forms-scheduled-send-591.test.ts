@@ -48,7 +48,7 @@ import { GET as cron } from '@/app/api/cron/scheduled-form-sends/route';
 
 const BIZ = 'biz-a';
 const OTHER = 'biz-b';
-const FORM = 'form-a';
+const FORM = '33333333-3333-4333-a333-333333333333';
 const P1 = '+2348031111111';
 const P2 = '+2348032222222';
 const P3 = '+2348033333333';
@@ -126,6 +126,13 @@ describe('scheduling a form send', () => {
     expect(m.db.tables.form_sends).toEqual([]);
   });
 
+  it('caps how many sends one business can have waiting', async () => {
+    for (let i = 0; i < 20; i++) m.db.tables.form_sends.push({ business_id: BIZ, form_id: FORM, status: 'scheduled', recipients: [P1], scheduled_at: inAnHour() });
+    const res = await send(post({ formId: FORM, businessId: BIZ, phones: [P1], scheduledAt: inAnHour() }));
+    expect(res.status).toBe(429);
+    expect(m.db.tables.form_sends).toHaveLength(20);
+  });
+
   it('cannot schedule another business’s form', async () => {
     expect((await send(post({ formId: 'form-b', businessId: BIZ, phones: [P1], scheduledAt: inAnHour() }))).status).toBe(404);
     m.user = { id: 'owner-b' };
@@ -169,7 +176,7 @@ describe('the scheduled-sends cron', () => {
     await tick();
     expect(m.template).not.toHaveBeenCalled();
     expect(m.text).not.toHaveBeenCalled();
-    expect(sendRow()).toMatchObject({ status: 'failed', sent_count: 0, skipped_count: 2, error_message: 'No messages were accepted' });
+    expect(sendRow()).toMatchObject({ status: 'failed', sent_count: 0, skipped_count: 2, error_message: 'Nobody was eligible to receive it at send time' });
     expect(sendRow().results).toEqual([
       { phone: P1, status: 'skipped', reason: 'no_consent' },
       { phone: P2, status: 'skipped', reason: 'opted_out' },
@@ -192,18 +199,80 @@ describe('the scheduled-sends cron', () => {
     expect(m.template).toHaveBeenCalledTimes(2);
   });
 
-  it('a template that lost approval means outside-window recipients fail honestly, no free text', async () => {
+  it('a template that lost approval stops the whole send, like an immediate send would', async () => {
     await schedule();
     m.getTemplates.mockResolvedValue({ data: [template({ status: 'PAUSED' })] });
     m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-${BIZ}`, sender_phone: P2.slice(1), provider_timestamp: new Date(Date.now() - 60_000).toISOString() });
     await tick();
     expect(m.template).not.toHaveBeenCalled();
-    expect(m.text).toHaveBeenCalledTimes(1); // P2 is inside the 24-hour window
-    expect(sendRow().results).toEqual([
-      { phone: P1, status: 'failed', reason: 'no_template' },
-      { phone: P2, status: 'sent', via: 'text' },
-    ]);
-    expect(sendRow().error_message).toMatch(/no longer approved/);
+    expect(m.text).not.toHaveBeenCalled();
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/no longer approved.*nothing was sent/) });
+  });
+
+  it('gives up on a template check that keeps failing for 2 hours, with nothing sent', async () => {
+    await schedule();
+    sendRow().scheduled_at = new Date(Date.now() - 3 * 60 * 60_000).toISOString();
+    m.getTemplates.mockRejectedValue(new Error('Session has expired'));
+    await tick();
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/could not be checked for 2 hours/) });
+    expect(m.template).not.toHaveBeenCalled();
+  });
+
+  it('takes turns: one business’s stuck sends cannot hold up another business', async () => {
+    m.db.tables.forms.push({ id: 'form-b2', business_id: OTHER, title: 'B2', description: null, token: 'tokB2', is_active: true, settings: {} });
+    for (let i = 0; i < 4; i++) {
+      m.db.tables.form_sends.push({ id: `00000000-0000-4000-a000-00000000000${i}`, business_id: BIZ, form_id: FORM, template_name: 'feedback_request', recipients: [P1], status: 'scheduled', scheduled_at: new Date(Date.now() - 60_000 * (10 - i)).toISOString(), updated_at: new Date(Date.now() - 60_000 * (10 - i)).toISOString(), results: [], sent_count: 0, failed_count: 0, skipped_count: 0 });
+    }
+    m.db.tables.form_sends.push({ id: '00000000-0000-4000-a000-0000000000bb', business_id: OTHER, form_id: 'form-b2', template_name: null, recipients: ['+2348039999999'], status: 'scheduled', scheduled_at: new Date(Date.now() - 1000).toISOString(), updated_at: new Date(Date.now() - 1000).toISOString(), results: [], sent_count: 0, failed_count: 0, skipped_count: 0 });
+    // Business A's WhatsApp account can't answer template checks.
+    m.getTemplates.mockRejectedValue(new Error('Session has expired'));
+    const res = await (await tick()).json();
+    expect(res.processed).toBe(2); // one send per business per run
+    const other = m.db.tables.form_sends.find(r => r.business_id === OTHER)!;
+    expect(other.status).not.toBe('scheduled'); // reached in the very first run
+    expect(m.db.tables.form_sends.filter(r => r.business_id === BIZ && r.status === 'scheduled')).toHaveLength(4);
+  });
+
+  it('when time runs out, the rest go back in the queue and are sent next run; nobody is dropped', async () => {
+    const people = Array.from({ length: 7 }, (_, i) => `+234803111110${i}`);
+    for (const p of people) m.db.tables.customer_consents.push(consent(p));
+    await send(post({ formId: FORM, businessId: BIZ, phones: people, templateName: 'feedback_request', scheduledAt: inAnHour() }));
+    makeDue();
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    m.template.mockImplementation(async () => { if (m.template.mock.calls.length >= 5) offset = 45_000; return { success: true, messageId: 'w' }; });
+    try {
+      await tick();
+      expect(sendRow()).toMatchObject({ status: 'scheduled', sent_count: 5, recipients: people.slice(5), error_message: 'Partly sent; 2 still to send' });
+      expect((sendRow().results as unknown[])).toHaveLength(5);
+      offset = 0;
+      await tick();
+    } finally { spy.mockRestore(); }
+    expect(m.template).toHaveBeenCalledTimes(7);
+    expect(sendRow()).toMatchObject({ status: 'sent', sent_count: 7, failed_count: 0, error_message: null });
+    expect((sendRow().results as Array<{ phone: string }>).map(r => r.phone)).toEqual(people);
+  });
+
+  it('never overwrites a send whose state changed while it was being sent', async () => {
+    await schedule();
+    // e.g. marked interrupted by another run's sweep while this run was still sending.
+    m.template.mockImplementation(async () => { sendRow().status = 'failed'; sendRow().error_message = 'changed elsewhere'; return { success: true, messageId: 'w' }; });
+    await tick();
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: 'changed elsewhere' });
+    expect(sendRow().sent_count).toBeUndefined();
+  });
+
+    it('a send left in "sending" by a killed run is marked interrupted and never re-sent', async () => {
+    await schedule();
+    Object.assign(sendRow(), { status: 'sending', started_at: new Date(Date.now() - 11 * 60_000).toISOString() });
+    await tick();
+    expect(sendRow()).toMatchObject({ status: 'failed', error_message: expect.stringMatching(/Interrupted.*check before sending again/) });
+    expect(m.template).not.toHaveBeenCalled();
+    // A recent "sending" row (another run still working on it) is left alone.
+    Object.assign(sendRow(), { status: 'sending', started_at: new Date(Date.now() - 60_000).toISOString(), error_message: null });
+    await tick();
+    expect(sendRow().status).toBe('sending');
   });
 
   it('a template-check outage puts the send back in the queue with nothing sent', async () => {
@@ -269,6 +338,11 @@ describe('listing and cancelling sends', () => {
     makeDue();
     await tick();
     expect(m.template).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed ids', async () => {
+    expect((await del('not-a-uuid')).status).toBe(400);
+    expect((await listSends(new NextRequest(`https://example.test/api/forms/sends?businessId=${BIZ}&formId=nope`))).status).toBe(400);
   });
 
   it('another owner can neither see nor cancel the send', async () => {

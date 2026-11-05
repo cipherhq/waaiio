@@ -127,11 +127,13 @@ const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
  * is missing or unsuitable; throws TemplateLookupUnavailableError when WhatsApp
  * could not be asked, so callers never mistake an outage for a bad template.
  */
-export async function loadInviteTemplate(resolved: ResolvedChannel, name: string | null | undefined): Promise<InviteTemplate | null> {
+export async function loadInviteTemplate(resolved: ResolvedChannel, name: string | null | undefined, deadline?: number): Promise<InviteTemplate | null> {
   if (!name || !TEMPLATE_NAME.test(name) || !resolved.cloud || !resolved.sender.sendTemplate) return null;
   try {
     let after: string | undefined;
     for (let page = 0; page < 10; page++) {
+      // Paging must not eat the whole time budget; out of time counts as "could not check".
+      if (deadline !== undefined && Date.now() >= deadline) throw new Error('Template lookup ran out of time');
       const result = await resolved.cloud.getTemplates({ limit: 100, after });
       const t = result.data.find(x => x.name === name && x.language === 'en_US');
       if (t) return isInviteCompatible(t) ? { name, category: t.category === 'UTILITY' ? 'utility' : 'marketing' } : null;

@@ -25,9 +25,17 @@ const REASON_TEXT: Record<string, string> = {
 };
 
 type Mode = 'contacts' | 'audience' | 'numbers';
+
+/** Earliest pickable time (2 minutes from now), in the datetime-local format. */
+function localMin(): string {
+  const d = new Date(Date.now() + 2 * 60_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 type SendRow = {
   id: string; status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled'; scheduled_at: string;
   sent_count: number; failed_count: number; skipped_count: number; error_message: string | null;
+  results?: Result[] | null;
 };
 const STATUS_TEXT: Record<SendRow['status'], string> = {
   scheduled: 'Scheduled', sending: 'Sending', sent: 'Sent', failed: 'Not sent', cancelled: 'Cancelled',
@@ -106,6 +114,10 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   const canSend = !sending && !tooMany && (!later || !!when) && (mode === 'contacts' ? picked.size > 0 : mode === 'audience' ? !!segmentId : typedNumbers.length > 0);
 
   async function send() {
+    // Browsers without a date picker can produce text that is not a date.
+    const whenDate = later && when ? new Date(when) : null;
+    if (whenDate && Number.isNaN(whenDate.getTime())) { setError('Enter a valid date and time.'); return; }
+    const whenIso = whenDate ? whenDate.toISOString() : null;
     setSending(true); setError(''); setResults(null); setScheduled(null);
     try {
       const res = await fetch('/api/forms/send', {
@@ -117,7 +129,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
           ...(mode === 'numbers' ? { phones: typedNumbers } : {}),
           ...(mode === 'audience' ? { segmentId } : {}),
           ...(templateName ? { templateName } : {}),
-          ...(later && when ? { scheduledAt: new Date(when).toISOString() } : {}),
+          ...(whenIso ? { scheduledAt: whenIso } : {}),
         }),
       });
       const data = await res.json().catch(() => null);
@@ -226,9 +238,9 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         </label>
         {later && (
           <div>
-            <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} aria-label="Send at"
+            <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} aria-label="Send at" min={localMin()}
               className="mt-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-            <p className="mt-1 text-xs text-gray-400">Goes out within 15 minutes of this time. Opt-ins are checked again when it sends.</p>
+            <p className="mt-1 text-xs text-gray-400">Uses your device’s time zone. Usually goes out within a few minutes of this time; busy times can take longer. Opt-ins are checked again when it sends.</p>
           </div>
         )}
       </fieldset>
@@ -286,6 +298,16 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
                     <span className="text-gray-500"> · Sent {h.sent_count} · Failed {h.failed_count} · Skipped {h.skipped_count}</span>
                   )}
                   {h.error_message && <span className="block text-gray-400">{h.error_message}</span>}
+                  {(h.results || []).some(r => r.status !== 'sent') && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-gray-500">Who wasn’t sent</summary>
+                      <ul className="mt-1 space-y-0.5">
+                        {(h.results || []).filter(r => r.status !== 'sent').map(r => (
+                          <li key={r.phone} className="text-gray-500">{r.phone}: {'reason' in r ? REASON_TEXT[r.reason] || r.reason : ''}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                 </span>
                 {h.status === 'scheduled' && (
                   <button type="button" onClick={() => cancelSend(h.id)} className="text-red-500 hover:text-red-700">Cancel</button>

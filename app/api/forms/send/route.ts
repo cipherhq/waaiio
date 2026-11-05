@@ -12,6 +12,9 @@ import {
   type RecipientOutcome,
 } from '@/lib/forms/form-send';
 
+/** Most scheduled sends one business may have waiting at once (interim; Owner decision pending on limits). */
+const MAX_WAITING_SENDS = 20;
+
 /** Scheduled sends: at least a minute ahead (the cron runs every 15 minutes), at most 90 days. */
 function parseSchedule(value: unknown): Date | 'invalid' | null {
   if (value === undefined || value === null || value === '') return null;
@@ -134,7 +137,7 @@ export async function POST(request: NextRequest) {
     let template = null;
     if (templateName) {
       try {
-        template = await loadInviteTemplate(resolved, templateName);
+        template = await loadInviteTemplate(resolved, templateName, deadline);
       } catch (err) {
         if (err instanceof TemplateLookupUnavailableError) {
           return NextResponse.json({ error: 'Could not check templates with WhatsApp right now. Nothing was sent. Please try again shortly.' }, { status: 503 });
@@ -151,6 +154,13 @@ export async function POST(request: NextRequest) {
     const invalidSkips: RecipientOutcome[] = invalid.map(phone => ({ phone, status: 'skipped' as const, reason: 'invalid_phone' as const }));
 
     if (scheduledAt) {
+      // Interim cap on waiting sends per business, so one merchant cannot crowd the queue.
+      const { count: waiting, error: waitingErr } = await service.from('form_sends')
+        .select('id', { count: 'exact', head: true }).eq('business_id', businessId).eq('status', 'scheduled');
+      if (waitingErr) return NextResponse.json({ error: 'Could not schedule this send' }, { status: 503 });
+      if ((waiting ?? 0) >= MAX_WAITING_SENDS) {
+        return NextResponse.json({ error: `You already have ${MAX_WAITING_SENDS} sends waiting. Cancel one or wait for them to go out.` }, { status: 429 });
+      }
       // Store only people who may be messaged now; the cron checks each one again when it sends.
       const skips: RecipientOutcome[] = [...invalidSkips];
       const eligible: string[] = [];
