@@ -162,7 +162,15 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
   const serviceDuration = d.service_duration as number | undefined;
   const slotInterval = (meta.slot_interval_minutes as number) || serviceDuration || 60;
 
-  let slots = generateTimeSlots(openTime, closeTime, slotInterval);
+  // Opening and closing at the same time means open 24 hours, as book_table_atomic
+  // reads business hours (M510); generateTimeSlots alone returns no times for it.
+  const openMin = timeToMinutes(openTime);
+  const allDay = openMin === timeToMinutes(closeTime);
+  const lastMinute = (openMin + 24 * 60 - 1) % (24 * 60);
+  const listClose = allDay
+    ? `${String(Math.floor(lastMinute / 60)).padStart(2, '0')}:${String(lastMinute % 60).padStart(2, '0')}`
+    : closeTime;
+  let slots = generateTimeSlots(openTime, listClose, slotInterval);
 
   // Filter by time preference if smart intent set one
   if (pref === 'morning') {
@@ -176,9 +184,8 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
   if (extraTime && !slots.includes(extraTime)) {
     // Inside [open, close), the same window generateTimeSlots uses (close after midnight too)
     const t = timeToMinutes(extraTime);
-    const openMin = timeToMinutes(openTime);
     const closeMin = timeToMinutes(closeTime);
-    const inside = closeMin > openMin ? t >= openMin && t < closeMin : closeMin < openMin && (t >= openMin || t < closeMin);
+    const inside = allDay || (closeMin > openMin ? t >= openMin && t < closeMin : t >= openMin || t < closeMin);
     if (inside) slots = [...slots, extraTime];
   }
 
@@ -195,7 +202,6 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
   const isTableRes = d._is_table_reservation === true;
   if (isTableRes && serviceDuration) {
     const seatingTo = d._seating_available_to as string | null;
-    const openMin = timeToMinutes(openTime);
     let closeMin = timeToMinutes(seatingTo || closeTime);
     // Business hours that close at or after midnight run into the next day, as
     // book_table_atomic reads them (M510). A table's own closing time is

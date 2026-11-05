@@ -387,6 +387,38 @@ describe('T tables whose business hours close at or after midnight (M510)', () =
   });
 });
 
+describe('T businesses open 24 hours (open and close both 00:00, M510)', () => {
+  const allDaySat = { saturday: { open: '00:00', close: '00:00' } };
+
+  it('services: the day is listed, has times, and a typed or pre-filled time is accepted', async () => {
+    const { date, time } = await flow();
+    const ctx = (extra: Record<string, unknown> = {}) => ctxFor({ db: mockDb(), operatingHours: allDaySat, sessionData: { date: SAT, ...extra } });
+    const ids = rowIds(await time.prompt(ctx()));
+    // Hourly from 00:00; the list shows the first 10 (WhatsApp limit), later ones can be typed
+    expect(ids.slice(0, 10)).toEqual(['00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00']);
+    expect(await time.validate('23:00', ctx())).toMatchObject({ valid: true, data: { time: '23:00' } });
+    expect(await time.validate('10am', ctx())).toMatchObject({ valid: true, data: { time: '10:00' } });
+    expect(await time.validate('10:30', ctx())).toMatchObject({ valid: true, data: { time: '10:30' } });
+    const prefilled = ctx({ time: '10:00' });
+    expect(await time.skipIf!(prefilled)).toBe(true);
+    const list = ctx({ _show_full_date_list: true });
+    delete list.session.session_data.date;
+    expect(rowIds(await date.prompt(list))).toContain(SAT);
+    const pre = ctx();
+    expect(await date.skipIf!(pre)).toBe(true);
+  });
+
+  it('tables: the day is listed and a late table is accepted', async () => {
+    const { date, time } = await flow();
+    const ctx = (extra: Record<string, unknown> = {}) => ctxFor({ table: true, db: mockDb(), operatingHours: allDaySat, sessionData: { date: SAT, ...extra } });
+    expect(rowIds(await time.prompt(ctx()))).toContain('00:00');
+    expect(await time.validate('22:30', ctx())).toMatchObject({ valid: true });
+    const list = ctx({ _show_full_date_list: true });
+    delete list.session.session_data.date;
+    expect(rowIds(await date.prompt(list))).toContain(SAT);
+  });
+});
+
 // ═══════════════════════════════════════════════════════
 // C. Taken between the list and the final claim
 // ═══════════════════════════════════════════════════════
