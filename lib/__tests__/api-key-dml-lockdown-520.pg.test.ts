@@ -4,10 +4,10 @@
  *
  * Fixture: public.api_keys as created by M180 (RLS on, owners_manage_api_keys FOR ALL to
  * PUBLIC), M474 applied from disk (issue_api_key / revoke_api_key, SECURITY INVOKER,
- * service_role-only EXECUTE). Table ACLs differ by environment (read 2026-11-05, read-only):
- * production gives anon, authenticated and service_role every privilege; staging gives
- * authenticated and service_role arwd. M520 is applied from disk as one whole-file statement
- * over both starting states and must give the same exact grants.
+ * service_role-only EXECUTE). Table ACLs differ by environment, so M520 is applied from disk
+ * as one whole-file statement over two starting states, a broad one (every privilege for every
+ * API role, as Supabase default privileges give a new table) and a narrow one (authenticated and
+ * service_role arwd), and must give the same exact grants from both.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
@@ -113,7 +113,7 @@ suite('M520 api_keys grants (real PostgreSQL)', () => {
     await control?.end();
   });
 
-  it('from the production grants: 520 sets exactly the contract (self-check passes)', async () => {
+  it('from a broad starting state: 520 sets exactly the contract (self-check passes)', async () => {
     await q(`
       GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.api_keys TO anon, authenticated, service_role;
       GRANT SELECT ON public.api_keys TO PUBLIC;`);
@@ -122,7 +122,7 @@ suite('M520 api_keys grants (real PostgreSQL)', () => {
     expect(await grants()).toEqual(EXPECTED);
   });
 
-  it('from the staging grants: 520 gives the same result, and re-applies cleanly', async () => {
+  it('from the narrow starting state: 520 gives the same result, and re-applies cleanly', async () => {
     await q(`
       REVOKE ALL ON public.api_keys FROM PUBLIC, anon, authenticated, service_role;
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.api_keys TO authenticated, service_role;`);
