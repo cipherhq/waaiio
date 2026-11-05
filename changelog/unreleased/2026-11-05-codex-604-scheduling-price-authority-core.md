@@ -1,0 +1,14 @@
+## 2026-11-05 — Migration 518: the database sets scheduling booking prices (#604, PR #806)
+
+**What changed**
+- New migration `supabase/migrations/518_scheduling_price_authority_core.sql` (renumbered from draft 497, which sat below the Release V3 lock).
+  - A private schema `scheduling_private_604` holds a quote function. It reads the service or appointment price, deposit, add-ons, promo code and the business's prepay settings from the database rows, inside the same transaction that reserves the slot. Callers send only the terms the customer saw; if those differ from the rows, booking stops with `terms_changed` and nothing is created.
+  - New entry points `book_slot_authoritative_604`, `book_manual_slot_authoritative_604` and `book_with_package_authoritative_604` return the committed total and payable amount. The old `book_slot_atomic`, `book_manual_slot_atomic` and `book_with_package_atomic` signatures are kept and route through the same authority. All are service-role only.
+  - Promo codes on new scheduling bookings are reserved in `promo_reservations` (new `booking_id` column) and counted once: at booking when nothing is due, otherwise when payment is verified. Cancelling an unpaid booking releases the reservation.
+- App callers use the new entry points: WhatsApp scheduling flow (`lib/bot/flows/scheduling.flow.ts`), public booking page and route (`app/b/[slug]/BookingForm.tsx`, `app/api/bookings/public/create/route.ts`) and manual dashboard booking (`app/api/bookings/create-manual/route.ts`). Payment is started for the committed amount read back from the booking, not a client-side figure. The public page asks the customer to confirm again when the price changed.
+- `lib/payments/process-success.ts` finalizes the booking's promo reservation after a verified payment and before platform fee and confirmation steps; if that fails, finalization stops and can be retried.
+- Table reservations (`book_table_atomic`) and both merchant payment routes (merchant-connected and Waaiio-held) are not changed. Fee recording is unchanged.
+
+**Tests:** `lib/__tests__/scheduling-price-authority-604.pg.test.ts` (real PostgreSQL, CI `.pg.test.ts` job), `scheduling-price-authority-604-postgrest.test.ts` (real PostgREST, workflow `scheduling-price-authority-604-postgrest.yml`), `scheduling-price-authority-604-callers.test.ts`, plus the existing scheduling, manual-booking and payment-finalization suites. Catalog delta: `supabase/catalog-deltas/518_scheduling_price_authority_core.json`.
+
+**What could break:** the new app code needs M518 in the database and fails closed without it (bookings cannot be created), so M518 must be applied to staging and production before this app code is served. A booking whose service price changed between viewing and confirming now asks the customer to confirm the new price instead of charging the old one.
