@@ -306,7 +306,8 @@ describe('Every started invocation has exactly one terminal event', () => {
     const completed = (autoPayoutCode.match(/cron\.completed\(/g) || []).length;
     const failed = (autoPayoutCode.match(/cron\.failed\(/g) || []).length;
     expect(started).toBe(1);
-    expect(completed).toBe(2); // normal + early "no businesses"
+    // 3 mutually exclusive exits: (1) no businesses, (2) no valid timezones, (3) normal completion
+    expect(completed).toBe(3);
     expect(failed).toBe(1); // catch block
   });
 

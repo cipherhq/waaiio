@@ -22,13 +22,13 @@ vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
 vi.mock('@/lib/constants', () => ({ getCurrencyCode: () => 'NGN', getPaymentGatewayForCountry: () => 'paystack' }));
 vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: async () => ({ payout_cooling_period_days: 7, fraud_velocity_threshold: 100, minimum_payout: 1 }) }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => client }));
-const business = { id: 'business-1', country_code: 'NG', created_at: '2020-01-01', verification_level: 'verified' };
+const business = { id: 'business-1', country_code: 'NG', created_at: '2020-01-01', verification_level: 'verified', timezone: 'Africa/Lagos' };
 const client = {
   rpc: f.rpc,
   from(table: string) {
     let columns = ''; let write = false;
     const q: Record<string, any> = {};
-    for (const method of ['eq', 'in', 'is', 'gte', 'lte', 'limit', 'order', 'not', 'neq']) q[method] = () => q;
+    for (const method of ['eq', 'in', 'is', 'gte', 'lt', 'lte', 'limit', 'order', 'not', 'neq']) q[method] = () => q;
     q.select = (value: string) => { columns = value; f.reads.push(table + ':' + value); return q; };
     for (const method of ['insert', 'update', 'delete', 'upsert']) q[method] = (payload: unknown) => { write = true; f.writes(table, method, payload); return q; };
     const result = () => {

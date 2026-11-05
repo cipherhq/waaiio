@@ -11,6 +11,7 @@ import { logAdminAudit } from '@/lib/admin-audit';
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
+import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom, PAYOUT_HISTORY_MAX_ROWS } from '@/lib/payouts/period';
 
 interface Flag {
   type: string;
@@ -44,20 +45,14 @@ export async function POST(request: NextRequest) {
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
     const MINIMUM_PAYOUT = settings.minimum_payout;
 
-    // Calculate period: last full week (Monday to Sunday)
+    // Capture a single instant for all period calculations
     const now = new Date();
-    const periodEnd = new Date(now);
-    periodEnd.setDate(periodEnd.getDate() - periodEnd.getDay()); // Last Sunday
-    const periodStart = new Date(periodEnd);
-    periodStart.setDate(periodStart.getDate() - 6); // Monday before
-
-    const periodStartStr = periodStart.toISOString().split('T')[0];
-    const periodEndStr = periodEnd.toISOString().split('T')[0];
+    const periodFor = createPrecedingWeekResolver(now);
 
     // Get all active platform-managed businesses with verification info
     const { data: businesses, error: bizError } = await supabase
       .from('businesses')
-      .select('id, created_at, verification_level, payout_limit_monthly, country_code')
+      .select('id, created_at, verification_level, payout_limit_monthly, country_code, timezone')
       .eq('payout_mode', 'platform_managed')
       .eq('status', 'active');
 
@@ -77,25 +72,40 @@ export async function POST(request: NextRequest) {
     const needsAttention: string[] = [];
     let custodyUnclassifiedCount = 0;
     let custodyUnclassifiedAmount = 0;
+    const processedPeriods = new Set<string>();
 
     for (const biz of businesses) {
       try {
         if (await getMerchantAccountingHold(supabase, biz.id)) { accountingHeld++; skipped++; continue; }
       } catch { failed++; continue; }
-      // Check if payout already exists for this period
-      const { data: existing, error: existingError } = await supabase
-        .from('business_payouts')
-        .select('id, currency')
-        .eq('business_id', biz.id)
-        .eq('period_start', periodStartStr)
-        .eq('period_end', periodEndStr);
 
-      // Fail closed: if we can't check for duplicates, count as failed
-      if (existingError) {
-        logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError.message });
+      // Compute per-business merchant-local preceding completed week
+      const periodResult = periodFor(biz.timezone);
+      if (!periodResult.success) {
+        logger.error('[PAYOUT] Invalid timezone — business skipped', { business_id: biz.id, timezone: biz.timezone, error: periodResult.error });
         failed++;
         continue;
       }
+      const { periodStart: periodStartStr, periodEnd: periodEndStr } = periodResult.period;
+      processedPeriods.add(`${periodStartStr}:${periodEndStr}`);
+
+      // One read gives this week's payout rows (dedup) and the latest recorded
+      // payout end within 53 weeks (M521 anchor, used below).
+      const { data: recentPayouts, error: existingError } = await supabase
+        .from('business_payouts')
+        .select('id, currency, period_start, period_end, covered_from, covered_to')
+        .eq('business_id', biz.id)
+        .gte('period_end', recentPayoutRowsFrom(periodResult.period))
+        .limit(PAYOUT_HISTORY_MAX_ROWS);
+
+      // Fail closed: if we can't check for duplicates, count as failed. A full page
+      // may be truncated by the API's row cap, so it counts as unreadable too.
+      if (existingError || (recentPayouts || []).length >= PAYOUT_HISTORY_MAX_ROWS) {
+        logger.error('[PAYOUT] Dedup check failed for business', { business_id: biz.id, error: existingError?.message });
+        failed++;
+        continue;
+      }
+      const existing = (recentPayouts || []).filter(row => row.period_start === periodStartStr && row.period_end === periodEndStr);
       // Never generate for a merchant with unresolved historical currency.
       const { data: legacyPayouts, error: legacyPayoutError } = await supabase
         .from('business_payouts').select('id')
@@ -106,16 +116,28 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      // M521 (#796 Option A): count exactly from where the latest earlier payout
+      // ended, so a timezone change cannot double-count or skip fees, and fees from
+      // weeks without a payout roll forward. Fail closed.
+      const range = anchorCoveredRange(periodResult.period, recentPayouts || []);
+      if (!range.success) {
+        logger.error('[PAYOUT] Payout range conflict — business skipped', { business_id: biz.id, error: range.error });
+        failed++;
+        continue;
+      }
+      const { coveredFrom, coveredTo } = range;
+
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
       // M466: Join platform_fees → payments to get authoritative currency
+      // Half-open [coveredFrom, coveredTo): merchant-local week, anchored to the previous payout (M521)
       const { data: fees, error: feesError } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString());
+        .gte('created_at', coveredFrom)
+        .lt('created_at', coveredTo);
 
       // Flatten the joined currency into the fee row for payable-fees.ts
       const feesWithCurrency = (fees || []).map(f => ({
@@ -186,14 +208,14 @@ export async function POST(request: NextRequest) {
 
       if (gross <= 0) continue;
 
-      // Fetch payments for velocity check
+      // Fetch payments for velocity check (same UTC bounds as fee query)
       const { data: payments, error: paymentsError } = await supabase
         .from('payments')
         .select('created_at')
         .eq('business_id', biz.id)
         .eq('status', 'success')
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString());
+        .gte('created_at', coveredFrom)
+        .lt('created_at', coveredTo);
 
       if (paymentsError) {
         logger.error('[PAYOUT] Payments query failed for business', { business_id: biz.id, error: paymentsError.message });
@@ -324,6 +346,8 @@ export async function POST(request: NextRequest) {
           payout_account_id: payoutAccount?.id || null,
           period_start: periodStartStr,
           period_end: periodEndStr,
+          covered_from: coveredFrom,
+          covered_to: coveredTo,
           gross_amount: gross,
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
@@ -433,6 +457,8 @@ export async function POST(request: NextRequest) {
           payout_account_id: payoutAccount?.id || null,
           period_start: periodStartStr,
           period_end: periodEndStr,
+          covered_from: coveredFrom,
+          covered_to: coveredTo,
           gross_amount: gross,
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
@@ -459,6 +485,14 @@ export async function POST(request: NextRequest) {
       } // end per-currency loop (M466)
     }
 
+    // Build truthful period metadata: single field only when all processed periods agree
+    const periodsArray = [...processedPeriods];
+    const periodMeta = periodsArray.length === 1
+      ? { period: { start: periodsArray[0].split(':')[0], end: periodsArray[0].split(':')[1] } }
+      : periodsArray.length > 1
+        ? { periods: periodsArray.map(p => ({ start: p.split(':')[0], end: p.split(':')[1] })) }
+        : {};
+
     // Audit log — uses service client (INSERT revoked from authenticated)
     await logAdminAudit({
       actorId: admin.id,
@@ -466,8 +500,7 @@ export async function POST(request: NextRequest) {
       entityType: 'business_payout',
       entityId: null,
       details: {
-        period_start: periodStartStr,
-        period_end: periodEndStr,
+        ...periodMeta,
         businesses_checked: businesses.length,
         payouts_created: created,
         payouts_held: held,
@@ -486,7 +519,7 @@ export async function POST(request: NextRequest) {
         needs_attention: needsAttention.length > 0 ? needsAttention : undefined,
         failed,
         accounting_held: accountingHeld,
-        period: { start: periodStartStr, end: periodEndStr },
+        ...periodMeta,
         ...(custodyUnclassifiedCount > 0 ? {
           custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
           custody_unclassified_amount: custodyUnclassifiedAmount,
@@ -502,7 +535,7 @@ export async function POST(request: NextRequest) {
         skipped,
         failed: 0,
         accounting_held: accountingHeld,
-        period: { start: periodStartStr, end: periodEndStr },
+        ...periodMeta,
         message: accountingHeld > 0 ? `${accountingHeld} businesses awaiting accounting reconciliation` : 'No eligible payouts for this period',
       });
     }
@@ -514,7 +547,7 @@ export async function POST(request: NextRequest) {
       skipped,
       failed: 0,
       accounting_held: accountingHeld,
-      period: { start: periodStartStr, end: periodEndStr },
+      ...periodMeta,
       ...(custodyUnclassifiedCount > 0 ? {
         custody_warning: `${custodyUnclassifiedCount} fee rows excluded: custody unknown`,
         custody_unclassified_amount: custodyUnclassifiedAmount,

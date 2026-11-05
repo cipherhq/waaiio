@@ -423,6 +423,9 @@ export default function Payouts() {
           Array.isArray(data.needs_attention) && data.needs_attention.length > 0
             ? `Needs review (payout IDs): ${data.needs_attention.join(', ')}` : null,
           data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
+          // #796: businesses in different local weeks return `periods` instead of `period`
+          Array.isArray(data.periods) && data.periods.length > 0
+            ? `Periods: ${data.periods.map((p: { start: string; end: string }) => `${p.start} to ${p.end}`).join('; ')}` : null,
         ].filter(Boolean).join('\n');
         alert(msg);
 

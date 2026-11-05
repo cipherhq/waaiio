@@ -57,6 +57,13 @@ it('shows the server explanation when no payouts are eligible', async () => {
   expect(message).toContain('No eligible payouts for this period');
   expect(message).toContain('Skipped: 1');
 });
+it('lists every local week when businesses fall in different weeks (#796 periods)', async () => {
+  m.result = { created: 2, held: 0, skipped: 0, failed: 0,
+    periods: [{ start: '2026-10-26', end: '2026-11-01' }, { start: '2026-10-19', end: '2026-10-25' }] };
+  const message = await generate();
+  expect(message).toContain('Periods: 2026-10-26 to 2026-11-01; 2026-10-19 to 2026-10-25');
+  expect(message).not.toContain('Period: ');
+});
 it('preserves a fatal server error without a created-payout summary', async () => {
   m.status = 500; m.result = { error: 'Failed to generate payouts' };
   expect(await generate()).toBe('Failed to generate payouts');

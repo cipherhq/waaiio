@@ -16,11 +16,12 @@ import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow
 import { computePlatformHeldTotals, getUnclassifiedFeeRows, getUnknownCurrencyFeeRows, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { checkVerificationLimit } from '@/lib/payouts/verification-limit';
 import { decideAutoPayoutOutcome } from '@/lib/payouts/auto-payout-decision';
+import { createPrecedingWeekResolver, anchorCoveredRange, recentPayoutRowsFrom, PAYOUT_HISTORY_MAX_ROWS, type PayoutPeriod, type CoveredPayoutRow } from '@/lib/payouts/period';
 
 /**
  * GET /api/cron/auto-payout
  *
- * Runs every Monday at 6 AM via cron.
+ * Runs every Monday at 12:00 UTC via cron (vercel.json; Owner decision 2026-11-05, #796).
  * Generates and auto-approves payouts for platform-managed businesses.
  *
  * Safety checks before auto-approval:
@@ -229,20 +230,14 @@ export async function GET(request: NextRequest) {
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
     const MINIMUM_PAYOUT = settings.minimum_payout;
 
-    // Calculate period: last full week (Monday to Sunday)
+    // Capture a single instant for all period calculations
     const now = new Date();
-    const periodEnd = new Date(now);
-    periodEnd.setDate(periodEnd.getDate() - periodEnd.getDay()); // Last Sunday
-    const periodStart = new Date(periodEnd);
-    periodStart.setDate(periodStart.getDate() - 6); // Monday before
-
-    const periodStartStr = periodStart.toISOString().split('T')[0];
-    const periodEndStr = periodEnd.toISOString().split('T')[0];
+    const periodFor = createPrecedingWeekResolver(now);
 
     // Get all active platform-managed businesses
     const { data: businesses } = await supabase
       .from('businesses')
-      .select('id, name, created_at, country_code, verification_level')
+      .select('id, name, created_at, country_code, verification_level, timezone')
       .eq('payout_mode', 'platform_managed')
       .eq('status', 'active');
 
@@ -251,69 +246,63 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: 'No platform-managed businesses', generated: 0 });
     }
 
-    const bizIds = businesses.map(b => b.id);
+    // Group businesses by timezone → compute one period per group
+    // Invalid timezones are fail-closed: excluded from all groups, never enter generation or release
+    const invalidTimezoneBizIds = new Set<string>();
+    const tzGroups = new Map<string, { period: PayoutPeriod; bizIds: string[] }>();
+    const bizPeriodMap = new Map<string, PayoutPeriod>();
 
-    // Batch-fetch all data needed for the main loop in parallel — one query each instead of N per business.
+    for (const biz of businesses) {
+      const result = periodFor(biz.timezone);
+      if (!result.success) {
+        logger.error('[AUTO-PAYOUT] Invalid timezone — business skipped', { business_id: biz.id, timezone: biz.timezone, error: result.error });
+        invalidTimezoneBizIds.add(biz.id);
+        continue;
+      }
+      const period = result.period;
+      bizPeriodMap.set(biz.id, period);
+      const groupKey = `${period.periodStart}:${period.periodEnd}:${period.queryStart}:${period.queryEnd}`;
+      const group = tzGroups.get(groupKey) ?? { period, bizIds: [] };
+      group.bizIds.push(biz.id);
+      tzGroups.set(groupKey, group);
+    }
+
+    // Valid businesses only (excluding invalid-timezone)
+    const validBizIds = businesses.filter(b => !invalidTimezoneBizIds.has(b.id)).map(b => b.id);
+    if (validBizIds.length === 0) {
+      cron.completed({ processedCount: businesses.length });
+      return NextResponse.json({ message: 'No businesses with valid timezones', generated: 0 });
+    }
+
+    // Period-independent batch queries (run once for all valid businesses)
     const [
-      { data: existingPayoutsForPeriod, error: existingPayoutError },
       { data: legacyPayouts, error: legacyPayoutError },
       { data: legacyAdjustments, error: legacyAdjustmentError },
-      { data: allFeeRows, error: allFeeError },
       { data: allAdjustmentRows, error: allAdjustmentError },
       { data: allPayoutAccountRows },
     ] = await Promise.all([
-      // Existing payouts for this period
-      supabase
-        .from('business_payouts')
-        .select('business_id, currency')
-        .in('business_id', bizIds)
-        .eq('period_start', periodStartStr)
-        .eq('period_end', periodEndStr)
-        .limit(5000),
-      supabase.from('business_payouts').select('business_id').in('business_id', bizIds).is('currency', null).limit(5000),
-      supabase.from('payout_adjustments').select('business_id').in('business_id', bizIds).is('currency', null).limit(5000),
-      // Platform fees for the period across all businesses
-      supabase
-        .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
-        .in('business_id', bizIds)
-        .is('refunded_at', null)
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString())
-        .limit(100_000),
-      // Unapplied payout adjustments across all businesses
+      supabase.from('business_payouts').select('business_id').in('business_id', validBizIds).is('currency', null).limit(5000),
+      supabase.from('payout_adjustments').select('business_id').in('business_id', validBizIds).is('currency', null).limit(5000),
       supabase
         .from('payout_adjustments')
         .select('id, business_id, amount, currency')
-        .in('business_id', bizIds)
+        .in('business_id', validBizIds)
         .is('applied_to_payout_id', null)
         .limit(10_000),
-      // Active payout accounts across all businesses (includes verified_at for eligibility check)
       supabase
         .from('payout_accounts')
         .select('id, business_id, bank_code, account_number, account_name, gateway, verified_at, is_active, stripe_account_id')
-        .in('business_id', bizIds)
+        .in('business_id', validBizIds)
         .eq('is_active', true)
         .limit(5000),
     ]);
 
-    // Build lookup structures from batch results
-    if (existingPayoutError || legacyPayoutError || legacyAdjustmentError || allFeeError || allAdjustmentError ||
-        (existingPayoutsForPeriod || []).length >= 5000 || (legacyPayouts || []).length >= 5000 ||
-        (legacyAdjustments || []).length >= 5000 || (allFeeRows || []).length >= 100_000 || (allAdjustmentRows || []).length >= 10_000) {
+    if (legacyPayoutError || legacyAdjustmentError || allAdjustmentError ||
+        (legacyPayouts || []).length >= 5000 ||
+        (legacyAdjustments || []).length >= 5000 || (allAdjustmentRows || []).length >= 10_000) {
       throw new Error('[AUTO-PAYOUT] Payout history not reliably enumerable; stopping safely');
     }
-    const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(row => `${row.business_id}:${row.currency ?? '__legacy__'}`));
     const reconciliationRequired = new Set([...(legacyPayouts || []), ...(legacyAdjustments || [])].map(row => row.business_id));
-
-    // M466: Group fees by business_id with flattened currency
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined; currency: string | null }[]>();
-    for (const row of (allFeeRows || [])) {
-      const currency = (row as unknown as { payments: { currency: string } }).payments?.currency ?? null;
-      const list = feesByBiz.get(row.business_id) ?? [];
-      list.push({ ...row, currency });
-      feesByBiz.set(row.business_id, list);
-    }
 
     // Group adjustments by business_id (M466: includes currency)
     const adjustmentsByBiz = new Map<string, { id: string; amount: number; currency: string | null }[]>();
@@ -333,13 +322,102 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Period-dependent batch queries: per timezone group.
+    // M521 (#796 Option A): each business's payout history (up to 53 weeks) gives this
+    // week's rows (dedup) and its latest recorded end (anchor). Its fee range starts
+    // exactly there, so a timezone change cannot double-count or skip fees, and fees
+    // from weeks without a payout roll forward. History is read per business so the
+    // API's 1000-row page cap cannot silently truncate it. A business whose range
+    // cannot be worked out safely is excluded from generation and release, like an
+    // invalid timezone (fail closed).
+    const alreadyHasPayout = new Set<string>();
+    type FeeRow = { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean | null | undefined; currency: string | null };
+    const feesByBiz = new Map<string, FeeRow[]>();
+    const rangeConflictBizIds = new Set<string>();
+    const bizRangeMap = new Map<string, { coveredFrom: string; coveredTo: string }>();
+
+    for (const [, group] of tzGroups) {
+      const { period } = group;
+      const historyFrom = recentPayoutRowsFrom(period);
+      const histories = await Promise.all(group.bizIds.map(bizId => supabase
+        .from('business_payouts')
+        .select('business_id, currency, period_start, period_end, covered_from, covered_to')
+        .eq('business_id', bizId)
+        .gte('period_end', historyFrom)
+        .limit(PAYOUT_HISTORY_MAX_ROWS)));
+
+      group.bizIds.forEach((bizId, i) => {
+        const { data: history, error: historyError } = histories[i];
+        if (historyError || (history || []).length >= PAYOUT_HISTORY_MAX_ROWS) {
+          logger.error('[AUTO-PAYOUT] Payout history not reliably enumerable — business skipped', { business_id: bizId, error: historyError?.message });
+          rangeConflictBizIds.add(bizId);
+          return;
+        }
+        for (const row of (history || [])) {
+          if (row.period_start === period.periodStart && row.period_end === period.periodEnd) {
+            alreadyHasPayout.add(`${bizId}:${row.currency ?? '__legacy__'}`);
+          }
+        }
+        const range = anchorCoveredRange(period, (history || []) as CoveredPayoutRow[]);
+        if (!range.success) {
+          logger.error('[AUTO-PAYOUT] Payout range conflict — business skipped', { business_id: bizId, error: range.error });
+          rangeConflictBizIds.add(bizId);
+          return;
+        }
+        bizRangeMap.set(bizId, { coveredFrom: range.coveredFrom, coveredTo: range.coveredTo });
+      });
+
+      const groupBizIds = group.bizIds.filter(id => bizRangeMap.has(id));
+      if (groupBizIds.length === 0) continue;
+      // One read covers every business's own range in this group; rows are filtered per business below.
+      const groupRanges = groupBizIds.map(id => bizRangeMap.get(id)!);
+      const groupFrom = groupRanges.map(r => r.coveredFrom).sort()[0];
+      const groupTo = groupRanges.map(r => r.coveredTo).sort().slice(-1)[0];
+      const { data: groupFeeRows, error: groupFeeError } = await supabase
+        .from('platform_fees')
+        .select('business_id, created_at, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer, payments(currency)')
+        .in('business_id', groupBizIds)
+        .is('refunded_at', null)
+        .gte('created_at', groupFrom)
+        .lt('created_at', groupTo)
+        .limit(100_000);
+
+      if (groupFeeError || (groupFeeRows || []).length >= 100_000) {
+        throw new Error('[AUTO-PAYOUT] Payout history not reliably enumerable; stopping safely');
+      }
+
+      // M466: Group fees by business_id with flattened currency, keeping only
+      // rows inside that business's own half-open range (M521).
+      for (const row of (groupFeeRows || [])) {
+        const range = bizRangeMap.get(row.business_id);
+        const createdMs = Date.parse(row.created_at);
+        if (!range || !(createdMs >= Date.parse(range.coveredFrom) && createdMs < Date.parse(range.coveredTo))) continue;
+        const currency = (row as unknown as { payments: { currency: string } }).payments?.currency ?? null;
+        const list = feesByBiz.get(row.business_id) ?? [];
+        list.push({ ...row, currency });
+        feesByBiz.set(row.business_id, list);
+      }
+    }
+
+    // Track processed periods for truthful response metadata
+    const processedPeriods = new Set<string>();
+
     for (const biz of businesses) {
+      // Skip businesses with invalid timezones or an unsafe payout range (already logged above)
+      if (invalidTimezoneBizIds.has(biz.id) || rangeConflictBizIds.has(biz.id)) continue;
+
       if (await getMerchantAccountingHold(supabase, biz.id)) { held++; continue; }
       // Skip if payout already exists for this period (checked via batch query above)
       if (reconciliationRequired.has(biz.id)) {
         logger.warn('[AUTO-PAYOUT] Historical currency requires reconciliation', { business_id: biz.id });
         continue;
       }
+
+      const bizPeriod = bizPeriodMap.get(biz.id)!;
+      const periodStartStr = bizPeriod.periodStart;
+      const periodEndStr = bizPeriod.periodEnd;
+      const { coveredFrom, coveredTo } = bizRangeMap.get(biz.id)!;
+      processedPeriods.add(`${periodStartStr}:${periodEndStr}`);
 
       // Calculate gross and fee totals from pre-fetched batch data
       // Exclude direct transfers — Waaiio never holds those funds
@@ -473,6 +551,8 @@ export async function GET(request: NextRequest) {
           business_id: biz.id,
           period_start: periodStartStr,
           period_end: periodEndStr,
+          covered_from: coveredFrom,
+          covered_to: coveredTo,
           gross_amount: gross,
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
@@ -588,6 +668,8 @@ export async function GET(request: NextRequest) {
           business_id: biz.id,
           period_start: periodStartStr,
           period_end: periodEndStr,
+          covered_from: coveredFrom,
+          covered_to: coveredTo,
           gross_amount: gross,
           platform_fee: totalFees,
           gateway_fee: totalGatewayFees,
@@ -671,6 +753,8 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
+        // Exclude businesses with invalid timezones or an unsafe payout range from release path
+        if (invalidTimezoneBizIds.has(hp.business_id) || rangeConflictBizIds.has(hp.business_id)) continue;
         const homeBusiness = businesses.find(b => b.id === hp.business_id);
         if (!homeBusiness || hp.currency !== getCurrencyCode(homeBusiness.country_code as CountryCode)) continue;
         if (coolingDone && isVerified && hasAccount) {
@@ -685,9 +769,17 @@ export async function GET(request: NextRequest) {
 
     cron.completed({ processedCount: businesses.length, successCount: generated, skippedCount: businesses.length - generated });
 
+    // Build truthful period metadata: single field only when all agree
+    const periodsArray = [...processedPeriods];
+    const periodMeta = periodsArray.length === 1
+      ? { period: `${periodsArray[0].split(':')[0]} to ${periodsArray[0].split(':')[1]}` }
+      : periodsArray.length > 1
+        ? { periods: periodsArray.map(p => ({ start: p.split(':')[0], end: p.split(':')[1] })) }
+        : {};
+
     return NextResponse.json({
       message: 'Auto-payout complete',
-      period: `${periodStartStr} to ${periodEndStr}`,
+      ...periodMeta,
       generated,
       autoApproved,
       transferred,

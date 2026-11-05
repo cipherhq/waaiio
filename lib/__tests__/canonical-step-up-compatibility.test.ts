@@ -29,7 +29,7 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: (options: any) =
         is: (k: string, v: any) => { filters.push(r => (r[k] ?? null) === v); return query; },
         not: (k: string, _op: string, v: any) => { filters.push(r => (r[k] ?? null) !== v); return query; },
         gt: (k: string, v: any) => { filters.push(r => r[k] > v); return query; },
-        gte: () => query, lte: () => query, in: () => query,
+        gte: () => query, lt: () => query, lte: () => query, in: () => query, limit: () => query,
         single: () => { single = true; return query; },
         maybeSingle: () => { single = true; return query; },
         then: (resolve: any, reject: any) => {
@@ -129,7 +129,7 @@ describe('canonical admin → backend prepare/verify/generate compatibility', ()
   });
   it('preserves separate currency platform-held totals while excluding connected-provider funds', async () => {
     const id = await grant();
-    fixture.rows.businesses = [{ id: 'business-a', status: 'active', payout_mode: 'platform_managed', country_code: 'NG', verification_level: 'verified', created_at: '2020-01-01', payout_limit_monthly: 0 }];
+    fixture.rows.businesses = [{ id: 'business-a', status: 'active', payout_mode: 'platform_managed', country_code: 'NG', verification_level: 'verified', created_at: '2020-01-01', payout_limit_monthly: 0, timezone: 'Africa/Lagos' }];
     fixture.rows.platform_fees = [
       { business_id: 'business-a', transaction_amount: 100, fee_total: 10, gateway_fee: 5, is_direct_transfer: false, payments: { currency: 'NGN' } },
       { business_id: 'business-a', transaction_amount: 50, fee_total: 2, gateway_fee: 1, is_direct_transfer: false, payments: { currency: 'USD' } },
