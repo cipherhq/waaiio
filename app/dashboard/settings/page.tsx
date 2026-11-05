@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const [openSections, setOpenSections] = useState<string[]>(() => {
     const section = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('section') : null;
     if (initialTab === 'payments') return [section === 'recurring' ? 'recurring' : 'gateway'];
+    if (initialTab === 'business' && section === 'hours') return ['profile', 'hours'];
     return [initialTab === 'account' ? 'plan' : initialTab === 'features' ? 'queue' : 'profile'];
   });
   const toggleSection = (section: string) => {

@@ -103,41 +103,35 @@ export async function checkAIFeature(
 }
 
 /**
- * Increment usage counter for an AI feature.
+ * Increment usage counter for an AI feature. Returns true when the count was
+ * saved.
+ *
+ * `supabase` must be the service client: ai_usage writes and the
+ * increment_ai_usage RPC are service-role only (migration 351). The RPC
+ * updates or inserts the month's row atomically.
  */
 export async function incrementAIUsage(
   supabase: SupabaseClient,
   businessId: string,
   feature: 'voice_transcription' | 'translation' | 'ai_fallback' | 'ace_setup',
-): Promise<void> {
+): Promise<boolean> {
   const monthKey = new Date().toISOString().slice(0, 7);
   const field = `${feature}_count`;
 
   try {
-    // Upsert: create row if it doesn't exist, increment if it does
-    const { data: existing } = await supabase
-      .from('ai_usage')
-      .select('id')
-      .eq('business_id', businessId)
-      .eq('month_key', monthKey)
-      .maybeSingle();
-
-    if (existing) {
-      await supabase.rpc('increment_ai_usage', {
-        p_business_id: businessId,
-        p_month_key: monthKey,
-        p_field: field,
-      });
-    } else {
-      await supabase.from('ai_usage').insert({
-        business_id: businessId,
-        month_key: monthKey,
-        [field]: 1,
-      });
+    const { error } = await supabase.rpc('increment_ai_usage', {
+      p_business_id: businessId,
+      p_month_key: monthKey,
+      p_field: field,
+    });
+    if (error) {
+      logger.error('[AI-TIER] Usage increment error:', error.message);
+      return false;
     }
+    return true;
   } catch (err) {
-    // Non-blocking — don't fail the request if usage tracking fails
     logger.error('[AI-TIER] Usage increment error:', (err as Error).message);
+    return false;
   }
 }
 

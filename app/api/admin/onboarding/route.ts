@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -110,6 +111,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: request.headers.get('authorization') ? 'Forbidden' : 'Unauthorized' }, { status: request.headers.get('authorization') ? 403 : 401 });
+  if (!channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
   const limit = await rateLimitResponseAsync(`admin-onboarding-create:${admin.userId}`, 10, 60 * 60_000);
   if (limit) return limit;
 

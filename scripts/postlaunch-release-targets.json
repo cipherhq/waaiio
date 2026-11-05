@@ -1,0 +1,52 @@
+{
+  "merchant": {
+    "baseline_sha": "b741c7cf9e2f969520f8d4ca1aa05a6582d16fac",
+    "target_sha": "5e3204d9334e171bce3475fffa179d5d23f4cc1d",
+    "target_tree": "7ef94107ca7d33b72a65e153b30c60939b888a62",
+    "blobs": {
+      ".github/workflows/ci.yml": "397e18f11d96f9efe3b3e04b62074b9ce901bcbff4ac6daa4dfd7ce5fd96b876",
+      "CHANGELOG.md": "4b47aa9d5aac1d42ff3ad30cd77f6862dc588bd081789c48bedbe1487fa043cf",
+      "admin/src/__tests__/users-null-email-search-833.test.tsx": "573540fba4a9bc729d7b67bb6bf406529a04c2893f2b4aeac4c63cde13294dbe",
+      "admin/src/pages/Users.tsx": "00b729668598899cbc8a56cf9d9e8eefc944f33cddb22d17561e94fa4e63a9a9",
+      "app/(marketing)/pricing/page.tsx": "a68e488e730040b15758280ad8cd1e40289fd34ac06c06a7fca9096a25d37540",
+      "app/dashboard/qr-code/page.tsx": "361922436628af447ebb76e01802384e9791e9250ae103a547508f3c68045896",
+      "app/dashboard/queue/__tests__/queue-share-qr.test.tsx": "7645bbcdf7ef1ba0a78d196a19ffb8b72cab9ad0eb624e639f4b9c18ca63fcd2",
+      "components/marketing/Footer.tsx": "81691506bc96a7b376458598923421122f12dc2b45e4e46c47bc73a366df4a09",
+      "docs/POSTLAUNCH_APP_ONLY_RELEASE.md": "e28256796859c47bef11aadb50823d8c9c61177f4d7c30ee1c5cf41e94c9af82",
+      "lib/__tests__/issue-496-qr-production.test.tsx": "6b9f249d91ce50806f1c5994ceab4f80226de956f377edfca090ef90460ce474",
+      "lib/__tests__/marketing-country-pricing.test.tsx": "01938b3dd2b1d3438faa389698004aaf847f0b1e2b0e7c927e7f5dbd11de36cb",
+      "scripts/__tests__/postlaunch-release-policy.test.ts": "2ee191f00f056f16fd0c946ad4231773b81ecc760bea969f29733a9e1fb659b9",
+      "scripts/postlaunch-catalog-completion.json": "ef6e877c02294b30854d16e1c4745a1d5f783ca11fd3cf4eed24711c2c9b4e82",
+      "scripts/postlaunch-release-policy.mjs": "88fd5ca78b169aadd1b0dd826a35672981a0adb5cb436fc795f3a412c914c428",
+      "scripts/postlaunch-release-targets.json": "aaf65efbce7c5b7096c3aa312a575ecce35529314559d3103dcbd48a3f8ab42b",
+      "scripts/reduced-release-evidence.mjs": "f6ae64e122808c95f201a11dd05721262ef1afbae1eecd85a1d6c255a070af8f",
+      "scripts/reduced-release-gate.mjs": "3699bcfe783c693862ef2cbd7ed84d3bcfac73a5990b5383ad41b9bc864de960"
+    },
+    "deleted_blobs": {}
+  },
+  "admin": {
+    "baseline_sha": "b741c7cf9e2f969520f8d4ca1aa05a6582d16fac",
+    "target_sha": "5e3204d9334e171bce3475fffa179d5d23f4cc1d",
+    "target_tree": "7ef94107ca7d33b72a65e153b30c60939b888a62",
+    "blobs": {
+      ".github/workflows/ci.yml": "397e18f11d96f9efe3b3e04b62074b9ce901bcbff4ac6daa4dfd7ce5fd96b876",
+      "CHANGELOG.md": "4b47aa9d5aac1d42ff3ad30cd77f6862dc588bd081789c48bedbe1487fa043cf",
+      "admin/src/__tests__/users-null-email-search-833.test.tsx": "573540fba4a9bc729d7b67bb6bf406529a04c2893f2b4aeac4c63cde13294dbe",
+      "admin/src/pages/Users.tsx": "00b729668598899cbc8a56cf9d9e8eefc944f33cddb22d17561e94fa4e63a9a9",
+      "app/(marketing)/pricing/page.tsx": "a68e488e730040b15758280ad8cd1e40289fd34ac06c06a7fca9096a25d37540",
+      "app/dashboard/qr-code/page.tsx": "361922436628af447ebb76e01802384e9791e9250ae103a547508f3c68045896",
+      "app/dashboard/queue/__tests__/queue-share-qr.test.tsx": "7645bbcdf7ef1ba0a78d196a19ffb8b72cab9ad0eb624e639f4b9c18ca63fcd2",
+      "components/marketing/Footer.tsx": "81691506bc96a7b376458598923421122f12dc2b45e4e46c47bc73a366df4a09",
+      "docs/POSTLAUNCH_APP_ONLY_RELEASE.md": "e28256796859c47bef11aadb50823d8c9c61177f4d7c30ee1c5cf41e94c9af82",
+      "lib/__tests__/issue-496-qr-production.test.tsx": "6b9f249d91ce50806f1c5994ceab4f80226de956f377edfca090ef90460ce474",
+      "lib/__tests__/marketing-country-pricing.test.tsx": "01938b3dd2b1d3438faa389698004aaf847f0b1e2b0e7c927e7f5dbd11de36cb",
+      "scripts/__tests__/postlaunch-release-policy.test.ts": "2ee191f00f056f16fd0c946ad4231773b81ecc760bea969f29733a9e1fb659b9",
+      "scripts/postlaunch-catalog-completion.json": "ef6e877c02294b30854d16e1c4745a1d5f783ca11fd3cf4eed24711c2c9b4e82",
+      "scripts/postlaunch-release-policy.mjs": "88fd5ca78b169aadd1b0dd826a35672981a0adb5cb436fc795f3a412c914c428",
+      "scripts/postlaunch-release-targets.json": "aaf65efbce7c5b7096c3aa312a575ecce35529314559d3103dcbd48a3f8ab42b",
+      "scripts/reduced-release-evidence.mjs": "f6ae64e122808c95f201a11dd05721262ef1afbae1eecd85a1d6c255a070af8f",
+      "scripts/reduced-release-gate.mjs": "3699bcfe783c693862ef2cbd7ed84d3bcfac73a5990b5383ad41b9bc864de960"
+    },
+    "deleted_blobs": {}
+  }
+}

@@ -32,6 +32,7 @@ interface TermsAcceptance {
 }
 
 interface Balance {
+  settlement_held: boolean;
   total_revenue: number;  // all completed business revenue (bookings + orders + invoices)
   gross: number;          // platform-held gross (platform_managed) or = total_revenue (direct_split)
   fees: number;
@@ -113,6 +114,7 @@ export default function PayoutsPage() {
   const [step, setStep] = useState<SetupStep>('idle');
   const [error, setError] = useState('');
   const [stripeLoading, setStripeLoading] = useState(false);
+  const [settlementHeld, setSettlementHeld] = useState(false);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [recentPayouts, setRecentPayouts] = useState<PayoutRecord[]>([]);
   const [payoutMode, setPayoutMode] = useState<'direct_split' | 'platform_managed'>('platform_managed');
@@ -121,7 +123,10 @@ export default function PayoutsPage() {
 
   // Load initial state
   useEffect(() => {
+    let cancelled = false;
     async function load() {
+      setBalance(null);
+      setSettlementHeld(false);
       const supabase = createClient();
 
       // Check for existing payout account
@@ -132,6 +137,8 @@ export default function PayoutsPage() {
         .eq('is_active', true)
         .maybeSingle();
 
+      if (cancelled) return;
+
       // Check for terms acceptance
       const { data: terms } = await supabase
         .from('payout_terms_acceptance')
@@ -141,18 +148,22 @@ export default function PayoutsPage() {
         .limit(1)
         .maybeSingle();
 
+      if (cancelled) return;
       setExisting(payoutAccount);
       setTermsAccepted(terms);
 
       // Fetch balance in all views (not just connected) so setup view shows earnings
       try {
         const res = await fetch(`/api/payouts/balance?business_id=${business.id}`);
-        if (res.ok) {
+        if (res.ok || res.status === 409) {
           const data = await res.json();
-          setBalance(data);
+          if (cancelled) return;
+          setSettlementHeld(data.settlement_held === true);
+          if (res.ok) setBalance(data);
         }
       } catch { /* ignore */ }
 
+      if (cancelled) return;
       if (payoutAccount) {
         setPageView('connected');
         // Fetch recent payouts for the connected view
@@ -160,6 +171,7 @@ export default function PayoutsPage() {
           const res = await fetch(`/api/payouts/history?business_id=${business.id}&page=1`);
           if (res.ok) {
             const data = await res.json();
+            if (cancelled) return;
             setRecentPayouts((data.payouts || []).slice(0, 5));
           }
         } catch { /* ignore */ }
@@ -170,6 +182,7 @@ export default function PayoutsPage() {
       }
     }
     load();
+    return () => { cancelled = true; };
   }, [business.id]);
 
   // Fetch banks for the selected setup provider
@@ -518,6 +531,13 @@ export default function PayoutsPage() {
           </Link>
         </div>
 
+        {settlementHeld && isPlatformManaged && (
+          <div role="status" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">Settlement held for reconciliation</p>
+            <p>Platform-held funds are not available for payout while accounting is reconciled. Any amounts shown are provisional accounting totals.</p>
+          </div>
+        )}
+
         {/* Earnings Stats */}
         {balance && (
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -530,7 +550,7 @@ export default function PayoutsPage() {
               <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(balance.fees, country)}</p>
             </div>
             <div className="rounded-xl border border-green-200 bg-green-50 p-5">
-              <p className="text-xs font-medium text-green-600">{isPlatformManaged ? 'Available for Payout' : 'Net Earned'}</p>
+              <p className="text-xs font-medium text-green-600">{isPlatformManaged ? (settlementHeld ? 'Provisional Accounting Total' : 'Available for Payout') : 'Net Earned'}</p>
               <p className="mt-1 text-2xl font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
             </div>
           </div>
@@ -565,7 +585,7 @@ export default function PayoutsPage() {
                   <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.fees, country)}</p>
                 </div>
                 <div>
-                  <p className="text-blue-600">Available</p>
+                  <p className="text-blue-600">{settlementHeld ? 'Provisional Accounting Total' : 'Available'}</p>
                   <p className="text-lg font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
                 </div>
                 <div>
@@ -835,6 +855,13 @@ export default function PayoutsPage() {
       />
 
       <div className="mt-8 max-w-lg">
+        {settlementHeld && (termsAccepted?.payout_mode || business.payout_mode) !== 'direct_split' && (
+          <div role="status" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">Settlement held for reconciliation</p>
+            <p>Platform-held funds are not available for payout while accounting is reconciled. Any amounts shown are provisional accounting totals.</p>
+          </div>
+        )}
+
         {/* Earnings Overview */}
         {balance && (
           <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
@@ -852,7 +879,7 @@ export default function PayoutsPage() {
                   </div>
                 </div>
                 <div className="mt-4 rounded-lg bg-green-50 px-4 py-3">
-                  <p className="text-xs text-green-700">Available for Payout</p>
+                  <p className="text-xs text-green-700">{settlementHeld && (termsAccepted?.payout_mode || business.payout_mode) !== 'direct_split' ? 'Provisional Accounting Total' : 'Available for Payout'}</p>
                   <p className="text-xl font-bold text-green-800">{formatCurrency(balance.net_available, country)}</p>
                 </div>
               </>

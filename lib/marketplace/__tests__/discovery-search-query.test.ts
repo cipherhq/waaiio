@@ -69,8 +69,23 @@ function fakeSupabase(rows: Row[], error: { message: string } | null = null) {
             if (arg === 'is' && extra === null) return row[resolveCol(String(field))] !== null && row[resolveCol(String(field))] !== undefined;
             if (arg === 'in') return !String(extra).slice(1, -1).split(',').includes(String(row[resolveCol(String(field))]));
             throw new Error('Unknown mocked not filter');
-          case 'or':
-            return String(field).split(',').some((clause) => {
+          case 'or': {
+            // Split on top-level commas only, so and(a,b) groups stay whole.
+            const splitTop = (text: string): string[] => {
+              const parts: string[] = [];
+              let depth = 0; let current = '';
+              for (const ch of text) {
+                if (ch === '(') depth++;
+                if (ch === ')') depth--;
+                if (ch === ',' && depth === 0) { parts.push(current); current = ''; } else current += ch;
+              }
+              if (depth !== 0) throw new Error('Unbalanced PostgREST OR filter: ' + text);
+              parts.push(current);
+              return parts;
+            };
+            const evalClause = (clause: string): boolean => {
+              const group = /^and\((.*)\)$/.exec(clause);
+              if (group) return splitTop(group[1]).every(evalClause);
               const match = /^([a-z_:]+)\.(ilike|eq|is)\.(.*)$/.exec(clause);
               if (!match) throw new Error('Malformed PostgREST OR filter: ' + clause);
               const [, col, operator, value] = match;
@@ -78,7 +93,9 @@ function fakeSupabase(rows: Row[], error: { message: string } | null = null) {
               if (operator === 'ilike') return matchesIlike(row[resolvedCol], value);
               if (operator === 'is') return value === 'null' && (row[resolvedCol] === null || row[resolvedCol] === undefined);
               return String(row[resolvedCol]) === value;
-            });
+            };
+            return splitTop(String(field)).some(evalClause);
+          }
           default: throw new Error('Unknown mocked operation: ' + op.method);
         }
       };
@@ -118,9 +135,62 @@ describe('searchMarketplace — executable filters and containment', () => {
       category: 'restaurant', locationText: 'Lagos', _addressHint: 'Lekki',
     });
     expect(result.results.map((r) => r.businessId)).toEqual([ID[0]]);
-    expect(calls).toContainEqual({ method: 'ilike', args: ['city', '%Lagos%'] });
-    expect(calls).toContainEqual({ method: 'ilike', args: ['address', '%Lekki%'] });
-    expect(calls.some((c) => c.method === 'or' && String(c.args[0]).includes('state.ilike.%Lagos%'))).toBe(false);
+    // State never stands alone as the parent: it only appears paired with the
+    // city field being the neighborhood itself (#867).
+    const orArgs = calls.filter((c) => c.method === 'or').map((c) => String(c.args[0]));
+    expect(orArgs.some((a) => a.includes('and(city.ilike.%Lagos%,address.ilike.%Lekki%)'))).toBe(true);
+    for (const arg of orArgs) {
+      const stateUses = arg.match(/state\.ilike\.%Lagos%/g) ?? [];
+      const pairedUses = arg.match(/and\(city\.ilike\.%Lekki%,state\.ilike\.%Lagos%\)/g) ?? [];
+      expect(stateUses.length).toBe(pairedUses.length);
+    }
+  });
+
+  // #867: production "Shop in ikoyi" returned 0 because autocomplete stores the
+  // neighborhood in `city` and the metro in `state`, with a bare street address.
+  it('#867 finds a shop whose city IS the neighborhood and whose state is the parent city', async () => {
+    const { db } = fakeSupabase([
+      business(ID[0], 'shop', 'Ikoyi', '7 Example Drive', { state: 'Lagos' }),
+      business(ID[1], 'shop', 'Lekki', 'Admiralty Way', { state: 'Lagos' }),
+      business(ID[2], 'restaurant', 'Ikoyi', '1 Other Road', { state: 'Lagos' }),
+    ]);
+    const result = await searchMarketplace(db, {
+      category: 'shop', locationText: 'Lagos', _addressHint: 'Ikoyi', country: 'NG',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.results.map((r) => r.businessId)).toEqual([ID[0]]);
+  });
+
+  it('#867 finds a business whose address names both the neighborhood and the parent city', async () => {
+    const { db } = fakeSupabase([
+      business(ID[0], 'shop', 'Lekki', 'Lekki Phase 1, Lekki 106104, Lagos, Nigeria', { state: 'Maryland' }),
+      business(ID[1], 'shop', 'Lekki', 'Lekki Phase 2, Lagos', { state: 'Lagos' }),
+    ]);
+    const result = await searchMarketplace(db, {
+      category: 'shop', locationText: 'Lagos', _addressHint: 'Lekki Phase 1', country: 'NG',
+    });
+    expect(result.results.map((r) => r.businessId)).toEqual([ID[0]]);
+  });
+
+  it('#867 still excludes a business that only has a wrong state (no parent city in city or address)', async () => {
+    const { db } = fakeSupabase([
+      business(ID[0], 'shop', 'Abuja', 'Ikoyi Plaza, Wuse, Abuja', { state: 'Lagos' }),
+      business(ID[1], 'shop', 'Abuja', 'Wuse', { state: 'Lagos' }),
+    ]);
+    const result = await searchMarketplace(db, {
+      category: 'shop', locationText: 'Lagos', _addressHint: 'Ikoyi', country: 'NG',
+    });
+    expect(result.results).toEqual([]);
+  });
+
+  it('#867 a city search also matches the address, so a wrong state does not hide a Lagos business', async () => {
+    const { db } = fakeSupabase([
+      business(ID[0], 'shop', 'Lekki', 'Lekki Phase 1, Lekki 106104, Lagos, Nigeria', { state: 'Maryland' }),
+      business(ID[1], 'shop', 'Ikoyi', '7 Example Drive', { state: 'Lagos' }),
+      business(ID[2], 'shop', 'Abuja', 'Wuse', { state: 'Federal Capital Territory' }),
+    ]);
+    const result = await searchMarketplace(db, { category: 'shop', locationText: 'Lagos', country: 'NG' });
+    expect(result.results.map((r) => r.businessId).sort()).toEqual([ID[0], ID[1]].sort());
   });
 
   it('compound "Lekki, Lagos" preserves the neighborhood constraint', async () => {
@@ -274,8 +344,13 @@ describe('searchMarketplace — executable filters and containment', () => {
     expect(urls).toHaveLength(1);
     const params = urls[0].searchParams;
     expect(params.get('category_text')).toBe('ilike.%restaurant%');
-    expect(params.get('city')).toBe('ilike.%Lagos%');
-    expect(params.get('address')).toBe('ilike.%Lekki%');
+    // #867: the neighborhood filter is one nested OR group, serialized by the real client.
+    expect(params.get('city')).toBeNull();
+    expect(params.get('address')).toBeNull();
+    expect(params.getAll('or')).toContain(
+      '(and(city.ilike.%Lagos%,address.ilike.%Lekki%),and(address.ilike.%Lagos%,address.ilike.%Lekki%),' +
+      'and(city.ilike.%Lekki%,state.ilike.%Lagos%),and(city.ilike.%Lekki%,address.ilike.%Lagos%))',
+    );
     expect(params.get('id')).toBe('not.in.(' + ID[1] + ')');
     expect(params.get('limit')).toBe('45'); // Oversampling before ranking, final top 15.
     expect(params.getAll('or')).toContain('(discovery_enabled.is.null,discovery_enabled.eq.true)');

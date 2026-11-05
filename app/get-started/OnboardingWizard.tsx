@@ -22,7 +22,7 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { useOnboardingPersistence, clearOnboardingDraft, type OnboardingDraft } from '@/hooks/useOnboardingPersistence';
-import { buildMerchantLink } from '@/lib/url';
+import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
 import type { User } from '@supabase/supabase-js';
 import {
   StepAuth,
@@ -88,7 +88,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   plan: {
     title: 'Choose your plan',
     subtitle: 'Start free. Your QR code works on every plan.',
-    bullets: ['Free trial included', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
+    bullets: ['Free trial included', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Connect your own WhatsApp number on any plan'],
     visual: '\u{1F4B3}',
   },
   details: {
@@ -911,7 +911,8 @@ function OnboardingWizard() {
   // the URL-resumed successBusinessId. Never fall back to raw wa.me for StepSuccess;
   // StepSuccess shows pending/error when the link isn't ready yet.
   const confirmedBusinessId = successData?.business_id || successBusinessId;
-  const waLink = confirmedBusinessId ? buildMerchantLink(confirmedBusinessId) : '';
+  const waLink = confirmedBusinessId ? buildShortMerchantLink(successData?.bot_code || botCode, confirmedBusinessId) : '';
+  const qrLink = confirmedBusinessId ? buildMerchantLink(confirmedBusinessId) : '';
   // Build localTiers from authoritative DB projection — no hardcoded commercial fallback.
   // When projection is absent, commercial fields (price, feePercentage, feeFlat) are zeroed
   // and the UI is gated by pricingReady below. Non-commercial metadata (name, features) from constants only.
@@ -1224,6 +1225,7 @@ function OnboardingWizard() {
                 successData={successData}
                 waMethod={waMethod}
                 waLink={waLink}
+                qrLink={qrLink}
                 selectedCapabilities={selectedCapabilities}
                 category={category}
                 error={error}

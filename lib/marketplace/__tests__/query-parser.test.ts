@@ -182,4 +182,61 @@ describe('parseDirectoryQuery', () => {
     expect(result.categories).toContain('spa');
     expect(result.locationText).toBe('Lagos');
   });
+
+  // ── #867: category next to a place, without a preposition ──
+
+  it.each(['shops Ikoyi', 'Ikoyi shop', 'shop Ikoyi', 'Ikoyi shops'])(
+    '#867 "%s" keeps Ikoyi as the location (same as "shop in Ikoyi")',
+    (text) => {
+      const result = parseDirectoryQuery(text, 'NG');
+      expect(result.locationText).toBe('Ikoyi');
+      expect(result.resolvedLocation!.tier).toBe(2);
+      expect(result.resolvedLocation!.city).toBe('Lagos');
+      expect(result.resolvedLocation!.addressHint).toBe('Ikoyi');
+      expect(result.needsLocation).toBe(false);
+    },
+  );
+
+  it('#867 "salon Lagos" reads as a category in a city', () => {
+    const result = parseDirectoryQuery('salon Lagos', 'NG');
+    expect(result.categories.length).toBeGreaterThan(0);
+    expect(result.locationText).toBe('Lagos');
+    expect(result.resolvedLocation!.tier).toBe(1);
+  });
+
+  it('#867 a two-word business name without a place is unchanged (name search)', () => {
+    const result = parseDirectoryQuery('Citadel Ventures', 'NG');
+    expect(result.locationText).toBeNull();
+    expect(result.categories).toEqual([]);
+    expect(result.nameQuery).toBe('Citadel Ventures');
+  });
+
+  // Review r2 P2-3: only an exact city or area name counts as the place.
+  it.each(['shop a', 'spa 1', 'Salon East'])('#867 "%s" is not read as a place search', (text) => {
+    const result = parseDirectoryQuery(text, 'NG');
+    expect(result.locationText).toBeNull();
+  });
+
+  it('#867 long messages without a preposition are not re-split', () => {
+    const result = parseDirectoryQuery('very nice cheap shop Ikoyi Lagos', 'NG');
+    expect(result.locationText).toBeNull();
+  });
+
+  it('#867 a multi-word area works: "spa Lekki Phase 1"', () => {
+    const result = parseDirectoryQuery('spa Lekki Phase 1', 'NG');
+    expect(result.resolvedLocation!.addressHint).toBe('Lekki Phase 1');
+    expect(result.resolvedLocation!.city).toBe('Lagos');
+  });
+
+  // Review r1: inputs with a leading or trailing preposition must not reach the
+  // re-parse, and must return promptly.
+  it.each(['spa in', 'shop in', 'hotel in', 'in spa', 'salon at', 'spa wey dey'])(
+    '#867 "%s" parses promptly without re-parsing',
+    (text) => {
+      const started = Date.now();
+      const result = parseDirectoryQuery(text, 'NG');
+      expect(Date.now() - started).toBeLessThan(500);
+      expect(result).toBeTruthy();
+    },
+  );
 });

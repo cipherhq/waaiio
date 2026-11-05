@@ -81,9 +81,13 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }));
 
+// Mirrors production RLS: owners cannot read a shared channel from the base
+// table (dedicated-only owner policy), only through whatsapp_channels_public,
+// which lists active shared channels. The base-table mock above only returns a
+// row for the dedicated query.
 vi.mock('@/lib/supabase/safe-view-query', () => ({
   queryChannelsPublic: async () => ({
-    data: state.hasBotChannel ? { phone_number: state.sharedPhone } : null,
+    data: state.hasBotChannel && state.channelType === 'shared' ? { id: 'ch-shared-default' } : null,
     error: null,
   }),
 }));
@@ -113,7 +117,9 @@ beforeEach(() => {
     phone: '+12025550000',
     country_code: 'US',
     wa_method: 'shared',
-    assigned_channel_id: null,
+    // A valid bot channel means an assigned channel: /m/{id} links only resolve
+    // through assigned_channel_id / whatsapp_channel_id (app/m/resolve.ts).
+    assigned_channel_id: 'ch-shared-default',
     whatsapp_channel_id: null,
     subscription_tier: 'free',
     capabilities: ['queue', 'payment', 'chat'],
@@ -315,17 +321,26 @@ describe('QR Code page — queue artifact guards', () => {
     expect(clipboardContent).toBe(qrValue);
   });
 
-  it('shared-channel fallback: dedicated business gets queue permanent link', async () => {
+  it('assigned channel + generic template → no not-connected warning', async () => {
+    render(<QRCodePage />);
+    await waitFor(() => expect(screen.getAllByTestId('qr-value').length).toBeGreaterThan(0));
+    expect(screen.queryByTestId('no-whatsapp-channel')).toBeNull();
+  });
+
+  it('no assigned channel: an unrelated shared number is not treated as the bot channel', async () => {
+    // Previously the page fell back to any active shared number (often another
+    // country's), which made the queue QR look ready while /m/{id} returned
+    // "not connected". The page must now withhold the queue artifacts.
     state.searchParams = new URLSearchParams('template=queue');
-    state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'QTEST' };
+    state.business = { ...state.business, wa_method: 'dedicated', bot_code: 'QTEST', assigned_channel_id: null };
     state.channelType = 'shared';
 
     render(<QRCodePage />);
 
     await waitFor(() => {
-      const value = screen.getAllByTestId('qr-value')[0].getAttribute('data-value');
-      expect(value).toBe(`https://www.waaiio.com/m/${state.business.id}/queue`);
+      expect(screen.getByTestId('queue-setup-guidance')).toBeTruthy();
     });
+    expect(screen.queryAllByTestId('qr-value')).toHaveLength(0);
   });
 
   it('assigned dedicated channel + shared preference → queue permanent link', async () => {

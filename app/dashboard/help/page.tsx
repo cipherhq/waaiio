@@ -38,7 +38,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   // Account & Billing
   { category: 'Account & Billing', question: 'How do I upgrade my plan?', answer: 'Go to Settings → Account tab → Click "Upgrade" next to the plan you want. You\'ll be redirected to complete payment. New capabilities are unlocked immediately.' },
   { category: 'Account & Billing', question: 'Can I downgrade or cancel?', answer: 'Yes. Go to Settings → Account tab → Click "Downgrade." You\'ll keep your data but lose access to higher-tier capabilities. There are no contracts — cancel anytime.' },
-  { category: 'Account & Billing', question: 'How do I connect my own WhatsApp number?', answer: 'Available on Pro and Premium plans. Go to the onboarding flow or Settings → Click "Connect with Facebook" → Authorize Waaiio → Enter your phone number. Your number will be connected automatically.' },
+  { category: 'Account & Billing', question: 'How do I connect my own WhatsApp number?', answer: 'Available on every plan. Use a brand-new number that has never had WhatsApp (for example a new SIM); a number that already has WhatsApp will not connect. Go to the onboarding flow or Settings → Click "Connect with Facebook" → Authorize Waaiio → Enter your phone number. Your number will be connected automatically.' },
 ];
 
 const CATEGORIES = [...new Set(HELP_ARTICLES.map(a => a.category))];

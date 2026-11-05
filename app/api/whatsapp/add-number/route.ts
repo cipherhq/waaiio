@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
 
   if (process.env.NEXT_PUBLIC_WHATSAPP_DIRECT_ONBOARDING_ENABLED === 'false') {
     return NextResponse.json({ error: 'Direct number setup is temporarily unavailable. Please use Connect via Facebook or the shared number.', code: 'DIRECT_ONBOARDING_DISABLED' }, { status: 503 });

@@ -53,5 +53,5 @@ Verify each setting works before adding the next.
 
 ## Exceptions
 
-- Repository admins can bypass for emergency hotfixes (must document in CHANGELOG.md)
+- Repository admins can bypass for emergency hotfixes (must document it with a changelog fragment in `changelog/unreleased/`, see `changelog/README.md`)
 - Vercel preview deploys run on PRs automatically

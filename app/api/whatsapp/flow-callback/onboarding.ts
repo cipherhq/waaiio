@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initCapabilities } from '@/lib/capabilities/service';
 import { logger } from '@/lib/logger';
@@ -6,7 +7,7 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { loadPlatformSettings } from '@/lib/platformSettings';
-import { allocateSharedChannelWithFallback, SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
+import { allocateSharedChannelForNewBusiness, SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -18,6 +19,9 @@ export async function handleOnboardingComplete(
   flowToken: string,
   data: Record<string, unknown>,
 ): Promise<{ success: boolean; error?: string }> {
+  // Not admitted by ENABLE_FIRST_SHARED_ASSIGNMENT: M507 covers the register/verify
+  // signup path only. This Flow path stays behind the broad switch.
+  if (!channelOperationsEnabled()) return { success: false, error: CHANNEL_OPERATIONS_UNAVAILABLE.message };
   const customerPhone = flowToken.split(':')[1] || '';
 
   const firstName = (data.first_name as string || '').trim();
@@ -152,7 +156,7 @@ export async function handleOnboardingComplete(
 
     // #266 R7/R10: Allocate shared channel then activate (with GH→NG fallback)
     let allocationSucceeded = false;
-    const { data: allocation, error: allocError } = await allocateSharedChannelWithFallback(
+    const { data: allocation, error: allocError } = await allocateSharedChannelForNewBusiness(
       supabase,
       biz.id,
       country,

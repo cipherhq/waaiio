@@ -52,6 +52,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -67,7 +69,19 @@ jobs:
 
       - name: Run tests
         # Runs in security-acl-tests with a disposable database and zero-skip guard.
-        run: npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts
+        run: |
+          test -f scripts/__tests__/full-release-policy.test.ts
+          test -f scripts/__tests__/full-release-evidence.test.ts
+          test -f scripts/__tests__/full-release-catalog.test.ts
+          test -f scripts/__tests__/full-report-transport.test.ts
+          test -f scripts/__tests__/full-release-orchestration.test.ts
+          test -f scripts/__tests__/postlaunch-release-policy.test.ts
+          test -f scripts/__tests__/first-assignment-release-policy.test.ts
+          test -f scripts/__tests__/bot-code-lock-release-policy.test.ts
+          test -f scripts/__tests__/release-v3-classify.test.ts
+          test -f scripts/__tests__/release-v3-admission.test.ts
+          test -f scripts/__tests__/release-v3-gate.test.ts
+          npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/legacy-accounting-hold.pg.test.ts --exclude lib/__tests__/recurring-payment-provenance.pg.test.ts --exclude lib/__tests__/accounting-migration-installation.pg.test.ts --exclude lib/__tests__/recurring-cancellation-503.pg.test.ts --exclude lib/__tests__/party-slug-foundation-504.pg.test.ts --exclude lib/__tests__/full-release-additive-506.pg.test.ts --exclude lib/__tests__/subscription-owner-downgrade.pg.test.ts --exclude lib/__tests__/first-shared-assignment-507.pg.test.ts --exclude lib/__tests__/business-control-columns-508.pg.test.ts --exclude lib/__tests__/table-keyword-whole-word-509.pg.test.ts --exclude lib/__tests__/table-overnight-510.pg.test.ts --exclude lib/__tests__/party-seating-by-tag-514.pg.test.ts --exclude lib/__tests__/profile-consent-preferences-515.pg.test.ts --exclude lib/__tests__/seating-resource-gallery-516.pg.test.ts --exclude lib/__tests__/business-upload-paths-878.pg.test.ts --exclude scripts/__tests__/release-v3-observer.pg.test.ts
 
       - name: Build
         env:
@@ -157,6 +171,13 @@ jobs:
           # No shell variable intermediary — preserves NUL bytes end-to-end.
           git diff --name-status -z "$MERGE_BASE" -- 'supabase/migrations/*.sql' \
             | npx tsx lib/release-gate/migration-diff-cli.ts
+
+      - name: Release V3 lane and review requirement (advisory)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          MERGE_BASE=$(git merge-base "$BASE_SHA" HEAD)
+          { echo '### Release V3 lane (RELEASE_GATE_V2.md §9.3)'; echo '```json'; node scripts/release-v3/classify.mjs "$MERGE_BASE" "$(git rev-parse HEAD)"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run release gate tests
         run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts
@@ -4419,22 +4440,83 @@ jobs:
 
           echo "✅ M476 table reservation DB tests complete — $PASS_COUNT passed, zero skips, zero failures."
 
+  # ── Release V3 catalog oracle (RELEASE_GATE_V2.md §9.5) ──
+  # Regenerates every committed catalog delta (migration 508 onward) and the
+  # M430 object list in disposable PostgreSQL 17 (production's major version)
+  # and requires byte equality. On a mismatch the generated files are uploaded
+  # so the migration author can commit them.
+  catalog-oracle:
+    name: "Catalog oracle (PostgreSQL 17)"
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+      - name: Install Node.js dependencies
+        run: npm ci
+      - name: Verify PostgreSQL client
+        run: psql --version
+      - name: Regenerate and compare catalog deltas
+        env:
+          ORACLE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          ORACLE_OUTPUT_DIR: oracle-output
+        run: node scripts/release-v3/catalog-oracle.mjs check
+      - name: Release observer role proof (real PostgreSQL 17)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          test -f scripts/__tests__/release-v3-observer.pg.test.ts
+          npx vitest run scripts/__tests__/release-v3-observer.pg.test.ts --reporter=json --outputFile=observer.json
+          node -e "const r=require('./observer.json');if(r.numTotalTests!==10||r.numPassedTests!==10||r.numPendingTests||r.numTodoTests||r.numFailedTests){console.error('Expected 10 passed, 0 skipped');process.exit(1)}console.log('release_observer proof: 10 passed, 0 skipped (incl. replica-only guard)')"
+      - name: Upload generated oracle files
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-oracle-output
+          path: oracle-output
+          if-no-files-found: ignore
+          retention-days: 7
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
-    needs: [migration-shard-a, migration-shard-b]
+    needs: [migration-shard-a, migration-shard-b, catalog-oracle]
     if: always()
     steps:
       - name: Check shard results
         run: |
           if [ "${{ needs.migration-shard-a.result }}" != "success" ] || \
-             [ "${{ needs.migration-shard-b.result }}" != "success" ]; then
-            echo "❌ One or more migration shards failed."
+             [ "${{ needs.migration-shard-b.result }}" != "success" ] || \
+             [ "${{ needs.catalog-oracle.result }}" != "success" ]; then
+            echo "❌ One or more migration checks failed."
             echo "Shard A: ${{ needs.migration-shard-a.result }}"
             echo "Shard B: ${{ needs.migration-shard-b.result }}"
+            echo "Catalog oracle (PG17): ${{ needs.catalog-oracle.result }}"
             exit 1
           fi
-          echo "All migration shards passed"
+          echo "All migration shards and the catalog oracle passed"
 
   # ── Engineering Governance ──
   governance:
@@ -4453,6 +4535,9 @@ jobs:
 
       - name: Validate governance artifacts
         run: node scripts/verify-engineering-governance.mjs
+
+      - name: Validate changelog fragments
+        run: node scripts/changelog/collect.mjs check
 
       - name: Validate migration repair plan
         run: npm run verify:migration-repair-plan
@@ -4728,7 +4813,22 @@ jobs:
 
           # Discover files
           mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
+          test -f lib/__tests__/accounting-migration-installation.pg.test.ts || exit 1
+          test -f lib/__tests__/recurring-cancellation-503.pg.test.ts || exit 1
+          test -f lib/__tests__/party-slug-foundation-504.pg.test.ts || exit 1
+          test -f lib/__tests__/full-release-additive-506.pg.test.ts || exit 1
+          test -f lib/__tests__/subscription-owner-downgrade.pg.test.ts || exit 1
+          test -f lib/__tests__/first-shared-assignment-507.pg.test.ts || exit 1
+          test -f lib/__tests__/business-control-columns-508.pg.test.ts || exit 1
+          test -f lib/__tests__/table-keyword-whole-word-509.pg.test.ts || exit 1
+          test -f lib/__tests__/table-overnight-510.pg.test.ts || exit 1
+          test -f lib/__tests__/party-seating-by-tag-514.pg.test.ts || exit 1
+          test -f lib/__tests__/business-upload-paths-878.pg.test.ts || exit 1
+          test -f lib/__tests__/profile-consent-preferences-515.pg.test.ts || exit 1
+          test -f lib/__tests__/seating-resource-gallery-516.pg.test.ts || exit 1
           PG_COUNT=${#PG_FILES[@]}
+          printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/legacy-accounting-hold.pg.test.ts' >/dev/null || { echo 'Missing required accounting-hold SQL proof'; exit 1; }
+          printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/recurring-payment-provenance.pg.test.ts' >/dev/null || { echo 'Missing required recurring payment provenance SQL proof'; exit 1; }
           echo "Found $PG_COUNT .pg.test.ts file(s):"
           printf '  %s\n' "${PG_FILES[@]}"
 

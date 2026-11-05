@@ -106,6 +106,18 @@ test.describe('Launch banner — mocked API integration', () => {
     );
   }
 
+  test('live homepage keeps launch treatment hidden and offers signup', async ({ page }) => {
+    await setupMocks(page);
+    const announcement = page.waitForResponse('**/api/site-announcement');
+    await page.goto('/');
+    await announcement;
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Your business');
+    await expect(page.locator('[data-testid="launch-strip"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="launch-modal"]')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Get Started', exact: true }).first()).toHaveAttribute('href', '/get-started');
+    await expect(page.getByRole('link', { name: /Get (Launch )?Updates/i })).toHaveCount(0);
+  });
+
   test('enabled launch_countdown renders compact strip and auto-opens modal', async ({ page }) => {
     await setupMocks(page);
     // Override timezone detection — use a timezone with no supported country match
@@ -118,7 +130,7 @@ test.describe('Launch banner — mocked API integration', () => {
       };
     });
 
-    await page.goto('/');
+    await page.goto('/features');
     // Compact launch strip should be visible
     const strip = page.locator('[data-testid="launch-strip"]');
     await expect(strip).toBeVisible({ timeout: 10000 });
@@ -148,7 +160,7 @@ test.describe('Launch banner — mocked API integration', () => {
       };
     });
 
-    await page.goto('/');
+    await page.goto('/features');
     // Wait for modal to auto-open
     const modal = page.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible({ timeout: 10000 });
@@ -177,7 +189,7 @@ test.describe('Launch banner — mocked API integration', () => {
       };
     });
 
-    await page.goto('/');
+    await page.goto('/features');
     // Wait for modal to auto-open
     const modal = page.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible({ timeout: 10000 });
@@ -204,7 +216,7 @@ test.describe('Launch banner — mocked API integration', () => {
     // Use a narrow mobile viewport
     await page.setViewportSize({ width: 375, height: 812 });
 
-    await page.goto('/');
+    await page.goto('/features');
     // Compact strip should be visible
     const strip = page.locator('[data-testid="launch-strip"]');
     await expect(strip).toBeVisible({ timeout: 10000 });

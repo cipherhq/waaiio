@@ -714,7 +714,7 @@ export default function BookingsPage() {
         <div className="mt-4 flex gap-1 border-b border-gray-200 dark:border-gray-700">
           {([
             ...(hasSchedulingCapability ? [{ id: 'bookings' as const, label: 'Appointments' }] : []),
-            ...(hasTableReservationCap ? [{ id: 'table_reservations' as const, label: 'Table Reservations' }] : []),
+            ...(hasTableReservationCap ? [{ id: 'table_reservations' as const, label: 'Tables & Sections' }] : []),
             ...(hasReservationCap ? [{ id: 'reservations' as const, label: 'Stays' }] : []),
           ]).map(tab => (
             <button key={tab.id} onClick={() => { setBookingType(tab.id); setPage(1); }}
