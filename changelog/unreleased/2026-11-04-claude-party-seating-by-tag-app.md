@@ -12,9 +12,9 @@ What changed:
   - the guest-list table picker disables reserved tables for guests without the tag;
   - the guest list shows each guest's RSVP answers and marks the tag that came from the RSVP;
   - the seating preview shows each table's reserved tag, lists guests who don't fit per tag, and lists D4 warnings. The existing "Not placed by this plan" line is unchanged for other guests.
-- **CSV** (`lib/parties/guest-answers.ts`): the export adds one column per current question with the guest's answer. These new cells are exported as plain text: a value starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading apostrophe. The existing columns are unchanged.
+- **CSV** (`lib/parties/guest-answers.ts`): the export adds one column per current question with the guest's answer. The export now lives in `guestListCsv`, and the page calls it. Name, Tags, Dietary Notes, the question headers and the answers go through the shared plain-text guard `neutralizeFormulaPrefix` (`lib/utils/csv-export.ts`, #713). This keeps #883's protection on the existing columns and applies the same rule to the new ones. Phone, Status, Plus Ones and Responded At are unchanged.
 - **Seating route** (`app/api/parties/[partyId]/seating/route.ts`): the database's "Table 1 is reserved for …" refusal is shown as the error message. Other `23514` errors keep the generic message.
-- **Tests:** `lib/__tests__/party-seating-by-tag-514.test.ts` (planner, contract, CSV, including CSV header labels), `lib/__tests__/party-seating-by-tag-ui-514.test.tsx` (rendered dashboard), and two cases added to `lib/__tests__/party-seating-route-762.test.ts`.
+- **Tests:** `lib/__tests__/party-seating-by-tag-514.test.ts` (planner, contract, CSV, including header labels and the shared guard on every free-text column); #883's rendered export test `lib/__tests__/party-guest-csv-plain-text.test.tsx` passes unchanged, `lib/__tests__/party-seating-by-tag-ui-514.test.tsx` (rendered dashboard), and two cases added to `lib/__tests__/party-seating-route-762.test.ts`.
 
 Affects: the Parties dashboard (questions, tables, guest list, seating, CSV) and the seating route's error text. No bot change.
 

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { planSeating, reservedTagsFor, type SeatingGuest, type SeatingSnapshot, type SeatingTable } from '@/lib/parties/seating-planner';
 import { parseQuestions, type PartyQuestion } from '@/lib/parties/rsvp-questions';
-import { answerText, guestListCsv, plainTextCell } from '@/lib/parties/guest-answers';
+import { answerText, guestListCsv } from '@/lib/parties/guest-answers';
 
 const GROOM = "Groom's family", BRIDE = "Bride's family";
 const guest = (id: string, extra: Partial<SeatingGuest> = {}): SeatingGuest => ({
@@ -213,9 +213,16 @@ describe('guest answers and CSV', () => {
     const [head, row] = csv.split('\n');
     expect(head).toBe('"Name","Phone","Status","Plus Ones","Tags","Dietary Notes","Responded At","Which side?","Meal?"');
     expect(row).toBe(`"Ada","+1555","accepted","1","${GROOM}; VIP","","","${GROOM}","'=HYPERLINK(""x"")"`);
-    for (const start of ['=', '+', '-', '@', '\t', '\r']) expect(plainTextCell(`${start}1`)).toBe(`'${start}1`);
     expect(guestListCsv([], [{ ...meal, label: '=cmd()' }]).split(',').pop()).toBe(`"'=cmd()"`);
-    expect(plainTextCell('Fish')).toBe('Fish');
+    // Name, tags, dietary notes and answers all use the shared #713 guard (leading spaces and | included; plain numbers kept).
+    const guarded = guestListCsv([{
+      guest_name: '+cmd', guest_phone: '1', status: 'accepted', plus_ones: 0, tags: ['@x'], dietary_notes: ' =1+1',
+      responded_at: null, custom_answers: { meal: '|calc' }, saved_question_snapshot: [meal],
+    }], [meal]).split('\n')[1];
+    expect(guarded).toBe(`"'+cmd","1","accepted","0","'@x","' =1+1","","'|calc"`);
+    expect(guestListCsv([{ guest_name: 'Fish', guest_phone: '1', status: 'accepted', plus_ones: 0, tags: ['-5'], dietary_notes: 'No nuts - thanks',
+      responded_at: null, custom_answers: { meal: '-5' }, saved_question_snapshot: [meal] }], [meal]).split('\n')[1])
+      .toBe('"Fish","1","accepted","0","-5","No nuts - thanks","","-5"');
   });
   it('keeps the existing columns unchanged when there are no questions', () => {
     const csv = guestListCsv([{ guest_name: null, guest_phone: '1', status: 'declined', plus_ones: 2, tags: null, dietary_notes: 'None', responded_at: null }], []);
