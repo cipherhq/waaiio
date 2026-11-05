@@ -883,9 +883,11 @@ export class FlowExecutor {
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
         // The payment confirmation (Stage 3) sends its own next-steps menu once it
-        // is accepted. When it already went out for this payment, end the session
-        // instead of sending the customer a second menu.
-        if (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd)) {
+        // is accepted. When that happened during this request (an "I've Paid" tap
+        // ran Stage 3 synchronously), end the session instead of sending a second
+        // menu. A confirmation sent earlier by the webhook does not count: this tap
+        // still gets the chat menu.
+        if (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd, new Date(_ft0).toISOString())) {
           // Version-checked like the menu path: if another message already moved
           // this session on (e.g. the save-card PIN step), leave it alone.
           if (await this.casUpdateSession(session, { current_step: 'complete', session_data: sd })) {

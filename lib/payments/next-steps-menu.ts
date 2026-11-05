@@ -27,14 +27,18 @@ export function buildPaymentNextStepsButtons(kind: string, shared: boolean, lang
 const HANDED_TO_META = ['accepted', 'sent', 'delivered', 'read'];
 
 /**
- * True when Stage 3 already sent this chat payment's confirmation, and so its
- * next-steps menu. The chat flow then skips its own menu so the customer gets
- * one, not two. Any lookup failure returns false: two menus beat none.
+ * True when Stage 3 sent this chat payment's confirmation, and so its next-steps
+ * menu, during the current chat request (accepted at or after `sinceIso`). That
+ * is the "I've Paid" tap that ran Stage 3 synchronously: the chat then skips its
+ * own menu so the customer gets one, not two. A confirmation accepted earlier
+ * (the webhook got there first) returns false, so a later tap still gets the
+ * chat's reply and menu. Any lookup failure returns false: two menus beat none.
  */
 export async function paymentNextStepsMenuSent(
   supabase: SupabaseClient,
   businessId: string,
   sessionData: Record<string, unknown>,
+  sinceIso: string,
 ): Promise<boolean> {
   try {
     const savedCardPaymentId = typeof sessionData._saved_card_payment_id === 'string' && sessionData._saved_card_payment_id
@@ -59,6 +63,7 @@ export async function paymentNextStepsMenuSent(
       .select('id')
       .eq('payment_id', paymentId)
       .in('delivery_status', HANDED_TO_META)
+      .gte('accepted_at', sinceIso)
       .limit(1);
     if (error) return false;
     return Array.isArray(data) && data.length > 0;

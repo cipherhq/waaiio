@@ -38,7 +38,7 @@ function db(opts: { payment?: unknown; paymentError?: unknown; deliveries?: unkn
     const call = { table, filters: [] as unknown[][] };
     calls.push(call);
     const c: Record<string, any> = {};
-    for (const m of ['select', 'eq', 'in']) c[m] = vi.fn((...a: unknown[]) => { call.filters.push([m, ...a]); return c; });
+    for (const m of ['select', 'eq', 'in', 'gte']) c[m] = vi.fn((...a: unknown[]) => { call.filters.push([m, ...a]); return c; });
     c.maybeSingle = vi.fn(async () => ({ data: opts.payment ?? null, error: opts.paymentError ?? null }));
     c.limit = vi.fn(async () => ({ data: opts.deliveries ?? [], error: opts.deliveryError ?? null }));
     return c;
@@ -46,25 +46,29 @@ function db(opts: { payment?: unknown; paymentError?: unknown; deliveries?: unkn
   return { client: { from } as any, calls };
 }
 
+const SINCE = '2026-11-05T12:00:00.000Z';
+
 describe('paymentNextStepsMenuSent', () => {
   it('saved-card payment with an accepted confirmation → true, payment checked against the business', async () => {
     const { client, calls } = db({ payment: { id: 'pay-1' }, deliveries: [{ id: 'd1' }] });
-    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-1', payment_reference: 'ignored' })).toBe(true);
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-1', payment_reference: 'ignored' }, SINCE)).toBe(true);
     expect(calls.map(c => c.table)).toEqual(['payments', 'payment_confirmation_deliveries']);
     expect(calls[0].filters).toContainEqual(['eq', 'business_id', 'biz-1']);
     expect(calls[0].filters).toContainEqual(['eq', 'id', 'pay-1']);
     expect(calls[1].filters).toContainEqual(['eq', 'payment_id', 'pay-1']);
     expect(calls[1].filters).toContainEqual(['in', 'delivery_status', ['accepted', 'sent', 'delivered', 'read']]);
+    // Only a confirmation accepted during this request counts.
+    expect(calls[1].filters).toContainEqual(['gte', 'accepted_at', SINCE]);
   });
 
   it('saved-card payment from another business → false', async () => {
     const { client } = db({ payment: null, deliveries: [{ id: 'd1' }] });
-    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-other' })).toBe(false);
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-other' }, SINCE)).toBe(false);
   });
 
   it('payment reference lookup is scoped to the business', async () => {
     const { client, calls } = db({ payment: { id: 'pay-2' }, deliveries: [{ id: 'd1' }] });
-    expect(await paymentNextStepsMenuSent(client, 'biz-1', { payment_reference: 'ref-9' })).toBe(true);
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', { payment_reference: 'ref-9' }, SINCE)).toBe(true);
     expect(calls[0].table).toBe('payments');
     expect(calls[0].filters).toContainEqual(['eq', 'business_id', 'biz-1']);
     expect(calls[0].filters).toContainEqual(['eq', 'gateway_reference', 'ref-9']);
@@ -80,6 +84,6 @@ describe('paymentNextStepsMenuSent', () => {
     ['client throws', { throws: true }, { payment_reference: 'r' }],
   ])('%s → false, so the chat still shows its menu', async (_label, opts, sessionData) => {
     const { client } = db(opts as any);
-    expect(await paymentNextStepsMenuSent(client, 'biz-1', sessionData)).toBe(false);
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', sessionData, SINCE)).toBe(false);
   });
 });

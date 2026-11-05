@@ -184,7 +184,11 @@ describe('Paid chat completion: one next-steps menu', () => {
     mockMenuSent.mockResolvedValue(true);
     completingStep({ _action: 'payment_confirmed' });
     const { sender, rpcNames, casCalls } = await runCompletion({ payment_reference: 'PAY-1' });
-    expect(mockMenuSent).toHaveBeenCalledWith(expect.anything(), 'biz-1', expect.objectContaining({ payment_reference: 'PAY-1', _action: 'payment_confirmed' }));
+    expect(mockMenuSent).toHaveBeenCalledWith(expect.anything(), 'biz-1', expect.objectContaining({ payment_reference: 'PAY-1', _action: 'payment_confirmed' }), expect.any(String));
+    // The cut-off is this request's start time, so an earlier webhook confirmation does not count.
+    const since = Date.parse(mockMenuSent.mock.calls[0][3]);
+    expect(Number.isNaN(since)).toBe(false);
+    expect(Date.now() - since).toBeLessThan(60_000);
     expect(sender.sendButtons).not.toHaveBeenCalled();
     expect(sender.sendList).not.toHaveBeenCalled();
     expect(rpcNames).toContain('deactivate_session_atomic');
@@ -209,6 +213,14 @@ describe('Paid chat completion: one next-steps menu', () => {
     expect(menu.buttons.map((b: { id: string }) => b.id)).toContain('pc_options');
     expect(menu.footer).toBe('Powered by Waaiio.com');
     expect(casCalls.some(c => c.p_current_step === 'post_completion')).toBe(true);
+  });
+
+  it('webhook confirmed earlier, customer taps I have paid later → chat still replies with its menu', async () => {
+    mockMenuSent.mockResolvedValue(false); // accepted before this request, so it does not count
+    completingStep({ _action: 'already_confirmed' });
+    const { sender } = await runCompletion({ payment_reference: 'PAY-1' });
+    expect(sender.sendButtons).toHaveBeenCalledTimes(1);
+    expect(sender.sendButtons.mock.calls[0][0].footer).toBe('Powered by Waaiio.com');
   });
 
   it('free completion (no payment) never asks about the payment menu', async () => {
