@@ -206,6 +206,18 @@ describe('the scheduled-sends cron', () => {
     expect(sendRow().error_message).toMatch(/no longer approved/);
   });
 
+  it('a template-check outage puts the send back in the queue with nothing sent', async () => {
+    await schedule();
+    m.getTemplates.mockRejectedValue(new Error('Meta down'));
+    await tick();
+    expect(m.template).not.toHaveBeenCalled();
+    expect(m.text).not.toHaveBeenCalled();
+    expect(sendRow()).toMatchObject({ status: 'scheduled', started_at: null, error_message: expect.stringMatching(/will retry/) });
+    m.getTemplates.mockResolvedValue({ data: [template()] });
+    await tick();
+    expect(sendRow()).toMatchObject({ status: 'sent', sent_count: 2 });
+  });
+
   it('a provider rejection is recorded as failed; nothing accepted means status failed', async () => {
     await schedule();
     m.template.mockRejectedValue(new Error('rejected'));

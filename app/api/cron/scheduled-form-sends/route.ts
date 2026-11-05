@@ -4,7 +4,9 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
-import { loadInviteTemplate, sendFormInvites, summarize, type RecipientOutcome } from '@/lib/forms/form-send';
+import {
+  SEND_TIME_BUDGET_MS, TemplateLookupUnavailableError, loadInviteTemplate, sendFormInvites, summarize, type RecipientOutcome,
+} from '@/lib/forms/form-send';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -31,8 +33,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Lookup failed' }, { status: 500 });
   }
 
+  // One budget for the whole tick: later sends wait for the next run rather than risk the 60s limit.
+  const deadline = Date.now() + SEND_TIME_BUDGET_MS;
   let processed = 0;
   for (const send of (due || []) as Due[]) {
+    if (Date.now() >= deadline) break;
     const { data: claimed, error: claimErr } = await db.from('form_sends')
       .update({ status: 'sending', started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('id', send.id).eq('status', 'scheduled').select('id');
@@ -62,16 +67,29 @@ export async function GET(request: NextRequest) {
         processed++; continue;
       }
       // Re-checked on the sending account: approval can be withdrawn after scheduling.
-      const template = send.template_name ? await loadInviteTemplate(resolved, send.template_name) : null;
+      let template = null;
+      if (send.template_name) {
+        try {
+          template = await loadInviteTemplate(resolved, send.template_name);
+        } catch (err) {
+          if (!(err instanceof TemplateLookupUnavailableError)) throw err;
+          // WhatsApp could not be asked: nothing was sent, so put it back for the next run.
+          await db.from('form_sends')
+            .update({ status: 'scheduled', started_at: null, updated_at: new Date().toISOString(), error_message: 'Waiting: templates could not be checked, will retry' })
+            .eq('id', send.id).eq('status', 'sending');
+          continue;
+        }
+      }
       const outcomes = await sendFormInvites({
         db, resolved, businessId: send.business_id, businessName: biz.name,
         form: { id: form.id, title: form.title, description: form.description, token: form.token },
-        template, phones: send.recipients,
+        template, phones: send.recipients, deadline,
       });
       const earlier = Array.isArray(send.results) ? send.results : [];
       const now = summarize(outcomes);
       const notes = [
         now.sent === 0 ? 'No messages were accepted' : null,
+        outcomes.some(o => o.status === 'skipped' && o.reason === 'not_attempted') ? 'Some people were not attempted (ran out of time); send again to them' : null,
         send.template_name && !template ? 'The chosen template is no longer approved for form links' : null,
       ].filter(Boolean).join('. ');
       await finish({
