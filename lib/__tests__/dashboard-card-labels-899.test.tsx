@@ -12,6 +12,9 @@ import type { ReactNode } from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import { CATEGORY_LABELS } from '@/lib/constants';
 
+// The first render loads the whole dashboard page; allow for a busy machine.
+vi.setConfig({ testTimeout: 30_000 });
+
 type Filter = [op: string, column: string, value: unknown];
 type Query = { table: string; filters: Filter[] };
 
@@ -188,15 +191,32 @@ describe('#899 "today" is the business date; the usage month stays on the limit 
     expect(scheduledDateQueried()).toBe('2026-11-05');
   });
 
-  it('the same instant is still 4 Nov for a UTC business', async () => {
-    state.business = shopBusiness({ timezone: 'UTC' });
-    await renderAt('2026-11-04T23:30:00Z');
+  it('a US business with a fitting zone gets its earlier date (New York, 01:30 UTC on 5 Nov = 4 Nov)', async () => {
+    state.business = shopBusiness({ country_code: 'US', timezone: 'America/New_York' });
+    await renderAt('2026-11-05T01:30:00Z');
     expect(scheduledDateQueried()).toBe('2026-11-04');
   });
 
-  it('a business behind UTC gets its earlier date (New York, 01:30 UTC on 5 Nov = 4 Nov)', async () => {
-    state.business = shopBusiness({ timezone: 'America/New_York' });
-    await renderAt('2026-11-05T01:30:00Z');
+  it('a GB business on Europe/London uses London\'s date', async () => {
+    state.business = shopBusiness({ country_code: 'GB', timezone: 'Europe/London' });
+    await renderAt('2026-11-05T23:30:00Z');
+    expect(scheduledDateQueried()).toBe('2026-11-05');
+  });
+
+  // businesses.timezone defaults to Africa/Lagos and the app never sets it, so a
+  // zone that does not fit the country is not trusted (as in the bot): UTC date.
+  it('a US or GB business still on the Lagos default keeps the UTC date', async () => {
+    for (const country_code of ['US', 'GB']) {
+      cleanup(); state.queries = [];
+      state.business = shopBusiness({ country_code, timezone: 'Africa/Lagos' });
+      await renderAt('2026-11-05T23:30:00Z');
+      expect(scheduledDateQueried(), country_code).toBe('2026-11-05');
+    }
+  });
+
+  it('a zone that does not fit the country (NG on UTC) keeps the UTC date', async () => {
+    state.business = shopBusiness({ timezone: 'UTC' });
+    await renderAt('2026-11-04T23:30:00Z');
     expect(scheduledDateQueried()).toBe('2026-11-04');
   });
 

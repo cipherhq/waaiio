@@ -22,7 +22,7 @@ import { DirectWhatsAppLink } from '@/components/dashboard/DirectWhatsAppLink';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
-import { getLocalNow } from '@/lib/bot/flows/shared/table-same-day';
+import { getLocalNow, timezoneFitsCountry } from '@/lib/bot/flows/shared/table-same-day';
 
 interface Stats {
   totalBookings: number;
@@ -118,8 +118,11 @@ export default function DashboardOverview() {
       try {
       const supabase = createClient();
       const utcToday = new Date().toISOString().split('T')[0];
-      // "Today" is the business's own date; the UTC date if its time zone is missing or invalid (#899).
-      const today = getLocalNow(business.timezone)?.date ?? utcToday;
+      // "Today" is the business's own date (#899). The stored timezone defaults to
+      // Africa/Lagos and is never set by the app, so trust it only when it fits the
+      // country, as the bot does (Owner decision 2026-11-04); otherwise keep the UTC date.
+      const localNow = timezoneFitsCountry(business.timezone, business.country_code) ? getLocalNow(business.timezone) : null;
+      const today = localNow?.date ?? utcToday;
       // Usage bars stay on the limit check's month: lib/tier-limits.ts counts from
       // UTC midnight on the 1st (Owner decision on #899).
       const monthStart = utcToday.slice(0, 7) + '-01'; // YYYY-MM-01
