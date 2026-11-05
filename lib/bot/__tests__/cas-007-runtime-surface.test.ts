@@ -63,7 +63,7 @@ describe('CAS-007 BEHAVIORAL: capability selection', () => {
       session_data: { capabilities: ['ordering'] },
       version: 0,
     } as any;
-    const kw = { keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
+    const kw = { id: 'keyword-test', match_type: 'exact' as const, scope: 'system' as const, category: null, business_id: null, campaign_id: null, description: null, keyword: 'book', action_type: 'start_capability' as const, payload: 'scheduling', priority: 0 };
     const rpcMock = vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null });
     const ctx = {
       supabase: { from: vi.fn(() => ({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) })), rpc: rpcMock } as any,

@@ -32,7 +32,7 @@ function assertNoSensitiveData(lines: string[], sensitiveValues: string[]) {
 
 // ── Helpers ──
 
-function makeRequest(url: string, opts: RequestInit = {}) {
+function makeRequest(url: string, opts: NonNullable<ConstructorParameters<typeof NextRequest>[1]> = {}) {
   return new NextRequest(new URL(url, 'http://localhost:3000'), opts);
 }
 

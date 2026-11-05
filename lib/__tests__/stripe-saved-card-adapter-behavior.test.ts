@@ -43,17 +43,17 @@ vi.mock('../payments/resolve-stripe-routing', () => ({
 }));
 
 vi.mock('../payments/stripe-saved-card', () => ({
-  buildSavedCardPIParams: (...args: unknown[]) => mockBuildSavedCardPIParams(...args),
-  chargeStripeSavedCard: (...args: unknown[]) => mockChargeStripeSavedCard(...args),
-  createAuthAttempt: (...args: unknown[]) => mockCreateAuthAttempt(...args),
+  buildSavedCardPIParams: (...args: Parameters<typeof mockBuildSavedCardPIParams>) => mockBuildSavedCardPIParams(...args),
+  chargeStripeSavedCard: (...args: Parameters<typeof mockChargeStripeSavedCard>) => mockChargeStripeSavedCard(...args),
+  createAuthAttempt: (...args: Parameters<typeof mockCreateAuthAttempt>) => mockCreateAuthAttempt(...args),
 }));
 
 vi.mock('../payments/reconcile', () => ({
-  reconcilePayment: (...args: unknown[]) => mockReconcilePayment(...args),
+  reconcilePayment: (...args: Parameters<typeof mockReconcilePayment>) => mockReconcilePayment(...args),
 }));
 
 vi.mock('../payments/saved-card-recovery', () => ({
-  recoverDispatchedSavedCardPayment: (...args: unknown[]) => mockRecoverDispatchedSavedCardPayment(...args),
+  recoverDispatchedSavedCardPayment: (...args: Parameters<typeof mockRecoverDispatchedSavedCardPayment>) => mockRecoverDispatchedSavedCardPayment(...args),
 }));
 
 import { savedPaymentAdapter } from '../payments/saved-payment-adapter';

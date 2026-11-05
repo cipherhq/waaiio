@@ -132,7 +132,7 @@ describe('Route regression: MetaApiError 5xx takes ambiguous path', () => {
 
   it('OTP route: generic Error is ambiguous', () => {
     const err = new Error('ETIMEDOUT');
-    const isDefiniteRejection = err instanceof MetaApiError && (err as MetaApiError).httpStatus >= 400 && (err as MetaApiError).httpStatus < 500;
+    const isDefiniteRejection = err instanceof MetaApiError && err.httpStatus >= 400 && err.httpStatus < 500;
     expect(isDefiniteRejection).toBe(false);
   });
 });

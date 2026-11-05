@@ -122,8 +122,8 @@ describe('deriveCapabilityConfiguration', () => {
     const transitions: Array<{ prev: CapabilityId[]; prevOrder: CapabilityId[]; next: CapabilityId[] }> = [
       { prev: ['scheduling'] as CapabilityId[], prevOrder: ['scheduling'] as CapabilityId[], next: ['scheduling', 'staff'] as CapabilityId[] },
       { prev: ['scheduling', 'staff'] as CapabilityId[], prevOrder: ['staff', 'scheduling'] as CapabilityId[], next: ['scheduling'] as CapabilityId[] },
-      { prev: ['a', 'b', 'c'] as CapabilityId[], prevOrder: ['c', 'a', 'b'] as CapabilityId[], next: ['a', 'b', 'c', 'd'] as CapabilityId[] },
-      { prev: ['a', 'b'] as CapabilityId[], prevOrder: ['b', 'a'] as CapabilityId[], next: ['c'] as CapabilityId[] },
+      { prev: ['ordering', 'scheduling', 'staff'] as CapabilityId[], prevOrder: ['staff', 'ordering', 'scheduling'] as CapabilityId[], next: ['ordering', 'scheduling', 'staff', 'ticketing'] as CapabilityId[] },
+      { prev: ['ordering', 'scheduling'] as CapabilityId[], prevOrder: ['scheduling', 'ordering'] as CapabilityId[], next: ['staff'] as CapabilityId[] },
     ];
 
     for (const t of transitions) {

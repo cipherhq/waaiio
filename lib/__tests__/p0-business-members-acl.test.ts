@@ -262,8 +262,8 @@ interface PgClient {
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_members containment', () => {
-  let pg: { Client: new (opts: { connectionString: string }) => PgClient };
-  let client: PgClient;
+  let pg: typeof import('pg');
+  let client: import('pg').Client;
 
   // Test identities
   const OWNER_ID = '11111111-1111-1111-1111-111111111111';

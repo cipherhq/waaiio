@@ -1105,7 +1105,7 @@ describe('Cross-Business Isolation', () => {
         }
         const chain = createChainMock([], 0);
         // Also wrap the count thenable chain's eq
-        const origSelect = chain.select as ReturnType<typeof vi.fn>;
+        const origSelect = chain.select as ReturnType<typeof vi.fn<(...args: unknown[]) => Record<string, unknown>>>;
         chain.select = vi.fn().mockImplementation((_cols: string, opts?: { count?: string; head?: boolean }) => {
           const result = origSelect(_cols, opts);
           if (result && typeof result === 'object' && result.eq) {
@@ -1132,7 +1132,7 @@ describe('Cross-Business Isolation', () => {
   for (const { name, source, field, biz } of adapters) {
     it(`${name} adapter scopes by business_id`, async () => {
       const { service, eqCalls } = createTrackedService();
-      const needsUuid = field === 'form_id' || field === 'event_id';
+      const needsUuid = field === 'form_id';
       const expr: Predicate = {
         type: 'predicate',
         source: source as any,

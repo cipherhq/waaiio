@@ -452,7 +452,7 @@ describe('561-B: scheduling flow uses getFlowCopy for static chrome', () => {
     const flowModule = await import('../flows/scheduling.flow');
     expect(flowModule).toBeDefined();
     // The flow definition should exist
-    expect(flowModule.default || flowModule.schedulingFlow).toBeDefined();
+    expect(flowModule.schedulingFlow).toBeDefined();
   });
 
   it('scheduling flow source contains getFlowCopy calls', async () => {

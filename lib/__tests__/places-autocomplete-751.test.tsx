@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-function Controlled({ changed = vi.fn() }: { changed?: ReturnType<typeof vi.fn> }) {
+function Controlled({ changed = vi.fn() }: { changed?: (...args: unknown[]) => void }) {
   const [value, setValue] = useState('');
   return <PlacesAutocomplete value={value} onChange={(text, data) => { setValue(text); changed(text, data); }} />;
 }

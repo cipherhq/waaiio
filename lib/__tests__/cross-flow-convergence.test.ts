@@ -110,9 +110,9 @@ describe('Reservation payment atomic convergence (confirm_reservation_payment_at
       p_payment_id: 'pay-1',
     });
 
-    expect(result.data.confirmed).toBe(true);
-    expect(result.data.was_pending).toBe(true);
-    expect(result.data.reason).toBe('pending_to_confirmed');
+    expect((result.data as Record<string, unknown>).confirmed).toBe(true);
+    expect((result.data as Record<string, unknown>).was_pending).toBe(true);
+    expect((result.data as Record<string, unknown>).reason).toBe('pending_to_confirmed');
     expect(supabase.rpc).toHaveBeenCalledWith('confirm_reservation_payment_atomic', {
       p_reservation_id: 'res-1',
       p_payment_id: 'pay-1',
@@ -130,9 +130,9 @@ describe('Reservation payment atomic convergence (confirm_reservation_payment_at
       p_payment_id: 'pay-1',
     });
 
-    expect(result.data.confirmed).toBe(true);
-    expect(result.data.was_pending).toBe(false);
-    expect(result.data.reason).toBe('repair_paid_state');
+    expect((result.data as Record<string, unknown>).confirmed).toBe(true);
+    expect((result.data as Record<string, unknown>).was_pending).toBe(false);
+    expect((result.data as Record<string, unknown>).reason).toBe('repair_paid_state');
   });
 
   it('6. Reservation different payment -> conflict', async () => {
@@ -146,8 +146,8 @@ describe('Reservation payment atomic convergence (confirm_reservation_payment_at
       p_payment_id: 'pay-different',
     });
 
-    expect(result.data.confirmed).toBe(false);
-    expect(result.data.reason).toBe('payment_conflict');
+    expect((result.data as Record<string, unknown>).confirmed).toBe(false);
+    expect((result.data as Record<string, unknown>).reason).toBe('payment_conflict');
   });
 });
 

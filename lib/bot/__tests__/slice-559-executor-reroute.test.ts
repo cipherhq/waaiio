@@ -164,7 +164,7 @@ describe('#559 — Executable executor reroute tests', () => {
       id === 'browse_catalog' ? step : id === 'select_service' ? serviceStep : null);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     // Capture outbound
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
@@ -198,7 +198,7 @@ describe('#559 — Executable executor reroute tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -220,7 +220,7 @@ describe('#559 — Executable executor reroute tests', () => {
       id === 'browse_catalog' ? step : id === 'select_service' ? serviceStep : null);
     mockGetFlowDefinition.mockReturnValue({ type: 'scheduling', steps: [serviceStep] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -252,7 +252,7 @@ describe('#559 — Executable executor reroute tests', () => {
     // Capability no longer available
     mockGetEnabledCapabilities.mockResolvedValue(['ordering']); // scheduling removed!
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -280,7 +280,7 @@ describe('#559 — Executable executor reroute tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -307,7 +307,7 @@ describe('#559 — Executable executor reroute tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -331,7 +331,7 @@ describe('#559 — Executable executor reroute tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async () => {});
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -360,7 +360,7 @@ describe('#559 — Executable executor reroute tests', () => {
     mockGetFlowStep.mockReturnValue(step);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async (_to: string, msgs: any[]) => { sentMessages.push(...msgs); });
 
@@ -383,7 +383,7 @@ describe('#559 — Executable executor reroute tests', () => {
       id === 'browse_catalog' ? step : id === 'select_quantity' ? { id: 'select_quantity', prompt: vi.fn().mockResolvedValue([]), validate: vi.fn(), next: vi.fn() } : null);
     mockGetFlowDefinition.mockReturnValue({ type: 'ordering', steps: [step] });
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async () => {});
     (executor as any).sendMessages = vi.fn(async () => {});
 
@@ -406,7 +406,7 @@ describe('#559 — Executable executor reroute tests', () => {
     // No scheduling capability → no reroute → goes to error path
     mockGetEnabledCapabilities.mockResolvedValue(['ordering']);
 
-    const executor = new FlowExecutor(sb);
+    const executor = new FlowExecutor(sb, {} as ConstructorParameters<typeof FlowExecutor>[1], {} as ConstructorParameters<typeof FlowExecutor>[2], {} as ConstructorParameters<typeof FlowExecutor>[3]);
     (executor as any).sendText = vi.fn(async (_to: string, text: string) => { sentTexts.push(text); });
     (executor as any).sendMessages = vi.fn(async () => {});
 
