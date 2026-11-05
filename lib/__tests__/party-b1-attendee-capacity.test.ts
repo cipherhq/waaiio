@@ -87,9 +87,8 @@ describe('Capacity enforcement decisions', () => {
   });
 
   it('cancellation (declined) sets plus_ones to 0', () => {
-    const status = 'declined';
-    const plusOnes = status === 'accepted' ? 2 : 0;
-    expect(plusOnes).toBe(0);
+    const plusOnes = (status: string) => status === 'accepted' ? 2 : 0;
+    expect(plusOnes('declined')).toBe(0);
   });
 });
 

@@ -35,7 +35,7 @@ const dbUrl = process.env.TEST_DATABASE_URL;
 // DATABASE URL SAFETY GUARD
 // ══════════════════════════════════════════════════════════════
 
-function validateDatabaseUrl(url: string | undefined): url is string {
+function validateDatabaseUrl(url: string | undefined): boolean {
   if (!url) return false;
 
   let parsed: URL;

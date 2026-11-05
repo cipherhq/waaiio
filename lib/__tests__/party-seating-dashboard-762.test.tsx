@@ -92,7 +92,7 @@ async function waitForLoadedParty() {
   await waitFor(()=>{
     const guests=within(screen.getByRole('table'));
     for(const guest of snapshot.guests) {
-      expect(guests.getByRole('cell',{name:guest.guest_name!,exact:true})).toBeTruthy();
+      expect(guests.getByRole('cell',{name:guest.guest_name!})).toBeTruthy();
     }
     for(const table of snapshot.tables) {
       const seated=snapshot.guests.filter(g=>g.table_id===table.id)
@@ -201,7 +201,7 @@ describe('rendered Parties dashboard seating #762',()=>{
     parentCountGate=deferredGate();
     await navigateToParty();
     await waitFor(()=>expect(parentCountReads).toBe(1));
-    await screen.findByRole('cell',{name:'Alex',exact:true});
+    await screen.findByRole('cell',{name:'Alex'});
     const editor=within(screen.getByRole('region',{name:'Seating plan'}));
     fireEvent.click(await editor.findByRole('button',{name:'Randomize and preview'}));
     await editor.findByRole('button',{name:'Confirm seating'});

@@ -64,7 +64,7 @@ describe('VALID_GATEWAYS preserves existing Flutterwave merchant processing', ()
     const result = await resolveCountryGateway(mockSupabase, 'NG');
     // flutterwave is still recognized — NOT rejected
     expect(result.gateway).toBe('flutterwave');
-    expect(result.reason).toBeUndefined();
+    expect(result).not.toHaveProperty('reason');
   });
 });
 

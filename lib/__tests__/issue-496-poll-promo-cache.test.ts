@@ -127,6 +127,7 @@ describe('Issue #496: mutable dashboard list cache policy', () => {
       new NextRequest('http://localhost/api/polls?business_id=biz-1'),
     );
 
+    if (!response) throw new Error('Route must return a response');
     expectNoStore(response);
     await expect(response.json()).resolves.toEqual({
       polls: [{ id: 'poll-1', question: 'Fresh poll' }],
@@ -141,6 +142,7 @@ describe('Issue #496: mutable dashboard list cache policy', () => {
       new NextRequest('http://localhost/api/promo-codes?businessId=biz-1'),
     );
 
+    if (!response) throw new Error('Route must return a response');
     expectNoStore(response);
     await expect(response.json()).resolves.toEqual({
       codes: [{ id: 'promo-1', code: 'FRESH10' }],

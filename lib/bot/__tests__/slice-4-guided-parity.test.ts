@@ -363,7 +363,7 @@ describe('Dynamic ownership — campaign title beats colliding keyword (real Bot
 // ═══════════════════════════════════════════════════════════════
 
 describe('Blocker 4 — FlowExecutor entity carry-forward (real execution)', () => {
-  function buildExecutorSupabase(serviceData?: Record<string, unknown>) {
+  function buildExecutorSupabase(serviceData?: Record<string, unknown> | null) {
     const chain = (): Record<string, any> => {
       const c: Record<string, any> = {};
       for (const m of ['select','insert','update','delete','eq','neq','or','in','is','not','ilike','like','gte','lte','gt','lt','order','limit','range','filter','match','contains','containedBy'])
@@ -433,7 +433,7 @@ describe('Blocker 4 — FlowExecutor entity carry-forward (real execution)', () 
       session_data: {
         capabilities: ['scheduling'], active_capability: 'scheduling',
         business_category: 'salon',
-      },
+      } as Record<string, unknown>,
       conversation_log: [],
     };
 

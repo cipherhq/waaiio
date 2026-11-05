@@ -72,7 +72,7 @@ vi.mock('@/lib/countries', async (importOriginal) => {
   return {
     ...orig,
     loadCountries: vi.fn().mockResolvedValue(undefined),
-    getCountryList: () => [{ code: 'NG', name: 'Nigeria', flag: '🇳🇬', currency_code: 'NGN', currency_symbol: '₦', currency_locale: 'en-NG' }],
+    getCountryList: () => [{ code: 'NG', name: 'Nigeria', flag: '🇳🇬', currency_code: 'NGN', currency_symbol: '₦', currency_locale: 'en-NG', dialing_code: '+234', payment_gateway: 'paystack', phone_digits: 10, phone_pattern: '', phone_placeholder: '8012345678', cities: {}, pricing: {}, verification_tiers: {}, doc_types: [], is_active: true, sort_order: 0 }],
     getCountry: () => ({ code: 'NG', name: 'Nigeria', currency_code: 'NGN', payment_gateway: 'paystack' }),
   };
 });
@@ -109,7 +109,7 @@ describe('StepCategory — category selection replaces stale paid state', () => 
       React.createElement(StepCategory, {
         selectedCountry: 'NG',
         setSelectedCountry: vi.fn(),
-        countryList: [{ code: 'NG', name: 'Nigeria', flag: '🇳🇬', currency_code: 'NGN', currency_symbol: '₦', currency_locale: 'en-NG' }],
+        countryList: [{ code: 'NG', name: 'Nigeria', flag: '🇳🇬', currency_code: 'NGN', currency_symbol: '₦', currency_locale: 'en-NG', dialing_code: '+234', payment_gateway: 'paystack', phone_digits: 10, phone_pattern: '', phone_placeholder: '8012345678', cities: {}, pricing: {}, verification_tiers: {}, doc_types: [], is_active: true, sort_order: 0 }],
         setCity: vi.fn(),
         selectedGroup: null,
         setSelectedGroup: vi.fn(),
@@ -285,7 +285,7 @@ describe('OnboardingWizard — registration payload contains only free-tier capa
       writable: true, configurable: true,
     });
 
-    global.fetch = vi.fn(async (url: string, init?: any) => {
+    global.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       if (typeof url === 'string' && url.includes('/api/public/pricing')) {
         return new Response(JSON.stringify(PRICING_FIXTURE), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
@@ -293,7 +293,7 @@ describe('OnboardingWizard — registration payload contains only free-tier capa
         return new Response(JSON.stringify({ slug_available: true, code_available: true, suggested_code: 'TEST-BIZ', bot_code: 'TEST-BIZ' }), { status: 200 });
       }
       if (typeof url === 'string' && url.includes('/api/onboarding/register')) {
-        const body = init?.body ? JSON.parse(init.body) : {};
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
         registerPayloads.push({ url, body });
         return new Response(JSON.stringify({ business_id: 'biz-123', bot_code: 'TEST-BIZ' }), { status: 200 });
       }

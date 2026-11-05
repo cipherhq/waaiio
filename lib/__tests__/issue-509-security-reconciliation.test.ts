@@ -828,9 +828,9 @@ describe('B3: commercial key classification and client routing contract', () => 
       new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
     // messaging_topup_packages is in COMMERCIAL_KEYS, NOT in MESSAGING_BUNDLE_KEYS
-    expect(src).toMatch(/COMMERCIAL_KEYS.*messaging_topup_packages/s);
+    expect(src).toMatch(new RegExp("COMMERCIAL_KEYS.*messaging_topup_packages", "s"));
     // Verify it's not in the bundle set by checking the bundle set definition
-    const bundleMatch = src.match(/MESSAGING_BUNDLE_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
+    const bundleMatch = src.match(new RegExp("MESSAGING_BUNDLE_KEYS\\s*=\\s*new\\s+Set\\(\\[([^\\]]+)\\]\\)", "s"));
     expect(bundleMatch).toBeTruthy();
     expect(bundleMatch![1]).not.toContain('messaging_topup_packages');
   });
@@ -887,7 +887,7 @@ describe('B3: commercial key classification and client routing contract', () => 
     const src = fs.readFileSync(
       new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
-    const bundleMatch = src.match(/MESSAGING_BUNDLE_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
+    const bundleMatch = src.match(new RegExp("MESSAGING_BUNDLE_KEYS\\s*=\\s*new\\s+Set\\(\\[([^\\]]+)\\]\\)", "s"));
     expect(bundleMatch).toBeTruthy();
     const bundleContent = bundleMatch![1];
     expect(bundleContent).toContain("'messaging_pricing'");
@@ -909,7 +909,7 @@ describe('B3: commercial key classification and client routing contract', () => 
     // No direct adminDb.rpc('save_commercial_config') remaining
     expect(src).not.toContain("adminDb.rpc('save_commercial_config'");
     // COMMERCIAL_KEYS contains messaging_topup_packages (individually writable)
-    const commercialMatch = src.match(/const COMMERCIAL_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
+    const commercialMatch = src.match(new RegExp("const COMMERCIAL_KEYS\\s*=\\s*new\\s+Set\\(\\[([^\\]]+)\\]\\)", "s"));
     expect(commercialMatch).toBeTruthy();
     expect(commercialMatch![1]).toContain("'messaging_topup_packages'");
   });

@@ -99,7 +99,7 @@ function buildSb(opts: {
       if (t === 'customer_profiles') return chain({ email: 'donor@test.com' });
       return chain();
     }),
-    rpc: vi.fn(async (name: string, params?: Record<string, unknown>) => {
+    rpc: vi.fn(async (name: string, params?: Record<string, unknown>): Promise<{ data: Record<string, unknown> | null; error: null }> => {
       if (name === 'claim_payment_confirmation') return { data: { claimed: true, claim_token: 'tok-c', payment_id: 'pay-camp-1', amount: 5000, booking_id: null, reservation_id: null, invoice_id: null, campaign_id: 'camp-1', order_id: null, customer_phone: '+2349012345678', payment_authority_version: 1, ...opts.claimOverrides }, error: null };
       if (name === 'renew_payment_confirmation_claim') {
         if (opts.renewDenied) return { data: { renewed: false, reason: 'claim_expired' }, error: null };

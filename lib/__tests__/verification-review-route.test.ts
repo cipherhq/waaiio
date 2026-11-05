@@ -363,7 +363,7 @@ describe('operation-bound verification review and CORS', () => {
     vi.clearAllMocks(); writes.length = 0; foreignDocument = false; failWrite = '';
     const { requirePlatformAdmin } = await import('@/lib/admin-auth');
     vi.mocked(requirePlatformAdmin).mockResolvedValue({
-      userId: 'admin', email: 'synthetic@example.test', role: 'admin', aal: 'aal2', bearerToken: 'token', sessionId: 'session',
+      id: 'admin', userId: 'admin', email: 'synthetic@example.test', role: 'admin', aal: 'aal2', bearerToken: 'token', sessionId: 'session',
     });
     const { consumeStepUp } = await import('@/lib/admin-step-up');
     vi.mocked(consumeStepUp).mockReset().mockResolvedValue(true);

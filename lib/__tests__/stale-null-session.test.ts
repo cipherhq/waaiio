@@ -1342,7 +1342,7 @@ describe('Stale null-business session fix', () => {
 
     // Assert: in-place update payload includes version = existingSession.version + 1 = 4
     expect(updatePayload).not.toBeNull();
-    expect((updatePayload as Record<string, unknown>)?.version).toBe(4);
+    expect(updatePayload).toMatchObject({ version: 4 });
   });
 
   it('21. (b) persisted suggestions used for button content when session recovered (CAS 0 rows), not local array', async () => {

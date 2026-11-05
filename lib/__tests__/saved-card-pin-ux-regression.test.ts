@@ -156,6 +156,7 @@ function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowC
     return c;
   };
   return {
+    copyLang: 'en',
     supabase: {
       from: vi.fn().mockImplementation((table: string) => makeChain(table)),
       rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2 }, error: null }),

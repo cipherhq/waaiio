@@ -82,7 +82,7 @@ function makeSupabase(paymentData: Record<string, unknown> | null = null, casRow
       select: vi.fn().mockReturnValue(selectChain),
       update: vi.fn().mockReturnValue(updateChain),
     }),
-  } as never;
+  } as unknown as import('@supabase/supabase-js').SupabaseClient;
 }
 
 /**
@@ -121,7 +121,7 @@ function makeSupabaseWithReRead(
       select: vi.fn().mockImplementation(() => makeSelectChain()),
       update: vi.fn().mockReturnValue(updateChain),
     }),
-  } as never;
+  } as unknown as import('@supabase/supabase-js').SupabaseClient;
 }
 
 const VALID_PAYMENT = {
@@ -847,8 +847,8 @@ describe('R2-B1: Lifecycle-aware reconciliation after PI succeeded', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'pi_cas_lost', status: 'succeeded' }) });
     // CAS fails (0 rows updated), re-read sees success
     const sb = makeSupabaseWithReRead(
-      VALID_PAYMENT, 0,
-      { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed', gateway_reference: 'pi_cas_lost' },
+      VALID_PAYMENT,
+      { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed', gateway_reference: 'pi_cas_lost' }, 0,
     );
     mockReconcilePayment.mockResolvedValue({
       providerOutcome: 'verified',

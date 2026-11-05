@@ -38,6 +38,7 @@ export function createMockSupabase(overrides: Record<string, unknown> = {}) {
 /** Create a mock FlowContext for testing */
 export function createMockContext(overrides: Partial<FlowContext> = {}): FlowContext {
   return {
+    copyLang: 'en',
     supabase: createMockSupabase() as any,
     sender: {
       sendText: vi.fn().mockResolvedValue({}),
