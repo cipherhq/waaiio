@@ -623,7 +623,7 @@ describe('chargeSavedCard behavioral state machine', () => {
     };
 
     const result = await chargeSavedCard(mockSb as never, {
-      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_x', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' },
+      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_x', authorization_email: 'test@test.com', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' },
       amount: 1000, currency: 'NGN', email: 'test@test.com',
       reference: 'ref-legacy', businessId: 'biz-1', bookingId: 'bk-1',
     });
@@ -652,7 +652,7 @@ describe('chargeSavedCard behavioral state machine', () => {
     };
 
     const result = await chargeSavedCard(mockSb as never, {
-      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_x', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' },
+      savedMethod: { id: 'sm-1', gateway: 'paystack', authorization_code: 'AUTH_x', authorization_email: 'test@test.com', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' },
       amount: 1000, currency: 'NGN', email: 'test@test.com',
       reference: 'ref-err', businessId: 'biz-1', bookingId: 'bk-1',
     });
@@ -766,7 +766,7 @@ describe('chargeSavedCard behavioral state machine', () => {
     return { chargeSavedCard, mockSb, insertedPayments, mockReconcile };
   }
 
-  const savedMethod = { id: 'sm-1', gateway: 'paystack' as const, authorization_code: 'AUTH_x', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' };
+  const savedMethod = { id: 'sm-1', gateway: 'paystack' as const, authorization_code: 'AUTH_x', authorization_email: 'test@test.com', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' };
   const baseOpts = { savedMethod, amount: 1000, currency: 'NGN', email: 'test@test.com', reference: 'ref-term', businessId: 'biz-1', bookingId: 'bk-1' };
 
   it('existing payment with a different or missing entity link fails closed before provider dispatch', async () => {

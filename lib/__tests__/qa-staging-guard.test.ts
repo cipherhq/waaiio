@@ -6,7 +6,7 @@
  * behavior. Uses mocked fetch — no real network requests.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach , beforeAll} from 'vitest';
 
 import {
   assertStagingTarget,

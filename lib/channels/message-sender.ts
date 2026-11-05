@@ -7,7 +7,8 @@
 
 import { MetaCloudService } from './meta-cloud';
 import { isCircuitOpen, recordSuccess, recordFailure, CircuitBreakerOpenError } from '@/lib/circuit-breaker';
-import { assertMessagingAllowed } from '@/lib/channels/send-guard';
+import { PreEmissionRecoveryError } from './pre-emission-error';
+import { assertMessagingAllowed, MessagingSuspendedError } from '@/lib/channels/send-guard';
 import {
   createAttempt,
   markSending,
@@ -209,8 +210,12 @@ export interface MessageSender {
     messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendTemplate?(msg: {
+    /** Notification queue only: report strictly proven zero-emission transient failures. */
+    reportSafePreEmissionFailure?: boolean;
     to: string;
     templateName: string;
+    /** Explicit provider locale; omitted callers retain the en_US provider default. */
+    languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
     noRetry?: boolean;
@@ -292,7 +297,7 @@ export class MetaCloudSender implements MessageSender {
     providerCall: () => Promise<T>,
     params: Omit<AttemptParams, 'businessId' | 'attemptScope'> & { recipientPhone: string; messageCategory?: string },
     /** Platform-scoped sends skip the guard when no business is bound */
-    options?: { platformScopeAllowed?: boolean },
+    options?: { platformScopeAllowed?: boolean; reportSafePreEmissionFailure?: boolean },
   ): Promise<T> {
     const isPlatform = !this._businessId && options?.platformScopeAllowed;
     const scope: 'business' | 'platform' = isPlatform ? 'platform' : 'business';
@@ -337,6 +342,10 @@ export class MetaCloudSender implements MessageSender {
         // Suspension/deadline block: no Meta emission occurred.
         // Attempt stays pending_authorization (not failed_send — that would be false state).
         // No financial encumbrance exists, so no compensating release is needed.
+        if (options?.reportSafePreEmissionFailure && typeof MessagingSuspendedError === 'function' && guardErr instanceof MessagingSuspendedError
+          && ['db_error', 'unverifiable'].includes(guardErr.reason)) {
+          throw new PreEmissionRecoveryError(guardErr);
+        }
         throw guardErr;
       }
 
@@ -349,6 +358,10 @@ export class MetaCloudSender implements MessageSender {
           const { data: authResult, error: authError } = await service.rpc('check_or_authorize_send', { p_attempt_id: attemptId });
 
           if (authError) {
+            // Only explicit PostgreSQL transaction rollback proves no reservation committed.
+            if (options?.reportSafePreEmissionFailure && ['40001', '40P01'].includes(authError.code)) {
+              throw new PreEmissionRecoveryError(authError);
+            }
             // RPC error: fail closed — zero Meta emission
             logger.error('[SENDER] check_or_authorize_send RPC error — fail closed:', authError.message);
             throw new Error(`Financial authorization RPC error: ${authError.message}`);
@@ -373,6 +386,7 @@ export class MetaCloudSender implements MessageSender {
             throw new Error('Financial authorization: null RPC response');
           }
         } catch (finErr) {
+          if (finErr instanceof PreEmissionRecoveryError) throw finErr;
           if (finErr instanceof Error && (
             finErr.message.startsWith('Financial authorization denied:') ||
             finErr.message.startsWith('Financial authorization RPC error:') ||
@@ -636,8 +650,12 @@ export class MetaCloudSender implements MessageSender {
   }
 
   async sendTemplate(msg: {
+    /** Notification queue only: report strictly proven zero-emission transient failures. */
+    reportSafePreEmissionFailure?: boolean;
     to: string;
     templateName: string;
+    /** Explicit provider locale; omitted callers retain the en_US provider default. */
+    languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
     /** Skip automatic retry for delivery-critical sends where ambiguous outcomes must not produce duplicate provider POSTs */
@@ -656,8 +674,9 @@ export class MetaCloudSender implements MessageSender {
     }
     const templateCall = async () => {
       return this.withAttemptAndGuard(
-        () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }),
+        () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, languageCode: msg.languageCode, components }),
         { recipientPhone: msg.to, templateName: msg.templateName, messageCategory: msg.messageCategory },
+        {reportSafePreEmissionFailure: msg.reportSafePreEmissionFailure},
       );
     };
     const result = msg.noRetry ? await templateCall() : await withRetry(templateCall, 2, 1000, this.beforeEachAttempt);

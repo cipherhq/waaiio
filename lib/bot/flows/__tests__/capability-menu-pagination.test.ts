@@ -94,6 +94,7 @@ function buildCtx(opts: {
   }
 
   return {
+    copyLang: 'en',
     supabase: supabase as any,
     sender: {
       sendText: vi.fn().mockResolvedValue({}),
@@ -866,7 +867,7 @@ describe('sender-boundary: real MetaCloudSender → MetaCloudService pipeline', 
         wabaId: 'test-waba',
       });
       const capturedPayloads: Array<Record<string, unknown>> = [];
-      vi.spyOn(cloud as any, 'callApi').mockImplementation(async (_ep: string, body: Record<string, unknown>) => {
+      vi.spyOn(cloud as unknown as { callApi(endpoint: string, body: Record<string, unknown>): Promise<{ messages: { id: string }[] }> }, 'callApi').mockImplementation(async (_ep: string, body: Record<string, unknown>) => {
         capturedPayloads.push(body);
         return { messages: [{ id: 'wamid.test-pagination' }] };
       });
@@ -878,7 +879,8 @@ describe('sender-boundary: real MetaCloudSender → MetaCloudService pipeline', 
         profileId: 'profile-1',
         hasHistory: true,
       });
-      sender.bindBusiness(ctx.business.id);
+      expect(ctx.business).not.toBeNull();
+      sender.bindBusiness(ctx.business!.id);
 
       // ── Helper: render prompt and send through real sender ──
       async function renderAndSend() {

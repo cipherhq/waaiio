@@ -60,7 +60,7 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 
 // Configurable bot-code detection mock for fuzzy/returning-customer tests
-let mockDetectionResult: { businessId: string | null; suggestions?: any[]; isCategory?: boolean; deepLinkCapability?: string } = { businessId: null };
+let mockDetectionResult: { businessId: string | null; suggestions?: any[]; isCategory?: boolean; deepLinkCapability?: string; authority?: 'exact' | 'fuzzy' } = { businessId: null };
 let mockReturningCustomerResult: string | null = null;
 let mockReturningCustomerBusinesses: any[] = [];
 vi.mock('../handlers/bot-code-detection', () => ({

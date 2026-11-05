@@ -1,3 +1,5 @@
+import { hasMerchantNotificationIntent, hasStoppedMerchantNotifications } from '@/lib/merchant-notifications/compatibility';
+import { isMerchantNotificationsEnabled } from '@/lib/merchant-notifications/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { sendEmail } from '@/lib/email/client';
@@ -78,38 +80,52 @@ async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string): Pro
   let notifyWhatsApp = false;
   let notifyWhatsAppPhone: string | null = config?.notify_whatsapp_phone || null;
 
-  if (config?.notify_whatsapp_enabled && notifyWhatsAppPhone && notifyWhatsAppPhone.length >= 10) {
-    const tier = (biz.subscription_tier as string) || 'free';
-    const limit = WHATSAPP_NOTIFY_LIMITS[tier] || 50;
-    const now = new Date();
-    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    const lastReset = config.notify_month_reset;
-    let monthlyCount = config.notify_monthly_count || 0;
-
-    // Reset counter if new month
-    if (!lastReset || lastReset < currentMonth) {
-      monthlyCount = 0;
-      await supabase
-        .from('whatsapp_config')
-        .update({ notify_monthly_count: 0, notify_month_reset: currentMonth })
-        .eq('business_id', businessId);
-    }
-
-    if (monthlyCount < limit) {
+  if (config?.notify_whatsapp_enabled && notifyWhatsAppPhone && notifyWhatsAppPhone.length >= 10
+      && !await hasStoppedMerchantNotifications(supabase, businessId, notifyWhatsAppPhone)) {
+    if (isMerchantNotificationsEnabled()) {
+      // Reserve only immediately before an actual legacy send, after durable-intent checks.
       notifyWhatsApp = true;
-      // Increment counter
-      await supabase
-        .from('whatsapp_config')
-        .update({ notify_monthly_count: monthlyCount + 1 })
-        .eq('business_id', businessId);
     } else {
-      logger.debug(`[NOTIFY] WhatsApp limit reached for business ${businessId}: ${monthlyCount}/${limit}`);
+      const tier = (biz.subscription_tier as string) || 'free';
+      const limit = WHATSAPP_NOTIFY_LIMITS[tier] || 50;
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const lastReset = config.notify_month_reset;
+      let monthlyCount = config.notify_monthly_count || 0;
+
+      // Reset counter if new month
+      if (!lastReset || lastReset < currentMonth) {
+        monthlyCount = 0;
+        await supabase
+          .from('whatsapp_config')
+          .update({ notify_monthly_count: 0, notify_month_reset: currentMonth })
+          .eq('business_id', businessId);
+      }
+
+      if (monthlyCount < limit) {
+        notifyWhatsApp = true;
+        // Increment counter
+        await supabase
+          .from('whatsapp_config')
+          .update({ notify_monthly_count: monthlyCount + 1 })
+          .eq('business_id', businessId);
+      } else {
+        logger.debug(`[NOTIFY] WhatsApp limit reached for business ${businessId}: ${monthlyCount}/${limit}`);
+      }
     }
   }
 
   const businessMetadata = (biz.metadata as Record<string, unknown>) || null;
 
   return { ownerEmail, ownerPhone, isDedicated, notifyEmail, notifySound, notifyWhatsApp, notifyWhatsAppPhone, businessMetadata };
+}
+
+async function reserveLegacyWhatsApp(supabase: SupabaseClient, businessId: string): Promise<boolean> {
+  if (!isMerchantNotificationsEnabled()) return true;
+  try {
+    const result = await supabase.rpc('reserve_merchant_notification_allowance', { p_business_id: businessId });
+    return !result.error && result.data === true;
+  } catch { return false; }
 }
 
 interface CartItem {
@@ -146,7 +162,7 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/orders`;
 
   // Send email (if enabled + preference allows)
-  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email')) {
+  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email') && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerEmail, event: 'sale', reference: referenceCode, sourceTable: 'orders' })) {
     const { subject, html } = newOrderEmail({
       businessName,
       referenceCode,
@@ -162,7 +178,7 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   }
 
   // Send WhatsApp (if enabled + within limit + preference allows)
-  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp')) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp') && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'whatsapp', address: notifyWhatsAppPhone, event: 'sale', reference: referenceCode, sourceTable: 'orders' }) && await reserveLegacyWhatsApp(supabase, businessId)) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
       return `  • ${label} x${i.quantity}`;
@@ -268,7 +284,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
   }
 
   // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && await reserveLegacyWhatsApp(supabase, businessId)) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
       return `  • ${label} x${i.quantity}`;
@@ -360,7 +376,7 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
   const cc = countryCode || 'NG';
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/reservations`;
 
-  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email')) {
+  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email') && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerEmail, event: 'booking', reference: referenceCode }) && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerEmail, event: 'appointment', reference: referenceCode })) {
     const { subject, html } = newBookingOwnerEmail({
       businessName,
       referenceCode,
@@ -378,7 +394,7 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
   }
 
   // Send WhatsApp (if enabled + within monthly limit + preference allows)
-  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp')) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp') && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'whatsapp', address: notifyWhatsAppPhone, event: 'booking', reference: referenceCode }) && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'whatsapp', address: notifyWhatsAppPhone, event: 'appointment', reference: referenceCode }) && await reserveLegacyWhatsApp(supabase, businessId)) {
     const lines = [
       `📅 *New Booking!*`,
       '',
@@ -447,7 +463,7 @@ export async function notifyOwnerNewTicketSale(opts: NotifyTicketSaleOpts): Prom
   }
 
   // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && await reserveLegacyWhatsApp(supabase, businessId)) {
     const lines = [
       `🎫 *New Ticket Sale!*`,
       '',
@@ -470,6 +486,7 @@ export async function notifyOwnerNewTicketSale(opts: NotifyTicketSaleOpts): Prom
 // ── Donation ──
 
 interface NotifyDonationOpts {
+  paymentId?: string;
   supabase: SupabaseClient;
   sender: MessageSender;
   businessId: string;
@@ -494,7 +511,7 @@ export async function notifyOwnerNewDonation(opts: NotifyDonationOpts): Promise<
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/giving`;
 
   // Send email (if enabled)
-  if (notifyEmail && ownerEmail) {
+  if (notifyEmail && ownerEmail && (!opts.paymentId || !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerEmail, event: 'payment', sourceTable: 'payments', sourceId: opts.paymentId }))) {
     sendEmail({
       to: ownerEmail,
       subject: `New Donation from ${displayName} - ${businessName}`,
@@ -510,7 +527,7 @@ export async function notifyOwnerNewDonation(opts: NotifyDonationOpts): Promise<
   }
 
   // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && (!opts.paymentId || !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'whatsapp', address: notifyWhatsAppPhone, event: 'payment', sourceTable: 'payments', sourceId: opts.paymentId })) && await reserveLegacyWhatsApp(supabase, businessId)) {
     const lines = [
       `🙏 *New Donation!*`,
       '',
@@ -530,6 +547,7 @@ export async function notifyOwnerNewDonation(opts: NotifyDonationOpts): Promise<
 // ── Payment (tithes, fees, general) ──
 
 interface NotifyPaymentOpts {
+  paymentId?: string;
   supabase: SupabaseClient;
   sender: MessageSender;
   businessId: string;
@@ -554,7 +572,7 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/payments`;
 
   // Send email (if enabled + preference allows)
-  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email')) {
+  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email') && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerEmail, event: 'payment', reference: referenceCode, sourceTable: 'payments', sourceId: opts.paymentId })) {
     sendEmail({
       to: ownerEmail,
       subject: `New Payment from ${customerName} - ${businessName}`,
@@ -570,7 +588,7 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
   }
 
   // Send WhatsApp (if enabled + within monthly limit + preference allows)
-  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp')) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp') && !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'whatsapp', address: notifyWhatsAppPhone, event: 'payment', reference: referenceCode, sourceTable: 'payments', sourceId: opts.paymentId }) && await reserveLegacyWhatsApp(supabase, businessId)) {
     const lines = [
       `💳 *New Payment!*`,
       '',
@@ -590,6 +608,7 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
 // ── Invoice Payment ──
 
 interface NotifyInvoicePaymentOpts {
+  paymentId?: string;
   supabase: SupabaseClient;
   sender: MessageSender;
   businessId: string;
@@ -613,7 +632,7 @@ export async function notifyOwnerNewInvoicePayment(opts: NotifyInvoicePaymentOpt
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/invoices`;
 
   // Send email (if enabled)
-  if (notifyEmail && ownerEmail) {
+  if (notifyEmail && ownerEmail && (!opts.paymentId || !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'email', address: ownerEmail, event: 'payment', sourceTable: 'payments', sourceId: opts.paymentId }))) {
     sendEmail({
       to: ownerEmail,
       subject: `Invoice ${invoiceNumber} Paid - ${businessName}`,
@@ -629,7 +648,7 @@ export async function notifyOwnerNewInvoicePayment(opts: NotifyInvoicePaymentOpt
   }
 
   // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && (!opts.paymentId || !await hasMerchantNotificationIntent(supabase, { businessId, channel: 'whatsapp', address: notifyWhatsAppPhone, event: 'payment', sourceTable: 'payments', sourceId: opts.paymentId })) && await reserveLegacyWhatsApp(supabase, businessId)) {
     const lines = [
       `🧾 *Invoice Paid!*`,
       '',
@@ -681,7 +700,7 @@ export async function notifyOwnerNewQueueCheckin(opts: NotifyQueueCheckinOpts): 
   }
 
   // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  if (notifyWhatsApp && notifyWhatsAppPhone && await reserveLegacyWhatsApp(supabase, businessId)) {
     const lines = [
       `📋 *New Queue Check-in!*`,
       '',
@@ -723,7 +742,7 @@ export async function notifyOwnerGeneric(opts: {
     }
 
     // WhatsApp
-    if (info.notifyWhatsApp && info.notifyWhatsAppPhone && opts.sender) {
+    if (info.notifyWhatsApp && info.notifyWhatsAppPhone && opts.sender && await reserveLegacyWhatsApp(opts.supabase, opts.businessId)) {
       const phone = info.notifyWhatsAppPhone.startsWith('+') ? info.notifyWhatsAppPhone.slice(1) : info.notifyWhatsAppPhone;
       opts.sender.sendText({ to: phone, text: opts.whatsappText, messageCategory: 'service' }).catch(err =>
         logger.error('[NOTIFY-OWNER] Generic WhatsApp error:', err),
