@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { FormSendPanel } from '@/components/dashboard/forms/FormSendPanel';
 
 interface FormField {
   id: string;
@@ -23,6 +23,7 @@ interface Form {
   token: string | null;
   is_active: boolean;
   response_count: number;
+  settings?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -35,6 +36,7 @@ interface FormResponse {
   business_notes: string | null;
   status: string;
   channel: string | null;
+  consent_given?: boolean | null;
   submitted_at: string;
 }
 
@@ -78,9 +80,8 @@ export default function FormsPage() {
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
   const [savingNotes, setSavingNotes] = useState<string | null>(null);
 
-  // Send form state
-  const [sendPhone, setSendPhone] = useState('');
-  const [sendingForm, setSendingForm] = useState(false);
+  // Which form's WhatsApp send panel is open
+  const [sendFormId, setSendFormId] = useState<string | null>(null);
   const [nativePreview, setNativePreview] = useState<{ businessId: string; formId: string; json: string } | null>(null);
   const [previewingNative, setPreviewingNative] = useState<string | null>(null);
   const [nativePreviewError, setNativePreviewError] = useState('');
@@ -93,6 +94,10 @@ export default function FormsPage() {
   const [fields, setFields] = useState<FormField[]>([]);
   const [editId, setEditId] = useState('');
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [askForUpdates, setAskForUpdates] = useState(false);
+  const [editSettings, setEditSettings] = useState<Record<string, unknown>>({});
+  // The opt-in box needs a phone field to know whose consent it records.
+  const hasPhoneField = fields.some(f => f.type === 'phone');
 
   // New field state
   const [newLabel, setNewLabel] = useState('');
@@ -106,7 +111,7 @@ export default function FormsPage() {
     try {
       const { data, error } = await supabase
         .from('forms')
-        .select('id, title, description, fields, token, is_active, response_count, created_at')
+        .select('id, title, description, fields, token, is_active, response_count, settings, created_at')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -137,6 +142,8 @@ export default function FormsPage() {
     setTitle('');
     setDescription('');
     setFields([]);
+    setAskForUpdates(false);
+    setEditSettings({});
     setView('add');
   }
 
@@ -145,6 +152,8 @@ export default function FormsPage() {
     setTitle(form.title);
     setDescription(form.description || '');
     setFields(form.fields || []);
+    setEditSettings(form.settings || {});
+    setAskForUpdates(form.settings?.marketing_opt_in === true);
     setView('edit');
   }
 
@@ -154,8 +163,10 @@ export default function FormsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('form_responses')
-      .select('id, customer_phone, customer_name, customer_email, answers, business_notes, status, channel, submitted_at')
+      .select('id, customer_phone, customer_name, customer_email, answers, business_notes, status, channel, consent_given, submitted_at')
       .eq('form_id', form.id)
+      // Older versions stored an empty "sent" row when a form was sent; those are not responses.
+      .neq('status', 'sent')
       .order('submitted_at', { ascending: false });
     setResponses((data || []) as FormResponse[]);
   }
@@ -205,6 +216,7 @@ export default function FormsPage() {
       description: description.trim() || null,
       fields,
       is_active: true,
+      settings: { ...editSettings, marketing_opt_in: askForUpdates && hasPhoneField },
     };
 
     setSaveError(null);
@@ -245,32 +257,6 @@ export default function FormsPage() {
     navigator.clipboard.writeText(`${appUrl}/form/${token}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
-
-  async function handleSendForm(form: Form) {
-    if (!sendPhone.trim() || !form.token) return;
-    setSendingForm(true);
-    try {
-      const res = await fetch('/api/forms/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          formId: form.id,
-          businessId: business.id,
-          phone: sendPhone.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to send form');
-      } else {
-        setSendPhone('');
-        loadForms(); // refresh response counts
-      }
-    } catch {
-      alert('Network error. Please try again.');
-    }
-    setSendingForm(false);
   }
 
   async function previewNativeForm(form: Form) {
@@ -331,7 +317,7 @@ export default function FormsPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">{selectedForm.title}</h1>
             <p className="text-sm text-gray-500">
-              {responses.filter(r => r.status === 'submitted').length} responded · {responses.filter(r => r.status === 'sent').length} pending
+              {responses.length} response{responses.length !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
@@ -367,6 +353,7 @@ export default function FormsPage() {
                         <p className="font-medium text-gray-900">{r.customer_name || 'Anonymous'}</p>
                         {r.customer_phone && <p className="text-xs text-gray-400">{r.customer_phone}</p>}
                         {r.customer_email && <p className="text-xs text-gray-400">{r.customer_email}</p>}
+                        {r.consent_given === true && <p className="text-xs text-green-600">Opted in to updates</p>}
                       </td>
                       {selectedForm.fields.slice(0, 5).map(f => (
                         <td key={f.id} className="px-4 py-3 text-gray-700 max-w-[200px] truncate">
@@ -535,6 +522,21 @@ export default function FormsPage() {
           </div>
         </div>
 
+        <div className="mt-4 max-w-2xl rounded-lg border border-gray-200 bg-white p-4">
+          <label className="flex items-start gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={askForUpdates && hasPhoneField}
+              disabled={!hasPhoneField}
+              onChange={e => setAskForUpdates(e.target.checked)} className="mt-0.5 rounded" />
+            <span>
+              Ask for updates
+              <span className="block text-xs text-gray-500">
+                Adds an unticked “Yes, send me updates” box. People who tick it can later be sent forms and updates on WhatsApp.
+                {!hasPhoneField && ' Add a Phone field first.'}
+              </span>
+            </span>
+          </label>
+        </div>
+
         <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
           <button onClick={handleSave} disabled={saving || !title.trim() || fields.length === 0}
             className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
@@ -640,16 +642,15 @@ export default function FormsPage() {
                   className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
                   View Responses ({form.response_count})
                 </button>
-                <div className="flex items-center gap-1 ml-auto">
-                  <input type="text" value={sendPhone} onChange={e => setSendPhone(e.target.value)}
-                    placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
-                    className="w-36 rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-brand" />
-                  <button onClick={() => handleSendForm(form)} disabled={sendingForm || !sendPhone.trim()}
-                    className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
-                    {sendingForm ? '...' : 'Send'}
-                  </button>
-                </div>
+                <button onClick={() => setSendFormId(sendFormId === form.id ? null : form.id)}
+                  disabled={!form.is_active || !form.token}
+                  className="ml-auto rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                  Send on WhatsApp
+                </button>
               </div>
+              {sendFormId === form.id && form.is_active && (
+                <FormSendPanel businessId={business.id} formId={form.id} onClose={() => setSendFormId(null)} />
+              )}
             </div>
           ))}
         </div>

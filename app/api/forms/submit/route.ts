@@ -2,13 +2,15 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { grantConsent } from '@/lib/growth/consent-service';
+import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
 
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'form-submit'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
-    const { token, answers, customer_name, customer_phone, customer_email } = await request.json();
+    const { token, answers, customer_name, customer_phone, customer_email, marketing_opt_in } = await request.json();
 
     if (!token || !answers || typeof answers !== 'object') {
       return NextResponse.json({ error: 'Token and answers required' }, { status: 400 });
@@ -37,7 +39,7 @@ export async function POST(request: NextRequest) {
     // Load form
     const { data: form } = await supabase
       .from('forms')
-      .select('id, business_id, fields, is_active')
+      .select('id, business_id, fields, is_active, settings')
       .eq('token', token)
       .single();
 
@@ -59,6 +61,20 @@ export async function POST(request: NextRequest) {
         }
       }
     }
+
+    // Optional "Yes, send me updates" box (#591). Only offered when the merchant turned it
+    // on, unticked by default, and recorded only for a valid phone the customer typed.
+    const offersOptIn = (form.settings as Record<string, unknown> | null)?.marketing_opt_in === true;
+    const optIn = offersOptIn && marketing_opt_in === true;
+    let optInPhone: string | null = null;
+    if (optIn) {
+      const { data: biz } = await supabase.from('businesses').select('country_code').eq('id', form.business_id).maybeSingle();
+      optInPhone = typeof customer_phone === 'string' ? normalizeEngagePhone(customer_phone, biz?.country_code || 'NG') : null;
+      if (!optInPhone) {
+        return NextResponse.json({ error: 'Enter a valid WhatsApp number to get updates' }, { status: 400 });
+      }
+    }
+    const consentColumn = offersOptIn ? { consent_given: optIn } : {};
 
     // Check if there's a pending "sent" record for this phone + form (update instead of insert)
     let insertError: { message: string; code?: string } | null = null;
@@ -83,6 +99,7 @@ export async function POST(request: NextRequest) {
             answers,
             status: 'submitted',
             submitted_at: new Date().toISOString(),
+            ...consentColumn,
           })
           .eq('id', existing.id);
         insertError = error;
@@ -98,6 +115,7 @@ export async function POST(request: NextRequest) {
             answers,
             status: 'submitted',
             channel: 'web',
+            ...consentColumn,
           });
         insertError = error;
       }
@@ -113,6 +131,7 @@ export async function POST(request: NextRequest) {
           answers,
           status: 'submitted',
           channel: 'web',
+          ...consentColumn,
         });
       insertError = error;
     }
@@ -122,10 +141,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to submit response' }, { status: 500 });
     }
 
+    let optInRecorded: boolean | undefined;
+    if (optIn && optInPhone) {
+      // Existing append-only consent store; never blocks the saved response.
+      const granted = await grantConsent(supabase, {
+        phone: optInPhone, businessId: form.business_id, channel: 'whatsapp', purpose: 'marketing',
+        source: 'website', evidenceReference: `form:${form.id}`,
+      });
+      optInRecorded = granted.success;
+    }
+
     // Atomic increment — prevents race condition with concurrent submissions
     await supabase.rpc('increment_form_response_count', { p_form_id: form.id });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, ...(optInRecorded !== undefined ? { optInRecorded } : {}) });
   } catch (error) {
     logger.error('[FORMS] Submit error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
