@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /**
  * Tests for token encryption/decryption (lib/encryption.ts).
@@ -19,7 +19,7 @@ describe('Token encryption', () => {
     originalKey = process.env.TOKEN_ENCRYPTION_KEY;
     originalNodeEnv = process.env.NODE_ENV;
     // Force non-production so dev fallbacks apply for error paths
-    process.env.NODE_ENV = 'test';
+    vi.stubEnv('NODE_ENV', 'test');
   });
 
   afterEach(() => {
@@ -29,9 +29,9 @@ describe('Token encryption', () => {
       delete process.env.TOKEN_ENCRYPTION_KEY;
     }
     if (originalNodeEnv !== undefined) {
-      process.env.NODE_ENV = originalNodeEnv;
+      vi.stubEnv('NODE_ENV', originalNodeEnv);
     } else {
-      delete process.env.NODE_ENV;
+      vi.stubEnv('NODE_ENV', undefined);
     }
     // Clear module cache so next import picks up new env var
     vi.resetModules();

@@ -1,0 +1,1632 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_deliveries.accepted_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_deliveries.address",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.merchant_notification_deliveries.attempts",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_notification_deliveries.available_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_notification_deliveries.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_deliveries.channel",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.merchant_notification_deliveries.claim_token",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "802a37c53cc07fe448a9c9e6b3bc47b6e15da4242d7db169dbe19c00e7f771a0",
+   "identity": "column:public.merchant_notification_deliveries.consent_verified_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_notification_deliveries.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_deliveries.dispatched_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_deliveries.event",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.merchant_notification_deliveries.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_deliveries.lease_until",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.merchant_notification_deliveries.payload",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.merchant_notification_deliveries.provider_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.merchant_notification_deliveries.reason",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_notification_deliveries.recipient_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_notification_deliveries.source_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_deliveries.source_table",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'pending'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "d34430a5b5f954d8cee5240ef573d872c3f5df0efcaa9d1b51e9543b2fdf0f55",
+   "identity": "column:public.merchant_notification_deliveries.state",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.merchant_notification_deliveries.whatsapp_channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_invitations.address",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_notification_invitations.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_invitations.channel",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_invitations.consumed_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_notification_invitations.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "802a37c53cc07fe448a9c9e6b3bc47b6e15da4242d7db169dbe19c00e7f771a0",
+   "identity": "column:public.merchant_notification_invitations.expires_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.merchant_notification_invitations.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_notification_invitations.recipient_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_invitations.token_hash",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.merchant_notification_invitations.whatsapp_channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_recipients.address",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_notification_recipients.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_recipients.channel",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.merchant_notification_recipients.consent_version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_notification_recipients.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "true",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "489fd649ed31db7c41d00ca75bea95bff10cee2d9e55ccce79a3d8bfad16b07b",
+   "identity": "column:public.merchant_notification_recipients.enabled",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text[]"
+   },
+   "after_sha256": "504c7407881c490a35b03aaa542219a43b860f0c27495d7e1b6e651cf916e7c4",
+   "identity": "column:public.merchant_notification_recipients.events",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.merchant_notification_recipients.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_notification_recipients.label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_recipients.revoked_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_recipients.stopped_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_notification_recipients.verified_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.merchant_notification_recipients.whatsapp_channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (source_table, source_id, event, recipient_id, channel)",
+    "validated": true
+   },
+   "after_sha256": "c58dd07384f15b8092758c1dcd2d51cab9ee575f482414404fe843a2799020b0",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliver_source_table_source_id_event__key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliveries_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (event = ANY (ARRAY['sale'::text, 'payment'::text, 'appointment'::text, 'booking'::text]))",
+    "validated": true
+   },
+   "after_sha256": "df8949f68860649e6b7815f1a2225fde1341d780d33744b48c9f88a622a8f7e8",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliveries_event_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliveries_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (recipient_id) REFERENCES merchant_notification_recipients(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "ca743a3e0844269d70e36e93db66426285344d00d58e62f280ec5e8815464d4e",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliveries_recipient_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (source_table = ANY (ARRAY['orders'::text, 'bookings'::text, 'reservations'::text, 'payments'::text]))",
+    "validated": true
+   },
+   "after_sha256": "4a8776f83a4c70c559d202b43210646faea711bee6f44c76ac7986ed8a0ddc7c",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliveries_source_table_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (state = ANY (ARRAY['pending'::text, 'claimed'::text, 'dispatched'::text, 'accepted'::text, 'unknown'::text, 'failed'::text, 'suppressed'::text]))",
+    "validated": true
+   },
+   "after_sha256": "581b089cf56b1b97393c3cf58f887804a3ae2cb9eea3b8b672c55076edf0e89e",
+   "identity": "constraint:public.merchant_notification_deliveries.merchant_notification_deliveries_state_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.merchant_notification_invitations.merchant_notification_invitations_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.merchant_notification_invitations.merchant_notification_invitations_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (recipient_id) REFERENCES merchant_notification_recipients(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "ca743a3e0844269d70e36e93db66426285344d00d58e62f280ec5e8815464d4e",
+   "identity": "constraint:public.merchant_notification_invitations.merchant_notification_invitations_recipient_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (token_hash)",
+    "validated": true
+   },
+   "after_sha256": "dd4795307de6b337fb1d626cbff0b96c9b1b71bcb26fb2bcbf7dbf0e1238e916",
+   "identity": "constraint:public.merchant_notification_invitations.merchant_notification_invitations_token_hash_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (whatsapp_channel_id) REFERENCES whatsapp_channels(id)",
+    "validated": true
+   },
+   "after_sha256": "4f4a8f7e0d0b627cbee9e67183ab82a48a37f2c86ce067f4510254ac686dffe8",
+   "identity": "constraint:public.merchant_notification_invitations.merchant_notification_invitations_whatsapp_channel_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(address) >= 3 AND length(address) <= 254)",
+    "validated": true
+   },
+   "after_sha256": "faf8d49bdbc0b2e65f74bf6637c638b454ffe637f35f2b02c2f6e42b37437db8",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_address_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (channel = ANY (ARRAY['email'::text, 'whatsapp'::text]))",
+    "validated": true
+   },
+   "after_sha256": "279fb72b86a0d09dbd894fd0da5f20e2d03f2106b4d68c4552c4894132648f52",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_channel_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (channel = 'email'::text AND address = lower(address) AND POSITION(('@'::text) IN (address)) > 1 OR channel = 'whatsapp'::text AND address ~ '^\\+[1-9][0-9]{7,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "1b33b9dbaca995a18a68d217a3b24a35da00143da96d414ffc26acc199552925",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (verified_at IS NULL OR consent_version IS NOT NULL AND (channel = 'email'::text OR whatsapp_channel_id IS NOT NULL))",
+    "validated": true
+   },
+   "after_sha256": "96754671c0a43dcc2ab016788e1e4f81a5abd77ae4f51a554ba87367cfd3d072",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_check1",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (cardinality(events) > 0 AND events <@ ARRAY['sale'::text, 'payment'::text, 'appointment'::text, 'booking'::text])",
+    "validated": true
+   },
+   "after_sha256": "2d1ef031b51e13b3e58a21065d7d1642ce19b642da89ba797cacdf1134350a45",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_events_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(label) >= 1 AND length(label) <= 80)",
+    "validated": true
+   },
+   "after_sha256": "dd85496bc8c6f146887f314d32923ecaff6aabd179a0042e6553ae15240fdd73",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_label_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (whatsapp_channel_id) REFERENCES whatsapp_channels(id)",
+    "validated": true
+   },
+   "after_sha256": "4f4a8f7e0d0b627cbee9e67183ab82a48a37f2c86ce067f4510254ac686dffe8",
+   "identity": "constraint:public.merchant_notification_recipients.merchant_notification_recipients_whatsapp_channel_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "1f389268642b504786ce97e3766693361a003cc3b8e0b0b6a7a4b438a371bffd",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "c93222f568c7e8a923922e4d71a637f37a125518a3b9df6b0e6ddf187457995e",
+   "identity": "function:public.capture_merchant_notification()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "2ee9485bb1ea1a4780763ef194a1663fb5e57c425c8d85d13abd8933d82ec590",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5018dd92e11afc3c46f59f340b3cde2550458c0ecf4553c49dcef071f32ec333",
+   "identity": "function:public.claim_merchant_notification()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_token_hash text, p_channel text, p_address text DEFAULT NULL::text, p_channel_id uuid DEFAULT NULL::uuid",
+    "body_sha256": "c99d5c3c0cc27e48dea9fc5d6c1cbef21fc81561693b8d2cba4e9826bebf7afb",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "bbd2ad3a968e871681c50052f6718bc7e4bb290c5b489e1827bcfb00be6cae93",
+   "identity": "function:public.consume_merchant_notification_invitation(p_token_hash text, p_channel text, p_address text, p_channel_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_label text, p_channel text, p_address text, p_events text[]",
+    "body_sha256": "5b5c1fe645e70647a6c5ce538552f519350765a440ec2557ff46016da1f18a53",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "0d6eb4c045df63d0f6720f8f1d9e668538287023577400173f839a266ee9036a",
+   "identity": "function:public.create_merchant_notification_recipient(p_business_id uuid, p_label text, p_channel text, p_address text, p_events text[])",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_id uuid, p_claim_token uuid",
+    "body_sha256": "4e06465a39349a7ff5e2a2d46a0640c961dcb982e26873190ce9147727fbd0cd",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "7916166da9014c8e8594ae26dd44c0e1bbdbdc9e0dfb962ffc1b345f6ca6e887",
+   "identity": "function:public.fence_merchant_notification(p_id uuid, p_claim_token uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_id uuid, p_claim_token uuid, p_state text, p_provider_id text DEFAULT NULL::text, p_reason text DEFAULT NULL::text",
+    "body_sha256": "4c0fcac2645f5da1113dbd6111831024987c97fc853f9170a67a29cf3ec0cb74",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "330e9db19bee2378d5cf03ee84f353dabeebe9af30d4c4b2ab6310bf5e23282e",
+   "identity": "function:public.finish_merchant_notification(p_id uuid, p_claim_token uuid, p_state text, p_provider_id text, p_reason text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_recipient_id uuid, p_business_id uuid, p_token_hash text, p_channel_id uuid DEFAULT NULL::uuid",
+    "body_sha256": "59779838a89ba47f0940f9e5bb64d2a555c767c0403e84d408fe79028ef0391d",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "d64d2cd91cf3746e2c0dcd05285265d511152349e4e1b364abed1e3dae945046",
+   "identity": "function:public.issue_merchant_notification_invitation(p_recipient_id uuid, p_business_id uuid, p_token_hash text, p_channel_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid",
+    "body_sha256": "d103eeeb0825caf0973e6a21a2892c01ecf600a3bece9449581f4107581b2ac3",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "4111e60c449135bf970f6ab6f2520bbbfef30b9f8ae1acd42ad34558bf5bbf10",
+   "identity": "function:public.reserve_merchant_notification_allowance(p_business_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_address text, p_channel_id uuid",
+    "body_sha256": "bc6360be5baee0b99258c8451ee2e0392ff107a395ad37391c37cbb8b3e0e672",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "integer",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b1e6109f70c999e04a4e22ec974802844908a84bf690953ce9648e706c188e16",
+   "identity": "function:public.revoke_merchant_notification_whatsapp(p_address text, p_channel_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_notification_deliver_source_table_source_id_event__key ON public.merchant_notification_deliveries USING btree (source_table, source_id, event, recipient_id, channel)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "c02980799ef8062a31c19cf9e90c00f7dce7d2f5cbcd1cc550d3f7bb878afd9e",
+   "identity": "index:public.merchant_notification_deliveries.merchant_notification_deliver_source_table_source_id_event__key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_notification_deliveries_pkey ON public.merchant_notification_deliveries USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "17141a93b0bc8129ab53c2aab80cc8fe4fbea19605a499f54a0e5fcc080253d8",
+   "identity": "index:public.merchant_notification_deliveries.merchant_notification_deliveries_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX merchant_notification_pending ON public.merchant_notification_deliveries USING btree (available_at, created_at) WHERE (state = ANY (ARRAY['pending'::text, 'claimed'::text]))",
+    "predicate": "(state = ANY (ARRAY['pending'::text, 'claimed'::text]))",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "7eec150cbe430d82260f8c14a5ceee0e41b19ec410abd4987b4070a613642849",
+   "identity": "index:public.merchant_notification_deliveries.merchant_notification_pending",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_notification_invitations_pkey ON public.merchant_notification_invitations USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "409bd6761bd7cc1ab05d22d339ee6eacba44d6528c082bb3732b76505228415a",
+   "identity": "index:public.merchant_notification_invitations.merchant_notification_invitations_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_notification_invitations_token_hash_key ON public.merchant_notification_invitations USING btree (token_hash)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "f02e3541fde9e162b0152202d4d9829bfe5ba59d307d63a04dd0a117a600abf3",
+   "identity": "index:public.merchant_notification_invitations.merchant_notification_invitations_token_hash_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX merchant_notification_invites_recipient ON public.merchant_notification_invitations USING btree (recipient_id, created_at DESC)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "18e050bf30e30ce88d4148c4eab4573f5b5888d7a1ec87d6249787d47dd58fd7",
+   "identity": "index:public.merchant_notification_invitations.merchant_notification_invites_recipient",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_notification_destination ON public.merchant_notification_recipients USING btree (business_id, channel, address) WHERE (revoked_at IS NULL)",
+    "predicate": "(revoked_at IS NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "4917d49a4154963a4d87d944c63dc4dbb684f9fa2dbe69c1ca6afc3d83112693",
+   "identity": "index:public.merchant_notification_recipients.merchant_notification_destination",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_notification_recipients_pkey ON public.merchant_notification_recipients USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "a8b6aff030384c1fb1cec9ec8b2cbf8a7cb7a01e13813f36b34f3db76e4f9d24",
+   "identity": "index:public.merchant_notification_recipients.merchant_notification_recipients_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid))))",
+    "with_check": null
+   },
+   "after_sha256": "960228573688e35b1d8c85deaefebf79792ac33378a202be0990db4d37adeb88",
+   "identity": "policy:public.merchant_notification_deliveries.merchant_delivery_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = ( SELECT auth.uid() AS uid))))",
+    "with_check": null
+   },
+   "after_sha256": "960228573688e35b1d8c85deaefebf79792ac33378a202be0990db4d37adeb88",
+   "identity": "policy:public.merchant_notification_recipients.merchant_recipient_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.merchant_notification_deliveries",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.merchant_notification_invitations",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.merchant_notification_recipients",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER merchant_booking_alert AFTER INSERT OR UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION capture_merchant_notification()",
+    "enabled": "O"
+   },
+   "after_sha256": "8c0bd15e707c4b85919b0ddf347d1d3ffbf68141855f6e9d732c5663e4b2d4f7",
+   "identity": "trigger:public.bookings.merchant_booking_alert",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER merchant_order_alert AFTER INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION capture_merchant_notification()",
+    "enabled": "O"
+   },
+   "after_sha256": "8cdc44f1ca50d9b8e425d46355ae80672a2d1d2606adba9bc347c6cc7490aaf2",
+   "identity": "trigger:public.orders.merchant_order_alert",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER merchant_payment_alert AFTER INSERT OR UPDATE ON payments FOR EACH ROW EXECUTE FUNCTION capture_merchant_notification()",
+    "enabled": "O"
+   },
+   "after_sha256": "8c2197a01cf08f7e8a2e4a9b754af7a924229ade0deeb20b67839a6e7414fd62",
+   "identity": "trigger:public.payments.merchant_payment_alert",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER merchant_reservation_alert AFTER INSERT OR UPDATE ON reservations FOR EACH ROW EXECUTE FUNCTION capture_merchant_notification()",
+    "enabled": "O"
+   },
+   "after_sha256": "8756a3488fab98d53536ccdfaabfd7f229eddb90dc819c50403314a70b42876d",
+   "identity": "trigger:public.reservations.merchant_reservation_alert",
+   "operation": "add"
+  }
+ ],
+ "migration": "511_merchant_notifications.sql",
+ "migration_sha256": "2c3fb980c117171d62cf0e4774a376072634e0938dea562f16a3c41b208fd4d9",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}

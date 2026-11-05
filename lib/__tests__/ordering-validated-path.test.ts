@@ -179,6 +179,7 @@ function makeFlowContext(overrides?: {
   }
 
   return {
+    copyLang: 'en',
     supabase,
     sender: {
       sendText: vi.fn(async () => ({ success: true })),

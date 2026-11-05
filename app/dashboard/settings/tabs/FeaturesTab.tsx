@@ -1,5 +1,6 @@
 'use client';
 
+import { MerchantNotificationRecipients } from '@/components/dashboard/MerchantNotificationRecipients';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -836,6 +837,8 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
               {notifSaved && <span className="text-sm text-green-600">Saved!</span>}
             </div>
           </div>
+
+          <MerchantNotificationRecipients businessId={business.id} />
 
           {/* Info box */}
           <div className="rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-4">

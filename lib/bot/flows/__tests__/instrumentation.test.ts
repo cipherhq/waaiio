@@ -871,7 +871,7 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     };
 
     const mockSupabase = {
-      from: vi.fn(() => thenableChain()),
+      from: vi.fn((_table: string) => thenableChain()),
       rpc: vi.fn().mockImplementation((fn: string) => {
         if (fn === 'update_session_cas') {
           return Promise.resolve({ data: { success: true, new_version: 2 }, error: null });
@@ -888,8 +888,8 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
       return new FlowExecutor(
         mockSupabase as any,
         mockSender as any,
-        '+2348012345678',
-        'bench-biz-id',
+        {} as ConstructorParameters<typeof FlowExecutor>[2],
+        {} as ConstructorParameters<typeof FlowExecutor>[3],
       );
     }
 

@@ -393,7 +393,7 @@ describe('Settlement Lifecycle: Ghana Manual-Only', () => {
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
     // AUTO_APPROVE_COUNTRIES must contain only NG
-    const match = source.match(/AUTO_APPROVE_COUNTRIES\s*=\s*new Set\(\[(.*?)\]\)/s);
+    const match = source.match(/AUTO_APPROVE_COUNTRIES\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
     expect(match).toBeTruthy();
     expect(match![1]).toContain("'NG'");
     expect(match![1]).not.toContain("'GH'");
@@ -405,7 +405,7 @@ describe('Settlement Lifecycle: Ghana Manual-Only', () => {
     const source = fs.readFileSync(
       path.resolve('app/api/cron/auto-payout/route.ts'), 'utf-8',
     );
-    const match = source.match(/NUBAN_COUNTRIES\s*=\s*new Set\(\[(.*?)\]\)/s);
+    const match = source.match(/NUBAN_COUNTRIES\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
     expect(match).toBeTruthy();
     // GH can receive manually-approved transfers but not auto-approve
     expect(match![1]).toContain("'NG'");

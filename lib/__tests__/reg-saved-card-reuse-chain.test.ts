@@ -96,6 +96,7 @@ function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowC
     return c;
   };
   return {
+    copyLang: 'en',
     supabase: { from: vi.fn().mockImplementation((table: string) => makeChain(table)), rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2 }, error: null }) } as any,
     sender: { sendText: vi.fn().mockResolvedValue(undefined) } as any,
     standalone: { getBotTemplates: vi.fn().mockResolvedValue({ confirmation: '✅ Confirmed!\nRef: {{reference_code}}' }), checkTierLimits: vi.fn().mockResolvedValue({ isWhitelabel: false }), fillTemplate: vi.fn().mockImplementation((t: string) => t) } as any,

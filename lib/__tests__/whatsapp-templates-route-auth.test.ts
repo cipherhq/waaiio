@@ -192,7 +192,7 @@ describe('GET /api/whatsapp/templates — authorization', () => {
     }));
 
     // Override service client to return a DB error
-    vi.mocked(await import('@/lib/supabase/service')).createServiceClient = () => {
+    (await import('@/lib/supabase/service')).createServiceClient = () => {
       serviceClientUsed = true;
       return {
         from: () => ({
