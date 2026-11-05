@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS storage.objects (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Match Supabase Storage service grants, also used by the canonical CI bootstrap.
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO service_role;
 
 -- Storage helper function used in bucket policies (migration 133)
 CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)

@@ -1229,6 +1229,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
         GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
         GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+        -- Supabase Storage supplies these grants before application migrations.
+        GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO service_role;
         GRANT ALL ON ALL TABLES IN SCHEMA auth TO service_role;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
       `);

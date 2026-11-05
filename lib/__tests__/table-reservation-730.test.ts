@@ -91,7 +91,8 @@ describe('#730: Table Reservation capability definition', () => {
     const { CAPABILITIES } = await import('@/shared/capabilities');
     const cap = CAPABILITIES.find(c => c.id === 'table_reservation');
     expect(cap).toBeDefined();
-    expect(cap!.label).toBe('Table Reservations');
+    // Owner decision 2026-11-04: renamed from 'Table Reservations' (id unchanged)
+    expect(cap!.label).toBe('Tables & Sections');
   });
 
   it('table_reservation tier is free', async () => {
@@ -693,13 +694,20 @@ describe('#730: Admin API and security', () => {
       'lib/bot/flows/capability-selection.flow.ts',
       'lib/bot/flows/executor.ts',
       'lib/bot/handlers/keyword-actions.ts',
-      'lib/bot/bot.service.ts',
     ];
 
     for (const file of callers) {
       const code = fs.readFileSync(path.join(process.cwd(), file), 'utf-8');
       expect(code).toContain('clearStaleCapabilityState');
     }
+
+    // Repeat navigation replaces transactional state through an allowlist.
+    const { repeatSessionData } = await import('@/lib/bot/flows/shared/navigation');
+    expect(repeatSessionData({ _inbound_channel_id: 'shared-1', _conversation_version: 3,
+      capabilities: ['table_reservation'], table_id: 'old-table', booking_id: 'old-booking',
+      payment_id: 'old-payment', active_capability: 'table_reservation' })).toEqual({
+      _inbound_channel_id: 'shared-1', _conversation_version: 3, capabilities: ['table_reservation'],
+    });
   });
 
   it('select_quantity.skipIf: table reservation is NOT skipped by business skip_quantity', async () => {

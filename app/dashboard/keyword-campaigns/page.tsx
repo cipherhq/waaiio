@@ -7,6 +7,7 @@ import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { buildMerchantCampaignLink } from '@/lib/url';
 
 interface KeywordCampaign {
   id: string;
@@ -185,9 +186,9 @@ export default function KeywordCampaignsPage() {
 
   const isReservedKeyword = RESERVED_KEYWORDS.includes(form.keyword.toLowerCase().trim());
 
-  function getWaLink(keyword: string) {
-    if (!waPhone) return '';
-    return `https://wa.me/${waPhone.replace(/\D/g, '')}?text=${encodeURIComponent(keyword)}`;
+  function getCampaignLink(campaignId: string) {
+    // Use permanent campaign link that survives number changes
+    return buildMerchantCampaignLink(business.id, campaignId);
   }
 
   function copyToClipboard(text: string, id: string) {
@@ -795,32 +796,32 @@ export default function KeywordCampaignsPage() {
                 )}
               </div>
 
-              {/* Share tools */}
-              {waPhone && campaign.is_active && (
+              {/* Share tools — uses permanent campaign link */}
+              {campaign.is_active && (
                 <div className="mt-3 flex items-center gap-3 rounded-lg bg-gray-50 dark:bg-gray-700/30 p-3">
                   <div className="shrink-0 rounded bg-white p-1">
-                    <QRCodeSVG value={getWaLink(campaign.keyword)} size={56} level="M" />
+                    <QRCodeSVG value={getCampaignLink(campaign.id)} size={56} level="M" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase">Share this campaign</p>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase">Permanent Campaign Link</p>
                     <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-300 truncate">
-                      Text <strong>{campaign.keyword}</strong> to +{waPhone.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}
+                      This link stays the same even if your WhatsApp number changes
                     </p>
                     <div className="mt-1.5 flex gap-1.5">
                       <button
-                        onClick={(e) => { e.stopPropagation(); copyToClipboard(getWaLink(campaign.keyword), campaign.id); }}
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(getCampaignLink(campaign.id), campaign.id); }}
                         className="rounded bg-white dark:bg-gray-600 px-2 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-500"
                       >
                         {copiedId === campaign.id ? 'Copied!' : 'Copy Link'}
                       </button>
                       <a
-                        href={`https://wa.me/?text=${encodeURIComponent(`Text ${campaign.keyword} to +${waPhone} on WhatsApp to ${campaign.description || campaign.name}`)}`}
+                        href={getCampaignLink(campaign.id)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
                         className="rounded bg-whatsapp px-2 py-1 text-[10px] font-medium text-white hover:bg-whatsapp/85"
                       >
-                        Share
+                        Test
                       </a>
                     </div>
                   </div>

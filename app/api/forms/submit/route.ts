@@ -2,13 +2,38 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
+
+/**
+ * Append a 'pending' WhatsApp marketing consent row for a ticked web opt-in. Never
+ * written over a newer 'granted' record: an unverified web tick must not be able
+ * to replace (and so withdraw) a real permission. Never blocks the saved response.
+ */
+async function recordPendingOptIn(db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string): Promise<boolean> {
+  try {
+    const digits = e164.replace(/\D/g, '');
+    const { data: latest, error } = await db.from('customer_consents').select('status')
+      .eq('business_id', businessId).in('phone', [digits, `+${digits}`])
+      .eq('channel', 'whatsapp').eq('purpose', 'marketing')
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(1).maybeSingle();
+    if (error) return false;
+    if (latest?.status === 'granted' || latest?.status === 'pending') return true;
+    const { error: insertError } = await db.from('customer_consents').insert({
+      business_id: businessId, phone: e164, channel: 'whatsapp', purpose: 'marketing',
+      status: 'pending', source: 'website', evidence_reference: `form:${formId}`,
+    });
+    if (insertError) logger.warn('[FORMS] Opt-in not recorded:', insertError.message);
+    return !insertError;
+  } catch { return false; }
+}
 
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'form-submit'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
-    const { token, answers, customer_name, customer_phone, customer_email } = await request.json();
+    const { token, answers, customer_name, customer_phone, customer_email, marketing_opt_in } = await request.json();
 
     if (!token || !answers || typeof answers !== 'object') {
       return NextResponse.json({ error: 'Token and answers required' }, { status: 400 });
@@ -37,7 +62,7 @@ export async function POST(request: NextRequest) {
     // Load form
     const { data: form } = await supabase
       .from('forms')
-      .select('id, business_id, fields, is_active')
+      .select('id, business_id, fields, is_active, settings')
       .eq('token', token)
       .single();
 
@@ -59,6 +84,22 @@ export async function POST(request: NextRequest) {
         }
       }
     }
+
+    // Optional "Yes, send me updates" box (#591). Only offered when the merchant turned it
+    // on, unticked by default, and only for a valid phone. Nobody has proved they own the
+    // typed number, so the tick is recorded as *pending*, which is never sendable
+    // (hasRecipientPermission needs 'granted'). Owner decision pending on confirmation.
+    const offersOptIn = (form.settings as Record<string, unknown> | null)?.marketing_opt_in === true;
+    const optIn = offersOptIn && marketing_opt_in === true;
+    let optInPhone: string | null = null;
+    if (optIn) {
+      const { data: biz } = await supabase.from('businesses').select('country_code').eq('id', form.business_id).maybeSingle();
+      optInPhone = typeof customer_phone === 'string' ? normalizeEngagePhone(customer_phone, biz?.country_code || 'NG') : null;
+      if (!optInPhone) {
+        return NextResponse.json({ error: 'Enter a valid WhatsApp number to get updates' }, { status: 400 });
+      }
+    }
+    const consentColumn = offersOptIn ? { consent_given: optIn } : {};
 
     // Check if there's a pending "sent" record for this phone + form (update instead of insert)
     let insertError: { message: string; code?: string } | null = null;
@@ -83,6 +124,7 @@ export async function POST(request: NextRequest) {
             answers,
             status: 'submitted',
             submitted_at: new Date().toISOString(),
+            ...consentColumn,
           })
           .eq('id', existing.id);
         insertError = error;
@@ -98,6 +140,7 @@ export async function POST(request: NextRequest) {
             answers,
             status: 'submitted',
             channel: 'web',
+            ...consentColumn,
           });
         insertError = error;
       }
@@ -113,6 +156,7 @@ export async function POST(request: NextRequest) {
           answers,
           status: 'submitted',
           channel: 'web',
+          ...consentColumn,
         });
       insertError = error;
     }
@@ -122,10 +166,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to submit response' }, { status: 500 });
     }
 
+    let optInPending: boolean | undefined;
+    if (optIn && optInPhone) {
+      optInPending = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
+    }
+
     // Atomic increment — prevents race condition with concurrent submissions
     await supabase.rpc('increment_form_response_count', { p_form_id: form.id });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, ...(optInPending !== undefined ? { optInPending } : {}) });
   } catch (error) {
     logger.error('[FORMS] Submit error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

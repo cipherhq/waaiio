@@ -1,0 +1,69 @@
+{
+  "migration": {
+    "path": "supabase/migrations/507_first_shared_channel_assignment.sql",
+    "ledger_name": "507_first_shared_channel_assignment",
+    "sha256": "6abe3edbb59371cdbc72939d74b9c3610bebcdc3ab20ac9443b8c60d830dbd5e"
+  },
+  "functions": [
+    {
+      "signature": "public.assign_first_shared_channel(uuid)",
+      "owner": "postgres",
+      "definer": true,
+      "config": [
+        "search_path=public, pg_temp"
+      ],
+      "language": "plpgsql",
+      "arguments": "p_business_id uuid",
+      "returns": "jsonb",
+      "volatility": "v",
+      "body_sha256": "8165bc587e2330a66a02886b6022b8c82d4877f9c3a3f40b4f1fede994f6d2da",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "grantable": false
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "signature": "public.get_bot_context(text,uuid)",
+      "owner": "postgres",
+      "definer": true,
+      "config": [
+        "search_path=public"
+      ],
+      "language": "plpgsql",
+      "arguments": "p_phone text, p_business_id uuid DEFAULT NULL::uuid",
+      "returns": "jsonb",
+      "volatility": "v",
+      "body_sha256": "abdba53a6876559513371c77f74199bf7c80f2111c59d86793a247b0695e3196",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "grantable": false
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    }
+  ],
+  "production_absent_function_names": [
+    "public.allocate_shared_channel",
+    "public.reassign_shared_channel"
+  ]
+}

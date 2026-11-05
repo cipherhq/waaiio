@@ -1,5 +1,5 @@
 import { getCategoryList } from '@/lib/categoryConfig';
-import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
+import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITY_MAP } from '@/lib/capabilities/types';
 
 /**
  * Handle data_exchange requests for the WhatsApp Flows onboarding flow.
@@ -46,7 +46,10 @@ export function handleOnboardingDataExchange(
       .filter(c => !systemCaps.includes(c))
       .map(c => ({
         id: c,
-        title: c.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        // Tables & Sections uses its product name; other options keep their generated title.
+        title: c === 'table_reservation'
+          ? CAPABILITY_MAP.table_reservation.label
+          : c.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
       }));
 
     return {

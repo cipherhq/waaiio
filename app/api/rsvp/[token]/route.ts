@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
+import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
+import { QUESTION_BODY_LIMIT } from '@/lib/parties/rsvp-questions';
+
 const VALID_STATUSES = ['accepted', 'maybe', 'declined'] as const;
 
 /**
@@ -25,7 +28,7 @@ export async function GET(
   const { data, error } = await supabase
     .from('event_invites')
     .select(`
-      id, invite_token, guest_phone, guest_name, status, plus_ones, dietary_notes,
+      id, invite_token, guest_phone, guest_name, status, plus_ones, dietary_notes, custom_answers, saved_answer_revision, saved_question_snapshot,
       events (
         id, name, description, date, time, venue, image_url,
         allow_plus_ones, max_plus_ones, ask_dietary, invite_message,
@@ -33,7 +36,7 @@ export async function GET(
       ),
       parties (
         id, name, description, date, time, venue, image_url,
-        allow_plus_ones, max_plus_ones, ask_dietary, invite_message, dress_code,
+        allow_plus_ones, max_plus_ones, ask_dietary, invite_message, dress_code, question_definitions, question_revision,
         businesses!inner ( name, slug, subscription_tier )
       )
     `)
@@ -74,9 +77,12 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid token' }, { status: 400 });
   }
 
-  let body: { status: string; plus_ones?: number; dietary_notes?: string };
+  let body: Record<string, unknown> & { status: string; plus_ones?: number; dietary_notes?: string };
   try {
-    body = await request.json();
+    const raw = await request.text();
+    if (new TextEncoder().encode(raw).length > QUESTION_BODY_LIMIT) return NextResponse.json({ error: 'Request too large' }, { status: 413 });
+    body = JSON.parse(raw);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
@@ -99,6 +105,12 @@ export async function POST(
 
   if (fetchError || !invite) {
     return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
+  }
+
+  if (invite.party_id) {
+    const result = await completePartyRsvp(supabase, token, body);
+    if (!result.ok) return NextResponse.json(result, { status: result.status });
+    return NextResponse.json({ success: true, saved: result.saved });
   }
 
   const requestedPlusOnes = body.status === 'accepted' ? (body.plus_ones ?? 0) : 0;

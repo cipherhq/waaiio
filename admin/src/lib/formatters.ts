@@ -27,6 +27,16 @@ export function fmtCurrency(amount: number, currency = 'NGN'): string {
   }
 }
 
+/** SQL DATE values represent a calendar day, not an instant in the viewer's timezone. */
+export function fmtCalendarDate(date: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '—';
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return '—';
+  return parsed.toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+  });
+}
+
 export function fmtDate(date: string | Date): string {
   return new Date(date).toLocaleDateString('en-GB', {
     day: 'numeric',

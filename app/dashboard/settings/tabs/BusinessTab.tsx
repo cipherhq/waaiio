@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { getCategoryByKey } from '@/lib/categoryConfig';
@@ -36,42 +36,6 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
     setLogoUrl(business.logo_url);
   }, [business.id, business.logo_url]);
 
-  // Bot code editing
-  const [editingBotCode, setEditingBotCode] = useState(false);
-  const [newBotCode, setNewBotCode] = useState(business.bot_code || '');
-  const [botCodeCheckStatus, setBotCodeCheckStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
-  const [botCodeSaving, setBotCodeSaving] = useState(false);
-  const botCodeTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  function handleBotCodeEdit(value: string) {
-    const cleaned = value.toUpperCase().replace(/\s+/g, '-').replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').slice(0, 30);
-    setNewBotCode(cleaned);
-    if (botCodeTimerRef.current) clearTimeout(botCodeTimerRef.current);
-    if (!cleaned || cleaned.length < 2 || cleaned === business.bot_code) {
-      setBotCodeCheckStatus('idle');
-      return;
-    }
-    setBotCodeCheckStatus('checking');
-    botCodeTimerRef.current = setTimeout(async () => {
-      const supabase = createClient();
-      const { data } = await supabase.from('businesses').select('id').eq('bot_code', cleaned).neq('id', business.id).maybeSingle();
-      setBotCodeCheckStatus(data ? 'taken' : 'available');
-    }, 400);
-  }
-
-  async function saveBotCode() {
-    if (!newBotCode || newBotCode.length < 2 || newBotCode === business.bot_code || botCodeCheckStatus === 'taken') return;
-    setBotCodeSaving(true);
-    const supabase = createClient();
-    const { error } = await supabase.from('businesses').update({ bot_code: newBotCode }).eq('id', business.id);
-    setBotCodeSaving(false);
-    if (!error) {
-      setEditingBotCode(false);
-      // Refresh — the bot_code comes from the layout server component
-      window.location.reload();
-    }
-  }
-
   const [saveError, setSaveError] = useState('');
 
   const [form, setForm] = useState({
@@ -84,6 +48,7 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
     latitude: (business as unknown as Record<string, unknown>).latitude as number | null ?? null,
     longitude: (business as unknown as Record<string, unknown>).longitude as number | null ?? null,
     city: business.city || '',
+    state: business.state || '',
   });
 
   const [hours, setHours] = useState<WeekSchedule>(() => {
@@ -115,6 +80,11 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
   );
 
   async function handleSave() {
+    // businesses.city is NOT NULL: never send null; ask for it instead (#867).
+    if (!form.city.trim()) {
+      setSaveError('Enter your city or area before saving.');
+      return;
+    }
     setSaving(true);
     setSaveError('');
     const supabase = createClient();
@@ -129,7 +99,8 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
         deposit_per_guest: form.deposit_per_guest,
         latitude: form.latitude,
         longitude: form.longitude,
-        city: form.city || null,
+        city: form.city.trim(),
+        state: form.state.trim() || null,
       })
       .eq('id', business.id);
     setSaving(false);
@@ -330,14 +301,46 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                           latitude: placeData.lat,
                           longitude: placeData.lng,
                           city: placeData.city || prev.city,
+                          state: placeData.state || prev.state,
                         }));
+                        // A manual edit (below) clears everything derived from the old place (#485),
+                        // including City and State, which the owner can see and re-enter (#867).
                       } else {
-                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null, city: '' }));
+                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null, city: '', state: '' }));
                       }
                     }}
                     placeholder="Enter your business address"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="business-city" className="mb-1 block text-sm font-medium text-gray-700">City or area</label>
+                    <input
+                      id="business-city"
+                      type="text"
+                      value={form.city}
+                      maxLength={50}
+                      aria-describedby="business-location-help"
+                      onChange={(e) => setForm({ ...form, city: e.target.value })}
+                      placeholder="e.g. Ikoyi"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="business-state" className="mb-1 block text-sm font-medium text-gray-700">State</label>
+                    <input
+                      id="business-state"
+                      type="text"
+                      value={form.state}
+                      maxLength={100}
+                      aria-describedby="business-location-help"
+                      onChange={(e) => setForm({ ...form, state: e.target.value })}
+                      placeholder="e.g. Lagos"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <p id="business-location-help" className="text-xs text-gray-500 sm:col-span-2">Customers searching the WhatsApp directory by location find you through these. They fill in when you pick an address suggestion; typing the address by hand clears them. City is required.</p>
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5 mb-1">
@@ -411,59 +414,9 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                 <div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">WhatsApp Name</span>
-                    {!editingBotCode ? (
-                      <div className="flex items-center gap-2">
-                        <code className="font-mono text-xs text-brand">{business.bot_code || '\u2014'}</code>
-                        <button
-                          onClick={() => { setEditingBotCode(true); setNewBotCode(business.bot_code || ''); setBotCodeCheckStatus('idle'); }}
-                          className="text-xs text-gray-400 hover:text-brand"
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-gray-400">Editing...</span>
-                    )}
+                    <code className="font-mono text-xs text-brand">{business.bot_code || '\u2014'}</code>
                   </div>
-                  <p className="mt-0.5 text-xs text-gray-400">Customers text this name to reach your business on WhatsApp</p>
-                  {editingBotCode && (
-                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                      <p className="mb-2 text-xs font-medium text-amber-800">
-                        Changing this will affect your existing QR codes, WhatsApp links, and returning customers who use the current name. Make sure to update your printed materials.
-                      </p>
-                      <input
-                        type="text"
-                        value={newBotCode}
-                        onChange={(e) => handleBotCodeEdit(e.target.value)}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs uppercase outline-none focus:border-brand"
-                        placeholder="YOUR-BOT-CODE"
-                      />
-                      {botCodeCheckStatus === 'checking' && (
-                        <p className="mt-1.5 text-xs text-gray-500">Checking...</p>
-                      )}
-                      {botCodeCheckStatus === 'available' && newBotCode !== business.bot_code && (
-                        <p className="mt-1.5 text-xs text-green-600">Available</p>
-                      )}
-                      {botCodeCheckStatus === 'taken' && (
-                        <p className="mt-1.5 text-xs text-red-600">Already taken</p>
-                      )}
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          onClick={saveBotCode}
-                          disabled={!newBotCode || newBotCode.length < 2 || newBotCode === business.bot_code || botCodeCheckStatus === 'taken' || botCodeSaving}
-                          className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-                        >
-                          {botCodeSaving ? 'Saving...' : 'Save'}
-                        </button>
-                        <button
-                          onClick={() => setEditingBotCode(false)}
-                          className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <p className="mt-0.5 text-xs text-gray-400">Customers text this name to reach your business on WhatsApp. It is part of your links and can't be changed here; contact support if you need a different name.</p>
                 </div>
               </div>
             </div>

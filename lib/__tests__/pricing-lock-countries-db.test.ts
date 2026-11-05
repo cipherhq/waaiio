@@ -37,11 +37,11 @@ function currentVersionId(): string {
 
 // ── Approved price lock table ──
 const LOCKED_PRICES: Record<string, { growth: number; business: number }> = {
-  NG: { growth: 15_000, business: 45_000 },
+  NG: { growth: 49_000, business: 99_000 },
   US: { growth: 49, business: 89.99 },
   GB: { growth: 30, business: 80 },
   CA: { growth: 49, business: 89.99 },
-  GH: { growth: 150, business: 400 },
+  GH: { growth: 450, business: 900 },
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -180,7 +180,7 @@ describe.skipIf(!canRun)('M458: RPC gateway-specific guard', () => {
         '{"growth":{"flutterwave":"FLW_wrong_gateway"}}'::jsonb,
         '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid,
-        '{"growth":{"price":15000}}'::jsonb
+        '{"growth":{"price":49000}}'::jsonb
       );
     `);
     expect(result).toContain('requires a paystack plan reference');
@@ -225,7 +225,7 @@ describe.skipIf(!canRun)('M458: tier_prices validation', () => {
         'NG', '{}'::jsonb,
         '${currentVersionId()}'::uuid,
         '00000000-0000-0000-0000-000000000001'::uuid,
-        '{"growth":{"price":15000,"secret":"inject"}}'::jsonb
+        '{"growth":{"price":49000,"secret":"inject"}}'::jsonb
       );
     `);
     expect(result).toContain('only "price" field is allowed');

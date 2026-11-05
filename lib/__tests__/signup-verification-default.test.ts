@@ -1,3 +1,6 @@
+import { beforeEach as beforeChannelAdmissionFixture, vi as channelAdmissionFixture } from 'vitest';
+// Existing enabled-operation behavior remains covered explicitly.
+beforeChannelAdmissionFixture(() => channelAdmissionFixture.stubEnv('ENABLE_CHANNEL_ALLOCATION_OPERATIONS', 'true'));
 /**
  * Signup default: new NG businesses get verification_level 'basic'
  * with the NG basic limit from country tiers.

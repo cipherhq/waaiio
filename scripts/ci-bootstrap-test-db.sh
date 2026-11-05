@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS storage.objects (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Supabase Storage supplies these service-role grants independently of app migrations.
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO service_role;
 
 -- Supabase storage helper function used in bucket policies (migration 133)
 CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
@@ -120,6 +122,13 @@ INSERT INTO auth.users (id, email, phone_confirmed_at) VALUES
 ON CONFLICT (id) DO NOTHING;
 EOSQL
 echo "✅ Supabase schema prerequisites created"
+
+# Release V3 catalog oracle (scripts/release-v3/catalog-oracle.mjs) reuses
+# these prerequisites, then replays migrations itself to emulate production.
+if [ "${CI_BOOTSTRAP_PREREQUISITES_ONLY:-}" = "1" ]; then
+  echo "Prerequisites only (CI_BOOTSTRAP_PREREQUISITES_ONLY=1); no migrations applied."
+  exit 0
+fi
 
 # ── 2. Apply all migrations (canonical semantics) ──
 echo "Applying migrations..."

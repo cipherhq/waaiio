@@ -87,7 +87,7 @@ describe('#751 controlled Places input (New API)', () => {
     expect((input as HTMLInputElement).value).toBe(prediction.description);
     await act(async () => { await Promise.resolve(); });
     expect(changed).toHaveBeenLastCalledWith(placeResult.formattedAddress, {
-      address: placeResult.formattedAddress, lat: 6.5, lng: 3.4, city: 'Lagos', placeId: 'place-1',
+      address: placeResult.formattedAddress, lat: 6.5, lng: 3.4, city: 'Lagos', state: 'Lagos State', placeId: 'place-1',
     });
     expect(screen.queryByRole('listbox')).toBeNull();
   });
@@ -103,7 +103,7 @@ describe('#751 controlled Places input (New API)', () => {
     fireEvent.blur(screen.getByRole('combobox'));
     await act(async () => { await Promise.resolve(); });
     expect(changed).toHaveBeenLastCalledWith(placeResult.formattedAddress, {
-      address: placeResult.formattedAddress, lat: 6.5, lng: 3.4, city: 'Lagos', placeId: 'place-1',
+      address: placeResult.formattedAddress, lat: 6.5, lng: 3.4, city: 'Lagos', state: 'Lagos State', placeId: 'place-1',
     });
   });
 

@@ -1,3 +1,4 @@
+import { isSharedConversation, transactionNextSteps } from './shared/navigation';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
@@ -78,6 +79,49 @@ function routeAfterProductSelection(d: Record<string, unknown>, meta?: Record<st
     return 'select_option_axis';
   }
   return 'select_variant';
+}
+
+/** Extra product photos sent with the main image (Owner decision 2026-11-04, #879; same limit as services). */
+const MAX_PRODUCT_GALLERY_IMAGES = 3;
+
+/**
+ * Gallery photos for the current product, sent once per product per conversation.
+ * Skips any URL already shown as the main or variant image. A failed lookup
+ * returns no photos and leaves the product unmarked, so the step still works.
+ */
+async function productGalleryMessages(ctx: FlowContext, shownImageUrl?: string | null): Promise<PromptMessage[]> {
+  const d = ctx.session.session_data;
+  const productId = d.current_product_id as string | undefined;
+  if (!productId || !ctx.business) return [];
+
+  const sentIds = Array.isArray(d._gallery_sent_product_ids) ? (d._gallery_sent_product_ids as string[]) : [];
+  if (sentIds.includes(productId)) return [];
+
+  let galleryUrls: unknown[] = [];
+  try {
+    const { data, error } = await ctx.supabase
+      .from('products')
+      .select('gallery_urls')
+      .eq('id', productId)
+      .eq('business_id', ctx.business.id)
+      .maybeSingle();
+    if (error) throw error;
+    galleryUrls = Array.isArray(data?.gallery_urls) ? data.gallery_urls : [];
+  } catch (err) {
+    logger.warn('[ORDERING] Product gallery lookup failed, sending main image only:', err);
+    return [];
+  }
+
+  d._gallery_sent_product_ids = [...sentIds, productId];
+
+  const alreadyShown = new Set([d.current_product_image_url, shownImageUrl].filter(Boolean));
+  const picked: string[] = [];
+  for (const url of galleryUrls) {
+    if (typeof url !== 'string' || !url || alreadyShown.has(url) || picked.includes(url)) continue;
+    picked.push(url);
+    if (picked.length === MAX_PRODUCT_GALLERY_IMAGES) break;
+  }
+  return picked.map(url => ({ type: 'image' as const, imageUrl: url }));
 }
 
 export const orderingFlow: FlowDefinition = {
@@ -520,6 +564,9 @@ export const orderingFlow: FlowDefinition = {
             caption: `${d.current_product_name}`,
           });
         }
+        if (axisIndex === 0) {
+          messages.push(...await productGalleryMessages(ctx));
+        }
 
         messages.push({
           type: 'list',
@@ -742,6 +789,7 @@ export const orderingFlow: FlowDefinition = {
             caption: `${d.current_product_name}`,
           });
         }
+        messages.push(...await productGalleryMessages(ctx));
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         messages.push({
@@ -967,6 +1015,7 @@ export const orderingFlow: FlowDefinition = {
             caption: `${productName}${variantInfo}`,
           });
         }
+        messages.push(...await productGalleryMessages(ctx, imageUrl));
 
         const minQty = (d.current_min_order_qty as number) || 1;
         let promptText = `*${productName}*${variantInfo} — ${formatCurrency(d.current_product_price as number, cc)}`;
@@ -2977,8 +3026,21 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        // Notify business owner (guarded by freshlyCreated — authoritative creation evidence)
+        // Owner "new order" alert (Owner decision 2026-11-04, option A).
+        // The order exists before the customer picks how to pay, so the alert is
+        // owed here (guarded by freshlyCreated) but sent only once the route is known:
+        //   - online only (payment link, saved card): never sent here; the owner is
+        //     alerted after payment succeeds by send-confirmation.ts.
+        //   - bank transfer, zero total, or still ambiguous (online + bank offered
+        //     together, payment setup failed): sent below.
+        // The owed marker survives a saved-card skip, so a later bank-transfer
+        // offer for the same order still alerts the owner once.
         if (ctx.business && freshlyCreated) {
+          d._owner_order_alert_due = order.id;
+        }
+        const sendOwedOwnerOrderAlert = () => {
+          if (!ctx.business || d._owner_order_alert_due !== order.id) return;
+          delete d._owner_order_alert_due;
           notifyOwnerNewOrder({
             supabase: ctx.supabase,
             sender: ctx.sender,
@@ -2992,7 +3054,7 @@ export const orderingFlow: FlowDefinition = {
             deliveryAddress: (d.delivery_address as string) || undefined,
             paymentPending: total > 0,
           }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
-        }
+        };
 
         // ACC-008: Promo usage is RESERVED (not finalized) inside create_order_atomic.
         // promo_reservations row inserted atomically with order creation.
@@ -3075,6 +3137,8 @@ export const orderingFlow: FlowDefinition = {
 
             if (d.bank_transfer_offered && bankAccount) {
               // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
+              // Customer may still choose bank transfer: keep the creation alert.
+              sendOwedOwnerOrderAlert();
 
               const orderSummary = getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
@@ -3171,6 +3235,8 @@ export const orderingFlow: FlowDefinition = {
 
           if (d.bank_transfer_offered) {
             // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
+            // Bank transfer only: the owner must verify it, so alert now.
+            sendOwedOwnerOrderAlert();
 
             const orderSummary = getOrderConfirmationMessage({
               businessName: ctx.business?.name || 'Shop',
@@ -3211,6 +3277,8 @@ export const orderingFlow: FlowDefinition = {
           }
 
           // Payment initialization failed — don't confirm without payment
+          // Route unknown: keep the creation alert.
+          sendOwedOwnerOrderAlert();
           return [
             {
               type: 'buttons',
@@ -3223,6 +3291,9 @@ export const orderingFlow: FlowDefinition = {
             },
           ];
         }
+
+        // Free order: no payment to wait for, so alert the owner now.
+        sendOwedOwnerOrderAlert();
 
         // Free order — decrement stock atomically via canonical RPC
         const { error: freeStockErr } = await ctx.supabase.rpc('apply_order_stock_once', {
@@ -3250,11 +3321,13 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const orderTips = getFlowCopy(ctx.copyLang, 'ordering.free_order_tips');
+        const navigation = transactionNextSteps('ordering', await isSharedConversation(ctx.supabase, d));
 
         return [
           {
             type: 'text',
             text: getOrderConfirmationMessage({
+              countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
               businessName: ctx.business?.name || 'Shop',
               items: cart,
               totalAmount: total,
@@ -3267,7 +3340,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               subscriptionTier: ctx.business?.subscription_tier,
               lang: ctx.copyLang,
-            }) + orderTips,
+            }) + orderTips + '\n\n' + navigation,
           },
           {
             type: 'buttons',

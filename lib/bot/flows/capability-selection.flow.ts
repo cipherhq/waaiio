@@ -1,3 +1,4 @@
+import { isSharedConversation, DIRECTORY_ACTION } from './shared/navigation';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -157,7 +158,7 @@ const selectCapabilityStep: FlowStepConfig = {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
 
     // Exactly one renderable capability → auto-select and skip the menu
-    if (userFacing.length === 1) {
+    if (userFacing.length === 1 && !await isSharedConversation(ctx.supabase, ctx.session.session_data) && !ctx.session.session_data._customer_history) {
       ctx.session.session_data.active_capability = userFacing[0];
       // Send greeting as standalone text since capability menu is skipped
       const greeting = ctx.session.session_data._greeting as string | undefined;
@@ -201,7 +202,7 @@ const selectCapabilityStep: FlowStepConfig = {
       const { data: profile } = await ctx.supabase
         .from('profiles')
         .select('id')
-        .eq('phone', phone)
+        .in('phone', [phone, phone.slice(1)])
         .maybeSingle();
       if (profile?.id) {
         const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -252,6 +253,10 @@ const selectCapabilityStep: FlowStepConfig = {
     // Must remain available even when zero CREATE_NEW capabilities exist
     if (hasHistory) {
       capItems.push({ id: 'cap_my_account', title: getFlowCopy(ctx.copyLang, 'account.title'), postbackText: 'cap_my_account' });
+    }
+
+    if (await isSharedConversation(ctx.supabase, ctx.session.session_data)) {
+      capItems.push({ ...DIRECTORY_ACTION, postbackText: DIRECTORY_ACTION.id });
     }
 
     // Use greeting as body if available (first-time display), then clear it

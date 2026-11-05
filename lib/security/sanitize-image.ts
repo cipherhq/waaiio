@@ -26,6 +26,8 @@ export async function sanitizeImage(
     maxHeight?: number;
     quality?: number;
     format?: 'jpeg' | 'png' | 'webp';
+    /** Optional: fill transparent areas with this colour (e.g. '#ffffff'). Off by default. */
+    flattenBackground?: string;
   },
 ): Promise<SanitizeResult> {
   const maxWidth = opts?.maxWidth ?? 4096;
@@ -52,6 +54,7 @@ export async function sanitizeImage(
   let pipeline = image
     .rotate() // Auto-rotate based on EXIF (before stripping)
     .resize(maxWidth, maxHeight, { fit: 'inside', withoutEnlargement: true });
+  if (opts?.flattenBackground) pipeline = pipeline.flatten({ background: opts.flattenBackground });
 
   let contentType: string;
   if (format === 'png') {

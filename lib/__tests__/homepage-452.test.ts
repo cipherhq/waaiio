@@ -82,25 +82,20 @@ describe('#452 homepage simplification — provider truth', () => {
     expect(homeClientSrc).toContain('Paystack');
   });
 
-  it('homepage does not show Square, Flutterwave, or PayPal', () => {
-    expect(homeClientSrc).not.toContain('Square');
-    expect(homeClientSrc).not.toContain('Flutterwave');
-    expect(homeClientSrc).not.toContain('PayPal');
-  });
-
-  it('FAQ only mentions Stripe and Paystack', () => {
+  it('FAQ mentions all supported gateways', () => {
     expect(pageSrc).toContain('Stripe');
     expect(pageSrc).toContain('Paystack');
-    expect(pageSrc).not.toContain('Square');
-    expect(pageSrc).not.toContain('Flutterwave');
-    expect(pageSrc).not.toContain('PayPal');
+    expect(pageSrc).toContain('Square');
+    expect(pageSrc).toContain('Flutterwave');
+    expect(pageSrc).toContain('PayPal');
   });
 });
 
 describe('#452 homepage simplification — pricing and trial', () => {
-  it('pricing uses getPricingTiers (not hardcoded values)', () => {
-    expect(homeClientSrc).toContain('getPricingTiers');
-    expect(homeClientSrc).toContain('formatCurrency');
+  it('homepage directs visitors to authoritative pricing', () => {
+    expect(homeClientSrc).not.toContain('getPricingTiers');
+    expect(homeClientSrc).toContain('href="/pricing"');
+    expect(homeClientSrc).not.toContain('formatCurrency');
   });
 
   it('does not introduce hardcoded specific trial duration claim', () => {
@@ -170,9 +165,9 @@ describe('#452 homepage simplification — structural integrity', () => {
     expect(homeClientSrc).toContain('See all features');
   });
 
-  it('homepage has pricing section with country selector', () => {
-    expect(homeClientSrc).toContain('PRICE_COUNTRIES');
-    expect(homeClientSrc).toContain('setPriceCountry');
+  it('homepage retains pricing section and country pricing link', () => {
+    expect(homeClientSrc).toContain('id="pricing"');
+    expect(homeClientSrc).toContain('View current subscription prices');
   });
 
   it('FAQ count is reduced (4-5 questions)', () => {
@@ -192,19 +187,23 @@ describe('#452 homepage simplification — structural integrity', () => {
 });
 
 describe('#452 homepage simplification — navigation CTAs', () => {
-  it('navbar CTA links to /launch not /get-started', () => {
-    expect(navbarSrc).not.toContain('href="/get-started"');
-    expect(navbarSrc).toContain('href="/launch"');
+  it('navbar CTA opens the existing gated signup flow', () => {
+    expect(navbarSrc).toContain('href="/get-started"');
+    expect(navbarSrc).toContain('Get Started');
+    expect(navbarSrc).not.toContain('href="/launch"');
   });
 
-  it('mobile menu CTA links to /launch not /get-started', () => {
-    expect(mobileMenuSrc).not.toContain('href="/get-started"');
-    expect(mobileMenuSrc).toContain('href="/launch"');
+  it('mobile menu CTA opens the existing gated signup flow', () => {
+    expect(mobileMenuSrc).toContain('href="/get-started"');
+    expect(mobileMenuSrc).toContain('Get Started');
+    expect(mobileMenuSrc).not.toContain('href="/launch"');
   });
 
-  it('homepage CTAs do not link to /get-started', () => {
-    // All homepage CTAs should route to /launch or /pricing, not /get-started
-    expect(homeClientSrc).not.toContain('href="/get-started"');
+  it('homepage CTAs link to signup without launch updates', () => {
+    // Owner opened signup; server-side signup authority remains intact.
+    expect(homeClientSrc).toContain('href="/get-started"');
+    expect(homeClientSrc).not.toContain('href="/launch"');
+    expect(homeClientSrc).not.toMatch(/Get (Launch )?Updates|when Waaiio launches/);
   });
 });
 
@@ -322,14 +321,13 @@ describe('#452 homepage simplification — setup wording truth', () => {
   });
 });
 
-describe('#452 homepage simplification — CTA post-launch handoff (#453)', () => {
-  it('navbar documents CTA must switch to /get-started when signup gate opens', () => {
-    expect(navbarSrc).toContain('#453');
-    expect(navbarSrc).toContain('/get-started');
+describe('live homepage navigation retains account access', () => {
+  it('navbar retains sign-in and dashboard links', () => {
+    expect(navbarSrc).toContain('href="/login"');
+    expect(navbarSrc).toContain('href="/dashboard"');
   });
-
-  it('mobile menu documents CTA must switch to /get-started when signup gate opens', () => {
-    expect(mobileMenuSrc).toContain('#453');
-    expect(mobileMenuSrc).toContain('/get-started');
+  it('mobile menu retains sign-in and dashboard links', () => {
+    expect(mobileMenuSrc).toContain('href="/login"');
+    expect(mobileMenuSrc).toContain('href="/dashboard"');
   });
 });

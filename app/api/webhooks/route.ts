@@ -1,3 +1,4 @@
+import { validateWebhookDestination } from '@/lib/webhooks/public-destination';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -59,6 +60,10 @@ export async function POST(request: NextRequest) {
     const auth = await authenticateAndVerifyOwnership(businessId);
     if ('error' in auth) return auth.error;
 
+    try { await validateWebhookDestination(url); } catch {
+      return NextResponse.json({ error: 'Webhook URL must resolve to a public HTTP(S) destination' }, { status: 400 });
+    }
+
     const secret = randomBytes(32).toString('hex');
 
     const supabase = createServiceClient();
@@ -92,7 +97,12 @@ export async function PUT(request: NextRequest) {
 
     const supabase = createServiceClient();
     const updateData: Record<string, unknown> = {};
-    if (url !== undefined) updateData.url = url;
+    if (url !== undefined) {
+      try { await validateWebhookDestination(url); } catch {
+        return NextResponse.json({ error: 'Webhook URL must resolve to a public HTTP(S) destination' }, { status: 400 });
+      }
+      updateData.url = url;
+    }
     if (events !== undefined) updateData.events = events;
     if (isActive !== undefined) updateData.is_active = isActive;
 

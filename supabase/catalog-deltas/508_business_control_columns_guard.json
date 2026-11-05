@@ -1,0 +1,89 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "1037faef6ee0afadda73e45d48dfcf220a5352d2bd9545fe2c4efb72c55c6c40",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "42e8833707aeafe9e6f638f052fbdc52af0f096ad58028a2620b5b63358d05e2",
+   "identity": "function:public.guard_business_insert()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "34f897ff11e41bdad50c16b546e871da3b592c3de608b27ecf555785fe14528e",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "c1e52d9ad3a8a245ba792ab05396be0c3c7e38214f6e8a0b09235824d164cf56",
+   "identity": "function:public.guard_server_managed_columns()",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER trg_guard_business_insert BEFORE INSERT ON businesses FOR EACH ROW EXECUTE FUNCTION guard_business_insert()",
+    "enabled": "O"
+   },
+   "after_sha256": "29acb85b9591345154320d177574878b3199ad2362f6e06597672559ca1554e4",
+   "identity": "trigger:public.businesses.trg_guard_business_insert",
+   "operation": "add"
+  }
+ ],
+ "migration": "508_business_control_columns_guard.sql",
+ "migration_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}

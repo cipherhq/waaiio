@@ -71,13 +71,12 @@ export default function RefundPolicyPage() {
               <h2 className="text-xl font-semibold text-gray-900">2. Platform Transaction Fees</h2>
               <p className="mt-2 leading-relaxed">
                 Waaiio charges a percentage-based platform fee on transactions processed through our
-                Services. When a refund is issued to an end customer:
+                Services. For booking, order, and invoice payments handled by our refund workflow, when a refund is successfully processed for an end customer:
               </p>
               <ul className="mt-3 list-disc space-y-1.5 pl-5">
                 <li>
                   <strong>Full refund:</strong> If the business issues a full refund to the end
-                  customer, the Waaiio platform fee for that transaction is reversed in full. The
-                  reversed amount will be credited to the business&rsquo;s next payout cycle.
+                  customer, the Waaiio platform fee for that transaction is reversed in full in the platform fee records. Settlement timing depends on the payment route.
                 </li>
                 <li>
                   <strong>Partial refund:</strong> If the business issues a partial refund, the

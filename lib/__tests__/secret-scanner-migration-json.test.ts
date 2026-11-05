@@ -322,6 +322,30 @@ describe('Secret scanner migration JSON exemption', () => {
       expect(output).toContain('CHANGELOG.md');
     });
 
+    // 5b. Per-PR changelog fragments get the same prose treatment as CHANGELOG.md
+    it('exempts a labelled SHA in a changelog fragment', () => {
+      const diff = buildDiff('changelog/unreleased/2026-11-04-claude-x.md', [
+        `Batch 8 SHA-256: \`${EXEMPT_CHECKSUM}\``,
+      ]);
+      expect(runFilter(diff, TWILIO_SID_PATTERN)).toBe('');
+    });
+
+    it('detects a token on the same line as an allowed SHA in a changelog fragment', () => {
+      const diff = buildDiff('changelog/unreleased/2026-11-04-claude-x.md', [
+        `SHA-256: \`${EXEMPT_CHECKSUM}\` token=${FAKE_TWILIO_SID}`,
+      ]);
+      const output = runFilter(diff, TWILIO_SID_PATTERN);
+      expect(output).not.toBe('');
+      expect(output).toContain('changelog/unreleased/2026-11-04-claude-x.md');
+    });
+
+    it('does NOT exempt files nested deeper under changelog/unreleased/', () => {
+      const diff = buildDiff('changelog/unreleased/sub/2026-11-04-x.md', [
+        `Batch 8 SHA-256: \`${EXEMPT_CHECKSUM}\``,
+      ]);
+      expect(runFilter(diff, TWILIO_SID_PATTERN)).not.toBe('');
+    });
+
     // 6. Unlabeled 64-char value is not automatically exempted
     it('does NOT exempt unlabeled 64-char hex in prose file', () => {
       // A line with a 64-char hex that is NOT labelled as SHA/checksum/digest

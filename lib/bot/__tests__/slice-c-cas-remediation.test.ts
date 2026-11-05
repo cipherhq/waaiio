@@ -1102,7 +1102,7 @@ function makeBotServiceMocks(opts: {
         c.then = d.then.bind(d); c.catch = d.catch.bind(d);
         return c;
       }
-      if (table === 'services') return makeChain(null);
+      if (table === 'services') return makeChain({ id: 'svc-123', name: 'Haircut', price: 1000, duration_minutes: 30, is_active: true, available_days: [] });
       if (table === 'profiles') return makeChain({ id: 'profile-1' });
       if (table === 'platform_settings') return makeChain({ value: false });
       if (table === 'ai_conversation_config') return makeChain(null);
@@ -1358,7 +1358,7 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     vi.useRealTimers();
   });
 
-  it('CAS success → 2nd update_session_cas called with select_date + flow executor continuation sent', async () => {
+  it('CAS success → exact service selector then date prompt', async () => {
     const session = {
       id: 'sess-qrebook-001',
       whatsapp_number: BS_PHONE,
@@ -1405,7 +1405,7 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls.length).toBeGreaterThanOrEqual(2);
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 7 });
-    expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_date' });
+    expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_service' });
 
     // Exact production output: flow executor sends the scheduling date-selection prompt
     // Compute expected dynamic date buttons using the same logic as scheduling.flow.ts
@@ -1500,7 +1500,7 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls).toHaveLength(2);
-    expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_date', p_expected_version: 8 });
+    expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_service', p_expected_version: 8 });
 
     // Zero messages — silent loser, no continuation ran
     expect(sender.getMessages()).toHaveLength(0);

@@ -160,7 +160,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Account & Billing',
     question: 'How do I connect my own WhatsApp number?',
-    answer: 'Available on Pro and Premium plans. Go to Settings and click "Connect with Facebook." You\'ll authorise Waaiio through your Facebook Business account, enter your phone number, and your number will be connected automatically.',
+    answer: 'Available on every plan. Use a brand-new number that has never had WhatsApp (for example a new SIM); a number that already has WhatsApp will not connect. Go to Settings and click "Connect with Facebook." You\'ll authorise Waaiio through your Facebook Business account, enter your phone number, and your number will be connected automatically.',
   },
   {
     category: 'Account & Billing',

@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import { PostHogProvider } from '@/components/PostHogProvider';
 import CookieConsent from '@/components/marketing/CookieConsent';
 import { BRAND_NAME, WORDMARK_PATH, WORDMARK_WIDTH, WORDMARK_HEIGHT, WORDMARK_ALT, FAVICON_PATH, ICON_PATH } from '@/lib/brand';
+import { isStagingTestMode } from '@/lib/staging-test-mode';
 import './globals.css';
 
 const inter = Inter({
@@ -45,6 +46,9 @@ export const metadata: Metadata = {
   verification: {
     google: process.env.GOOGLE_SITE_VERIFICATION || undefined,
   },
+  // Staging must never be indexed. Production keeps the default (indexable).
+  // The X-Robots-Tag header set in middleware is the main guard; this tag backs it up.
+  ...(isStagingTestMode() ? { robots: { index: false, follow: false } } : {}),
 };
 
 export default function RootLayout({

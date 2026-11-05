@@ -21,6 +21,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { truncTitle } from '@/lib/bot/utils/truncate';
 import { getFlowCopy, fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { parseDirectoryQuery } from '@/lib/marketplace/query-parser';
+import { detectCategoryIntent } from '@/lib/bot/fuzzy-match';
 import {
   searchMarketplace,
   searchFuzzy,
@@ -114,6 +115,19 @@ export async function sendReturningGreeting(
 // ── Search ────────────────────────────────────────────────
 
 /**
+ * Free text for a search without a category (#867). A generic word with a city or
+ * area ("businesses in Ikoyi") searches that place only. A category synonym ("shop
+ * in Ikoyi") keeps the raw text so the synonym still filters. Without a resolved
+ * city or area (no place, or only a state or country, which apply no location
+ * filter) the raw text is kept, so a search never lists a whole country.
+ */
+function freeTextQuery(parsed: ReturnType<typeof parseDirectoryQuery>, text: string): string | undefined {
+  if (parsed.nameQuery) return parsed.nameQuery;
+  if (!parsed.resolvedLocation?.city || detectCategoryIntent(text).length > 0) return text;
+  return undefined;
+}
+
+/**
  * Run a directory search from user text. Returns session data to persist.
  *
  * Handles:
@@ -161,7 +175,7 @@ export async function handleDirectorySearch(
     country: parsed.resolvedLocation?.countryCode || sharedCountry || undefined,
     excludeIds: hiddenIds,
     limit: WHATSAPP_LIST_MAX,
-    query: !category ? text : undefined,
+    query: !category ? freeTextQuery(parsed, text) : undefined,
   });
 
   if (!searchResult.ok) {

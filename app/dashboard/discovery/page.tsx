@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -41,6 +43,12 @@ const DEFAULTS: DiscoveryConfig = {
   logo_url: null,
 };
 
+/** Missing items that are edited in Settings, not on this page. */
+const SETTINGS_LINKS: Record<string, string> = {
+  'Business Hours': '/dashboard/settings?tab=business&section=hours',
+  Logo: '/dashboard/settings?tab=business',
+};
+
 function calculateCompleteness(config: DiscoveryConfig): { score: number; missing: string[] } {
   const missing: string[] = [];
   if (!config.description) missing.push('Description');
@@ -58,6 +66,7 @@ function calculateCompleteness(config: DiscoveryConfig): { score: number; missin
 
 export default function DiscoveryPage() {
   const business = useBusiness();
+  const router = useRouter();
   const supabase = createClient();
 
   const [config, setConfig] = useState<DiscoveryConfig>(DEFAULTS);
@@ -129,6 +138,7 @@ export default function DiscoveryPage() {
 
     const payload = {
       discovery_enabled: config.discovery_enabled,
+      description: config.description || null,
       discovery_description: config.discovery_description || null,
       discovery_keywords: keywords.length > 0 ? keywords : null,
       price_band: config.price_band || null,
@@ -150,6 +160,8 @@ export default function DiscoveryPage() {
     }
     setSaveError('');
     setSaved(true);
+    // Reload the dashboard's business data so Settings → Business opens with what was just saved here.
+    router.refresh();
     setConfig(prev => ({ ...prev, discovery_keywords: keywords }));
     setTimeout(() => setSaved(false), 3000);
   }
@@ -211,14 +223,17 @@ export default function DiscoveryPage() {
           <div>
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Missing items:</p>
             <div className="flex flex-wrap gap-1.5">
-              {missing.map(item => (
-                <span
-                  key={item}
-                  className="inline-flex rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
-                >
-                  {item}
-                </span>
-              ))}
+              {missing.map(item => {
+                const chipClass = 'inline-flex rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300';
+                const href = SETTINGS_LINKS[item];
+                return href ? (
+                  <Link key={item} href={href} className={`${chipClass} underline hover:bg-amber-200 dark:hover:bg-amber-900/50`}>
+                    {item} (in Settings)
+                  </Link>
+                ) : (
+                  <span key={item} className={chipClass}>{item}</span>
+                );
+              })}
             </div>
           </div>
         )}
@@ -256,6 +271,21 @@ export default function DiscoveryPage() {
         <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
           <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Profile Details</h2>
           <div className="space-y-4">
+            <div>
+              <label htmlFor="discovery-business-description" className={labelClass}>Description</label>
+              <textarea
+                id="discovery-business-description"
+                value={config.description ?? ''}
+                onChange={e => update('description', e.target.value)}
+                placeholder="Describe your business"
+                rows={3}
+                className={inputClass}
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                Also shown on your booking page. This is the same description as in Settings → Business.
+              </p>
+            </div>
+
             <div>
               <label className={labelClass}>Short Listing Summary</label>
               <textarea

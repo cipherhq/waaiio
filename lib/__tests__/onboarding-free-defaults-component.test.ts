@@ -251,16 +251,16 @@ const PRICING_FIXTURE = {
     currencyLocale: 'en-NG', flag: '🇳🇬', gateway: 'paystack',
     pricing: {
       free: { price: 0, feeFlat: 0, feePercentage: 3.0 },
-      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
-      business: { price: 45000, feeFlat: 0, feePercentage: 1.0 },
+      growth: { price: 49000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 99000, feeFlat: 0, feePercentage: 1.0 },
     },
   },
   countries: [{ code: 'NG', name: 'Nigeria', currencyCode: 'NGN', currencySymbol: '₦',
     currencyLocale: 'en-NG', flag: '🇳🇬', gateway: 'paystack',
     pricing: {
       free: { price: 0, feeFlat: 0, feePercentage: 3.0 },
-      growth: { price: 15000, feeFlat: 0, feePercentage: 1.5 },
-      business: { price: 45000, feeFlat: 0, feePercentage: 1.0 },
+      growth: { price: 49000, feeFlat: 0, feePercentage: 1.5 },
+      business: { price: 99000, feeFlat: 0, feePercentage: 1.0 },
     },
   }],
 };
@@ -336,7 +336,9 @@ describe('OnboardingWizard — registration payload contains only free-tier capa
     }, { timeout: 3000 });
 
     // Click "Start Free Trial" to advance to details
-    await act(async () => { findButton(container, /Start Free Trial/).click(); });
+    await act(async () => { findButton(container, /Continue to plans/).click(); });
+    await waitFor(() => expect(container.textContent).toContain('Choose your plan'));
+    await act(async () => { findButton(container, /Start free — upgrade later/).click(); });
 
     // Wait for details step
     await waitFor(() => {

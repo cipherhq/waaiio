@@ -221,11 +221,11 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // Total cost to business = waaiio fee + gateway fee
 // No flat fee component — percentage only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 0 }, growth: { price: 15_000, feeFlat: 0 }, business: { price: 45_000, feeFlat: 0 } },
+  NG: { free: { price: 0, feeFlat: 0 }, growth: { price: 49_000, feeFlat: 0 }, business: { price: 99_000, feeFlat: 0 } },
   US: { free: { price: 0, feeFlat: 0 }, growth: { price: 49, feeFlat: 0 }, business: { price: 89.99, feeFlat: 0 } },
   GB: { free: { price: 0, feeFlat: 0 }, growth: { price: 30, feeFlat: 0 }, business: { price: 80, feeFlat: 0 } },
   CA: { free: { price: 0, feeFlat: 0 }, growth: { price: 49, feeFlat: 0 }, business: { price: 89.99, feeFlat: 0 } },
-  GH: { free: { price: 0, feeFlat: 0 }, growth: { price: 150, feeFlat: 0 }, business: { price: 400, feeFlat: 0 } },
+  GH: { free: { price: 0, feeFlat: 0 }, growth: { price: 450, feeFlat: 0 }, business: { price: 900, feeFlat: 0 } },
 };
 
 // ── Business Categories ──
@@ -518,7 +518,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   },
   growth: {
     name: 'Pro',
-    price: 15_000,
+    price: 49_000,
     feePercentage: 1.5,
     feeFlat: 0,
     maxBookings: 1000,
@@ -535,7 +535,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   },
   business: {
     name: 'Premium',
-    price: 45_000,
+    price: 99_000,
     feePercentage: 1,
     feeFlat: 0,
     maxBookings: Infinity,

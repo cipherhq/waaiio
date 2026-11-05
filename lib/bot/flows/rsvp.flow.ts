@@ -1,3 +1,5 @@
+import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
+import { validateAnswers, type PartyQuestion, type PartyAnswers } from '@/lib/parties/rsvp-questions';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy } from './flow-localization';
 import { getLocale, type CountryCode } from '@/lib/constants';
@@ -111,7 +113,7 @@ export const rsvpFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const num = parseInt(input, 10);
-        const maxPlusOnes = (ctx.session.session_data.rsvp_max_plus_ones as number) || 3;
+        const maxPlusOnes = (ctx.session.session_data.rsvp_max_plus_ones as number | null) ?? 3;
 
         if (isNaN(num) || num < 1) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'rsvp.select_guests') };
@@ -134,16 +136,17 @@ export const rsvpFlow: FlowDefinition = {
               .from('event_invites')
               .select('plus_ones')
               .eq('party_id', partyId)
+              .eq('business_id', ctx.session.business_id)
+              .neq('id', ctx.session.session_data.rsvp_invite_id)
               .in('status', ['accepted', 'pending', 'maybe']);
 
             const currentAttendees = (attendeeData || []).reduce(
               (sum: number, inv: { plus_ones: number }) => sum + 1 + (inv.plus_ones || 0), 0
             );
-            // This guest wants (num - 1) plus_ones, but they're already counted as 1 attendee
-            // Net new attendees = (num - 1) additional plus_ones
+            // Other attendees exclude this invite; add its entire proposed party size.
             const requestedPlusOnes = num - 1;
-            if (currentAttendees + requestedPlusOnes > party.max_guests) {
-              const remaining = Math.max(0, party.max_guests - currentAttendees);
+            if (currentAttendees + 1 + requestedPlusOnes > party.max_guests) {
+              const remaining = Math.max(0, party.max_guests - currentAttendees - 1);
               const maxAllowed = remaining + 1; // +1 because guest is already counted
               return {
                 valid: false,
@@ -180,7 +183,44 @@ export const rsvpFlow: FlowDefinition = {
         }
         return { valid: true, data: { rsvp_dietary_notes: text } };
       },
-      async next() { return 'rsvp_confirmed'; },
+      async next(ctx) { return ctx.session.session_data.rsvp_party_id ? 'rsvp_questions' : 'rsvp_confirmed'; },
+    },
+
+    {
+      id: 'rsvp_questions',
+      async skipIf(ctx) {
+        const d = ctx.session.session_data;
+        return d.rsvp_response !== 'accepted' || !((d.rsvp_questions as PartyQuestion[] || []).length);
+      },
+      async prompt(ctx) {
+        const d = ctx.session.session_data;
+        const q = (d.rsvp_questions as PartyQuestion[])[Number(d.rsvp_question_index || 0)];
+        if (!q) return [{ type: 'text', text: 'Reply confirm to save your response.' }];
+        const choices = q.type === 'yes_no' ? '\nReply yes or no.' : q.options ? '\n' + q.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') : '\nUse up to 500 characters.';
+        return [{ type: 'text', text: q.label + choices + (q.required ? '' : '\nReply skip to leave this unanswered.') }];
+      },
+      async validate(input, ctx) {
+        const d = ctx.session.session_data;
+        const questions = d.rsvp_questions as PartyQuestion[];
+        const index = Number(d.rsvp_question_index || 0);
+        const q = questions[index];
+        if (!q) return { valid: true };
+        const answers = { ...(d.rsvp_answers as PartyAnswers || {}) };
+        const text = input.trim();
+        if (text.toLowerCase() === 'skip' && !q.required) delete answers[q.id];
+        else {
+          let answer: unknown = text;
+          if (q.type === 'yes_no') answer = /^yes$/i.test(text) ? true : /^no$/i.test(text) ? false : text;
+          if (q.type === 'single_choice') answer = /^\d+$/.test(text) ? q.options?.[Number(text) - 1]?.id : text;
+          try { Object.assign(answers, validateAnswers([q], { [q.id]: answer })); }
+          catch (e) { return { valid: false, errorMessage: e instanceof Error ? e.message : 'Please check your answer.' }; }
+        }
+        return { valid: true, data: { rsvp_answers: answers, rsvp_question_index: index + 1 } };
+      },
+      async next(ctx) {
+        const d = ctx.session.session_data;
+        return Number(d.rsvp_question_index || 0) < (d.rsvp_questions as PartyQuestion[] || []).length ? 'rsvp_questions' : 'rsvp_confirmed';
+      },
     },
 
     // ── Save RSVP and confirm ──
@@ -199,7 +239,15 @@ export const rsvpFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         // Save the RSVP to database
-        if (inviteId) {
+        if (d.rsvp_party_id) {
+          if (!d.rsvp_token || !ctx.session.business_id) return [{ type: 'text', text: 'Please reopen your invitation to respond.' }];
+          const result = await completePartyRsvp(ctx.supabase, String(d.rsvp_token), {
+            status: response, plus_ones: plusOnes, answers: d.rsvp_answers || {}, revision: d.rsvp_revision,
+            ...(Object.hasOwn(d, 'rsvp_dietary_notes') ? { dietary_notes: dietaryNotes } : {}),
+          }, { sender: ctx.from, businessId: ctx.session.business_id });
+          d.rsvp_save_failed = !result.ok;
+          if (!result.ok) return [{ type: 'text', text: result.error + ' Reply retry to try again, or reopen your invitation to review it.' }];
+        } else if (inviteId) {
           const updateData: Record<string, unknown> = {
             status: response,
             plus_ones: plusOnes,
@@ -269,7 +317,7 @@ export const rsvpFlow: FlowDefinition = {
       async validate(): Promise<ValidationResult> {
         return { valid: true };
       },
-      async next() { return null; },
+      async next(ctx) { return ctx.session.session_data.rsvp_save_failed ? 'rsvp_confirmed' : null; },
     },
   ],
 };
