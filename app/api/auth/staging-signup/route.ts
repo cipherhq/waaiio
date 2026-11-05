@@ -1,14 +1,25 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getRateLimitKey, rateLimitResponseAsync } from '@/lib/rate-limit';
 import { isStagingTestMode } from '@/lib/staging-test-mode';
+
+// Staging sign-up needs the invite code the Owner gives to testers. If the code
+// is not configured (or too short to be safe), sign-up stays closed.
+const MIN_INVITE_CODE_LENGTH = 16;
+
+function inviteCodeMatches(given: unknown, configured: string): boolean {
+  if (typeof given !== 'string') return false;
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(given.trim()), digest(configured));
+}
 
 export async function POST(request: NextRequest) {
   if (!isStagingTestMode()) {
     return new NextResponse(null, { status: 404 });
   }
 
-  let body: { email?: unknown; password?: unknown };
+  let body: { email?: unknown; password?: unknown; inviteCode?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -31,6 +42,14 @@ export async function POST(request: NextRequest) {
     60 * 60 * 1000,
   );
   if (limit) return limit;
+
+  const configuredCode = (process.env.STAGING_SIGNUP_INVITE_CODE || '').trim();
+  if (configuredCode.length < MIN_INVITE_CODE_LENGTH) {
+    return NextResponse.json({ message: 'Staging sign-up is closed. Ask the Waaiio team for access.' }, { status: 403 });
+  }
+  if (!inviteCodeMatches(body.inviteCode, configuredCode)) {
+    return NextResponse.json({ message: 'That invite code is not valid.' }, { status: 403 });
+  }
 
   const service = createServiceClient();
   const { error } = await service.auth.admin.createUser({

@@ -43,6 +43,9 @@ export interface StepAuthProps {
   setEmailSent: (v: boolean) => void;
   handleEmailSignup: (e: React.FormEvent) => void;
   setAuthLoading: (v: boolean) => void;
+  /** Staging only: when set, the form asks for the staging invite code. */
+  inviteCode?: string;
+  setInviteCode?: (v: string) => void;
 }
 
 export interface StepCategoryProps {
