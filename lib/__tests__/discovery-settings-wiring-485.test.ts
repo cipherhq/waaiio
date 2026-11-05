@@ -394,20 +394,20 @@ describe('existing wiring regression', () => {
     expect(source).toContain('update({ operating_hours: hours })');
   });
 
-  it('Discovery page reads description for completeness but does not write it', () => {
+  it('Discovery page saves the business description from its own Description field (Owner decision 2026-11-05)', () => {
     const source = readFileSync(
       resolve(__dirname, '../../app/dashboard/discovery/page.tsx'),
       'utf-8'
     );
     // Reads description for completeness
     expect(source).toContain("config.description");
-    // The save payload should NOT include a bare 'description' field (only discovery_description)
+    // The save payload writes the business description and the short listing summary separately.
+    // Behaviour is proven by the rendered test lib/__tests__/discovery-description-field.test.tsx.
     const payloadBlock = source.slice(
       source.indexOf('const payload = {'),
       source.indexOf('const payload = {') + 500
     );
-    // All 'description:' occurrences should be prefixed with 'discovery_'
-    const descMatches = payloadBlock.match(/(?<!discovery_)description:/g);
-    expect(descMatches).toBeNull();
+    expect(payloadBlock.match(/(?<!discovery_)description:/g)).toEqual(['description:']);
+    expect(payloadBlock).toContain('discovery_description:');
   });
 });

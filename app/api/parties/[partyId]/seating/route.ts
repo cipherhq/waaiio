@@ -58,8 +58,11 @@ async function handle(request: NextRequest, context: Context, mutate: boolean) {
     });
     return result;
   };
-  const respondError = (error: { code?: string }) => {
+  const respondError = (error: { code?: string; message?: string }) => {
     if (error.code === '42501') return reply({ error: 'Party unavailable' }, 403);
+    // M514: the organiser's own table name and tag, e.g. "Table 1 is reserved for Groom's family".
+    if (error.code === '23514' && typeof error.message === 'string' && / is reserved for .+$/.test(error.message) && error.message.length <= 250)
+      return reply({ error: error.message.endsWith('.') ? error.message : `${error.message}.` }, 409);
     if (['40001', '23514', '23503', '23505', 'P0001'].includes(error.code || ''))
       return reply({ error: 'Seating changed or conflicts with saved assignments. Refresh and review again.' }, 409);
     if (error.code === '22023' || error.code === '22P02')
