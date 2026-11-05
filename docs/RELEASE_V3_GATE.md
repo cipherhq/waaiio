@@ -104,6 +104,12 @@ Applying it is a separate Owner approval per environment, staging first. Run it 
 
 The gate refuses a URL whose login or project does not match its environment, a session that is not read-only, a privileged role or one that is a member of any other role, or a server other than PostgreSQL 17.
 
+## Staging admin behind Vercel's login
+
+When Vercel Authentication covers admin-staging.waaiio.com, the gate's staging admin health check (`checkServing`) sends Vercel's automation bypass header, `x-vercel-protection-bypass`, from the secret `VERCEL_ADMIN_STAGING_BYPASS`. No other check ever sends it.
+- The Owner creates the bypass secret on the admin-staging Vercel project and stores it in the GitHub environment **`release-observer`** (deployment branches restricted to `main`), not as a repository secret.
+- Without the secret, the gate stops with "staging admin needs VERCEL_ADMIN_STAGING_BYPASS". With a wrong or rotated secret, it stops with "staging admin rejected VERCEL_ADMIN_STAGING_BYPASS". Rotate it in both places together.
+
 ## The lock and the catalog oracle
 
 Production cannot be rebuilt by replaying migrations (irregular ledger, historic ACL repairs; M419 even asserts an ACL production does not reach by replay). So the catalog check is differential:

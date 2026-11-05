@@ -44,24 +44,34 @@ describe('release gate: staging admin bypass', () => {
     }
   });
 
+  // Node's fetch rejects a redirect under redirect: 'error' like this.
+  const redirectRejection = () => Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') });
+
   it('says the secret is missing when staging admin answers 401 without it', async () => {
     const fetchImpl = vi.fn(async () => new Response('', { status: 401 }));
-    await expect(checkServing('staging', 'admin', {}, fetchImpl, {})).rejects.toThrow('VERCEL_ADMIN_STAGING_BYPASS');
+    await expect(checkServing('staging', 'admin', {}, fetchImpl, {})).rejects.toThrow('needs VERCEL_ADMIN_STAGING_BYPASS');
   });
 
   it('says the secret is missing when Vercel redirects to its login without it', async () => {
-    // Vercel answers a protected custom domain with a 302 to its login page;
-    // the gate fetches with redirect: 'error', so fetch rejects.
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.redirect).toBe('error');
-      throw new TypeError('fetch failed: unexpected redirect');
+      throw redirectRejection();
     });
-    await expect(checkServing('staging', 'admin', {}, fetchImpl, {})).rejects.toThrow('VERCEL_ADMIN_STAGING_BYPASS');
+    await expect(checkServing('staging', 'admin', {}, fetchImpl, {})).rejects.toThrow('needs VERCEL_ADMIN_STAGING_BYPASS');
   });
 
-  it('keeps the original network error when the secret is set or the check is not staging admin', async () => {
-    const fetchImpl = vi.fn(async () => { throw new TypeError('fetch failed: ECONNRESET'); });
-    await expect(checkServing('staging', 'admin', {}, fetchImpl, { VERCEL_ADMIN_STAGING_BYPASS: BYPASS })).rejects.toThrow('ECONNRESET');
-    await expect(checkServing('production', 'admin', {}, fetchImpl, {})).rejects.toThrow('ECONNRESET');
+  it('says the secret was rejected when Vercel still redirects or answers 401 with it', async () => {
+    const redirecting = vi.fn(async () => { throw redirectRejection(); });
+    await expect(checkServing('staging', 'admin', {}, redirecting, { VERCEL_ADMIN_STAGING_BYPASS: BYPASS })).rejects.toThrow('rejected VERCEL_ADMIN_STAGING_BYPASS');
+    const unauthorized = vi.fn(async () => new Response('', { status: 401 }));
+    await expect(checkServing('staging', 'admin', {}, unauthorized, { VERCEL_ADMIN_STAGING_BYPASS: BYPASS })).rejects.toThrow('rejected VERCEL_ADMIN_STAGING_BYPASS');
+  });
+
+  it('keeps other network errors as they are, with or without the secret', async () => {
+    const fetchImpl = vi.fn(async () => { throw Object.assign(new TypeError('fetch failed'), { cause: new Error('getaddrinfo ENOTFOUND') }); });
+    await expect(checkServing('staging', 'admin', {}, fetchImpl, {})).rejects.toThrow('fetch failed');
+    await expect(checkServing('staging', 'admin', {}, fetchImpl, {})).rejects.not.toThrow('BYPASS');
+    await expect(checkServing('staging', 'admin', {}, fetchImpl, { VERCEL_ADMIN_STAGING_BYPASS: BYPASS })).rejects.not.toThrow('BYPASS');
+    await expect(checkServing('production', 'admin', {}, fetchImpl, {})).rejects.toThrow('fetch failed');
   });
 });

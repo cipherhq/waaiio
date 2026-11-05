@@ -109,17 +109,20 @@ export async function checkServing(environment, kind, expected, fetchImpl = fetc
   const config = PROJECTS[environment][kind];
   const stagingAdmin = environment === 'staging' && kind === 'admin';
   const bypass = stagingAdmin ? (env.VERCEL_ADMIN_STAGING_BYPASS || '') : '';
-  // Without the secret, Vercel answers with a redirect to its login (which
-  // `redirect: 'error'` rejects) or a 401. Name the missing secret either way.
-  const missingBypass = 'staging admin needs VERCEL_ADMIN_STAGING_BYPASS (Vercel login is on)';
+  // Vercel's login answers with a redirect to its sign-in page (which
+  // `redirect: 'error'` rejects) or a 401. Say which secret is wrong; leave
+  // every other error (DNS, TLS, timeouts) as it is.
+  const loginBlocked = () => fail(bypass
+    ? 'staging admin rejected VERCEL_ADMIN_STAGING_BYPASS (check or rotate it)'
+    : 'staging admin needs VERCEL_ADMIN_STAGING_BYPASS (Vercel login is on)');
   let health;
   try {
     health = await fetchImpl(`https://${config.alias}/${config.health}`, { redirect: 'error', cache: 'no-store', ...(bypass ? { headers: { 'x-vercel-protection-bypass': bypass } } : {}) });
   } catch (error) {
-    if (stagingAdmin && !bypass) fail(missingBypass);
+    if (stagingAdmin && /redirect/i.test(String(error?.cause?.message || ''))) loginBlocked();
     throw error;
   }
-  if (health.status === 401 && stagingAdmin && !bypass) fail(missingBypass);
+  if (health.status === 401 && stagingAdmin) loginBlocked();
   if (health.status !== 200) fail(`${environment} ${kind} public health failed (${health.status})`);
   if (!config.identity) return true;
   const response = await fetchImpl(`https://${config.alias}/api/release-identity`, { redirect: 'error', cache: 'no-store' });
