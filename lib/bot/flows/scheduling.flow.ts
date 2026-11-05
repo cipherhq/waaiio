@@ -132,8 +132,10 @@ async function loadStaffSchedule(ctx: FlowContext): Promise<StaffSchedule | null
  * service, staff and business hours, slot interval, the customer's
  * morning/afternoon/evening preference, the booking length within staff or
  * table closing time, and (tables, today) only times after now.
+ * `extraTime`: a typed or pre-filled time between list times, added when it
+ * falls inside the opening hours, then judged by the same filters (#919).
  */
-function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffSchedule | null, localNow: BusinessLocalNow | null, pref?: string): string[] {
+function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffSchedule | null, localNow: BusinessLocalNow | null, pref?: string, extraTime?: string): string[] {
   const d = ctx.session.session_data;
   const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const dayIdx = new Date(dateStr + 'T00:00').getDay();
@@ -171,6 +173,15 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
     slots = generateTimeSlots('17:00', closeTime, slotInterval);
   }
 
+  if (extraTime && !slots.includes(extraTime)) {
+    // Inside [open, close), the same window generateTimeSlots uses (close after midnight too)
+    const t = timeToMinutes(extraTime);
+    const openMin = timeToMinutes(openTime);
+    const closeMin = timeToMinutes(closeTime);
+    const inside = closeMin > openMin ? t >= openMin && t < closeMin : closeMin < openMin && (t >= openMin || t < closeMin);
+    if (inside) slots = [...slots, extraTime];
+  }
+
   // Filter slots where booking duration would extend past staff end
   if (staffSchedule && serviceDuration && staffDay?.end) {
     const staffEndMin = timeToMinutes(staffDay.end);
@@ -183,8 +194,19 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
   // Filter table-reservation slots where reservation end exceeds closing time
   const isTableRes = d._is_table_reservation === true;
   if (isTableRes && serviceDuration) {
-    const closeMin = timeToMinutes((d._seating_available_to as string | null) || closeTime);
-    slots = slots.filter(slot => timeToMinutes(slot) + serviceDuration <= closeMin);
+    const seatingTo = d._seating_available_to as string | null;
+    const openMin = timeToMinutes(openTime);
+    let closeMin = timeToMinutes(seatingTo || closeTime);
+    // Business hours that close at or after midnight run into the next day, as
+    // book_table_atomic reads them (M510). A table's own closing time is
+    // compared as it is, like book_table_atomic does.
+    const overnight = !seatingTo && closeMin <= openMin;
+    if (overnight) closeMin += 24 * 60;
+    slots = slots.filter(slot => {
+      let start = timeToMinutes(slot);
+      if (overnight && start < openMin) start += 24 * 60;
+      return start + serviceDuration <= closeMin;
+    });
   }
 
   // Same-day tables: only times after the current time in the business timezone
@@ -194,6 +216,8 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
 
 interface OpenTimesInputs {
   pref?: string;
+  /** A typed or pre-filled time to judge as well (candidateTimes). */
+  extraTime?: string;
   /** Bookings around the date (prefetched by the date list). */
   rows?: SlotBookingRow[];
   staffSchedule?: StaffSchedule | null;
@@ -214,7 +238,7 @@ async function openTimesForDate(ctx: FlowContext, dateStr: string, inputs: OpenT
   const staffSchedule = inputs.staffSchedule !== undefined ? inputs.staffSchedule : await loadStaffSchedule(ctx);
   const localNow = inputs.localNow !== undefined ? inputs.localNow : (isTableRes ? await resolveBusinessLocalNow(ctx) : null);
   const rows = inputs.rows ?? await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
-  const slots = candidateTimes(ctx, dateStr, staffSchedule, localNow, inputs.pref);
+  const slots = candidateTimes(ctx, dateStr, staffSchedule, localNow, inputs.pref, inputs.extraTime);
   return openTimesOnDate(slots, rows, {
     date: dateStr,
     isTable: isTableRes,
@@ -227,10 +251,11 @@ async function openTimesForDate(ctx: FlowContext, dateStr: string, inputs: OpenT
 }
 
 /**
- * Whether `time` (HH:MM) can be booked on `dateStr` (#919): 'open' when it is
- * one of the open times (with or without the customer's time preference),
- * 'taken' when it is a list time that is booked, 'not_offered' otherwise
- * (outside the hours, or between list times).
+ * Whether `time` (HH:MM) can be booked on `dateStr` (#919): 'open' when the
+ * time list's rules and the booking function's allow it (a list time, or a
+ * time between list times inside the hours; with or without the customer's
+ * time preference), 'taken' when it is inside the hours but booked,
+ * 'not_offered' otherwise (outside the hours).
  */
 async function checkTimeOpen(ctx: FlowContext, dateStr: string, time: string): Promise<'open' | 'taken' | 'not_offered'> {
   const isTableRes = ctx.session.session_data._is_table_reservation === true;
@@ -238,23 +263,25 @@ async function checkTimeOpen(ctx: FlowContext, dateStr: string, time: string): P
   const staffSchedule = await loadStaffSchedule(ctx);
   const localNow = isTableRes ? await resolveBusinessLocalNow(ctx) : null;
   const rows = await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
-  const prefs = pref ? [undefined, pref] : [undefined];
-  for (const p of prefs) {
-    const open = await openTimesForDate(ctx, dateStr, { pref: p, rows, staffSchedule, localNow });
+  const runs: OpenTimesInputs[] = [{ extraTime: time }, ...(pref ? [{ pref }] : [])];
+  for (const run of runs) {
+    const open = await openTimesForDate(ctx, dateStr, { ...run, rows, staffSchedule, localNow });
     if (open.some(s => s.time === time)) return 'open';
   }
-  const offered = prefs.some(p => candidateTimes(ctx, dateStr, staffSchedule, localNow, p).includes(time));
+  const offered = runs.some(run => candidateTimes(ctx, dateStr, staffSchedule, localNow, run.pref, run.extraTime).includes(time));
   return offered ? 'taken' : 'not_offered';
 }
 
 /**
- * The date list's exact "fully booked" check applies (#919) unless the staff
- * member is still to be chosen after the date: capacity is then per staff
- * member, the old per-day count is kept, and the time list judges it.
+ * The date list's exact "fully booked" check applies (#919) when no staff
+ * member is chosen after the date: tables, and services without staff. Else
+ * capacity is per staff member and select_staff runs again after every date
+ * (a staff_id already in the session is not final), so the old per-day count
+ * is kept and the time list judges the day.
  */
 function usesExactDateCheck(ctx: FlowContext): boolean {
   const d = ctx.session.session_data;
-  return d._is_table_reservation === true || !!d.staff_id || d._service_requires_staff === false;
+  return d._is_table_reservation === true || d._service_requires_staff === false;
 }
 
 /**
@@ -297,6 +324,20 @@ const MAX_SLOT_TAKEN_RETRIES = 2;
  * Null when it does not apply (drop-off, or refused too often); the caller then
  * keeps its old message.
  */
+/**
+ * create_booking was reached while a new time is still to be picked and
+ * confirmed after a taken one (#919), e.g. by "back" from the re-shown summary
+ * or after "Change date". Never claim then: show the time list again (or the
+ * date list when the date was cleared); nextAfterPrompt waits there.
+ */
+async function reshowPickerAfterTakenTime(ctx: FlowContext): Promise<PromptMessage[]> {
+  const stepId = ctx.session.session_data.date ? 'select_time' : 'select_date';
+  const step = schedulingFlow.steps.find(s => s.id === stepId);
+  const messages = step ? await step.prompt(ctx) : [];
+  // The time list is the last message; table photos before it were already seen
+  return stepId === 'select_time' ? messages.slice(-1) : messages;
+}
+
 async function backToTimeList(ctx: FlowContext): Promise<PromptMessage[] | null> {
   const d = ctx.session.session_data;
   if ((d._service_metadata as Record<string, unknown> | undefined)?.is_dropoff) return null;
@@ -2817,8 +2858,8 @@ export const schedulingFlow: FlowDefinition = {
       id: 'create_booking',
       nextAfterPrompt(ctx: FlowContext) {
         const d = ctx.session.session_data;
-        // The time was just taken: the time list was sent, wait for a new time (#919)
-        if (d._slot_taken_return) return 'select_time';
+        // The time was just taken: the time (or date) list was sent, wait for a new pick (#919)
+        if (d._slot_taken_return) return d.date ? 'select_time' : 'select_date';
         // Saved-card offer presented (separate step handles the button taps)
         if (d._saved_method_id && !d._skip_saved_card && !d.payment_reference && !d.bank_transfer_reference) {
           return 'saved_card_prompt';
@@ -2832,8 +2873,9 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         clearTablePromoState(ctx);
-        // Set again below only when this attempt's time is refused (#919)
-        delete d._slot_taken_return;
+        // A new time after a taken one must be picked and confirmed first (#919).
+        // confirmation.next clears the flag; reaching here with it set (e.g. "back") never claims.
+        if (d._slot_taken_return) return await reshowPickerAfterTakenTime(ctx);
 
         // ── Reschedule existing booking via atomic RPC ──
         if (d._reschedule_booking_id) {
@@ -3830,6 +3872,8 @@ export const schedulingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         // Cancelled booking — end flow
         if (d._action === 'cancel') return 'select_capability';
+        // "back" landed here while a new time is still to be picked (#919): pick it, then confirm
+        if (d._slot_taken_return) return d.date ? 'select_time' : 'select_date';
         // After accepting/cancelling terms via fallback T&C gate, re-enter to proceed.
         // _terms_loop_consumed prevents infinite loop (matches ticketing/payment/ordering/reservation).
         if (d._terms_accepted || d._terms_cancelled) {

@@ -258,13 +258,13 @@ describe('D select_date — a fully booked day is not offered or accepted', () =
     expect(rowIds(await date.prompt(ctx))).toContain(FRI);
   });
 
-  it('a chosen staff member: only that member\'s bookings fill the day', async () => {
+  it('a staff member kept from before ("Change date") does not hide a day another member has free', async () => {
+    // select_staff runs again after every date, so a staff_id in the session is not final
     const { date } = await flow();
     const staffBookings = EVERY_HOUR_FRI.map(b => ({ ...b, staff_id: 'staff-a' }));
-    const forA = ctxFor({ db: mockDb({ bookings: staffBookings }), operatingHours: FRIDAY_9_TO_5, sessionData: { ...LIST, staff_id: 'staff-a', _service_requires_staff: true } });
-    const forB = ctxFor({ db: mockDb({ bookings: staffBookings }), operatingHours: FRIDAY_9_TO_5, sessionData: { ...LIST, staff_id: 'staff-b', _service_requires_staff: true } });
-    expect(rowIds(await date.prompt(forA))).not.toContain(FRI);
-    expect(rowIds(await date.prompt(forB))).toContain(FRI);
+    const keptA = ctxFor({ db: mockDb({ bookings: staffBookings }), operatingHours: FRIDAY_9_TO_5, sessionData: { ...LIST, staff_id: 'staff-a', _service_requires_staff: true } });
+    expect(rowIds(await date.prompt(keptA))).toContain(FRI);
+    expect(await date.validate(FRI, keptA)).toMatchObject({ valid: true });
   });
 
   it('tables: a table booked all evening is not offered that day; another table is', async () => {
@@ -304,15 +304,28 @@ describe('T select_time — a booked time is not offered or accepted', () => {
     expect(ids).toContain('17:00');
   });
 
-  it('a typed time next to a booking, or outside the hours, is refused (it was accepted before)', async () => {
+  it('a typed time inside a booking, or outside the hours, is refused (both were accepted before)', async () => {
     const { time } = await flow();
     const ctx = () => ctxFor({ db: mockDb({ bookings: [booking(SAT, '10:00')] }), sessionData: { date: SAT } });
-    const notOffered = "That time isn't available. Please pick a time from the list.";
-    expect(await time.validate('10:30', ctx())).toMatchObject({ valid: false, errorMessage: notOffered });
-    expect(await time.validate('3am', ctx())).toMatchObject({ valid: false, errorMessage: notOffered });
-    expect(await time.validate('10:00', ctx())).toMatchObject({ valid: false, errorMessage: 'Sorry, this time slot just got booked. Please choose another time.' });
+    const taken = 'Sorry, this time slot just got booked. Please choose another time.';
+    // 10:30 is inside the 60-min 10:00 booking (book_slot_atomic, no buffer, would accept it)
+    expect(await time.validate('10:30', ctx())).toMatchObject({ valid: false, errorMessage: taken });
+    expect(await time.validate('10:00', ctx())).toMatchObject({ valid: false, errorMessage: taken });
+    expect(await time.validate('3am', ctx())).toMatchObject({ valid: false, errorMessage: "That time isn't available. Please pick a time from the list." });
     expect(await time.validate('12:00', ctx())).toMatchObject({ valid: true, data: { time: '12:00' } });
     expect(await time.validate('2pm', ctx())).toMatchObject({ valid: true, data: { time: '14:00' } });
+  });
+
+  it('a free time between list times is still accepted, typed or pre-filled', async () => {
+    const { time } = await flow();
+    // 45-min service: the list runs 08:00, 08:45, 09:30, 10:15 … — "10am" is not on it
+    const ctx = (extra: Record<string, unknown> = {}) => ctxFor({ db: mockDb({ bookings: [booking(SAT, '12:00')] }), sessionData: { date: SAT, service_duration: 45, ...extra } });
+    expect(rowIds(await time.prompt(ctx()))).not.toContain('10:00');
+    expect(await time.validate('10am', ctx())).toMatchObject({ valid: true, data: { time: '10:00' } });
+    expect(await time.validate('12:30', ctx())).toMatchObject({ valid: false }); // inside the 12:00 booking
+    const prefilled = ctx({ time: '10:00' });
+    expect(await time.skipIf!(prefilled)).toBe(true);
+    expect(prefilled.session.session_data.time).toBe('10:00');
   });
 
   it('a time from the afternoon list is accepted (its own 12:00 start)', async () => {
@@ -341,6 +354,31 @@ describe('T select_time — a booked time is not offered or accepted', () => {
     const free = ctxFor({ db: mockDb({ bookings: [booking(SAT, '10:00')] }), sessionData: { date: SAT, time: '12:00' } });
     expect(await time.skipIf!(free)).toBe(true);
     expect(free.session.session_data.time).toBe('12:00');
+  });
+});
+
+describe('T tables whose business hours close at or after midnight (M510)', () => {
+  const lateSat = { saturday: { open: '18:00', close: '00:00' } };
+  const lateCtx = (sessionData: Record<string, unknown> = {}, hours: Record<string, { open?: string; close?: string }> = lateSat) =>
+    ctxFor({ table: true, db: mockDb(), operatingHours: hours, sessionData: { date: SAT, ...sessionData } });
+
+  it('closing at 00:00: the evening times are offered and accepted, the day is in the date list', async () => {
+    const { date, time } = await flow();
+    // 90-min tables from 18:00: 18:00, 19:30, 21:00, 22:30 (ends at 00:00)
+    expect(rowIds(await time.prompt(lateCtx()))).toEqual(['18:00', '19:30', '21:00', '22:30', 'change_date']);
+    expect(await time.validate('20:00', lateCtx())).toMatchObject({ valid: true, data: { time: '20:00' } });
+    expect(await time.validate('23:00', lateCtx())).toMatchObject({ valid: false }); // ends 00:30, after closing
+    const prefilled = lateCtx({ time: '20:00' });
+    expect(await time.skipIf!(prefilled)).toBe(true);
+    const list = lateCtx({ _show_full_date_list: true });
+    delete list.session.session_data.date;
+    expect(rowIds(await date.prompt(list))).toContain(SAT);
+  });
+
+  it('closing at 02:00: a 23:30 table (ends 01:00) is offered', async () => {
+    const { time } = await flow();
+    const ids = rowIds(await time.prompt(lateCtx({}, { saturday: { open: '20:00', close: '02:00' } })));
+    expect(ids).toEqual(['20:00', '21:30', '23:00', '00:30', 'change_date']);
   });
 });
 
@@ -428,6 +466,27 @@ describe('C create_booking — the time was taken at the last moment', () => {
     expect(ctx.session.session_data._slot_taken_return).toBe(true);
   });
 
+  it('reaching the booking step again without confirming a new time never claims', async () => {
+    const { create } = await flow();
+    const { ctx, db } = raced(name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined);
+    await create.prompt(ctx); // refused: flag set
+    const again = await create.prompt(ctx); // e.g. "back" from the summary
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic')).toHaveLength(1);
+    expect(rowIds(again)).toContain('12:00');
+    expect(typeof create.nextAfterPrompt === 'function' && create.nextAfterPrompt(ctx)).toBe('select_time');
+    // A reply that lands on create_booking goes to the time list, not the end of the flow
+    expect(await create.next(ctx)).toBe('select_time');
+    // After "Change date" (no date): the date list, never a claim with no date
+    delete ctx.session.session_data.date;
+    delete ctx.session.session_data.time;
+    ctx.session.session_data._show_full_date_list = true;
+    const dates = await create.prompt(ctx);
+    expect(rowIds(dates)).toContain(SAT);
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic')).toHaveLength(1);
+    expect(typeof create.nextAfterPrompt === 'function' && create.nextAfterPrompt(ctx)).toBe('select_date');
+    expect(await create.next(ctx)).toBe('select_date');
+  });
+
   it('after three refusals in one session: the old message, no loop', async () => {
     const { create } = await flow();
     const { ctx } = raced(name => name === 'book_slot_atomic' ? claim({ slot_available: false }) : undefined, { _slot_taken_count: 2 });
@@ -506,6 +565,30 @@ describe('C through the real FlowExecutor', () => {
     expect(ids).toContain('12:00');
     expect(JSON.stringify(sent)).not.toMatch(/Send \*Hi\*/);
     expect(db.casCalls.at(-1)).toMatchObject({ p_current_step: 'select_time' });
+  });
+
+  it('"back" on the re-shown summary does not book the new time without a confirm', async () => {
+    const sent: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const db = mockDb({ bookings: [booking(SAT, '10:00')], rpc: name => name === 'book_slot_atomic' ? claim({ booking_id: 'bk-x', reference_code: 'X', slot_available: true }) : undefined });
+    const { FlowExecutor } = await import('@/lib/bot/flows/executor');
+    const executor = new FlowExecutor(db.client as never, sender(sent) as never, {} as never, { resetAbuse: vi.fn() } as never);
+    // After a refusal the customer picked 12:00 and sees the summary again
+    const session = {
+      id: 'sess-back', user_id: 'user-1', business_id: 'biz-919', current_step: 'confirmation', version: 1,
+      conversation_log: [],
+      session_data: {
+        ...ctxFor({ db }).session.session_data, capabilities: ['scheduling'],
+        date: SAT, time: '12:00', email: 'ada@example.com', _slot_taken_return: true, _slot_taken_count: 1,
+        _step_history: ['select_time', 'confirmation', 'create_booking', 'confirmation'],
+      },
+    };
+    await executor.execute('+2348000000000', 'back', session as never, business as never);
+
+    expect(db.client.rpc.mock.calls.filter(([name]) => name === 'book_slot_atomic')).toEqual([]);
+    expect(session.session_data).not.toHaveProperty('booking_id');
+    const lists = sent.filter(m => m.kind === 'list');
+    expect(lists).toHaveLength(1);
+    expect((lists[0].payload.items as Array<{ postbackText: string }>).map(i => i.postbackText)).toContain('12:00');
   });
 });
 
