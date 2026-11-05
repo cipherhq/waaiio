@@ -41,10 +41,13 @@ suite('Admin step-up CAS — disposable local PostgreSQL', () => {
     await a.query('TRUNCATE admin_step_up_authorizations');
     await a.query("INSERT INTO admin_step_up_authorizations(id,admin_user_id,session_id,action_type,params_hash,factor_id) VALUES($1,$2,'session-a','payout_generate','bound-generate-hash',$3)", [ID, ADMIN, FACTOR]);
   });
+  // DROP DATABASE always waits for a forced checkpoint across the whole server.
+  // In CI this is the first drop after 46 template clones, so that checkpoint
+  // flushes all of them: about 4 s normally, over 10 s on a slow runner (#904).
   afterAll(async () => {
     await Promise.all([a?.end(), b?.end(), observer?.end()]);
     if (control) { await control.query(`DROP DATABASE IF EXISTS ${database}`); await control.end(); }
-  });
+  }, 60_000);
   async function lockedRace(first: string, second: string) {
     await a.query('BEGIN');
     const winner = await a.query(first);

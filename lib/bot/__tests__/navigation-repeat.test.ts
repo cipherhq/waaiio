@@ -207,6 +207,102 @@ describe('visible navigation through actual menu builders', () => {
   });
 });
 
+describe('Powered by Waaiio.com footer on the next-steps menu (Owner 2026-11-05)', () => {
+  async function completeIn(channelType: 'shared' | 'dedicated', subscriptionTier = 'free') {
+    const { FlowExecutor } = await import('../flows/executor');
+    const { db } = database({ whatsapp_channels: { channel_type: channelType } });
+    const ctx = createMockContext({ supabase: db as any });
+    ctx.business!.subscription_tier = subscriptionTier;
+    ctx.session.session_data = { _inbound_channel_id: 'channel-a', active_capability: 'ordering' };
+    const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
+    await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
+    return ctx;
+  }
+
+  it.each(['shared', 'dedicated'] as const)('%s completion menu carries the footer', async channelType => {
+    const ctx = await completeIn(channelType);
+    const sent = channelType === 'shared'
+      ? vi.mocked(ctx.sender.sendList).mock.calls[0][0]
+      : vi.mocked(ctx.sender.sendButtons).mock.calls[0][0];
+    expect(sent.footer).toBe('Powered by Waaiio.com');
+    expect(sent.footer!.length).toBeLessThanOrEqual(60);
+  });
+
+  it.each(['shared', 'dedicated'] as const)('%s completion menu omits the footer for white-label plans', async channelType => {
+    const { PRICING_TIERS } = await import('@/lib/constants');
+    const tiers = PRICING_TIERS as unknown as Record<string, { whitelabel: boolean }>;
+    const original = tiers.business.whitelabel;
+    tiers.business.whitelabel = true;
+    try {
+      const ctx = await completeIn(channelType, 'business');
+      const sent = channelType === 'shared'
+        ? vi.mocked(ctx.sender.sendList).mock.calls[0][0]
+        : vi.mocked(ctx.sender.sendButtons).mock.calls[0][0];
+      expect(sent.footer).toBeUndefined();
+    } finally {
+      tiers.business.whitelabel = original;
+    }
+  });
+
+  it.each(['shared', 'dedicated'] as const)('%s completion menu omits the footer when the business itself is white-label', async channelType => {
+    const { FlowExecutor } = await import('../flows/executor');
+    const { db } = database({ whatsapp_channels: { channel_type: channelType } });
+    const ctx = createMockContext({ supabase: db as any });
+    ctx.business!.is_whitelabel = true;
+    ctx.session.session_data = { _inbound_channel_id: 'channel-a', active_capability: 'ordering' };
+    const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
+    await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
+    const sent = channelType === 'shared'
+      ? vi.mocked(ctx.sender.sendList).mock.calls[0][0]
+      : vi.mocked(ctx.sender.sendButtons).mock.calls[0][0];
+    expect(sent.footer).toBeUndefined();
+  });
+
+  it('business switch set to false keeps the footer, matching the greeting rule', async () => {
+    const { getPoweredByInteractiveFooter } = await import('@/lib/whitelabel');
+    expect(getPoweredByInteractiveFooter('free', false)).toBe('Powered by Waaiio.com');
+    expect(getPoweredByInteractiveFooter('free', true)).toBeUndefined();
+    expect(getPoweredByInteractiveFooter('free', null)).toBe('Powered by Waaiio.com');
+  });
+
+  it('translated menu keeps the brand footer untranslated', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/bot/outbound-localizer', () => ({
+      localizeMessage: vi.fn(async (msg: any) => ({
+        ...msg,
+        body: `[FR] ${msg.body}`,
+        footer: msg.footer ? `[FR] ${msg.footer}` : msg.footer,
+        buttons: msg.buttons?.map((b: any) => ({ ...b, title: `[FR] ${b.title}` })),
+      })),
+    }));
+    try {
+      const { FlowExecutor } = await import('../flows/executor');
+      const { db } = database({ whatsapp_channels: { channel_type: 'dedicated' } });
+      const ctx = createMockContext({ supabase: db as any });
+      ctx.session.session_data = { active_capability: 'ordering', _detected_language: 'fr' };
+      const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
+      await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
+      const sent = vi.mocked(ctx.sender.sendButtons).mock.calls[0][0];
+      expect(sent.body.startsWith('[FR] ')).toBe(true);
+      expect(sent.footer).toBe('Powered by Waaiio.com');
+    } finally {
+      vi.doUnmock('@/lib/bot/outbound-localizer');
+      vi.resetModules();
+    }
+  });
+
+  it('stale worker sends no menu and no footer', async () => {
+    const { FlowExecutor } = await import('../flows/executor');
+    const { db } = database({ whatsapp_channels: { channel_type: 'dedicated' } }, true);
+    const ctx = createMockContext({ supabase: db as any });
+    ctx.session.session_data = { active_capability: 'ordering' };
+    const executor = new FlowExecutor(db as any, ctx.sender, ctx.standalone, ctx.intelligence);
+    await (executor as any).showPostCompletionMenu(ctx.from, ctx.session, ctx, {});
+    expect(ctx.sender.sendButtons).not.toHaveBeenCalled();
+    expect(ctx.sender.sendList).not.toHaveBeenCalled();
+  });
+});
+
 describe('directory persistence before prompting', () => {
   it('does not take over another channel after a uniqueness collision', async () => {
     const { db, queries } = database({ bot_sessions: null });

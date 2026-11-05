@@ -111,6 +111,8 @@ export interface FlowContext {
     country_code?: CountryCode;
     /** Preferred payment gateway override stored on the business record */
     payment_gateway?: string | null;
+    /** Per-business white-label switch (server-set); hides Waaiio branding when true */
+    is_whitelabel?: boolean | null;
   } | null;
   /** Current message media URL (image/audio/video/document from WhatsApp) */
   mediaUrl?: string;
