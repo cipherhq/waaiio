@@ -17,8 +17,7 @@ export type ConnectSubStep = 'choose' | 'warnings' | 'setup' | 'phone_select';
 export interface FbConnectionData {
   waba_id: string;
   phone_number_id: string;
-  access_token: string;
-  token_expires_at: string | null;
+  connection_id: string;
   display_name?: string;
   phone_number?: string;
 }
@@ -141,6 +140,8 @@ export interface StepSuccessProps {
   successData: { bot_code: string; business_id: string } | null;
   waMethod: WhatsAppMethod;
   waLink: string;
+  /** Permanent /m/{uuid} link for QR codes; waLink may be the short /m/{BOT_CODE} text link. */
+  qrLink?: string;
   selectedCapabilities: CapabilityId[];
   category: BusinessCategoryKey | '';
   error: string;

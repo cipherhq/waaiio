@@ -10,18 +10,24 @@ import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
  * (select_date, select_time, select_staff, etc.) via cross-flow lookup.
  */
 
-const selectAppointmentStep: FlowStepConfig = {
-  id: 'select_appointment',
-
-  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
-
+async function loadActiveAppointments(ctx: FlowContext) {
+  if (!ctx.business) return [];
     const { data: appointments } = await ctx.supabase
       .from('appointments')
       .select('id, name, price, price_is_variable, deposit_amount, duration_minutes, buffer_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
       .eq('business_id', ctx.business.id)
       .eq('is_active', true)
       .order('sort_order');
+  return appointments || [];
+}
+
+const selectAppointmentStep: FlowStepConfig = {
+  id: 'select_appointment',
+
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+
+    const appointments = await loadActiveAppointments(ctx);
 
     if (!appointments || appointments.length === 0) {
       return [{
@@ -32,29 +38,6 @@ const selectAppointmentStep: FlowStepConfig = {
           { id: 'recovery_exit', title: 'Exit' },
         ],
       }];
-    }
-
-    // Auto-select if only one appointment type
-    if (appointments.length === 1) {
-      const a = appointments[0];
-      ctx.session.session_data.service_id = a.id;
-      ctx.session.session_data.service_name = a.name;
-      ctx.session.session_data.service_price = a.price;
-      ctx.session.session_data._service_price_is_variable = a.price_is_variable === true;
-      ctx.session.session_data.service_deposit = a.deposit_amount || 0;
-      ctx.session.session_data.service_duration = a.duration_minutes;
-      ctx.session.session_data._service_requires_staff = a.requires_staff;
-      ctx.session.session_data._service_staff_ids = a.staff_ids;
-      ctx.session.session_data._service_allow_staff_selection = a.allow_staff_selection;
-      ctx.session.session_data._service_available_days = a.available_days;
-      ctx.session.session_data._service_available_from = a.available_from;
-      ctx.session.session_data._service_available_to = a.available_to;
-      ctx.session.session_data._service_max_capacity = a.max_capacity || 1;
-      ctx.session.session_data._service_buffer_minutes = a.buffer_minutes || 0;
-      ctx.session.session_data._auto_approve = a.auto_approve !== false;
-      ctx.session.session_data._is_appointment = true;
-      ctx.session.session_data.skip_service = true;
-      return [];
     }
 
     const cc = (ctx.business.country_code || 'NG') as CountryCode;
@@ -85,6 +68,8 @@ const selectAppointmentStep: FlowStepConfig = {
       return { valid: true, data: { _action: 'cancel' } };
     }
 
+    const exactRepeat = ctx.session.session_data._repeat_selection_id === input;
+    delete ctx.session.session_data._repeat_selection_id;
     // Try exact ID match first
     const { data: appointment } = await ctx.supabase
       .from('appointments')
@@ -117,6 +102,8 @@ const selectAppointmentStep: FlowStepConfig = {
         },
       };
     }
+
+    if (exactRepeat) return { valid: false, errorMessage: 'That previous appointment is no longer available. Choose another appointment from the menu.' };
 
     // Fuzzy match by name
     const { data: all } = await ctx.supabase
@@ -170,7 +157,33 @@ const selectAppointmentStep: FlowStepConfig = {
   },
 
   async skipIf(ctx: FlowContext) {
-    return !!ctx.session.session_data.skip_service;
+    if (ctx.session.session_data._repeat_selection_id) return false;
+    const appointments = await loadActiveAppointments(ctx);
+    ctx.session.session_data.skip_service = false;
+    // Auto-select if only one appointment type
+    if (appointments.length === 1) {
+      const a = appointments[0];
+      ctx.session.session_data.service_id = a.id;
+      ctx.session.session_data.service_name = a.name;
+      ctx.session.session_data.service_price = a.price;
+      ctx.session.session_data._service_price_is_variable = a.price_is_variable === true;
+      ctx.session.session_data.service_deposit = a.deposit_amount || 0;
+      ctx.session.session_data.service_duration = a.duration_minutes;
+      ctx.session.session_data._service_requires_staff = a.requires_staff;
+      ctx.session.session_data._service_staff_ids = a.staff_ids;
+      ctx.session.session_data._service_allow_staff_selection = a.allow_staff_selection;
+      ctx.session.session_data._service_available_days = a.available_days;
+      ctx.session.session_data._service_available_from = a.available_from;
+      ctx.session.session_data._service_available_to = a.available_to;
+      ctx.session.session_data._service_max_capacity = a.max_capacity || 1;
+      ctx.session.session_data._service_buffer_minutes = a.buffer_minutes || 0;
+      ctx.session.session_data._auto_approve = a.auto_approve !== false;
+      ctx.session.session_data._is_appointment = true;
+      ctx.session.session_data.skip_service = true;
+      return true;
+    }
+
+    return false;
   },
 };
 

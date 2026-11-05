@@ -16,6 +16,7 @@ export interface Business {
   subscription_tier: string;
   address: string;
   city: string;
+  state?: string | null;
   neighborhood: string;
   phone: string;
   email: string | null;

@@ -12,3 +12,59 @@ export function canonicalPublicOrigin(): string {
   if (raw === 'https://waaiio.com') return 'https://www.waaiio.com';
   return raw;
 }
+
+/**
+ * Action suffixes for permanent merchant links.
+ * Maps QR template IDs to the capability IDs recognised by the existing
+ * bot-code deep-link parser (bot-code-detection.ts VALID_CAPABILITIES).
+ *
+ * attendance is a web /checkin page — not routed through /m/.
+ */
+export const ACTION_CAPABILITY_MAP: Readonly<Record<string, string | null>> = {
+  book: 'scheduling',
+  order: 'ordering',
+  pay: 'payment',
+  ticket: 'ticketing',
+  donate: 'crowdfunding',
+  queue: 'queue',
+  waitlist: 'waitlist',
+  give: 'giving',
+  chat: 'chat',
+  generic: null,
+};
+
+export type MerchantLinkAction = keyof typeof ACTION_CAPABILITY_MAP;
+
+/**
+ * Build a permanent Waaiio link for a merchant's WhatsApp.
+ *
+ * /m/{uuid}          — base link (shared: bot_code, dedicated: plain wa.me)
+ * /m/{uuid}/{action}  — action link (shared: bot_code:capability, dedicated: ?text=Hi)
+ * attendance          — NOT built here; use /checkin/{uuid} directly
+ */
+export function buildMerchantLink(businessId: string, action?: MerchantLinkAction): string {
+  const origin = canonicalPublicOrigin();
+  if (!action || action === 'generic') {
+    return `${origin}/m/${businessId}`;
+  }
+  return `${origin}/m/${businessId}/${action}`;
+}
+
+/**
+ * Short shareable link, /m/{BOT_CODE} (e.g. /m/CITADEL). Falls back to the
+ * permanent /m/{uuid} link when the bot code is missing or not URL-safe.
+ */
+export function buildShortMerchantLink(botCode: string | null | undefined, businessId: string): string {
+  // Only a canonical stored code (exactly as stored) becomes a short link; the
+  // resolver upper-cases keys, so anything else uses the permanent /m/{uuid} link.
+  if (typeof botCode === 'string' && /^(?=.*[A-Z0-9])[A-Z0-9-]{1,30}$/.test(botCode)) return `${canonicalPublicOrigin()}/m/${botCode}`;
+  return buildMerchantLink(businessId);
+}
+
+/**
+ * Build a permanent merchant campaign link.
+ */
+export function buildMerchantCampaignLink(businessId: string, campaignId: string): string {
+  const origin = canonicalPublicOrigin();
+  return `${origin}/m/${businessId}/campaign/${campaignId}`;
+}

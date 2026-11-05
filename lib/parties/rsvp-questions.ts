@@ -5,6 +5,8 @@ export type PartyQuestion = {
   type: 'short_text' | 'single_choice' | 'yes_no';
   required: boolean;
   options?: { id: string; label: string }[];
+  /** M514: the chosen option's label becomes a guest tag. Single choice only, one per party. */
+  tag_answers?: boolean;
 };
 export type PartyAnswers = Record<string, string | boolean>;
 export const QUESTION_BODY_LIMIT = 16 * 1024;
@@ -15,12 +17,18 @@ const label = (v: unknown, max: number): v is string => typeof v === 'string' &&
 export function parseQuestions(value: unknown): PartyQuestion[] {
   if (!Array.isArray(value) || value.length > 10) throw new Error('Use at most 10 questions.');
   const ids = new Set<string>();
+  let tagging = 0;
   for (const q of value) {
-    if (!object(q) || Object.keys(q).some(k => !['id', 'label', 'type', 'required', 'options'].includes(k)) ||
+    if (!object(q) || Object.keys(q).some(k => !['id', 'label', 'type', 'required', 'options', 'tag_answers'].includes(k)) ||
       typeof q.id !== 'string' || !identifier.test(q.id) || ids.has(q.id) || !label(q.label, 120) ||
       !['short_text', 'single_choice', 'yes_no'].includes(String(q.type)) || typeof q.required !== 'boolean')
       throw new Error('Invalid question. Check its label, type and unique ID.');
     ids.add(q.id);
+    if (q.tag_answers !== undefined) {
+      if (typeof q.tag_answers !== 'boolean' || q.type !== 'single_choice')
+        throw new Error('Only choice questions can tag guests with their answer.');
+      if (q.tag_answers) tagging++;
+    }
     if (q.type === 'single_choice') {
       if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 10)
         throw new Error('Choice questions need 2–10 options.');
@@ -33,6 +41,7 @@ export function parseQuestions(value: unknown): PartyQuestion[] {
       }
     } else if (q.options !== undefined) throw new Error('Only choice questions have options.');
   }
+  if (tagging > 1) throw new Error('Only one question can tag guests with their answer.');
   return value as PartyQuestion[];
 }
 

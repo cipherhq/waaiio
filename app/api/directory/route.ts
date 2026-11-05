@@ -156,32 +156,25 @@ export async function GET(request: NextRequest) {
     eventMap.set(e.business_id, existing);
   }
 
-  // Step 4: Fetch WhatsApp phone numbers for dedicated/transfer/coexist businesses
-  // We need wa_method which is not in MarketplaceResult, so fetch from DB
-  const { data: waMethodRows } = await supabase
-    .from('businesses')
-    .select('id, wa_method')
-    .in('id', businessIds)
-    .in('wa_method', ['dedicated', 'transfer', 'coexist']);
-
-  const dedicatedBizIds = (waMethodRows || []).map(r => r.id);
+  // Resolve links from persisted assignments, never environment-wide defaults.
+  const { data: waRows } = await supabase.from('businesses')
+    .select('id, wa_method, assigned_channel_id, whatsapp_channel_id').in('id', businessIds);
+  const channelIds = [...new Set((waRows || []).map(r => r.assigned_channel_id || r.whatsapp_channel_id).filter(Boolean))];
+  const { data: channels } = channelIds.length
+    ? await supabase.from('whatsapp_channels')
+      .select('id, business_id, channel_type, phone_number, is_active, connection_status')
+      .in('id', channelIds)
+    : { data: [] };
   const waPhoneMap = new Map<string, string>();
-  if (dedicatedBizIds.length > 0) {
-    const { data: channels } = await supabase
-      .from('whatsapp_channels')
-      .select('business_id, phone_number')
-      .in('business_id', dedicatedBizIds)
-      .eq('is_active', true);
-
-    for (const ch of (channels || [])) {
-      if (ch.phone_number) waPhoneMap.set(ch.business_id, ch.phone_number);
-    }
-  }
-
-  // Build wa_method map for the response
   const waMethodMap = new Map<string, string>();
-  for (const row of (waMethodRows || [])) {
-    waMethodMap.set(row.id, row.wa_method);
+  for (const business of waRows || []) {
+    const channel = (channels || []).find(c => c.id === (business.assigned_channel_id || business.whatsapp_channel_id));
+    if (!channel?.is_active || channel.connection_status !== 'active') continue;
+    if (channel.channel_type !== 'shared' && channel.business_id !== business.id) continue;
+    if (channel.channel_type !== 'shared' && channel.channel_type !== 'dedicated') continue;
+    if (!channel.phone_number) continue;
+    waPhoneMap.set(business.id, channel.phone_number);
+    waMethodMap.set(business.id, channel.channel_type);
   }
 
   // Step 5: Compose enriched response

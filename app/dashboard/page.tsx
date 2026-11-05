@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import {
   formatCurrency,
   getLocale,
@@ -19,8 +18,11 @@ import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
+import { DirectWhatsAppLink } from '@/components/dashboard/DirectWhatsAppLink';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
+import { getLocalNow, timezoneFitsCountry } from '@/lib/bot/flows/shared/table-same-day';
 
 interface Stats {
   totalBookings: number;
@@ -81,46 +83,16 @@ export default function DashboardOverview() {
   const [cancellingDeletion, setCancellingDeletion] = useState(false);
 
   const { labels } = useCategoryConfig(business.category);
+  // Shop-type categories call their entity an "order", but these cards count
+  // the bookings table (orders have their own cards), so say "bookings" (#899).
+  const bookingsLabel = labels.entityName === 'order' ? 'bookings' : labels.entityNamePlural;
   const country = (business.country_code || 'NG') as CountryCode;
   const categoryTemplate = getCategoryByKey(business.category);
 
-  const [whatsappLink, setWhatsappLink] = useState('');
-  const [whatsappDisplayNumber, setWhatsappDisplayNumber] = useState('');
-
-  // Load the correct WhatsApp number for this business (parallel queries, priority pick)
-  useEffect(() => {
-    async function loadWhatsAppLink() {
-      const supabase = createClient();
-      const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
-
-      // Fire all 3 queries in parallel instead of sequential waterfall
-      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
-        channelId
-          ? supabase.from('whatsapp_channels').select('phone_number, channel_type').eq('id', channelId).eq('is_active', true).maybeSingle()
-          : Promise.resolve({ data: null }),
-        supabase.from('whatsapp_channels').select('phone_number')
-          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-        queryChannelsPublic(supabase, 'phone_number', (q) => q.limit(1).maybeSingle()),
-      ]);
-
-      // Priority: assigned > dedicated > shared
-      const phone = assignedResult.data?.phone_number
-        || dedicatedResult.data?.phone_number
-        || sharedResult.data?.phone_number;
-
-      const num = phone?.replace(/[^0-9]/g, '') || '12029226251';
-      setWhatsappDisplayNumber(num);
-
-      // Shared channels need bot code prefix
-      const isShared = assignedResult.data?.phone_number
-        ? assignedResult.data.channel_type !== 'dedicated'
-        : !dedicatedResult.data?.phone_number;
-      setWhatsappLink(isShared && business.bot_code
-        ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
-        : `https://wa.me/${num}`);
-    }
-    loadWhatsAppLink();
-  }, [business.id]);
+  // Short Waaiio link (/m/BOT_CODE) — survives connected number changes
+  const whatsappLink = buildShortMerchantLink(business.bot_code, business.id);
+  // Printed QR codes stay on the permanent /m/{uuid} link (bot codes can still change).
+  const qrLink = buildMerchantLink(business.id);
 
   // Check if account deletion is scheduled (grace period)
   useEffect(() => {
@@ -145,8 +117,15 @@ export default function DashboardOverview() {
     async function load() {
       try {
       const supabase = createClient();
-      const today = new Date().toISOString().split('T')[0];
-      const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
+      const utcToday = new Date().toISOString().split('T')[0];
+      // "Today" is the business's own date (#899). The stored timezone defaults to
+      // Africa/Lagos and is never set by the app, so trust it only when it fits the
+      // country, as the bot does (Owner decision 2026-11-04); otherwise keep the UTC date.
+      const localNow = timezoneFitsCountry(business.timezone, business.country_code) ? getLocalNow(business.timezone) : null;
+      const today = localNow?.date ?? utcToday;
+      // Usage bars stay on the limit check's month: lib/tier-limits.ts counts from
+      // UTC midnight on the 1st (Owner decision on #899).
+      const monthStart = utcToday.slice(0, 7) + '-01'; // YYYY-MM-01
 
       const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes, outstandingInvCountRes, webBookingsRes, monthlyOrdersRes] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
@@ -433,7 +412,7 @@ export default function DashboardOverview() {
       {/* Stats */}
       <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
-          label={`Total ${labels.entityNamePlural}`}
+          label={`Total ${bookingsLabel}`}
           value={stats.totalBookings}
           icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
           color="brand"
@@ -448,13 +427,13 @@ export default function DashboardOverview() {
           />
         )}
         <StatCard
-          label={`Today's ${labels.entityNamePlural}`}
+          label={`${bookingsLabel.charAt(0).toUpperCase()}${bookingsLabel.slice(1)} scheduled today`}
           value={stats.todayBookings}
           icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
           color="blue"
         />
         <StatCard
-          label={`Pending ${labels.entityNamePlural}`}
+          label={`Pending ${bookingsLabel}`}
           value={stats.pendingBookings}
           icon="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
           color="amber"
@@ -470,9 +449,8 @@ export default function DashboardOverview() {
         )}
         {(hasCapability('payment') || hasCapability('ticketing') || hasCapability('crowdfunding')) && (
           <StatCard
-            label={hasCapability('ordering') && orderRevenue > 0
-              ? (labels.quantityLabel === 'amount' ? 'Giving Revenue' : `${labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1)} Revenue`)
-              : 'Revenue'}
+            // get_business_revenue sums every paid transaction, orders included (#899).
+            label={hasCapability('ordering') && orderRevenue > 0 ? 'Total revenue' : 'Revenue'}
             value={formatCurrency(stats.totalRevenue, country)}
             icon="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             color="green"
@@ -516,7 +494,7 @@ export default function DashboardOverview() {
       {(business.subscription_tier === 'free' || business.subscription_tier === 'growth') && (
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <UsageBar
-            label={`${labels.entityNamePlural} this month`}
+            label={`${bookingsLabel} this month`}
             current={monthlyBookings}
             limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.bookings ?? 50}
           />
@@ -569,6 +547,7 @@ export default function DashboardOverview() {
                     </button>
                   </div>
                 )}
+                <DirectWhatsAppLink businessId={business.id} />
               </div>
             )}
           </div>
@@ -614,7 +593,7 @@ export default function DashboardOverview() {
               className="mt-4 flex items-center gap-5 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 transition hover:border-brand/20 hover:shadow-sm"
             >
               <div className="shrink-0 rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-2">
-                <QRCodeCanvas value={whatsappLink} size={80} level="H" />
+                <QRCodeCanvas value={qrLink} size={80} level="H" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Your QR Code</p>
@@ -769,7 +748,7 @@ export default function DashboardOverview() {
       <div className="mt-8">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-            Recent {labels.entityNamePlural}
+            Recent {bookingsLabel}
           </h2>
           {recent.length > 0 && (
             <Link

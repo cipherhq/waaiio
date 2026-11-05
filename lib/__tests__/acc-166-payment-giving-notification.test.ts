@@ -161,7 +161,7 @@ const pay = { id: 'p1', amount: 50, booking_id: 'bk1', invoice_id: null, campaig
 const mockSender = { sendText: vi.fn().mockResolvedValue(undefined) };
 
 function setResolved(yes: boolean) {
-  const r = yes ? { sender: mockSender } : null;
+  const r = yes ? { channel: { id: 'ch-shared', channel_type: 'shared' }, sender: mockSender } : null;
   mockResolveByChannel.mockResolvedValue(r);
   mockResolveByBiz.mockResolvedValue(r);
 }

@@ -1,3 +1,4 @@
+import { adminApiGet } from '@/lib/adminApi';
 import { useEffect, useState, useRef } from 'react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
@@ -145,6 +146,20 @@ export default function Verification() {
   const totalPages = Math.max(1, Math.ceil(filteredRequests.length / perPage));
   const pageItems = filteredRequests.slice((page - 1) * perPage, page * perPage);
 
+
+  async function viewDocument(id: string) {
+    const tab = window.open('about:blank', '_blank');
+    if (tab) tab.opener = null;
+    try {
+      const response = await adminApiGet(`/api/admin/verification/document?id=${encodeURIComponent(id)}`);
+      if (!response.ok) throw new Error('Document unavailable');
+      const { url } = await response.json();
+      if (tab) tab.location.href = url;
+    } catch {
+      tab?.close();
+      setMessage('Document unavailable. Please try again.');
+    }
+  }
 
   function cancelReview() {
     operationRef.current = null;
@@ -391,15 +406,13 @@ export default function Verification() {
                       </div>
                       <div className="flex items-center gap-2">
                         <StatusBadge status={doc.status} />
-                        <a
-                          href={doc.file_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
                           className="text-xs text-brand hover:underline"
-                          onClick={e => e.stopPropagation()}
+                          onClick={e => { e.stopPropagation(); void viewDocument(doc.id); }}
                         >
                           View
-                        </a>
+                        </button>
                       </div>
                     </div>
                   ))}

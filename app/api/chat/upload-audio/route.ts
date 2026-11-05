@@ -55,7 +55,8 @@ export async function POST(request: NextRequest) {
     .replace(/[^a-zA-Z0-9.\-_]/g, '_')
     .slice(0, 100) || 'file';
   const ext = file.type.includes('webm') ? 'webm' : file.type.includes('ogg') ? 'ogg' : file.type.includes('mp4') ? 'mp4' : 'mp3';
-  const path = `chat-audio/${businessId}/${Date.now()}-${safeName}.${ext}`;
+  // Path must start with business_id — storage RLS checks (foldername(name))[1] = business_id
+  const path = `${businessId}/chat-audio/${Date.now()}-${safeName}.${ext}`;
 
   // Validate magic bytes — reject files whose content doesn't match claimed type
   const buffer = Buffer.from(await file.arrayBuffer());

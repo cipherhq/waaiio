@@ -1,0 +1,147 @@
+{
+ "migration": {
+  "path": "supabase/migrations/508_business_control_columns_guard.sql",
+  "ledger_name": "508_business_control_columns_guard",
+  "sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+ },
+ "catalog": {
+  "staging": {
+   "patches": [
+    {
+     "identity": "function:public.guard_server_managed_columns()",
+     "operation": "fields",
+     "fields": {
+      "body_sha256": "34f897ff11e41bdad50c16b546e871da3b592c3de608b27ecf555785fe14528e"
+     },
+     "before": {
+      "body_sha256": [
+       "1ccbfd4c4f68d5ae1685b197e84ac8d4ed37b657759fafcd93bd54ef7471743f"
+      ]
+     },
+     "source_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+    },
+    {
+     "identity": "function:public.guard_business_insert()",
+     "operation": "add",
+     "value": {
+      "acl": [
+       {
+        "grantee": "postgres",
+        "grantor": "postgres",
+        "grantable": false,
+        "privilege": "EXECUTE"
+       },
+       {
+        "grantee": "service_role",
+        "grantor": "postgres",
+        "grantable": false,
+        "privilege": "EXECUTE"
+       }
+      ],
+      "kind": "f",
+      "owner": "postgres",
+      "config": [
+       "search_path=public, pg_temp"
+      ],
+      "strict": false,
+      "definer": false,
+      "returns": "trigger",
+      "language": "plpgsql",
+      "parallel": "u",
+      "arguments": "",
+      "leakproof": false,
+      "volatility": "v",
+      "body_sha256": "1037faef6ee0afadda73e45d48dfcf220a5352d2bd9545fe2c4efb72c55c6c40"
+     },
+     "source_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+    },
+    {
+     "identity": "trigger:public.businesses.trg_guard_business_insert",
+     "operation": "add",
+     "value": {
+      "enabled": "O",
+      "definition": "CREATE TRIGGER trg_guard_business_insert BEFORE INSERT ON businesses FOR EACH ROW EXECUTE FUNCTION guard_business_insert()"
+     },
+     "source_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+    }
+   ],
+   "required_before": [
+    "function:public.guard_server_managed_columns()"
+   ],
+   "required_after": [
+    "function:public.guard_server_managed_columns()",
+    "function:public.guard_business_insert()",
+    "trigger:public.businesses.trg_guard_business_insert"
+   ]
+  },
+  "production": {
+   "patches": [
+    {
+     "identity": "function:public.guard_server_managed_columns()",
+     "operation": "fields",
+     "fields": {
+      "body_sha256": "34f897ff11e41bdad50c16b546e871da3b592c3de608b27ecf555785fe14528e"
+     },
+     "before": {
+      "body_sha256": [
+       "1ccbfd4c4f68d5ae1685b197e84ac8d4ed37b657759fafcd93bd54ef7471743f"
+      ]
+     },
+     "source_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+    },
+    {
+     "identity": "function:public.guard_business_insert()",
+     "operation": "add",
+     "value": {
+      "acl": [
+       {
+        "grantee": "postgres",
+        "grantor": "postgres",
+        "grantable": false,
+        "privilege": "EXECUTE"
+       },
+       {
+        "grantee": "service_role",
+        "grantor": "postgres",
+        "grantable": false,
+        "privilege": "EXECUTE"
+       }
+      ],
+      "kind": "f",
+      "owner": "postgres",
+      "config": [
+       "search_path=public, pg_temp"
+      ],
+      "strict": false,
+      "definer": false,
+      "returns": "trigger",
+      "language": "plpgsql",
+      "parallel": "u",
+      "arguments": "",
+      "leakproof": false,
+      "volatility": "v",
+      "body_sha256": "1037faef6ee0afadda73e45d48dfcf220a5352d2bd9545fe2c4efb72c55c6c40"
+     },
+     "source_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+    },
+    {
+     "identity": "trigger:public.businesses.trg_guard_business_insert",
+     "operation": "add",
+     "value": {
+      "enabled": "O",
+      "definition": "CREATE TRIGGER trg_guard_business_insert BEFORE INSERT ON businesses FOR EACH ROW EXECUTE FUNCTION guard_business_insert()"
+     },
+     "source_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11"
+    }
+   ],
+   "required_before": [
+    "function:public.guard_server_managed_columns()"
+   ],
+   "required_after": [
+    "function:public.guard_server_managed_columns()",
+    "function:public.guard_business_insert()",
+    "trigger:public.businesses.trg_guard_business_insert"
+   ]
+  }
+ }
+}

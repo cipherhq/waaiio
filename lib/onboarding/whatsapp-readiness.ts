@@ -1,3 +1,4 @@
+import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 /** Read-only WhatsApp allocation readiness for admin assistance.
  * Never infer readiness from countries.is_active or a requested onboarding method.
  * Treat unrecognized channel types as pending, not an implicit platform fallback.
@@ -107,6 +108,41 @@ export interface SharedChannelAllocationResult {
   idempotent?: boolean;
   repaired?: boolean;
   reason?: string;
+  unavailable?: true;
+}
+
+/**
+ * M507 first assignment: gives a business that has NO channel its own country's
+ * active shared number (approved GH -> NG fallback only). The database function
+ * locks the business, never replaces an existing assignment and refuses any
+ * business with other channel authority. Country comes from the business row.
+ */
+export async function assignFirstSharedChannel(
+  service: SupabaseClient,
+  businessId: string,
+): Promise<{ data: SharedChannelAllocationResult | null; error: { message: string } | null }> {
+  if (!firstSharedAssignmentEnabled()) {
+    return { data: { allocated: false, unavailable: true, reason: CHANNEL_OPERATIONS_UNAVAILABLE.code }, error: null };
+  }
+  const { data, error } = await service.rpc('assign_first_shared_channel', { p_business_id: businessId });
+  if (error) return { data: null, error };
+  const result = (data ?? null) as SharedChannelAllocationResult | null;
+  return { data: result ?? { allocated: false, reason: 'empty_rpc_response' }, error: null };
+}
+
+/**
+ * Shared-number allocation for a newly created business. The broad, certified
+ * M430 path is used only where channel operations are enabled (staging);
+ * otherwise the narrow M507 first assignment is used. Neither enabled means
+ * unavailable, exactly as before.
+ */
+export async function allocateSharedChannelForNewBusiness(
+  service: SupabaseClient,
+  businessId: string,
+  businessCountry: string | null | undefined,
+): Promise<{ data: SharedChannelAllocationResult | null; error: { message: string } | null }> {
+  if (channelOperationsEnabled()) return allocateSharedChannelWithFallback(service, businessId, businessCountry);
+  return assignFirstSharedChannel(service, businessId);
 }
 
 /**
@@ -126,6 +162,7 @@ export async function allocateSharedChannelWithFallback(
   businessCountry: string | null | undefined,
   options?: { repairStaleSharedChannel?: boolean },
 ): Promise<{ data: SharedChannelAllocationResult | null; error: { message: string } | null }> {
+  if (!channelOperationsEnabled()) return { data: { allocated: false, unavailable: true, reason: CHANNEL_OPERATIONS_UNAVAILABLE.code }, error: null };
   if (!businessCountry) {
     return {
       data: { allocated: false, reason: 'missing_business_country' },

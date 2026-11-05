@@ -141,4 +141,27 @@ describe('actual seating HTTP handlers #762', () => {
     expect(await readGuest()).toMatchObject({ seating_group_id: null, table_id: table, seating_pinned: true });
   });
 
+  // #874 (T9): tags and table reservations flow through preview and commit.
+  it('previews with tags and reservations and refuses a commit after a tag change', async () => {
+    const other = '00000000-0000-4000-a762-000000000005';
+    snapshot.tables = [{ id: table, name: 'One', capacity: 1, reserved_tag: 'Family' }, { id: other, name: 'Two', capacity: 1, reserved_tag: null }];
+    snapshot.guests[0].tags = ['Family'];
+    const p = await (await post({ op: 'preview', seed: 3 })).json();
+    expect(p.snapshot.tables[0].reserved_tag).toBe('Family');
+    expect(p.plan.assignments).toEqual([{ invite_id: invite, table_id: table }]);
+    expect(p.plan.warnings).toEqual([]);
+    snapshot = { ...snapshot, fingerprint: 'retagged', guests: [{ ...snapshot.guests[0], tags: [] }] };
+    const response = await post({ op: 'commit', seed: p.seed, fingerprint: p.snapshot.fingerprint, planHash: p.planHash, acknowledgePartial: false });
+    expect(response.status).toBe(409);
+    expect(mocks.rpc).not.toHaveBeenCalledWith('party_seating_486', expect.objectContaining({ p_operation: 'commit' }));
+  });
+  it('shows the reserved-table refusal from the database, and nothing else from 23514', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { code: '23514', message: "Table 1 is reserved for Groom's family" } });
+    const refused = await post({ op: 'manual', invite_id: invite, table_id: table });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).error).toBe("Table 1 is reserved for Groom's family.");
+    mocks.rpc.mockResolvedValue({ data: null, error: { code: '23514', message: 'Table capacity exceeded (2 attendees / 1 seats)' } });
+    expect((await (await post({ op: 'manual', invite_id: invite, table_id: table })).json()).error)
+      .toBe('Seating changed or conflicts with saved assignments. Refresh and review again.');
+  });
 });

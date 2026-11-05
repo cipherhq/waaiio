@@ -1213,7 +1213,8 @@ describe('Greeting key overrides — handleMessage path', () => {
     // The greeting is stored in session_data._greeting via the insert
     const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
     expect(sessionInsert).toBeDefined();
-    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    // The menu consumes _greeting; assert what the customer actually receives.
+    const greeting = sender.getMessages().map(m => m.text || m.body || '').join('\n');
     expect(greeting).toBeDefined();
 
     // Custom greeting used (not the default)
@@ -1246,8 +1247,9 @@ describe('Greeting key overrides — handleMessage path', () => {
 
     const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
     expect(sessionInsert).toBeDefined();
-    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
-    expect(greeting).toBeDefined();
+    // The menu consumes _greeting; assert what the customer actually receives.
+    const greeting = sender.getMessages().map(m => m.text || m.body || '').join('\n');
+    expect(greeting).toContain('Welcome! How can I help you today?');
     expect(greeting).not.toContain('Powered by');
   });
 
@@ -1353,7 +1355,8 @@ describe('Greeting key overrides — handleMessage path', () => {
     // Check the stored _greeting for pcm text
     const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
     expect(sessionInsert).toBeDefined();
-    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    // The menu consumes _greeting; assert what the customer actually receives.
+    const greeting = sender.getMessages().map(m => m.text || m.body || '').join('\n');
     if (greeting) {
       // If pcm was activated, the pcm cancel_hint override should be used
       const hasPcmHint = greeting.includes('wey you wan stop');
@@ -1433,7 +1436,8 @@ describe('Greeting key overrides — handleMessage path', () => {
 
     const sessionInsert = insertTracker.find(i => i.table === 'bot_sessions');
     expect(sessionInsert).toBeDefined();
-    const greeting = (sessionInsert!.data.session_data as Record<string, unknown>)?._greeting as string;
+    // The menu consumes _greeting; assert what the customer actually receives.
+    const greeting = sender.getMessages().map(m => m.text || m.body || '').join('\n');
     expect(greeting).toBeDefined();
 
     // Default cancel hint from FLOW_COPY.en

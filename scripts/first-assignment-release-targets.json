@@ -1,0 +1,58 @@
+{
+  "merchant": {
+    "baseline_sha": "5e3204d9334e171bce3475fffa179d5d23f4cc1d",
+    "target_sha": "73377818e16b02bdcbc2b8251445354b2e26877c",
+    "target_tree": "208b1ba83474b3361ab1b01b1681476e22e8e3db",
+    "blobs": {
+      ".github/workflows/ci.yml": "b073d5f4a8ff01e53d84ce65fd052d9a10a3f46db94f91f848dbcd654a8caa74",
+      "CHANGELOG.md": "05789cb695f3c25a6e0013c51e9a8f943928acc2d1fb33f891ff81c8171ca2f7",
+      "app/(marketing)/pricing/layout.tsx": "18889786f029b82a385d682a89c965880b0a5616e5ace18c717b82a3b5a95063",
+      "app/(marketing)/pricing/page.tsx": "8ab67507f60a744d8b4029974323937c9c46d7aeb976f57db813fba64e41a04f",
+      "app/api/onboarding/verify/route.ts": "c00757d1a40e1ad453b2b57f8453731e837f48ac4b36890060b700a4f71deea7",
+      "app/api/whatsapp/flow-callback/onboarding.ts": "49e49a199f7821ca183d2f67303ebf22733f25d59021de4897911171e33222b2",
+      "components/marketing/Footer.tsx": "80046c7a187a98e5a2f4d7453e05e27e35fd777a2f7241b958d57097ea0fa035",
+      "docs/POSTLAUNCH_APP_ONLY_RELEASE.md": "949f5c5f645a9e01a7e014918955d151c4da20ff8579b517e32218abedc920a5",
+      "lib/__tests__/first-shared-assignment-507.pg.test.ts": "cf15ea1301c22265ec3ccd409e3ede0e4714c10d9a7ec472ec5c14c2b4af178e",
+      "lib/__tests__/first-shared-assignment-admission.test.ts": "951479b5850ca0b12392df07ef56cc221b007d8bc65b5f7461cdb73e3f541091",
+      "lib/__tests__/hide-inactive-countries-marketing.test.tsx": "ff3f53ab8515f39f26a80fd70748674fdb089ac5cf43d77228dc4011f30d2346",
+      "lib/__tests__/onboarding-655-flow-callback-fallback.test.ts": "b93be53b9d027d6e35e930eacf751420ec59ee06bb630cab584bffa7edebc05d",
+      "lib/channels/operation-admission.ts": "244cec2a44877ff8451cf4134a24d17a0f1536402e67efd62466727369fcaea0",
+      "lib/onboarding/provision-business.ts": "686399e217fdcf298d37551ca3f4f0bc8d34be20dbf16d7c39ee800f8557dafd",
+      "lib/onboarding/whatsapp-readiness.ts": "b0bcadcebc0ea9b845a94020ba8ce2450b5ba9477e28aec8970520482f9e6724",
+      "public/llms.txt": "57b56578831049d8f36297162aa98c19a8e9d45d4c7bc6462012461de8b9b76e",
+      "scripts/__tests__/postlaunch-release-policy.test.ts": "eadb9c51f4f6293a4cc51720abc396a5007e9768f080697251266bb3b8548266",
+      "scripts/postlaunch-release-policy.mjs": "f1b11d79907c21eac3c488838c52c51ed1bd916c02dd8a4fc2930892b7fe2c63",
+      "scripts/postlaunch-release-targets.json": "76655fd8d3254eb8b90d8029b551c754c63345ec61f1ac9067d52bfbe233e6df",
+      "supabase/migrations/507_first_shared_channel_assignment.sql": "6abe3edbb59371cdbc72939d74b9c3610bebcdc3ab20ac9443b8c60d830dbd5e"
+    },
+    "deleted_blobs": {}
+  },
+  "admin": {
+    "baseline_sha": "5e3204d9334e171bce3475fffa179d5d23f4cc1d",
+    "target_sha": "73377818e16b02bdcbc2b8251445354b2e26877c",
+    "target_tree": "208b1ba83474b3361ab1b01b1681476e22e8e3db",
+    "blobs": {
+      ".github/workflows/ci.yml": "b073d5f4a8ff01e53d84ce65fd052d9a10a3f46db94f91f848dbcd654a8caa74",
+      "CHANGELOG.md": "05789cb695f3c25a6e0013c51e9a8f943928acc2d1fb33f891ff81c8171ca2f7",
+      "app/(marketing)/pricing/layout.tsx": "18889786f029b82a385d682a89c965880b0a5616e5ace18c717b82a3b5a95063",
+      "app/(marketing)/pricing/page.tsx": "8ab67507f60a744d8b4029974323937c9c46d7aeb976f57db813fba64e41a04f",
+      "app/api/onboarding/verify/route.ts": "c00757d1a40e1ad453b2b57f8453731e837f48ac4b36890060b700a4f71deea7",
+      "app/api/whatsapp/flow-callback/onboarding.ts": "49e49a199f7821ca183d2f67303ebf22733f25d59021de4897911171e33222b2",
+      "components/marketing/Footer.tsx": "80046c7a187a98e5a2f4d7453e05e27e35fd777a2f7241b958d57097ea0fa035",
+      "docs/POSTLAUNCH_APP_ONLY_RELEASE.md": "949f5c5f645a9e01a7e014918955d151c4da20ff8579b517e32218abedc920a5",
+      "lib/__tests__/first-shared-assignment-507.pg.test.ts": "cf15ea1301c22265ec3ccd409e3ede0e4714c10d9a7ec472ec5c14c2b4af178e",
+      "lib/__tests__/first-shared-assignment-admission.test.ts": "951479b5850ca0b12392df07ef56cc221b007d8bc65b5f7461cdb73e3f541091",
+      "lib/__tests__/hide-inactive-countries-marketing.test.tsx": "ff3f53ab8515f39f26a80fd70748674fdb089ac5cf43d77228dc4011f30d2346",
+      "lib/__tests__/onboarding-655-flow-callback-fallback.test.ts": "b93be53b9d027d6e35e930eacf751420ec59ee06bb630cab584bffa7edebc05d",
+      "lib/channels/operation-admission.ts": "244cec2a44877ff8451cf4134a24d17a0f1536402e67efd62466727369fcaea0",
+      "lib/onboarding/provision-business.ts": "686399e217fdcf298d37551ca3f4f0bc8d34be20dbf16d7c39ee800f8557dafd",
+      "lib/onboarding/whatsapp-readiness.ts": "b0bcadcebc0ea9b845a94020ba8ce2450b5ba9477e28aec8970520482f9e6724",
+      "public/llms.txt": "57b56578831049d8f36297162aa98c19a8e9d45d4c7bc6462012461de8b9b76e",
+      "scripts/__tests__/postlaunch-release-policy.test.ts": "eadb9c51f4f6293a4cc51720abc396a5007e9768f080697251266bb3b8548266",
+      "scripts/postlaunch-release-policy.mjs": "f1b11d79907c21eac3c488838c52c51ed1bd916c02dd8a4fc2930892b7fe2c63",
+      "scripts/postlaunch-release-targets.json": "76655fd8d3254eb8b90d8029b551c754c63345ec61f1ac9067d52bfbe233e6df",
+      "supabase/migrations/507_first_shared_channel_assignment.sql": "6abe3edbb59371cdbc72939d74b9c3610bebcdc3ab20ac9443b8c60d830dbd5e"
+    },
+    "deleted_blobs": {}
+  }
+}

@@ -18,6 +18,7 @@ interface PayoutRecord {
   business_id: string;
   business_name?: string;
   country_code?: string;
+  currency?: string | null;
   payout_account_id: string | null;
   period_start: string;
   period_end: string;
@@ -252,7 +253,7 @@ export default function Payouts() {
         actionType: 'payout_approve',
         targetId: approveTarget.id,
         params: { transfer_method: transferMethod, reference: transferRef || null, notes: approveNotes || null },
-        description: `Approve payout for ${approveTarget.business_name} — ${formatMoney(approveTarget.net_amount, approveTarget.country_code)}`,
+        description: `Approve payout for ${approveTarget.business_name} — ${formatMoney(approveTarget.net_amount, approveTarget.country_code, approveTarget.currency)}`,
         onAuthorized,
       });
     } catch (error) {
@@ -308,7 +309,7 @@ export default function Payouts() {
         actionType: 'payout_reject',
         targetId: rejectTarget.id,
         params: { reason: rejectReason },
-        description: `Reject payout for ${rejectTarget.business_name} — ${formatMoney(rejectTarget.net_amount, rejectTarget.country_code)}`,
+        description: `Reject payout for ${rejectTarget.business_name} — ${formatMoney(rejectTarget.net_amount, rejectTarget.country_code, rejectTarget.currency)}`,
         onAuthorized,
       });
     } catch (error) {
@@ -371,7 +372,7 @@ export default function Payouts() {
         actionType: 'payout_confirm_settlement',
         targetId: confirmTarget.id,
         params: { transfer_reference: confirmRef.trim(), attestation: true },
-        description: `Confirm settlement for ${confirmTarget.business_name} — ${formatMoney(confirmTarget.net_amount, confirmTarget.country_code)}`,
+        description: `Confirm settlement for ${confirmTarget.business_name} — ${formatMoney(confirmTarget.net_amount, confirmTarget.country_code, confirmTarget.currency)}`,
         onAuthorized,
       });
     } catch (error) {
@@ -414,8 +415,13 @@ export default function Payouts() {
         }
 
         const msg = [
+          data.error || data.message || null,
           `Created: ${data.created} payout(s)`,
           data.held ? `Held: ${data.held} (flagged for review)` : null,
+          data.failed ? `Failed: ${data.failed} payout(s)` : null,
+          data.skipped ? `Skipped: ${data.skipped}` : null,
+          Array.isArray(data.needs_attention) && data.needs_attention.length > 0
+            ? `Needs review (payout IDs): ${data.needs_attention.join(', ')}` : null,
           data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
         ].filter(Boolean).join('\n');
         alert(msg);
@@ -610,10 +616,10 @@ export default function Payouts() {
                   <td className="px-4 py-3 text-gray-600">
                     {formatDate(p.period_start)} - {formatDate(p.period_end)}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-900">{formatMoney(p.gross_amount, p.country_code)}</td>
-                  <td className="px-4 py-3 text-right text-gray-500">{formatMoney(p.platform_fee, p.country_code)}</td>
-                  <td className="px-4 py-3 text-right text-orange-500">{formatMoney(p.gateway_fee, p.country_code)}</td>
-                  <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(p.net_amount, p.country_code)}</td>
+                  <td className="px-4 py-3 text-right text-gray-900">{formatMoney(p.gross_amount, p.country_code, p.currency)}</td>
+                  <td className="px-4 py-3 text-right text-gray-500">{formatMoney(p.platform_fee, p.country_code, p.currency)}</td>
+                  <td className="px-4 py-3 text-right text-orange-500">{formatMoney(p.gateway_fee, p.country_code, p.currency)}</td>
+                  <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(p.net_amount, p.country_code, p.currency)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[p.status] || 'bg-gray-100 text-gray-600'}`}>
                       {p.status === 'processing' && (
@@ -682,7 +688,7 @@ export default function Payouts() {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Approve Payout</h3>
             <p className="mt-1 text-sm text-gray-500">
-              {approveTarget.business_name} — {formatMoney(approveTarget.net_amount, approveTarget.country_code)}
+              {approveTarget.business_name} — {formatMoney(approveTarget.net_amount, approveTarget.country_code, approveTarget.currency)}
             </p>
 
             {/* Destination Account Info */}
@@ -778,7 +784,7 @@ export default function Payouts() {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Reject Payout</h3>
             <p className="mt-1 text-sm text-gray-500">
-              {rejectTarget.business_name} — {formatMoney(rejectTarget.net_amount, rejectTarget.country_code)}
+              {rejectTarget.business_name} — {formatMoney(rejectTarget.net_amount, rejectTarget.country_code, rejectTarget.currency)}
             </p>
 
             <div className="mt-4">
@@ -817,7 +823,7 @@ export default function Payouts() {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Confirm Bank Transfer Settlement</h3>
             <p className="mt-1 text-sm text-gray-500">
-              {confirmTarget.business_name} — {formatMoney(confirmTarget.net_amount, confirmTarget.country_code)}
+              {confirmTarget.business_name} — {formatMoney(confirmTarget.net_amount, confirmTarget.country_code, confirmTarget.currency)}
             </p>
 
             {confirmError && (
@@ -917,9 +923,12 @@ const CURRENCY_MAP_FALLBACK: Record<string, { code: string; locale: string }> = 
   ZA: { code: 'ZAR', locale: 'en-ZA' },
 };
 
-function formatMoney(amount: number, countryCode?: string): string {
+function formatMoney(amount: number, countryCode?: string, currency?: string | null): string {
+  if (!currency || !/^[A-Z]{3}$/.test(currency)) {
+    return `${new Intl.NumberFormat('en').format(amount)} (currency unknown)`;
+  }
   const detailMap = getCountryCurrencyDetailMap();
   const cc = detailMap[countryCode || 'NG'] || CURRENCY_MAP_FALLBACK[countryCode || 'NG'] || CURRENCY_MAP_FALLBACK.NG;
-  const fractionDigits = ['NGN', 'GHS', 'KES'].includes(cc.code) ? 0 : 2;
-  return new Intl.NumberFormat(cc.locale, { style: 'currency', currency: cc.code, minimumFractionDigits: fractionDigits }).format(amount);
+  const fractionDigits = ['NGN', 'GHS', 'KES'].includes(currency) ? 0 : 2;
+  return new Intl.NumberFormat(cc.locale, { style: 'currency', currency, currencyDisplay: 'code', minimumFractionDigits: fractionDigits }).format(amount);
 }

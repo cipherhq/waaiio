@@ -48,6 +48,7 @@ vi.mock('@/lib/channels/channel-resolver', () => {
   const MockChannelResolver = class {
     resolveByChannelId = vi.fn().mockResolvedValue(null);
     resolveByBusinessId = vi.fn().mockResolvedValue({
+      channel: { id: 'ch-dedicated', channel_type: 'dedicated' },
       sender: {
         sendText: vi.fn().mockResolvedValue(undefined),
         sendDocument: vi.fn().mockResolvedValue(undefined),

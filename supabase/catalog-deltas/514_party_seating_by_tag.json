@@ -1,0 +1,251 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.event_invites.answer_tag",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.party_tables.reserved_tag",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (reserved_tag IS NULL OR reserved_tag = btrim(reserved_tag) AND length(reserved_tag) >= 1 AND length(reserved_tag) <= 100)",
+    "validated": true
+   },
+   "after_sha256": "6a09c5196afb164e46ad3972032700f140a5a4eee90fcb25c20685c2c010c21b",
+   "identity": "constraint:public.party_tables.party_tables_reserved_tag_514",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "320d32ce79402871ddbb5519535c5672388b8953f6f795de6106d05e37b60191",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "e362a440391f92c90d1bedd4f297b77b09cee44023192d8ff31ab29e89d3081c",
+   "identity": "function:private.party_answer_tag_514()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "defs jsonb, answers jsonb, tags text[], answer_tag text, pinned boolean, OUT next_tags text[], OUT next_answer_tag text",
+    "body_sha256": "8736d38209441fe4ffea770accbb0b69b94bbcf7b9f25a13945cf38f75823060",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "record",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "1a00189502fedbca2ed5bab1814cf3434cdfc80a016a29f227e4da94aaf82704",
+   "identity": "function:private.party_answer_tags_514(defs jsonb, answers jsonb, tags text[], answer_tag text, pinned boolean, OUT next_tags text[], OUT next_answer_tag text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_party uuid, p_actor uuid, p_payload jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "75441a0618f888e2d3cef3de4bb23b04d8b697c9a6f305f4ff694a511994eae0",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "a2f60b949ac98eff99035f271793b3ef632fbb2bc82e1c7d26146be7821b05a4",
+   "identity": "function:private.party_questions_489(p_party uuid, p_actor uuid, p_payload jsonb)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "911f10f493b608cf7f28d5e32d100ce90e2fb2f4ec5724d9e71e3c5bb50cf960",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "ab063b04158bd669be9da2bad51befb6aa692b820ecb6ad241d7dd60d92c2f43",
+   "identity": "function:private.party_reserved_table_514()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "defs jsonb",
+    "body_sha256": "12822d8f1106e4fe90ad6f0b45f5d95808491f01850c6693ab38329f3857b0a0",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "void",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "a3c98a23297571ee72364c4ddc29020d80240323996b97f71add7e7c38adf330",
+   "identity": "function:private.validate_party_questions_489(defs jsonb)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_party uuid",
+    "body_sha256": "209e333a3a7cae40882393d6ae305b7c471e79327546297835c2b8985f3b212f",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b11249a139c521d3eeed179f0870f927fbc3ab9702a25b76cbfec73f4852b592",
+   "identity": "function:public.party_seating_snapshot_486(p_party uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER party_answer_tag_514 BEFORE INSERT OR UPDATE OF custom_answers, saved_question_snapshot, answer_tag ON event_invites FOR EACH ROW EXECUTE FUNCTION private.party_answer_tag_514()",
+    "enabled": "O"
+   },
+   "after_sha256": "95f64b94a101a4583856914514c3fdfec27366c0b30df4211ee452e448649388",
+   "identity": "trigger:public.event_invites.party_answer_tag_514",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER party_reserved_table_514 BEFORE INSERT OR UPDATE OF table_id ON event_invites FOR EACH ROW EXECUTE FUNCTION private.party_reserved_table_514()",
+    "enabled": "O"
+   },
+   "after_sha256": "aae2ee3f8abd7ca1c1da4a16f7975c00aae7aa090e48811e00eb55c162e00f0b",
+   "identity": "trigger:public.event_invites.party_reserved_table_514",
+   "operation": "add"
+  }
+ ],
+ "migration": "514_party_seating_by_tag.sql",
+ "migration_sha256": "d787ee1abaacccebf3e101ef1a2ef99dc3d68316a33bae3814eb1a91763ffffd",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}

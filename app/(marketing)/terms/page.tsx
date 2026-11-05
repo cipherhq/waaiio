@@ -129,7 +129,7 @@ export default function TermsOfServicePage() {
                 refund due to a service deficiency, you may contact{' '}
                 <a href="mailto:billing@waaiio.com" className="text-brand underline">billing@waaiio.com</a>{' '}
                 within 14 days of the charge. Refund requests will be evaluated on a case-by-case basis.
-                Transaction fees earned on processed payments are non-refundable.
+                For booking, order, and invoice payments handled by our refund workflow, a successfully processed full refund reverses the associated Waaiio platform fee; a partial refund reduces it proportionally, subject to rounding. Subscription refunds and third-party processing fees are treated separately under our Refund Policy.
               </p>
             </section>
 
