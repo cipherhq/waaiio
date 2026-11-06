@@ -37,7 +37,7 @@ vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class {
     async resolveByBusinessId(businessId: string) {
       if (!m.channel) return null;
-      return { channel: { id: `chan-${businessId}` }, cloud: { getTemplates: m.getTemplates }, sender: { sendText: m.text, sendTemplate: m.template } };
+      return { channel: { id: `chan-${businessId}`, channel_type: 'dedicated', business_id: businessId }, cloud: { getTemplates: m.getTemplates }, sender: { sendText: m.text, sendTemplate: m.template } };
     }
   },
 }));
@@ -138,6 +138,38 @@ describe('scheduling a form send', () => {
     m.user = { id: 'owner-b' };
     expect((await send(post({ formId: FORM, businessId: BIZ, phones: [P1], scheduledAt: inAnHour() }))).status).toBe(403);
     expect(m.db.tables.form_sends).toEqual([]);
+  });
+});
+
+describe('scheduling for people who messaged in the last 24 hours (Owner option C)', () => {
+  const receiptAt = (phone: string, at: string) => ({ channel_id: `chan-${BIZ}`, sender_phone: phone.slice(1), provider_timestamp: at });
+
+  it('accepts a window-only person at scheduling time and re-checks them when it sends', async () => {
+    m.db.tables.whatsapp_inbound_receipts.push(receiptAt(P3, new Date(Date.now() - 10 * 60_000).toISOString()));
+    const res = await send(post({ formId: FORM, businessId: BIZ, phones: [P1, P3], templateName: 'feedback_request', scheduledAt: inAnHour() }));
+    expect(await res.json()).toMatchObject({ scheduled: true, recipients: 2, skipped: 0 });
+    expect(sendRow().recipients).toEqual([P1, P3]);
+    // By send time P3's 24 hours have passed (their only message is now 25 hours old).
+    m.db.tables.whatsapp_inbound_receipts[0].provider_timestamp = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    makeDue();
+    await tick();
+    expect(sendRow().results).toEqual([
+      { phone: P1, status: 'sent', via: 'template' },
+      { phone: P3, status: 'skipped', reason: 'no_consent' },
+    ]);
+    // The template went only to the opted-in person; the window-only person got nothing.
+    expect(m.template).toHaveBeenCalledTimes(1);
+    expect(m.template.mock.calls[0][0].to).toBe(P1.slice(1));
+    expect(m.text).not.toHaveBeenCalled();
+  });
+
+  it('a window-only person whose window is still open at send time gets the text invite', async () => {
+    m.db.tables.whatsapp_inbound_receipts.push(receiptAt(P3, new Date(Date.now() - 10 * 60_000).toISOString()));
+    await send(post({ formId: FORM, businessId: BIZ, phones: [P3], templateName: 'feedback_request', scheduledAt: inAnHour() }));
+    makeDue();
+    await tick();
+    expect(sendRow().results).toEqual([{ phone: P3, status: 'sent', via: 'text' }]);
+    expect(m.template).not.toHaveBeenCalled();
   });
 });
 

@@ -7,6 +7,7 @@ import { isInviteCompatible, type InviteTemplateShape } from '@/lib/forms/invite
 const MAX_PER_SEND = 100;
 
 type Contact = { phone: string; name: string | null };
+type RecentChat = Contact & { lastMessageAt: string };
 type Segment = { id: string; name: string };
 type Template = { name: string; category: string };
 type Result =
@@ -16,7 +17,7 @@ type Result =
 const REASON_TEXT: Record<string, string> = {
   invalid_phone: 'Not a valid phone number',
   opted_out: 'Opted out of messages',
-  no_consent: 'Has not opted in to updates',
+  no_consent: 'Has not opted in, and has not messaged you in the last 24 hours',
   check_failed: 'Consent could not be checked',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
   stopped: 'Not sent: the send stopped early',
@@ -26,6 +27,15 @@ const REASON_TEXT: Record<string, string> = {
 };
 
 type Mode = 'contacts' | 'audience' | 'numbers';
+
+/** Time left in someone's 24-hour window, e.g. "5h 12m left". */
+function timeLeft(lastMessageAt: string): string {
+  const ms = Date.parse(lastMessageAt) + 24 * 60 * 60_000 - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return 'window closed';
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return h > 0 ? `${h}h ${m}m left` : `${m}m left`;
+}
 
 /** Earliest pickable time (2 minutes from now), in the datetime-local format. */
 function localMin(): string {
@@ -43,14 +53,18 @@ const STATUS_TEXT: Record<SendRow['status'], string> = {
 };
 
 /**
- * Send one form on WhatsApp. Only opted-in people receive it; everyone else is
- * skipped and the merchant sees why.
+ * Send one form on WhatsApp. Only opted-in people, or people who messaged the
+ * business in the last 24 hours, receive it; everyone else is skipped and the
+ * merchant sees why.
  */
 export function FormSendPanel({ businessId, formId, onClose }: { businessId: string; formId: string; onClose: () => void }) {
   const [mode, setMode] = useState<Mode>('contacts');
   const [contacts, setContacts] = useState<Contact[] | null>(null);
   const [contactsError, setContactsError] = useState('');
   const [truncated, setTruncated] = useState(false);
+  const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+  const [recentTruncated, setRecentTruncated] = useState(false);
+  const [recentUnavailable, setRecentUnavailable] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [segments, setSegments] = useState<Segment[] | null>(null);
   const [segmentId, setSegmentId] = useState('');
@@ -87,6 +101,8 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         if (!live) return;
         if (!r.ok) { setContactsError(data.error || 'Could not load opted-in contacts'); setContacts([]); return; }
         setContacts(data.contacts || []); setTruncated(!!data.truncated);
+        setRecentChats(data.recentChats || []); setRecentTruncated(!!data.recentChatsTruncated);
+        setRecentUnavailable(!!data.recentChatsUnavailable);
       })
       .catch(() => { if (live) { setContactsError('Could not load opted-in contacts'); setContacts([]); } });
     fetch(`/api/engage/segments?businessId=${encodeURIComponent(businessId)}`)
@@ -108,6 +124,31 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
   function toggle(phone: string) {
     setPicked(prev => { const next = new Set(prev); if (next.has(phone)) next.delete(phone); else next.add(phone); return next; });
   }
+  function pickAll(list: Contact[], on: boolean) {
+    setPicked(prev => { const next = new Set(prev); for (const c of list) { if (on) next.add(c.phone); else next.delete(c.phone); } return next; });
+  }
+  const allPicked = (list: Contact[]) => list.length > 0 && list.every(c => picked.has(c.phone));
+
+  /** One group of pickable people, with its own "select all". */
+  const group = (label: string, list: Array<Contact & { lastMessageAt?: string }>, more: boolean) => (
+    <div role="group" aria-label={label}>
+      <p className="mb-1 text-xs font-medium text-gray-700">{label}</p>
+      <label className="mb-1 flex items-center gap-2 text-xs text-gray-600">
+        <input type="checkbox" checked={allPicked(list)} onChange={e => pickAll(list, e.target.checked)} />
+        Select all ({list.length}){more ? ' — showing the first 500' : ''}
+      </label>
+      <div className="max-h-48 overflow-y-auto rounded border border-gray-200 bg-white">
+        {list.map(c => (
+          <label key={c.phone} className="flex items-center gap-2 border-b border-gray-50 px-3 py-1.5 text-xs">
+            <input type="checkbox" checked={picked.has(c.phone)} onChange={() => toggle(c.phone)} />
+            <span className="text-gray-900">{c.name || 'Contact'}</span>
+            <span className="text-gray-400">{c.phone}</span>
+            {c.lastMessageAt && <span className="ml-auto text-gray-400">{timeLeft(c.lastMessageAt)}</span>}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
 
   const typedNumbers = numbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
   const count = mode === 'contacts' ? picked.size : mode === 'numbers' ? typedNumbers.length : 0;
@@ -168,34 +209,28 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
       <p className="text-xs text-gray-500">
         Only people who opted in to updates from you will get this. Everyone else is skipped, and you’ll see why.
       </p>
+      <p className="text-xs text-gray-500">
+        People who messaged you in the last 24 hours can also get it, as a normal message, while those 24 hours last. After that they need to opt in first.
+      </p>
 
       <div className="flex flex-wrap gap-2">
-        {tab('contacts', 'Opted-in contacts')}
+        {tab('contacts', 'Contacts')}
         {tab('audience', 'Audience')}
         {tab('numbers', 'Type numbers')}
       </div>
 
       {mode === 'contacts' && (
-        <div>
+        <div className="space-y-3">
           {contacts === null ? <p className="text-xs text-gray-400">Loading contacts…</p>
             : contactsError ? <p role="alert" className="text-xs text-red-600">{contactsError}</p>
-            : contacts.length === 0 ? <p className="text-xs text-gray-500">No opted-in contacts yet. Only people with confirmed permission to receive updates on WhatsApp are listed here.</p>
             : (
               <>
-                <label className="mb-1 flex items-center gap-2 text-xs text-gray-600">
-                  <input type="checkbox" checked={picked.size === contacts.length}
-                    onChange={e => setPicked(e.target.checked ? new Set(contacts.map(c => c.phone)) : new Set())} />
-                  Select all ({contacts.length}){truncated ? ' — showing the first 500' : ''}
-                </label>
-                <div className="max-h-48 overflow-y-auto rounded border border-gray-200 bg-white">
-                  {contacts.map(c => (
-                    <label key={c.phone} className="flex items-center gap-2 border-b border-gray-50 px-3 py-1.5 text-xs">
-                      <input type="checkbox" checked={picked.has(c.phone)} onChange={() => toggle(c.phone)} />
-                      <span className="text-gray-900">{c.name || 'Contact'}</span>
-                      <span className="text-gray-400">{c.phone}</span>
-                    </label>
-                  ))}
-                </div>
+                {recentUnavailable
+                  ? <p className="text-xs text-gray-500">Could not load who messaged you in the last 24 hours. You can still type their numbers.</p>
+                  : recentChats.length > 0 && group('Messaged you in the last 24 hours (can get a form now)', recentChats, recentTruncated)}
+                {contacts.length === 0
+                  ? <p className="text-xs text-gray-500">No opted-in contacts yet. Only people with confirmed permission to receive updates on WhatsApp are listed here.</p>
+                  : group('Opted in to updates', contacts, truncated)}
               </>
             )}
         </div>
@@ -241,7 +276,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
           <div>
             <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} aria-label="Send at" min={localMin()}
               className="mt-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-            <p className="mt-1 text-xs text-gray-400">Uses your device’s time zone. Usually goes out within a few minutes of this time; busy times can take longer. Opt-ins are checked again when it sends.</p>
+            <p className="mt-1 text-xs text-gray-400">Uses your device’s time zone. Usually goes out within a few minutes of this time; busy times can take longer. Opt-ins are checked again when it sends, and people who only messaged you are skipped if their 24 hours have passed by then.</p>
           </div>
         )}
       </fieldset>

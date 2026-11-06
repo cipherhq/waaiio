@@ -1,13 +1,17 @@
 /**
  * Sending a web form invitation over WhatsApp (#591 contract, Owner chose "Build into Forms").
  *
- * Rules (RECIPIENT_POLICY): only people with recorded consent for this business are
- * messaged; opt-outs always win; a failed check means skip, never send. Inside a
- * verified 24-hour customer window the invite goes as text; outside it only an
- * approved template on the sending WABA may be used. Every recipient gets an honest
- * outcome: sent (accepted by WhatsApp), failed, or skipped with a reason.
+ * Rules (Owner option C, part A): opt-outs always win; a failed check means skip,
+ * never send. A person may get a form when either
+ *  (a) they have recorded consent for this business (RECIPIENT_POLICY), or
+ *  (b) they messaged THIS business on the sending channel in the last 24 hours.
+ * Inside a verified 24-hour customer window the invite goes as text. Outside it,
+ * only people with recorded consent may get an approved template; a person who is
+ * eligible only through (b) never gets a template, so a closed window means skip.
+ * Every recipient gets an honest outcome: sent (accepted by WhatsApp), failed, or
+ * skipped with a reason.
  *
- * Shared by the immediate send route and, later, the scheduled-send cron.
+ * Shared by the immediate send route and the scheduled-send cron.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
@@ -44,7 +48,7 @@ export interface InviteTemplate { name: string; category: 'marketing' | 'utility
 export const SKIP_REASON_TEXT: Record<SkipReason | FailReason, string> = {
   invalid_phone: 'Not a valid phone number',
   opted_out: 'Opted out of messages',
-  no_consent: 'Has not opted in to updates',
+  no_consent: 'Has not opted in, and has not messaged you in the last 24 hours',
   check_failed: 'Consent could not be checked',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
   stopped: 'Not sent: the send stopped early',
@@ -94,19 +98,38 @@ export function normalizeRecipients(raw: string[], countryCode: string): { phone
   return { phones: Array.from(phones), invalid: Array.from(invalid) };
 }
 
-/** Opt-out first (for a precise reason), then the shared permission helper (which re-checks it). */
-export async function classifyRecipient(db: SupabaseClient, businessId: string, e164: string): Promise<SkipReason | null> {
+/**
+ * Why a recipient may get a form. `window` means "eligible only because they
+ * messaged this business in the last 24 hours": such a person may get the free-text
+ * invite while that window is open, and never a template.
+ */
+export type RecipientEligibility =
+  | { eligible: true; basis: 'consent' | 'window' }
+  | { eligible: false; reason: SkipReason };
+
+/**
+ * Opt-out first (for a precise reason), then recorded consent (the shared
+ * permission helper, which re-checks opt-outs), then this business's own 24-hour
+ * window on the sending channel.
+ */
+export async function classifyRecipient(
+  db: SupabaseClient, businessId: string, e164: string, channel: SendingChannel | null | undefined, now = Date.now(),
+): Promise<RecipientEligibility> {
   const digits = e164.replace(/\D/g, '');
   try {
     const { count, error } = await db.from('messaging_opt_outs')
       .select('id', { count: 'exact', head: true }).in('phone', [digits, `+${digits}`])
       .or(`business_id.eq.${businessId},business_id.is.null`)
       .eq('channel', 'whatsapp').is('resubscribed_at', null);
-    if (error || count === null || count === undefined) return 'check_failed';
-    if (count > 0) return 'opted_out';
-  } catch { return 'check_failed'; }
-  return await hasRecipientPermission(db, businessId, e164, FORM_INVITE_PURPOSE) ? null : 'no_consent';
+    if (error || count === null || count === undefined) return { eligible: false, reason: 'check_failed' };
+    if (count > 0) return { eligible: false, reason: 'opted_out' };
+  } catch { return { eligible: false, reason: 'check_failed' }; }
+  if (await hasRecipientPermission(db, businessId, e164, FORM_INVITE_PURPOSE)) return { eligible: true, basis: 'consent' };
+  if (await hasBusinessChatWindow(db, businessId, channel, e164, now)) return { eligible: true, basis: 'window' };
+  return { eligible: false, reason: 'no_consent' };
 }
+
+export const WINDOW_MS = 24 * 60 * 60_000;
 
 /** Service-window evidence comes from the sending channel's inbound receipts, never a session row. */
 export async function hasServiceWindow(db: SupabaseClient, channelId: string | undefined, e164: string, now = Date.now()): Promise<boolean> {
@@ -114,11 +137,74 @@ export async function hasServiceWindow(db: SupabaseClient, channelId: string | u
   try {
     const { data, error } = await db.from('whatsapp_inbound_receipts').select('provider_timestamp')
       .eq('channel_id', channelId).eq('sender_phone', e164.replace(/\D/g, ''))
-      .gte('provider_timestamp', new Date(now - 24 * 60 * 60_000).toISOString())
+      .gte('provider_timestamp', new Date(now - WINDOW_MS).toISOString())
       .lte('provider_timestamp', new Date(now).toISOString())
       .order('provider_timestamp', { ascending: false }).limit(1).maybeSingle();
     return !error && !!data;
   } catch { return false; }
+}
+
+/** The fields of the sending channel that decide whose inbound messages it carries. */
+export type SendingChannel = { id?: string; channel_type?: string | null; business_id?: string | null };
+
+/**
+ * A dedicated number owned by this business carries only this business's chats.
+ * A shared number carries many businesses' chats, so its receipts alone never say
+ * which business a person messaged.
+ */
+export function isOwnChannel(channel: SendingChannel | null | undefined, businessId: string): boolean {
+  return !!channel?.id && channel.channel_type === 'dedicated' && channel.business_id === businessId;
+}
+
+type LogEntry = { role?: unknown; timestamp?: unknown };
+
+/** Newest customer message in a conversation log inside [since, now], or null. */
+export function latestCustomerMessageAt(log: unknown, since: number, now: number): number | null {
+  let latest: number | null = null;
+  for (const entry of Array.isArray(log) ? log as LogEntry[] : []) {
+    if (entry?.role !== 'user' || typeof entry.timestamp !== 'string') continue;
+    const t = Date.parse(entry.timestamp);
+    if (Number.isFinite(t) && t >= since && t <= now && (latest === null || t > latest)) latest = t;
+  }
+  return latest;
+}
+
+/**
+ * Business-scoped chat evidence on a SHARED number: a bot conversation of THIS
+ * business, opened on this channel, in which the bot processed a message from the
+ * customer in the last 24 hours. Only the signature-verified webhook pipeline
+ * writes these rows (merchants can only read them), and the shared-number router
+ * attaches a conversation to a business only after the customer picks it.
+ */
+export async function hasSharedChannelChat(
+  db: SupabaseClient, businessId: string, channelId: string, e164: string, now = Date.now(),
+): Promise<boolean> {
+  const digits = e164.replace(/\D/g, '');
+  const since = now - WINDOW_MS;
+  try {
+    const { data, error } = await db.from('bot_sessions').select('conversation_log')
+      .eq('business_id', businessId).in('whatsapp_number', [digits, `+${digits}`])
+      .eq('session_data->>_inbound_channel_id', channelId)
+      .gte('updated_at', new Date(since).toISOString())
+      .order('updated_at', { ascending: false }).limit(20);
+    if (error || !data) return false;
+    return data.some(row => latestCustomerMessageAt((row as { conversation_log?: unknown }).conversation_log, since, now) !== null);
+  } catch { return false; }
+}
+
+/**
+ * Has this person messaged THIS business on the sending channel in the last 24
+ * hours? Always needs a provider receipt on that channel (the WhatsApp window).
+ * On a shared number it also needs business-scoped chat evidence, so one business
+ * can never use another business's conversation to reach that person.
+ */
+export async function hasBusinessChatWindow(
+  db: SupabaseClient, businessId: string, channel: SendingChannel | null | undefined, e164: string, now = Date.now(),
+): Promise<boolean> {
+  if (!channel?.id) return false;
+  if (!await hasServiceWindow(db, channel.id, e164, now)) return false;
+  if (isOwnChannel(channel, businessId)) return true;
+  return hasSharedChannelChat(db, businessId, channel.id, e164, now);
 }
 
 const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
@@ -148,14 +234,26 @@ export async function loadInviteTemplate(resolved: ResolvedChannel, name: string
   return null;
 }
 
-/** Send to one recipient that already passed classifyRecipient. Never throws. */
+/**
+ * Send to one recipient that already passed classifyRecipient. Never throws.
+ * `eligibility` is required, so a template can only go to someone with recorded
+ * consent: a window-only person gets the text invite while this business's window
+ * is still open, and is skipped once it has closed.
+ */
 export async function deliverInvite(opts: {
   db: SupabaseClient; resolved: ResolvedChannel; businessId: string; businessName: string;
   form: InviteForm; template: InviteTemplate | null; phone: string;
+  eligibility: Extract<RecipientEligibility, { eligible: true }>;
 }): Promise<RecipientOutcome> {
-  const { db, resolved, businessId, businessName, form, template, phone } = opts;
+  const { db, resolved, businessId, businessName, form, phone } = opts;
   const to = phone.replace(/\D/g, '');
-  const inWindow = await hasServiceWindow(db, resolved.channel?.id, phone);
+  const windowOnly = opts.eligibility.basis !== 'consent';
+  // Window-only: never a template, and the window is this business's own (re-checked now).
+  const template = windowOnly ? null : opts.template;
+  const inWindow = windowOnly
+    ? await hasBusinessChatWindow(db, businessId, resolved.channel, phone)
+    : await hasServiceWindow(db, resolved.channel?.id, phone);
+  if (!inWindow && windowOnly) return { phone, status: 'skipped', reason: 'no_consent' };
   if (!inWindow && !template) {
     await logAttempt(db, businessId, phone, form, 'failed', SKIP_REASON_TEXT.no_template);
     return { phone, status: 'failed', reason: 'no_template' };
@@ -208,9 +306,9 @@ export async function sendFormInvites(opts: {
       break;
     }
     const batch = await Promise.all(opts.phones.slice(i, i + 5).map(async (phone): Promise<RecipientOutcome> => {
-      const skip = await classifyRecipient(opts.db, opts.businessId, phone);
-      if (skip) return { phone, status: 'skipped', reason: skip };
-      return deliverInvite({ ...opts, phone });
+      const eligibility = await classifyRecipient(opts.db, opts.businessId, phone, opts.resolved.channel);
+      if (!eligibility.eligible) return { phone, status: 'skipped', reason: eligibility.reason };
+      return deliverInvite({ ...opts, phone, eligibility });
     }));
     outcomes.push(...batch);
   }

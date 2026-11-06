@@ -31,8 +31,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Send a web form invitation on WhatsApp to typed numbers, picked contacts and/or
- * an existing Audience segment. Only recipients with recorded consent are messaged;
- * everyone gets an honest per-recipient result. Sending never writes form_responses.
+ * an existing Audience segment. Only recipients with recorded consent, or who messaged
+ * this business in the last 24 hours (text only), are messaged; everyone gets an
+ * honest per-recipient result. Sending never writes form_responses.
  */
 export async function POST(request: NextRequest) {
   // The time budget runs from the start of the request, so Audience and template
@@ -161,19 +162,21 @@ export async function POST(request: NextRequest) {
       if ((waiting ?? 0) >= MAX_WAITING_SENDS) {
         return NextResponse.json({ error: `You already have ${MAX_WAITING_SENDS} sends waiting. Cancel one or wait for them to go out.` }, { status: 429 });
       }
-      // Store only people who may be messaged now; the cron checks each one again when it sends.
+      // Store only people who may be messaged now (opted in, or messaged this business in
+      // the last 24 hours); the cron classifies each one again when it sends, so a
+      // window-only person whose window has closed by then is skipped, never templated.
       const skips: RecipientOutcome[] = [...invalidSkips];
       const eligible: string[] = [];
       for (let i = 0; i < phones.length; i += 5) {
         const batch = phones.slice(i, i + 5);
-        const reasons = await Promise.all(batch.map(p => classifyRecipient(service, businessId, p)));
+        const checks = await Promise.all(batch.map(p => classifyRecipient(service, businessId, p, resolved.channel)));
         batch.forEach((phone, k) => {
-          const reason = reasons[k];
-          if (reason) skips.push({ phone, status: 'skipped', reason }); else eligible.push(phone);
+          const check = checks[k];
+          if (!check.eligible) skips.push({ phone, status: 'skipped', reason: check.reason }); else eligible.push(phone);
         });
       }
       if (eligible.length === 0) {
-        return NextResponse.json({ error: 'No one on this list has opted in to updates, so nothing was scheduled.', results: skips, policy: RECIPIENT_POLICY }, { status: 400 });
+        return NextResponse.json({ error: 'No one on this list has opted in or messaged you in the last 24 hours, so nothing was scheduled.', results: skips, policy: RECIPIENT_POLICY }, { status: 400 });
       }
       const { data: row, error: insertErr } = await service.from('form_sends').insert({
         business_id: businessId, form_id: form.id, created_by: user.id,
