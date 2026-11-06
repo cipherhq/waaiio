@@ -1231,6 +1231,9 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   const [success, setSuccess] = useState('');
   const msgStepUp = useStepUp();
   const msgStepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
+  // Currencies configured in the loaded snapshot. A save replaces the whole maps, so it must not
+  // silently drop one of these (e.g. a cleared spend cap would remove that market's pricing and credit).
+  const loadedCurrenciesRef = useRef<string[]>([]);
 
   // Country-scoped state: category rates + Paystack plan codes
   // rates keyed by category (utility, marketing, *, authentication, service)
@@ -1244,16 +1247,30 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     defaultCostMinor: string;
   }>>({});
 
-  // Load current config via DB-authoritative RPC
+  // Load current config via DB-authoritative RPC.
+  // The save fully replaces the three messaging maps, so Save must only be possible after a
+  // successful load for the current country list: never from a blank form built from a failed,
+  // empty or out-of-order response (otherwise one save could erase every currency's settings).
   useEffect(() => {
+    let cancelled = false;
+    setConfigVersionId(null);
+    if (countries.length === 0) return;
     (async () => {
       try {
         // D: Use get_effective_commercial_config() RPC — DB clock_timestamp(), not browser Date
         const { data: rows, error: rpcErr } = await adminDb.rpc('get_effective_commercial_config');
-        const ver = rpcErr ? null : (rows as { id: string; config_snapshot: Record<string, unknown> }[])?.[0];
-        if (ver?.id) setConfigVersionId(ver.id);
+        if (cancelled) return;
+        const ver = rpcErr ? null : (rows as { id: string; config_snapshot: Record<string, unknown> }[] | null)?.[0];
+        if (!ver?.id || !ver.config_snapshot) {
+          setError('Could not load the current messaging configuration. Reload the page before editing.');
+          return;
+        }
 
-        const snapshot = ver?.config_snapshot;
+        const snapshot = ver.config_snapshot;
+        loadedCurrenciesRef.current = Array.from(new Set([
+          ...Object.keys((snapshot.messaging_pricing as Record<string, unknown> | undefined) ?? {}),
+          ...Object.keys((snapshot.trial_credit_minor_by_currency as Record<string, unknown> | undefined) ?? {}),
+        ]));
         const pricing = snapshot?.messaging_pricing as Record<string, { rates?: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor?: number }> | undefined;
         const trialCredit = snapshot?.trial_credit_minor_by_currency as Record<string, number> | undefined;
         const included = snapshot?.subscription_included_minor_by_tier_currency as Record<string, Record<string, number>> | undefined;
@@ -1297,8 +1314,13 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
           };
         }
         setCountryState(ctryInit);
-      } catch {}
+        setError('');
+        setConfigVersionId(ver.id);
+      } catch {
+        if (!cancelled) setError('Could not load the current messaging configuration. Reload the page before editing.');
+      }
     })();
+    return () => { cancelled = true; };
   }, [countries]);
 
   async function handleSaveMessagingConfig() {
@@ -1307,6 +1329,10 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     try {
       const { messagingPricing, trialCredit, tierIncluded } =
         buildMessagingPayload(countries, currencyState, countryState);
+      const dropped = loadedCurrenciesRef.current.filter(c => !messagingPricing[c]);
+      if (dropped.length > 0) {
+        throw new Error(`${dropped.join(', ')}: Spend Cap is required. Saving without it would remove that currency's message prices and credit.`);
+      }
 
       const onAuthorized = async (stepUpId: string) => {
         const { data: sessionData } = await supabase.auth.getSession();

@@ -18,10 +18,11 @@ vi.mock('@/lib/supabase', () => ({
   supabase: { auth: { getSession: h.getSession, setSession: h.setSession } },
   adminDb: { rpc: h.rpc, from: h.writes },
 }));
-vi.mock('@/lib/countries', () => ({ loadCountries: async () => h.countries, invalidateCache: vi.fn() }));
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn(async () => h.countries), invalidateCache: vi.fn() }));
 vi.mock('@/lib/auditLog', () => ({ logAudit: vi.fn() }));
 vi.mock('@/components/AdminLayout', () => ({ useAdminSession: () => ({ userId: 'synthetic-admin', email: 'admin@example.test', role: h.role }) }));
 import Countries, { MinorAmountHint } from '@/pages/Countries';
+import { loadCountries } from '@/lib/countries';
 
 const SNAPSHOT = {
   messaging_pricing: {
@@ -61,6 +62,7 @@ beforeEach(() => {
   h.setSession.mockReset().mockResolvedValue({ error: null });
   h.rpc.mockReset().mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: SNAPSHOT }], error: null });
   h.writes.mockReset();
+  vi.mocked(loadCountries).mockReset().mockImplementation(async () => h.countries);
   vi.stubEnv('VITE_API_URL', 'https://synthetic.example.test'); vi.stubGlobal('fetch', h.fetch);
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -139,6 +141,58 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     expect(requests('/messaging-config')).toHaveLength(0);
   });
 
+  // A save fully replaces the messaging maps, so a blank form must never be saveable.
+  it.each([
+    ['an RPC error', { data: null, error: { message: 'synthetic failure' } }],
+    ['no config version', { data: [], error: null }],
+    ['a thrown request', null],
+  ])('a failed load (%s) shows an error and keeps Save disabled', async (_label, result) => {
+    if (result) h.rpc.mockResolvedValue(result); else h.rpc.mockRejectedValue(new Error('synthetic network'));
+    render(<Countries />);
+    await screen.findByText('Could not load the current messaging configuration. Reload the page before editing.');
+    expect(input('NGN trial credit').value).toBe('');
+    const save = screen.getByRole('button', { name: /Save Messaging Config/ }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(save);
+    expect(requests('/prepare')).toHaveLength(0);
+  });
+
+  it('refuses a save that would drop a currency configured today, before any MFA request', async () => {
+    render(<Countries />); await loaded();
+    for (const code of ['NG', 'US']) {
+      fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
+      fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
+    }
+    fireEvent.change(input('USD spend cap'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText("USD: Spend Cap is required. Saving without it would remove that currency's message prices and credit.");
+    expect(requests('/prepare')).toHaveLength(0);
+    expect(requests('/messaging-config')).toHaveLength(0);
+  });
+
+  it('does not load before the country list arrives, and loads once for it', async () => {
+    render(<Countries />); await loaded();
+    expect(h.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('a reload after saving that fails leaves Save disabled instead of a blank saveable form', async () => {
+    // Each loadCountries call returns a new array, as the real cache reload does.
+    vi.mocked(loadCountries).mockImplementation(async () => h.countries.map(c => ({ ...c })));
+    render(<Countries />); await loaded();
+    for (const code of ['NG', 'US']) {
+      fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
+      fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
+    }
+    h.rpc.mockResolvedValue({ data: null, error: { message: 'synthetic failure' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText('Confirm operation');
+    fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize' }));
+    await screen.findByText('Could not load the current messaging configuration. Reload the page before editing.');
+    expect(h.rpc).toHaveBeenCalledTimes(2);
+    expect((screen.getByRole('button', { name: /Save Messaging Config/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('read-only admin roles see the section but cannot edit or save', async () => {
     h.role = 'support';
     render(<Countries />); await loaded();
@@ -154,7 +208,7 @@ describe('MinorAmountHint', () => {
     ['550', 'CAD', 'en-CA', '= $5.50'],
     ['500', 'GBP', 'en-GB', '= £5.00'],
     ['0', 'USD', 'en-US', '= $0.00'],
-  ])('%s %s shows %s', (value, currency, locale, text) => {
+  ])('%s %s (%s) shows %s', (value, currency, locale, text) => {
     render(<MinorAmountHint value={value} currency={currency} locale={locale} />);
     expect(screen.getByText(text)).toBeTruthy();
   });
