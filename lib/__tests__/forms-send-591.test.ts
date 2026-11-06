@@ -412,7 +412,7 @@ describe('Optional "Yes, send me updates" on the public form', () => {
     const res = await submit(post('/api/forms/submit', submitBody({ marketing_opt_in: true, customer_phone: '0803 222 2222' })));
     expect(await res.json()).toEqual({ success: true, optInPending: true });
     expect(consents()).toEqual([expect.objectContaining({ kind: 'insert', row: expect.objectContaining({
-      business_id: BIZ, phone: P2, channel: 'whatsapp', purpose: 'marketing', status: 'pending', source: 'website', evidence_reference: `form:${FORM}`,
+      business_id: BIZ, phone: P2, channel: 'whatsapp', purpose: 'marketing', status: 'pending', source: 'website', evidence_reference: expect.stringMatching(new RegExp(`^form:${FORM}\\|confirm:[0-9a-f]{64}$`)),
     }) })]);
     expect(consents().some(w => w.row.status === 'granted')).toBe(false);
     expect(m.db.tables.form_responses[0]).toMatchObject({ consent_given: true });

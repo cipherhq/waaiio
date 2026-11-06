@@ -1,15 +1,20 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse, after, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
+import { OPTIN_POLICY_VERSION, newOptInNonce, pendingEvidence, sendOptInConfirmationRequest } from '@/lib/consent/optin-confirmation';
 
 /**
  * Append a 'pending' WhatsApp marketing consent row for a ticked web opt-in. Never
  * written over a newer 'granted' record: an unverified web tick must not be able
  * to replace (and so withdraw) a real permission. Never blocks the saved response.
+ * A NEW row carries sha256 of a one-time nonce; the nonce itself goes only to the
+ * typed number (WhatsApp confirmation, #591 part B1) and is never stored.
  */
-async function recordPendingOptIn(db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string): Promise<boolean> {
+async function recordPendingOptIn(
+  db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string,
+): Promise<{ pending: boolean; request: { id: string; nonce: string } | null }> {
   try {
     const digits = e164.replace(/\D/g, '');
     const { data: latest, error } = await db.from('customer_consents').select('status')
@@ -17,15 +22,20 @@ async function recordPendingOptIn(db: ReturnType<typeof createServiceClient>, bu
       .eq('channel', 'whatsapp').eq('purpose', 'marketing')
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .limit(1).maybeSingle();
-    if (error) return false;
-    if (latest?.status === 'granted' || latest?.status === 'pending') return true;
-    const { error: insertError } = await db.from('customer_consents').insert({
+    if (error) return { pending: false, request: null };
+    if (latest?.status === 'granted' || latest?.status === 'pending') return { pending: true, request: null };
+    const nonce = newOptInNonce();
+    const { data: inserted, error: insertError } = await db.from('customer_consents').insert({
       business_id: businessId, phone: e164, channel: 'whatsapp', purpose: 'marketing',
-      status: 'pending', source: 'website', evidence_reference: `form:${formId}`,
-    });
-    if (insertError) logger.warn('[FORMS] Opt-in not recorded:', insertError.message);
-    return !insertError;
-  } catch { return false; }
+      status: 'pending', source: 'website', evidence_reference: pendingEvidence(formId, nonce),
+      policy_version: OPTIN_POLICY_VERSION,
+    }).select('id').single();
+    if (insertError || !inserted?.id) {
+      logger.warn('[FORMS] Opt-in not recorded:', insertError?.message);
+      return { pending: false, request: null };
+    }
+    return { pending: true, request: { id: inserted.id as string, nonce } };
+  } catch { return { pending: false, request: null }; }
 }
 
 export async function POST(request: NextRequest) {
@@ -88,7 +98,7 @@ export async function POST(request: NextRequest) {
     // Optional "Yes, send me updates" box (#591). Only offered when the merchant turned it
     // on, unticked by default, and only for a valid phone. Nobody has proved they own the
     // typed number, so the tick is recorded as *pending*, which is never sendable
-    // (hasRecipientPermission needs 'granted'). Owner decision pending on confirmation.
+    // (hasRecipientPermission needs 'granted') until confirmed on WhatsApp (Owner Q2).
     const offersOptIn = (form.settings as Record<string, unknown> | null)?.marketing_opt_in === true;
     const optIn = offersOptIn && marketing_opt_in === true;
     let optInPhone: string | null = null;
@@ -168,7 +178,18 @@ export async function POST(request: NextRequest) {
 
     let optInPending: boolean | undefined;
     if (optIn && optInPhone) {
-      optInPending = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
+      const recorded = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
+      optInPending = recorded.pending;
+      if (recorded.request) {
+        // Ask the typed number to confirm on WhatsApp after the response is sent. It
+        // never blocks or fails the submit (the sender never throws).
+        const request = { businessId: form.business_id as string, phone: optInPhone, requestId: recorded.request.id, nonce: recorded.request.nonce };
+        try {
+          after(() => sendOptInConfirmationRequest(supabase, request).then(() => undefined));
+        } catch (err) {
+          logger.warn('[FORMS] Opt-in confirmation not scheduled:', (err as Error).message);
+        }
+      }
     }
 
     // Atomic increment — prevents race condition with concurrent submissions

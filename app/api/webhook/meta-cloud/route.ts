@@ -1,4 +1,5 @@
 import { handleMerchantAlertOptIn, sendMerchantAlertControlReply } from '@/lib/bot/merchant-alert-optin';
+import { handleOptInConfirmation, isOptInPayload, sendOptInControlReply } from '@/lib/consent/optin-confirmation';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -176,6 +177,8 @@ export async function POST(request: NextRequest) {
               button_reply?: { id: string; title: string };
               list_reply?: { id: string; title: string; description?: string };
             };
+            /** Template quick-reply tap. */
+            button?: { payload?: string; text?: string };
             audio?: { id: string; mime_type?: string };
             image?: { id: string; caption?: string };
             order?: {
@@ -624,6 +627,11 @@ export async function POST(request: NextRequest) {
                   text = msg.interactive.list_reply?.id || msg.interactive.list_reply?.title || '';
                   msgType = 'list';
                 }
+              } else if (msg.type === 'button' && isOptInPayload(msg.button?.payload)) {
+                // Template quick-reply tap (#591). Only opt-in confirmation payloads are
+                // read; every other template button keeps being dropped below.
+                text = msg.button!.payload!;
+                msgType = 'button';
               }
 
               // Handle audio messages: download from Meta, upload to Supabase Storage
@@ -743,6 +751,18 @@ export async function POST(request: NextRequest) {
                 sendReply: (reply) => sendMerchantAlertControlReply(guardedSender, source, reply),
               });
               if (merchantAlertHandled) {
+                await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
+                continue;
+              }
+
+              // Updates opt-in confirmation (#591): same verified sender and channel. The
+              // business comes from the confirmed request, never from this channel.
+              const optInHandled = await handleOptInConfirmation({
+                db: supabase, provenance: 'verified_meta_webhook', from: source, text, messageType: msgType,
+                messageId: metaMsgId, channel: resolved.channel,
+                sendReply: (reply) => sendOptInControlReply(guardedSender, source, reply),
+              });
+              if (optInHandled) {
                 await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
                 continue;
               }

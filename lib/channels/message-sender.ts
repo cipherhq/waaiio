@@ -218,6 +218,8 @@ export interface MessageSender {
     languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
+    /** Quick-reply button payloads, in the template's button order. Not combined with buttonParams. */
+    quickReplyPayloads?: string[];
     noRetry?: boolean;
     messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
@@ -658,11 +660,13 @@ export class MetaCloudSender implements MessageSender {
     languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
+    /** Quick-reply button payloads, in the template's button order. Not combined with buttonParams. */
+    quickReplyPayloads?: string[];
     /** Skip automatic retry for delivery-critical sends where ambiguous outcomes must not produce duplicate provider POSTs */
     noRetry?: boolean;
     messageCategory?: string;
   }) {
-    const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string }>; sub_type?: string; index?: number }> = [{
+    const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string } | { type: 'payload'; payload: string }>; sub_type?: string; index?: number }> = [{
       type: 'body' as const,
       parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })),
     }];
@@ -672,6 +676,10 @@ export class MetaCloudSender implements MessageSender {
         components.push({ type: 'button' as const, sub_type: 'url', index, parameters: [{ type: 'text' as const, text: param }] });
       });
     }
+    // Quick-reply payloads come back in the inbound webhook as msg.button.payload.
+    msg.quickReplyPayloads?.forEach((payload, index) => {
+      components.push({ type: 'button' as const, sub_type: 'quick_reply', index, parameters: [{ type: 'payload' as const, payload }] });
+    });
     const templateCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, languageCode: msg.languageCode, components }),

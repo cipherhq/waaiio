@@ -101,6 +101,11 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
           preds.push(r => r[c] !== null && r[c] !== undefined); return q;
         },
         or(expr: string) { preds.push(parseOr(expr)); return q; },
+        /** SQL LIKE: `%` any run, `_` one character, everything else literal. */
+        like(c: string, pattern: string) {
+          const re = new RegExp(`^${pattern.split('').map(ch => ch === '%' ? '.*' : ch === '_' ? '.' : ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('')}$`, 's');
+          preds.push(r => typeof r[c] === 'string' && re.test(r[c] as string)); return q;
+        },
         gte(c: string, v: unknown) { preds.push(r => cmp(r[c], v) >= 0); return q; },
         lte(c: string, v: unknown) { preds.push(r => cmp(r[c], v) <= 0); return q; },
         gt(c: string, v: unknown) { preds.push(r => cmp(r[c], v) > 0); return q; },
