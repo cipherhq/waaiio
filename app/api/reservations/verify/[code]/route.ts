@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { isSignedInBusinessMember } from '@/lib/api-auth';
 
 /**
  * GET /api/reservations/verify/[code]
  * Returns reservation details + validity status.
- * Optional ?business_id= param to verify reservation belongs to the scanning business.
- * Without business_id, guest phone is masked for privacy.
+ * Optional ?business_id= param to check the reservation belongs to the scanning business.
+ * Anyone with the code sees only non-personal details (status, dates, property, business).
+ * Guest name, contact details, special requests, amount and checked_in_by are added only
+ * when the signed-in caller is the owner or an active team member of that business.
  */
 export async function GET(
   req: NextRequest,
@@ -66,9 +69,6 @@ export async function GET(
     );
   }
 
-  // Mask guest phone if no business_id (public/self-checkin view)
-  const guestPhone = businessId ? (reservation.guest_phone || '') : undefined;
-
   // Fetch business name
   const { data: biz } = await supabase
     .from('businesses')
@@ -76,28 +76,40 @@ export async function GET(
     .eq('id', reservation.business_id)
     .single();
 
+  // Details anyone holding the reference code may see (Owner decision 2026-11-06).
+  const publicDetails = {
+    reference_code: reservation.reference_code,
+    property_name: property?.name || '',
+    property_address: property?.address || '',
+    property_id: property?.id || '',
+    business_name: biz?.name || '',
+    check_in: reservation.check_in,
+    check_out: reservation.check_out,
+    nights: reservation.nights,
+    guests: reservation.guests,
+    status: reservation.status,
+    checked_in_at: reservation.checked_in_at,
+    checked_out_at: reservation.checked_out_at,
+  };
+
+  // Guest details only for the signed-in owner or team of this reservation's
+  // business. The ?business_id= param above only scopes the scan; it is not
+  // proof of who is asking.
+  const isBusinessTeam = await isSignedInBusinessMember(req, supabase, reservation.business_id);
+
   return NextResponse.json({
     valid: reservation.status === 'confirmed' || reservation.status === 'checked_in',
-    reservation: {
-      reference_code: reservation.reference_code,
-      guest_name: reservation.guest_name || '',
-      guest_phone: guestPhone,
-      guest_email: businessId ? (reservation.guest_email || '') : undefined,
-      property_name: property?.name || '',
-      property_address: property?.address || '',
-      property_id: property?.id || '',
-      business_name: biz?.name || '',
-      check_in: reservation.check_in,
-      check_out: reservation.check_out,
-      nights: reservation.nights,
-      guests: reservation.guests,
-      status: reservation.status,
-      checked_in_at: reservation.checked_in_at,
-      checked_in_by: reservation.checked_in_by,
-      checked_out_at: reservation.checked_out_at,
-      total_amount: reservation.total_amount,
-      special_requests: businessId ? reservation.special_requests : undefined,
-    },
+    reservation: isBusinessTeam
+      ? {
+          ...publicDetails,
+          guest_name: reservation.guest_name || '',
+          guest_phone: reservation.guest_phone || '',
+          guest_email: reservation.guest_email || '',
+          checked_in_by: reservation.checked_in_by,
+          total_amount: reservation.total_amount,
+          special_requests: reservation.special_requests,
+        }
+      : publicDetails,
   });
 }
 

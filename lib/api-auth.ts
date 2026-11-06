@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { createServiceClient } from '@/lib/supabase/service';
+import { resolveBusinessRole } from '@/lib/capabilities/resolve-role';
 
 /**
  * Authenticate an API request and optionally verify business ownership.
@@ -89,4 +90,43 @@ export async function authenticateRequest(
   }
 
   return { user: { id: user.id, email: user.email }, service };
+}
+
+/**
+ * For public routes that show extra details to the business's own team.
+ *
+ * Returns true only when the request carries a signed-in session whose user is
+ * the owner, or an active team member (business_members), of `businessId`.
+ * A missing session, a failed lookup, or any error returns false, so callers
+ * fall back to the public view. A business id in the URL or body is never
+ * treated as proof of who is asking.
+ */
+export async function isSignedInBusinessMember(
+  request: NextRequest,
+  service: ReturnType<typeof createServiceClient>,
+  businessId: string | null | undefined,
+): Promise<boolean> {
+  if (!businessId) return false;
+  try {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(_cookies: { name: string; value: string; options: CookieOptions }[]) {
+            // Read-only check; no cookies are set here
+          },
+        },
+      },
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+    const role = await resolveBusinessRole(service, businessId, user.id);
+    return role.ok;
+  } catch {
+    return false;
+  }
 }
