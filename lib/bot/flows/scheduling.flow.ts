@@ -30,7 +30,7 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow, type BusinessLocalNow } from './shared/table-same-day';
 import { parseTypedDate, isCalendarDate } from './shared/typed-date';
-import { openTimesOnDate, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
+import { openTimesOnDate, tableTimeInsideBusinessHours, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
 import { seatingGalleryMessages } from './table-reservation.flow';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
@@ -215,6 +215,15 @@ function candidateTimes(ctx: FlowContext, dateStr: string, staffSchedule: StaffS
     });
   }
 
+  // Tables: the window above uses the table's own hours when it has them, but
+  // book_table_atomic (M510) also requires the business to be open for the
+  // whole booking. Drop the times it would refuse.
+  if (isTableRes) {
+    const tableDuration = (d._seating_duration as number) || 90; // as create_booking sends it
+    slots = slots.filter(slot =>
+      tableTimeInsideBusinessHours(dateStr, timeToMinutes(slot), tableDuration, ctx.business?.operating_hours));
+  }
+
   // Same-day tables: only times after the current time in the business timezone
   if (isTableRes && localNow && dateStr === localNow.date) slots = filterSlotsAfterNow(slots, localNow.minutes);
   return slots;
@@ -355,7 +364,7 @@ function pickerAfterTakenTime(ctx: FlowContext) {
  * Null when it does not apply (drop-off, or refused too often); the caller then
  * keeps its old message.
  */
-async function backToTimeList(ctx: FlowContext): Promise<PromptMessage[] | null> {
+async function backToTimeList(ctx: FlowContext, notice?: string): Promise<PromptMessage[] | null> {
   const d = ctx.session.session_data;
   if ((d._service_metadata as Record<string, unknown> | undefined)?.is_dropoff) return null;
   const refusals = ((d._slot_taken_count as number) || 0) + 1;
@@ -368,7 +377,7 @@ async function backToTimeList(ctx: FlowContext): Promise<PromptMessage[] | null>
   const timeMessages = await timeStep.prompt(ctx);
   // The last message is the time list; table photos before it were already seen
   const timeList = timeMessages[timeMessages.length - 1];
-  return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.time_taken') }, ...(timeList ? [timeList] : [])];
+  return [{ type: 'text', text: notice ?? getFlowCopy(ctx.copyLang, 'booking.time_taken') }, ...(timeList ? [timeList] : [])];
 }
 
 /** WhatsApp lists hold at most 10 rows. */
@@ -3229,7 +3238,11 @@ export const schedulingFlow: FlowDefinition = {
               if (pgError?.message?.includes('deposit_changed') || pgError?.message?.includes('duration_changed')) {
                 return [{ type: 'text', text: await ctx.t('The reservation terms have been updated. Send *Hi* to start over with the current pricing.') }];
               }
-              if (pgError?.message?.includes('day_unavailable') || pgError?.message?.includes('before_opening') || pgError?.message?.includes('after_closing')) {
+              if (pgError?.message?.includes('day_unavailable') || pgError?.message?.includes('before_opening') || pgError?.message?.includes('after_closing') || pgError?.message?.includes('past_midnight')) {
+                // Outside the opening hours (e.g. they changed after the time list was sent):
+                // show the open times again instead of ending the chat.
+                const backToTimes = await backToTimeList(ctx, await ctx.t('That time is no longer available for this table. Please choose another time.'));
+                if (backToTimes) return backToTimes;
                 return [{ type: 'text', text: await ctx.t('That time is no longer available for this table. Send *Hi* to pick a different time.') }];
               }
               logger.withContext({ op: 'scheduling.create-table-reservation', ...safeLogErrorContext(tableError) }).error('[SCHEDULING] Failed to create table reservation');
