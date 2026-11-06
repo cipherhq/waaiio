@@ -1,6 +1,6 @@
 {
  "bootstrap_migration": "508_business_control_columns_guard.sql",
- "catalog_query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "catalog_query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "certified": {
   "admin": "bdc007a8f93febeee8ce054d075d48894afd37bb",
   "merchant": "2b578c5bef4411aaf35bc6b60f61237620915c3a"
@@ -9,7 +9,7 @@
   "production": {
    "catalog": {
     "count": 6288,
-    "sha256": "21d2db2a7c68ddcd6027b4a6bf142685b001b136e248aa9aa0e7fe5ae36ee72c"
+    "sha256": "a30411a6da256d29d86304576d40249ae288daf94f9f12d300128604c587bd3e"
    },
    "catalog_map": "scripts/release-v3/lock-catalog-production.json",
    "ledger": {
@@ -21,7 +21,7 @@
   "staging": {
    "catalog": {
     "count": 6309,
-    "sha256": "feeb53c0fdfa155aa3bf3453925c8c2f67d3c1f03cfb62176710006ece524180"
+    "sha256": "567d514762deea655bf2b944d23ee84e26fb506b083c0eedc558ec0f235d9638"
    },
    "catalog_map": "scripts/release-v3/lock-catalog-staging.json",
    "ledger": {
@@ -39,6 +39,45 @@
    "manifest_sha256": "efd245eba525d00d561621d43b0be513e984e7626e95498b365f97ac46206a50",
    "policy": "postlaunch-bot-code-lock-v1",
    "report_sha256": "f220ec749a14271d5b836044c1023dd584171bbf6e95494b4bcaaa42175aa40f"
+  },
+  "catalog_query_rebase_929": {
+   "decision": "#929 (Option B from #927): widen the catalog. Owner in chat 2026-11-06, approving the lock translation instead of a lock-map re-bootstrap and keeping the session search_path rule for function bodies (same as views): \"Yes, approve both\" (PR #940)",
+   "environments": {
+    "production": {
+     "changed": {
+      "table:public.businesses_public": {
+       "new_digest": "edbe0859114893f1f03ba14f07d78a50c207a6fc30c796829b6aa7b34ceb48bf",
+       "previous_digest": "ddd86a5e93a911db6ab36e4c0726caea05ff58f2888a2d6dc4c1dd0a8e586952"
+      },
+      "table:public.whatsapp_channels_public": {
+       "new_digest": "b57cd5fbde517c6c96f730f274c157bb9ef303f5e0111ad7ae26dfcbebfc2088",
+       "previous_digest": "46675b82300ef6ba4dbabf35ab6432298d27f584eb41157ec89dc564b07fe7fa"
+      }
+     },
+     "previous_catalog": {
+      "count": 6288,
+      "sha256": "21d2db2a7c68ddcd6027b4a6bf142685b001b136e248aa9aa0e7fe5ae36ee72c"
+     }
+    },
+    "staging": {
+     "changed": {
+      "table:public.businesses_public": {
+       "new_digest": "1b27ed6b24c7ee81825f7db9830cc39967f11bd85f60fa0c59f56ffe33b29dfa",
+       "previous_digest": "77a6ffb3b5e60f1415b3319b91675b10b35a4b5882f0263511e2ab8b83b83d8e"
+      },
+      "table:public.whatsapp_channels_public": {
+       "new_digest": "fd37f7c48035cab0b12957f51dd06cfa9c437462a58bbc5c330d06693d083fb9",
+       "previous_digest": "73f94ae0063a663515fd695aeb267a335af59d787c6fc48b865a84fe79aa13ce"
+      }
+     },
+     "previous_catalog": {
+      "count": 6309,
+      "sha256": "feeb53c0fdfa155aa3bf3453925c8c2f67d3c1f03cfb62176710006ece524180"
+     }
+    }
+   },
+   "method": "lock state unchanged (M508). The new catalog-v3.sql changes no digest except objects with reloptions or a BEGIN ATOMIC body; in the lock state that is exactly the two M293 views (security_barrier=true). Each old value was rebuilt and proven equal to the lock digest, then re-hashed with its options added.",
+   "previous_query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809"
   },
   "method": "authorized Supabase connector, read-only SELECT",
   "staging_813_teardown": {
