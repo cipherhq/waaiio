@@ -98,6 +98,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'No active promotions right now. Check back later! 🎰',
     'menu.no_waivers': 'No waivers are available right now.',
     'menu.what_next': 'What would you like to do next?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Get first dibs",
+    'updates.optin_desc': "Offers & updates from {businessName} and Waaiio. Stop anytime.",
+    'updates.optin_desc_business': "Offers & updates from {businessName}. Stop anytime.",
+    'updates.thanks': "🎉 You're in! {businessName} and Waaiio will send you offers and updates here. Reply STOP anytime to unsubscribe.",
+    'updates.thanks_business': "🎉 You're in! {businessName} will send you offers and updates here. Reply STOP anytime to unsubscribe.",
+    'updates.already': "You're already signed up for offers and updates from {businessName}. Reply STOP anytime to unsubscribe.",
+    'updates.opted_out': "You unsubscribed from {businessName} earlier, so we haven't signed you up. Send START if you'd like their messages again.",
+    'updates.save_failed': "We couldn't save that right now. Please try again in a moment.",
+    'updates.expired': "That option is no longer available. Type *menu* to see your options.",
 
     // Account menu
     'account.title': 'My Account',
@@ -918,6 +928,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'No promotion dey now. Check back later! 🎰',
     'menu.no_waivers': 'No waiver dey available now.',
     'menu.what_next': 'Wetin you wan do next?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Hear deals first",
+    'updates.optin_desc': "Offers & updates from {businessName} and Waaiio. Stop anytime.",
+    'updates.optin_desc_business': "Offers & updates from {businessName}. Stop anytime.",
+    'updates.thanks': "🎉 You don join! {businessName} and Waaiio go dey send you offers and updates for here. Reply STOP anytime to comot.",
+    'updates.thanks_business': "🎉 You don join! {businessName} go dey send you offers and updates for here. Reply STOP anytime to comot.",
+    'updates.already': "You don already join for offers and updates from {businessName}. Reply STOP anytime to comot.",
+    'updates.opted_out': "You don comot from {businessName} before, so we no add you. Send START if you wan dey hear from dem again.",
+    'updates.save_failed': "We no fit save am now. Abeg try again small time.",
+    'updates.expired': "That option no dey again. Type *menu* to see your options.",
 
     // Account menu
     'account.title': "My Account",
@@ -1719,6 +1739,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'Kò sí àgbékalẹ̀ tó ń ṣiṣẹ́ báyìí. Padà wá lẹ́yìn! 🎰',
     'menu.no_waivers': 'Kò sí ìdáríjì tó wà báyìí.',
     'menu.what_next': 'Kí ni o fẹ́ ṣe tókàn?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Gbọ́ ìpèsè kọ́kọ́",
+    'updates.optin_desc': "Ìpèsè láti {businessName} àti Waaiio. Dá dúró nígbàkígbà.",
+    'updates.optin_desc_business': "Ìpèsè láti {businessName}. Dá dúró nígbàkígbà.",
+    'updates.thanks': "🎉 O ti wọlé! {businessName} àti Waaiio yóò máa fi ìpèsè àti ìròyìn ránṣẹ́ sí ọ níbí. Fèsì STOP nígbàkígbà láti dá dúró.",
+    'updates.thanks_business': "🎉 O ti wọlé! {businessName} yóò máa fi ìpèsè àti ìròyìn ránṣẹ́ sí ọ níbí. Fèsì STOP nígbàkígbà láti dá dúró.",
+    'updates.already': "O ti forúkọ sílẹ̀ fún ìpèsè àti ìròyìn láti {businessName}. Fèsì STOP nígbàkígbà láti dá dúró.",
+    'updates.opted_out': "O ti kúrò lọ́dọ̀ {businessName} tẹ́lẹ̀, nítorí náà a kò fi ọ́ kún un. Fi START ránṣẹ́ tí o bá fẹ́ gbọ́ láti ọ̀dọ̀ wọn lẹ́ẹ̀kan sí i.",
+    'updates.save_failed': "A kò lè fi pamọ́ báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí i láìpẹ́.",
+    'updates.expired': "Àṣàyàn yẹn kò sí mọ́. Tẹ *menu* láti rí àwọn àṣàyàn rẹ.",
     'account.title': 'Àkọọ́lẹ̀ Mi',
     'account.body': 'Ṣàkóso àwọn ìpèdè, àwọn pàṣẹ, àti díẹ̀ síi.\n\nTẹ *cancel* láti jáde tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí.',
     'account.my_bookings': 'Àwọn Ìpèdè Mi',
@@ -2464,6 +2494,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'Ọnọdụ akwụghị ụgwọ adịghị ugbu a. Lelee ọzọ! 🎰',
     'menu.no_waivers': 'Ọnọdụ mmehie adịghị ugbu a.',
     'menu.what_next': 'Gịnị ịchọ ime ọzọ?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Nụta onyinye mbụ",
+    'updates.optin_desc': "Onyinye na ozi site na {businessName} na Waaiio. Kwụsị mgbe ọbụla.",
+    'updates.optin_desc_business': "Onyinye na ozi site na {businessName}. Kwụsị mgbe ọbụla.",
+    'updates.thanks': "🎉 Ị banyela! {businessName} na Waaiio ga-ezitere gị onyinye na ozi ebe a. Zaa STOP mgbe ọbụla iji kwụsị.",
+    'updates.thanks_business': "🎉 Ị banyela! {businessName} ga-ezitere gị onyinye na ozi ebe a. Zaa STOP mgbe ọbụla iji kwụsị.",
+    'updates.already': "Ị debanyelarị aha maka onyinye na ozi site na {businessName}. Zaa STOP mgbe ọbụla iji kwụsị.",
+    'updates.opted_out': "Ị kwụsịrị {businessName} na mbụ, ya mere anyị etinyeghị gị. Ziga START ma ọ bụrụ na ịchọrọ ozi ha ọzọ.",
+    'updates.save_failed': "Anyị enweghị ike ichekwa ya ugbu a. Biko nwaa ọzọ n'oge na-adịghị anya.",
+    'updates.expired': "Nhọrọ ahụ adịghịzi. Pịa *menu* ka ịhụ nhọrọ gị.",
     'account.title': 'Akaụntụ M',
     'account.body': 'Chekwaa ndekọ ndebi gị, iwu, na ihe ndị ọzọ.\n\nPịnye *cancel* ịhapụ ma ọ bụ *Hi* ịmalite ọzọ.',
     'account.my_bookings': 'Ndebi m',
@@ -3209,6 +3249,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'Babu ingantattun tallace-tallace a yanzu. Duba daga baya! 🎰',
     'menu.no_waivers': 'Babu afuwa da ake da ita a yanzu.',
     'menu.what_next': 'Me kake son yi gaba?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Samu tayi da farko",
+    'updates.optin_desc': "Tayi daga {businessName} da Waaiio. Daina kowane lokaci.",
+    'updates.optin_desc_business': "Tayi daga {businessName}. Daina kowane lokaci.",
+    'updates.thanks': "🎉 Ka shiga! {businessName} da Waaiio za su riƙa aiko maka tayi da labarai a nan. Aika STOP kowane lokaci don dainawa.",
+    'updates.thanks_business': "🎉 Ka shiga! {businessName} za ta riƙa aiko maka tayi da labarai a nan. Aika STOP kowane lokaci don dainawa.",
+    'updates.already': "Ka riga ka yi rajista don tayi da labarai daga {businessName}. Aika STOP kowane lokaci don dainawa.",
+    'updates.opted_out': "Ka fita daga {businessName} a baya, don haka ba mu saka ka ba. Aika START idan kana son saƙonninsu kuma.",
+    'updates.save_failed': "Ba mu iya ajiye shi yanzu ba. Da fatan za ka sake gwadawa nan ba da jimawa ba.",
+    'updates.expired': "Wannan zaɓin babu shi yanzu. Rubuta *menu* don ganin zaɓuɓɓukanka.",
     'account.title': 'Asusuna Ta',
     'account.body': 'Sarrafa ajiyarku, oda, da ƙari.\n\nRubuta *cancel* don fita ko *Hi* don sake fara.',
     'account.my_bookings': 'Ajiyata',
@@ -3954,6 +4004,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'Nkɔsoɔ biara nni hɔ sɛ saa ara. Sane kɔ hwɛ! 🎰',
     'menu.no_waivers': 'Waivers biara nni hɔ sɛ saa ara.',
     'menu.what_next': 'Dɛn na wopɛ yɛ bio?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Te nkɔmmɔ kan",
+    'updates.optin_desc': "Nneɛma pa ne nsɛm fi {businessName} ne Waaiio. Gyae bere biara.",
+    'updates.optin_desc_business': "Nneɛma pa ne nsɛm fi {businessName}. Gyae bere biara.",
+    'updates.thanks': "🎉 Woaka ho! {businessName} ne Waaiio bɛsoma wo nneɛma pa ne nsɛm wɔ ha. Twerɛ STOP bere biara na gyae.",
+    'updates.thanks_business': "🎉 Woaka ho! {businessName} bɛsoma wo nneɛma pa ne nsɛm wɔ ha. Twerɛ STOP bere biara na gyae.",
+    'updates.already': "Woakyerɛw wo din dedaw ama nneɛma pa ne nsɛm fi {businessName}. Twerɛ STOP bere biara na gyae.",
+    'updates.opted_out': "Wogyaee {businessName} kan, enti yɛmmfaa wo nkaa ho. Soma START sɛ wopɛ wɔn nkra bio a.",
+    'updates.save_failed': "Yɛntumi nkora so seesei. Yɛsrɛ wo, san sɔ hwɛ bio.",
+    'updates.expired': "Saa nhyehyɛe no nni hɔ bio. Twerɛ *menu* na hwɛ wo nhyehyɛe.",
     'account.title': 'Me Account',
     'account.body': 'Tua w\'adeyɛ, order, ne biribi foforɔ so.\n\nDaa *cancel* kɔ fi, anaa *Hi* kɔ firi ase.',
     'account.my_bookings': 'Me Booking',
@@ -4699,6 +4759,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'Aucune promotion active pour le moment. Revenez plus tard ! 🎰',
     'menu.no_waivers': 'Aucune décharge disponible pour le moment.',
     'menu.what_next': 'Que souhaitez-vous faire ensuite ?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Offres en premier",
+    'updates.optin_desc': "Offres et infos de {businessName} et Waaiio. Arrêt libre.",
+    'updates.optin_desc_business': "Offres et infos de {businessName}. Arrêt libre.",
+    'updates.thanks': "🎉 C'est fait ! {businessName} et Waaiio vous enverront offres et nouvelles ici. Répondez STOP à tout moment pour vous désabonner.",
+    'updates.thanks_business': "🎉 C'est fait ! {businessName} vous enverra offres et nouvelles ici. Répondez STOP à tout moment pour vous désabonner.",
+    'updates.already': "Vous êtes déjà inscrit aux offres et nouvelles de {businessName}. Répondez STOP à tout moment pour vous désabonner.",
+    'updates.opted_out': "Vous vous êtes désabonné de {businessName}, nous ne vous avons donc pas inscrit. Envoyez START pour recevoir à nouveau leurs messages.",
+    'updates.save_failed': "Impossible d'enregistrer pour le moment. Réessayez dans un instant.",
+    'updates.expired': "Cette option n'est plus disponible. Tapez *menu* pour voir vos options.",
     'account.title': 'Mon compte',
     'account.body': 'Gérez vos réservations, commandes et plus encore.\n\nTapez *cancel* pour quitter ou *Hi* pour recommencer.',
     'account.my_bookings': 'Mes réservations',
@@ -5444,6 +5514,16 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'menu.no_promotions': 'No hay promociones activas en este momento. ¡Vuelva más tarde! 🎰',
     'menu.no_waivers': 'No hay exenciones disponibles en este momento.',
     'menu.what_next': '¿Qué desea hacer a continuación?',
+    // Customer updates opt-in (Owner decision 2026-11-06)
+    'updates.optin_title': "🎁 Ofertas primero",
+    'updates.optin_desc': "Ofertas de {businessName} y Waaiio. Cancela cuando quieras.",
+    'updates.optin_desc_business': "Ofertas de {businessName}. Cancela cuando quieras.",
+    'updates.thanks': "🎉 ¡Listo! {businessName} y Waaiio te enviarán ofertas y novedades aquí. Responde STOP cuando quieras para darte de baja.",
+    'updates.thanks_business': "🎉 ¡Listo! {businessName} te enviará ofertas y novedades aquí. Responde STOP cuando quieras para darte de baja.",
+    'updates.already': "Ya estás suscrito a ofertas y novedades de {businessName}. Responde STOP cuando quieras para darte de baja.",
+    'updates.opted_out': "Te diste de baja de {businessName}, así que no te suscribimos. Envía START si quieres recibir sus mensajes otra vez.",
+    'updates.save_failed': "No pudimos guardarlo ahora. Inténtalo de nuevo en un momento.",
+    'updates.expired': "Esa opción ya no está disponible. Escribe *menu* para ver tus opciones.",
     'account.title': 'Mi cuenta',
     'account.body': 'Administre sus reservas, pedidos y más.\n\nEscriba *cancel* para salir o *Hi* para reiniciar.',
     'account.my_bookings': 'Mis reservas',
@@ -6186,6 +6266,13 @@ export const OWNER_REVIEW_ITEMS: ReadonlyArray<{
   { locale: 'tw', key: 'booking.type_date_hint', issue: 'Date list paging copy added 2026-11-05 (#916) is best-effort; native review for the hint and the Later/Earlier dates rows' },
   { locale: 'fr', key: 'booking.type_date_hint', issue: 'Date list paging copy added 2026-11-05 (#916) is best-effort; native review for the hint and the Later/Earlier dates rows' },
   { locale: 'es', key: 'booking.type_date_hint', issue: 'Date list paging copy added 2026-11-05 (#916) is best-effort; native review for the hint and the Later/Earlier dates rows' },
+  { locale: 'pcm', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  { locale: 'yo', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  { locale: 'ig', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  { locale: 'ha', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  { locale: 'tw', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  { locale: 'fr', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  { locale: 'es', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -6248,6 +6335,13 @@ export const PLACEHOLDER_SCHEMA: ReadonlyMap<string, readonly string[]> = new Ma
   ['payment.amount_label', ['amount']],
   ['payment.ref_label', ['transferRef']],
   ['payment.ref_warning', ['transferRef']],
+  // Customer updates opt-in (2026-11-06)
+  ['updates.optin_desc', ['businessName']],
+  ['updates.optin_desc_business', ['businessName']],
+  ['updates.thanks', ['businessName']],
+  ['updates.thanks_business', ['businessName']],
+  ['updates.already', ['businessName']],
+  ['updates.opted_out', ['businessName']],
 ]);
 
 /** Keys used as WhatsApp button titles (max 20 chars). */
@@ -6328,6 +6422,8 @@ export const LIST_TITLE_KEYS: readonly string[] = [
   'refund.title',
   // Date list page rows (#916)
   'booking.later_dates', 'booking.earlier_dates',
+  // Customer updates opt-in row (2026-11-06)
+  'updates.optin_title',
 ];
 
 /** Keys used as WhatsApp footer (max 60 chars). */
@@ -6374,6 +6470,7 @@ export const KEYS_WITH_COMMANDS: readonly string[] = [
   'tips.subscriptions', 'tips.my_reservations', 'tips.my_tickets',
   'tips.receipt_purchase',
   'greeting.cancel_hint',
+  'updates.expired',
 ];
 
 // ═══════════════════════════════════════════════════════════════

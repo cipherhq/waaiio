@@ -11,6 +11,7 @@ import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
 import { handleLaunchOptIn } from './launch-optin';
+import { handleUpdatesOptInTap } from './customer-updates-optin';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
@@ -199,6 +200,15 @@ export class BotService {
       (phone, msg) => this.sendPlatformText(phone, msg),
     );
     if (launchHandled) return;
+
+    // Customer updates opt-in tap (Owner decision 2026-11-06). Handled here so the
+    // tap works whatever state the chat is in; it never touches the session, so
+    // the menu the customer is on keeps working.
+    const updatesOptInHandled = await handleUpdatesOptInTap(this.supabase, {
+      from, text, preResolvedBusinessId, destinationPhone,
+      sendReply: (phone, msg) => this.sendPlatformText(phone, msg),
+    });
+    if (updatesOptInHandled) return;
 
     // Pre-check 1: Timeout — exempt verified same-channel pending STOP selections
     const timeoutCheck = this.intelligence.isTimedOut(from);
