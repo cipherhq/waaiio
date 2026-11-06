@@ -423,16 +423,72 @@ describe('form submit: pending request and confirmation send', () => {
     expect(m.sendButtons).not.toHaveBeenCalled();
   });
 
-  it('no new request (and no send) when the latest record is pending or granted', async () => {
-    windowOpen();
-    for (const status of ['pending', 'granted']) {
-      m.db.tables.customer_consents = [{ id: `x-${status}`, business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status, created_at: ago(HOUR) }];
+  describe('re-ticking the box (Owner decision 2026-11-06: allow a fresh tick)', () => {
+    const sentNonce = () => /^optin_yes:(.+)$/.exec(m.sendButtons.mock.calls.at(-1)?.[0].buttons[0].id)?.[1] as string;
+
+    it('an expired request (over 30 days) is replaced: a new request goes out and the old nonce is stale', async () => {
+      windowOpen();
+      const oldNonce = newOptInNonce();
+      seedRequest(A, oldNonce, 31 * DAY);
+      await post({});
+      await runAfter();
+      expect(m.sendButtons).toHaveBeenCalledTimes(1);
+      expect(pending()).toHaveLength(2);
+      const newNonce = sentNonce();
+      expect(newNonce).not.toBe(oldNonce);
+      await tap(oldNonce);
+      expect(granted()).toEqual([]);
+      expect(lastReply().body).toContain('expired');
+      await tap(newNonce);
+      expect(await allowed(A)).toBe(true);
+    });
+
+    it('a pre-release tick (no confirm: hash) is replaced and a request goes out', async () => {
+      windowOpen();
+      consents().push({ id: 'legacy', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status: 'pending', source: 'website', evidence_reference: 'form:form-a', created_at: ago(HOUR) });
+      await post({});
+      await runAfter();
+      expect(m.sendButtons).toHaveBeenCalledTimes(1);
+      expect(pending()).toHaveLength(2);
+    });
+
+    it('a live request (30 days or less) stands: no new row, nothing sent', async () => {
+      windowOpen();
+      seedRequest(A, newOptInNonce(), 29 * DAY);
       const res = await post({});
       expect(await res.json()).toEqual({ success: true, optInPending: true });
-      expect(consents()).toHaveLength(1);
       expect(m.afterTasks).toHaveLength(0);
-    }
-    expect(m.sendButtons).not.toHaveBeenCalled();
+      expect(pending()).toHaveLength(1);
+      expect(m.sendButtons).not.toHaveBeenCalled();
+    });
+
+    it('a granted record stands: no new row, nothing sent', async () => {
+      windowOpen();
+      consents().push({ id: 'g', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status: 'granted', source: 'whatsapp', created_at: ago(HOUR) });
+      const res = await post({});
+      expect(await res.json()).toEqual({ success: true, optInPending: true });
+      expect(m.afterTasks).toHaveLength(0);
+      expect(consents()).toHaveLength(1);
+      expect(m.sendButtons).not.toHaveBeenCalled();
+    });
+
+    it('after a "No thanks" (revoked), a new tick sends a new request', async () => {
+      windowOpen();
+      consents().push({ id: 'r', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status: 'revoked', source: 'whatsapp', created_at: ago(HOUR) });
+      await post({});
+      await runAfter();
+      expect(m.sendButtons).toHaveBeenCalledTimes(1);
+    });
+
+    it('existing guards still apply to a re-tick (an opt-out means no send)', async () => {
+      windowOpen();
+      seedRequest(A, newOptInNonce(), 31 * DAY);
+      optOut(A, DAY);
+      await post({});
+      await runAfter();
+      expect(pending()).toHaveLength(2);
+      expect(m.sendButtons).not.toHaveBeenCalled();
+    });
   });
 
   it('a send failure never fails the submit', async () => {

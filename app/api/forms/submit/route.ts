@@ -3,12 +3,24 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
-import { OPTIN_POLICY_VERSION, newOptInNonce, pendingEvidence, sendOptInConfirmationRequest } from '@/lib/consent/optin-confirmation';
+import { OPTIN_POLICY_VERSION, OPTIN_REQUEST_TTL_MS, newOptInNonce, pendingEvidence, sendOptInConfirmationRequest } from '@/lib/consent/optin-confirmation';
+
+/**
+ * A pending request that can still be confirmed: it carries a nonce hash and is at
+ * most 30 days old (Owner Q5). An expired request, or a pre-release tick without a
+ * hash, does not block a fresh tick (Owner decision 2026-11-06).
+ */
+function isLiveRequest(row: { status?: string | null; evidence_reference?: string | null; created_at?: string | null } | null): boolean {
+  if (row?.status !== 'pending' || !/\|confirm:[0-9a-f]{64}$/.test(row.evidence_reference || '')) return false;
+  const created = Date.parse(row.created_at || '');
+  return Number.isFinite(created) && Date.now() - created <= OPTIN_REQUEST_TTL_MS;
+}
 
 /**
  * Append a 'pending' WhatsApp marketing consent row for a ticked web opt-in. Never
  * written over a newer 'granted' record: an unverified web tick must not be able
- * to replace (and so withdraw) a real permission. Never blocks the saved response.
+ * to replace (and so withdraw) a real permission. A live request is not repeated.
+ * Never blocks the saved response.
  * A NEW row carries sha256 of a one-time nonce; the nonce itself goes only to the
  * typed number (WhatsApp confirmation, #591 part B1) and is never stored.
  */
@@ -17,13 +29,13 @@ async function recordPendingOptIn(
 ): Promise<{ pending: boolean; request: { id: string; nonce: string } | null }> {
   try {
     const digits = e164.replace(/\D/g, '');
-    const { data: latest, error } = await db.from('customer_consents').select('status')
+    const { data: latest, error } = await db.from('customer_consents').select('status, evidence_reference, created_at')
       .eq('business_id', businessId).in('phone', [digits, `+${digits}`])
       .eq('channel', 'whatsapp').eq('purpose', 'marketing')
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .limit(1).maybeSingle();
     if (error) return { pending: false, request: null };
-    if (latest?.status === 'granted' || latest?.status === 'pending') return { pending: true, request: null };
+    if (latest?.status === 'granted' || isLiveRequest(latest)) return { pending: true, request: null };
     const nonce = newOptInNonce();
     const { data: inserted, error: insertError } = await db.from('customer_consents').insert({
       business_id: businessId, phone: e164, channel: 'whatsapp', purpose: 'marketing',
