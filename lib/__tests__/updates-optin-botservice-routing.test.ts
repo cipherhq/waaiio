@@ -69,7 +69,7 @@ describe('BotService: updates opt-in tap', () => {
 
     await bot.handleMessage(PHONE, `updates_yes:menu:${BIZ}`, 'list', 'pnid-shared', undefined);
 
-    expect(db.tables.customer_consents).toHaveLength(1);
+    expect(db.tables.customer_consents.map((r: { purpose: string }) => r.purpose).sort()).toEqual(['marketing', 'utility']);
     expect(db.tables.customer_consents[0]).toMatchObject({ business_id: BIZ, status: 'granted', evidence_reference: 'bot_next_steps_menu' });
     expect(db.tables.launch_subscribers).toHaveLength(1);
     expect(sent).toEqual(["🎉 You're in! Mama Put Kitchen and Waaiio will send you offers and updates. Reply STOP anytime to unsubscribe."]);

@@ -16,6 +16,7 @@ vi.mock('@/lib/logger', () => ({
 import {
   buildUpdatesOptInRow,
   handleUpdatesOptInTap,
+  recordUpdatesOptIn,
   parseUpdatesOptInPostback,
   shouldOfferUpdatesOptIn,
   updatesOptInPostback,
@@ -147,14 +148,18 @@ describe('shown once, recorded, not shown again', () => {
     const { handled, replies } = await tap(db, BIZ_A);
     expect(handled).toBe(true);
 
+    // One yes covers marketing AND utility (Owner decision 2026-11-06): two rows, same evidence and time.
     const rows = consentsFor(db, BIZ_A);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'marketing', status: 'granted',
-      source: 'whatsapp', evidence_reference: 'bot_next_steps_menu',
-      policy_version: `${UPDATES_OPTIN_POLICY_VERSION}:business+waaiio`,
-    });
-    expect(Number.isNaN(Date.parse(String(rows[0].granted_at)))).toBe(false);
+    expect(rows.map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
+    for (const r of rows) {
+      expect(r).toMatchObject({
+        business_id: BIZ_A, phone: E164, channel: 'whatsapp', status: 'granted',
+        source: 'whatsapp', evidence_reference: 'bot_next_steps_menu',
+        policy_version: `${UPDATES_OPTIN_POLICY_VERSION}:business+waaiio`,
+      });
+      expect(Number.isNaN(Date.parse(String(r.granted_at)))).toBe(false);
+    }
+    expect(rows[0].granted_at).toBe(rows[1].granted_at);
 
     expect(db.tables.launch_subscribers).toHaveLength(1);
     expect(db.tables.launch_subscribers[0]).toMatchObject({
@@ -173,7 +178,7 @@ describe('shown once, recorded, not shown again', () => {
     const db = seed();
     await tap(db, BIZ_A);
     const { replies } = await tap(db, BIZ_A);
-    expect(consentsFor(db, BIZ_A)).toHaveLength(1);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // marketing + utility
     expect(db.tables.launch_subscribers).toHaveLength(1);
     expect(replies[0]).toContain('already signed up');
   });
@@ -235,7 +240,7 @@ describe('opt-outs are respected and never re-asked', () => {
     const db = seed({ launch_subscribers: [{ id: 'l1', wa_number: PHONE, market: 'NG', receiving_number: 'x', signup_source: 'direct', opt_in_status: 'opted_out' }] });
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
     const { replies } = await tap(db, BIZ_A);
-    expect(consentsFor(db, BIZ_A)).toHaveLength(1);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // marketing + utility
     expect(db.tables.launch_subscribers).toHaveLength(1);
     expect(db.tables.launch_subscribers[0].opt_in_status).toBe('opted_out');
     expect(replies[0]).not.toContain('Waaiio');
@@ -249,7 +254,7 @@ describe('no cross-business consent', () => {
       { id: 's-b', business_id: BIZ_B, whatsapp_number: PHONE, session_data: {}, updated_at: '2026-11-06T10:00:00Z' },
     ] });
     await tap(db, BIZ_A);
-    expect(consentsFor(db, BIZ_A)).toHaveLength(1);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // marketing + utility
     expect(consentsFor(db, BIZ_B)).toHaveLength(0);
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_B, true)).toBe(true);
   });
@@ -273,7 +278,7 @@ describe('no cross-business consent', () => {
   it('a customer profile (no chat session) also counts as prior contact', async () => {
     const db = seed({ bot_sessions: [], customer_profiles: [{ id: 'cp', business_id: BIZ_A, phone: E164 }] });
     await tap(db, BIZ_A);
-    expect(consentsFor(db, BIZ_A)).toHaveLength(1);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // marketing + utility
   });
 });
 
@@ -307,7 +312,7 @@ describe('reviewer follow-ups', () => {
   it('no shared Waaiio number for the market → business consent only, and the reply says so', async () => {
     const db = seed({ whatsapp_channels: [] });
     const { replies } = await tap(db, BIZ_A, { destinationPhone: 'pnid-unknown' });
-    expect(consentsFor(db, BIZ_A)).toHaveLength(1);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // marketing + utility
     expect(db.tables.launch_subscribers).toHaveLength(0);
     expect(replies[0]).not.toContain('Waaiio');
   });
@@ -337,6 +342,27 @@ describe('reviewer follow-ups', () => {
     expect(await updatesOptInRowFor(db as any, { phone: PHONE, lang: 'en', source: 'welcome', business: biz, firstVisitSessionId: 's-a' })).not.toBeNull();
     db.tables.bot_sessions.push({ id: 's-old', business_id: BIZ_A, whatsapp_number: PHONE, session_data: {} });
     expect(await updatesOptInRowFor(db as any, { phone: PHONE, lang: 'en', source: 'welcome', business: biz, firstVisitSessionId: 's-a' })).toBeNull();
+  });
+});
+
+describe('marketing + utility (Owner decision 2026-11-06)', () => {
+  it('an older utility-only consent does not hide the offer; the tap adds both purposes', async () => {
+    const db = seed({ customer_consents: [{ id: 'u0', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'utility', status: 'granted', created_at: '2026-11-01T00:00:00Z' }] });
+    expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(true);
+    await tap(db, BIZ_A);
+    expect(consentsFor(db, BIZ_A).filter(r => r.id !== 'u0').map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
+  });
+
+  it('the exported recordUpdatesOptIn reports the outcome without sending anything', async () => {
+    const db = seed();
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', destinationPhone: 'pnid-shared-ng' }))
+      .toEqual({ status: 'granted', businessName: 'Mama Put Kitchen', waaiioSubscribed: true });
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu' }))
+      .toEqual({ status: 'already', businessName: 'Mama Put Kitchen' });
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_B, source: 'menu' }))
+      .toEqual({ status: 'no_contact' });
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: 'not-a-uuid', source: 'menu' }))
+      .toEqual({ status: 'unknown_business' });
   });
 });
 

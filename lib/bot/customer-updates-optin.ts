@@ -251,6 +251,110 @@ async function waaiioSenderFor(supabase: SupabaseClient, destinationPhone: strin
   return (data[0] as { phone_number_id: string | null }).phone_number_id || null;
 }
 
+/** Outcome of recording an opt-in. The caller chooses the reply. */
+export type UpdatesOptInResult =
+  | { status: 'granted'; businessName: string; waaiioSubscribed: boolean }
+  | { status: 'already' | 'opted_out'; businessName: string }
+  | { status: 'unknown_business' | 'no_contact' | 'error' };
+
+/**
+ * Purposes one "yes" covers (Owner decision 2026-11-06, #591): marketing and
+ * utility (service messages about what the customer did with the business).
+ */
+export const UPDATES_OPTIN_PURPOSES = ['marketing', 'utility'] as const;
+
+/**
+ * Record a customer's "yes" for one business (and Waaiio's list unless the
+ * business is white-label). Shared by the menu tap and, later, other explicit
+ * WhatsApp opt-in paths. The caller must already have the customer's explicit
+ * action; this never infers consent. Never throws.
+ *
+ * Checks, in order: business exists; the number has dealt with it; no active
+ * opt-out (business or global); latest consent not revoked; not already granted.
+ * Then appends one granted customer_consents row per purpose in a single insert.
+ */
+export async function recordUpdatesOptIn(
+  supabase: SupabaseClient,
+  params: { phone: string; businessId: string; source: UpdatesOptInSource; destinationPhone?: string },
+): Promise<UpdatesOptInResult> {
+  const { phone, businessId, source } = params;
+  if (!phone || !UUID_RE.test(businessId)) return { status: 'unknown_business' };
+  try {
+    const { data: business, error: bizErr } = await supabase.from('businesses')
+      .select('id, name, subscription_tier, is_whitelabel, country_code')
+      .eq('id', businessId).maybeSingle();
+    if (bizErr) return { status: 'error' };
+    if (!business) return { status: 'unknown_business' };
+
+    // Cross-business safety: only a business this number has actually dealt with.
+    const contact = await hasContactWithBusiness(supabase, phone, businessId);
+    if (contact === 'error') return { status: 'error' };
+    if (!contact) {
+      logger.warn('[UPDATES-OPTIN] No prior contact with business — not recorded');
+      return { status: 'no_contact' };
+    }
+
+    const optOut = await optOutState(supabase, phone, businessId, false);
+    if (optOut === 'error') return { status: 'error' };
+    if (optOut === 'opted_out') return { status: 'opted_out', businessName: business.name };
+
+    const consent = await businessConsentState(supabase, phone, businessId);
+    if (consent === 'error') return { status: 'error' };
+    if (consent === 'blocked') return { status: 'opted_out', businessName: business.name };
+    if (consent === 'granted') return { status: 'already', businessName: business.name };
+
+    const includesWaaiio = updatesOptInIncludesWaaiio(business.subscription_tier, business.is_whitelabel);
+    const grantedAt = new Date().toISOString();
+    const row = {
+      business_id: businessId,
+      phone: `+${phone.replace(/\D/g, '')}`,
+      channel: 'whatsapp',
+      status: 'granted',
+      source: 'whatsapp',
+      evidence_reference: UPDATES_OPTIN_EVIDENCE[source],
+      policy_version: `${UPDATES_OPTIN_POLICY_VERSION}:${includesWaaiio ? 'business+waaiio' : 'business'}`,
+      granted_at: grantedAt,
+    };
+    // One statement, so both purposes are recorded or neither is.
+    const { error: insertErr } = await supabase.from('customer_consents')
+      .insert(UPDATES_OPTIN_PURPOSES.map(purpose => ({ ...row, purpose })));
+    if (insertErr) {
+      logger.error('[UPDATES-OPTIN] Business consent not recorded:', insertErr.message);
+      return { status: 'error' };
+    }
+
+    // Waaiio's list: add a new subscriber, keep an active one, never re-activate
+    // someone who unsubscribed from Waaiio (the thank-you then names only the business).
+    let waaiioSubscribed = false;
+    if (includesWaaiio) {
+      const waaiio = await waaiioListState(supabase, phone);
+      if (waaiio === 'active') {
+        waaiioSubscribed = true;
+      } else if (waaiio === 'none') {
+        const waaiioSender = await waaiioSenderFor(supabase, params.destinationPhone, business.country_code ?? null);
+        if (!waaiioSender) {
+          logger.warn('[UPDATES-OPTIN] No shared Waaiio number for this market — business consent only');
+        } else {
+          const { error: subErr } = await supabase.from('launch_subscribers').insert({
+            wa_number: phone,
+            market: String(business.country_code || 'XX').slice(0, 4),
+            receiving_number: waaiioSender,
+            signup_source: UPDATES_OPTIN_EVIDENCE[source],
+            opt_in_status: 'active',
+          });
+          // 23505: a concurrent tap or launch sign-up just added this number as active.
+          waaiioSubscribed = !subErr || subErr.code === '23505';
+          if (subErr && subErr.code !== '23505') logger.error('[UPDATES-OPTIN] Waaiio subscriber not recorded:', subErr.message);
+        }
+      }
+    }
+    return { status: 'granted', businessName: business.name, waaiioSubscribed };
+  } catch (err) {
+    logger.error('[UPDATES-OPTIN] Recording failed:', String(err));
+    return { status: 'error' };
+  }
+}
+
 /**
  * Handle a tap on the opt-in row. Returns false when the text is not an opt-in
  * postback (caller continues), true when handled. Never touches the chat
@@ -287,84 +391,21 @@ export async function handleUpdatesOptInTap(
       return true;
     }
 
-    const { data: business, error: bizErr } = await supabase.from('businesses')
-      .select('id, name, subscription_tier, is_whitelabel, country_code')
-      .eq('id', businessId).maybeSingle();
-    if (bizErr || !business) {
-      await reply('updates.expired');
-      return true;
-    }
-
     const { data: lastSession } = await supabase.from('bot_sessions')
       .select('session_data').eq('business_id', businessId).in('whatsapp_number', phoneVariants(from))
       .order('updated_at', { ascending: false }).limit(1).maybeSingle();
     const detected = (lastSession?.session_data as Record<string, unknown> | null)?._detected_language;
     if (typeof detected === 'string' && detected) lang = detected;
 
-    // Cross-business safety: only a business this number has actually dealt with.
-    const contact = await hasContactWithBusiness(supabase, from, businessId);
-    if (contact === 'error') { await reply('updates.save_failed'); return true; }
-    if (!contact) {
-      logger.warn('[UPDATES-OPTIN] No prior contact with business — ignoring tap');
-      await reply('updates.expired');
-      return true;
+    const result = await recordUpdatesOptIn(supabase, { phone: from, businessId, source, destinationPhone: params.destinationPhone });
+    switch (result.status) {
+      case 'granted':
+        await reply(result.waaiioSubscribed ? 'updates.thanks' : 'updates.thanks_business', result.businessName); break;
+      case 'already': await reply('updates.already', result.businessName); break;
+      case 'opted_out': await reply('updates.opted_out', result.businessName); break;
+      case 'unknown_business': case 'no_contact': await reply('updates.expired'); break;
+      default: await reply('updates.save_failed');
     }
-
-    const optOut = await optOutState(supabase, from, businessId, false);
-    if (optOut === 'error') { await reply('updates.save_failed'); return true; }
-    if (optOut === 'opted_out') { await reply('updates.opted_out', business.name); return true; }
-
-    const consent = await businessConsentState(supabase, from, businessId);
-    if (consent === 'error') { await reply('updates.save_failed'); return true; }
-    if (consent === 'blocked') { await reply('updates.opted_out', business.name); return true; }
-    if (consent === 'granted') { await reply('updates.already', business.name); return true; }
-
-    const includesWaaiio = updatesOptInIncludesWaaiio(business.subscription_tier, business.is_whitelabel);
-    const now = new Date().toISOString();
-    const { error: insertErr } = await supabase.from('customer_consents').insert({
-      business_id: businessId,
-      phone: `+${from.replace(/\D/g, '')}`,
-      channel: 'whatsapp',
-      purpose: 'marketing',
-      status: 'granted',
-      source: 'whatsapp',
-      evidence_reference: UPDATES_OPTIN_EVIDENCE[source],
-      policy_version: `${UPDATES_OPTIN_POLICY_VERSION}:${includesWaaiio ? 'business+waaiio' : 'business'}`,
-      granted_at: now,
-    });
-    if (insertErr) {
-      logger.error('[UPDATES-OPTIN] Business consent not recorded:', insertErr.message);
-      await reply('updates.save_failed');
-      return true;
-    }
-
-    // Waaiio's list: add a new subscriber, keep an active one, never re-activate
-    // someone who unsubscribed from Waaiio (the thank-you then names only the business).
-    let waaiioSubscribed = false;
-    if (includesWaaiio) {
-      const waaiio = await waaiioListState(supabase, from);
-      if (waaiio === 'active') {
-        waaiioSubscribed = true;
-      } else if (waaiio === 'none') {
-        const waaiioSender = await waaiioSenderFor(supabase, params.destinationPhone, business.country_code ?? null);
-        if (!waaiioSender) {
-          logger.warn('[UPDATES-OPTIN] No shared Waaiio number for this market — business consent only');
-        } else {
-          const { error: subErr } = await supabase.from('launch_subscribers').insert({
-            wa_number: from,
-            market: String(business.country_code || 'XX').slice(0, 4),
-            receiving_number: waaiioSender,
-            signup_source: UPDATES_OPTIN_EVIDENCE[source],
-            opt_in_status: 'active',
-          });
-          // 23505: a concurrent tap or launch sign-up just added this number as active.
-          waaiioSubscribed = !subErr || subErr.code === '23505';
-          if (subErr && subErr.code !== '23505') logger.error('[UPDATES-OPTIN] Waaiio subscriber not recorded:', subErr.message);
-        }
-      }
-    }
-
-    await reply(waaiioSubscribed ? 'updates.thanks' : 'updates.thanks_business', business.name);
     return true;
   } catch (err) {
     logger.error('[UPDATES-OPTIN] Tap handling failed:', String(err));
