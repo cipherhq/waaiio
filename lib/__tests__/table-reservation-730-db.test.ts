@@ -99,8 +99,15 @@ describe.skipIf(SKIP)('#730: Disposable-PG M472 migration and RPC', () => {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      -- Retry until unused, like the real generator (M064); a bare random code collided on main (run 42111907234)
       CREATE OR REPLACE FUNCTION public.generate_reference_code() RETURNS TRIGGER AS $$
-      BEGIN NEW.reference_code := 'BW-' || LPAD(FLOOR(RANDOM() * 10000)::TEXT, 4, '0'); RETURN NEW; END $$ LANGUAGE plpgsql;
+      DECLARE new_code TEXT; BEGIN
+        LOOP
+          new_code := 'BW-' || LPAD(FLOOR(RANDOM() * 10000)::TEXT, 4, '0');
+          EXIT WHEN NOT EXISTS (SELECT 1 FROM bookings WHERE reference_code = new_code);
+        END LOOP;
+        NEW.reference_code := new_code; RETURN NEW;
+      END $$ LANGUAGE plpgsql;
       CREATE TRIGGER set_reference_code BEFORE INSERT ON bookings FOR EACH ROW
         WHEN (NEW.reference_code IS NULL) EXECUTE FUNCTION generate_reference_code();
 

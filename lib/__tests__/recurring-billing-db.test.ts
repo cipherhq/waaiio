@@ -100,9 +100,16 @@ describe.skipIf(!dbUrl)('Recurring Billing: Real PostgreSQL contention tests', (
         status reservation_status DEFAULT 'confirmed', total_amount NUMERIC(12,2),
         quantity INT DEFAULT 1, guest_name TEXT, guest_phone TEXT, confirmed_at TIMESTAMPTZ, notes TEXT
       );
+      -- Retry until unused, like the real generator (M064), so two bookings never share a code
       CREATE OR REPLACE FUNCTION generate_booking_reference() RETURNS TRIGGER AS $t$
       DECLARE new_code TEXT; BEGIN
-        IF NEW.reference_code IS NULL THEN NEW.reference_code := 'BW-R' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0'); END IF;
+        IF NEW.reference_code IS NULL THEN
+          LOOP
+            new_code := 'BW-R' || LPAD(FLOOR(RANDOM()*100000)::TEXT,5,'0');
+            EXIT WHEN NOT EXISTS (SELECT 1 FROM bookings WHERE reference_code = new_code);
+          END LOOP;
+          NEW.reference_code := new_code;
+        END IF;
         RETURN NEW;
       END; $t$ LANGUAGE plpgsql;
       DROP TRIGGER IF EXISTS trg_booking_ref ON bookings;
