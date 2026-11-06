@@ -6,6 +6,7 @@ import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import { FeeBankCard } from '@/components/FeeBankCard';
 import {
   isCountryAmountKey,
   validateCountryAmounts,
@@ -1179,6 +1180,8 @@ export default function PlatformSettings() {
           </span>
         </button>
       </div>
+
+      <FeeBankCard />
 
       {/* Add Setting Form */}
       {showAdd && (
