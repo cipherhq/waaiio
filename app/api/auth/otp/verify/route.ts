@@ -77,12 +77,39 @@ export async function POST(request: NextRequest) {
     const serviceClient = createServiceClient();
     const phoneEmail = `${phone.replace(/\+/g, '')}@phone.waaiio.com`;
 
-    // Check if a profile exists with this phone number
-    const { data: existingProfile } = await serviceClient
+    // Find the account for this phone. A profile's phone column can be edited
+    // and is not proof of ownership, so only an account whose own confirmed
+    // auth phone equals the verified phone may be signed in.
+    const { data: candidateProfiles } = await serviceClient
       .from('profiles')
       .select('id')
       .eq('phone', phone)
-      .maybeSingle();
+      .limit(5);
+
+    const verifiedDigits = phone.replace(/\D/g, '');
+    let existingProfile: { id: string } | null = null;
+    let hasUnconfirmedMatch = false;
+    for (const candidate of candidateProfiles ?? []) {
+      const { data: candidateUser, error: candidateError } = await serviceClient.auth.admin.getUserById(candidate.id);
+      if (candidateError) {
+        logger.withContext({ op: 'otp-verify.candidate-lookup', ...safeLogErrorContext(candidateError) }).warn('[OTP Verify] Account lookup failed');
+      }
+      const authDigits = (candidateUser?.user?.phone || '').replace(/\D/g, '');
+      if (authDigits && authDigits === verifiedDigits && candidateUser?.user?.phone_confirmed_at) {
+        existingProfile = candidate;
+        break;
+      }
+      hasUnconfirmedMatch = true;
+    }
+
+    if (!existingProfile && hasUnconfirmedMatch) {
+      // Owner decision 2026-11-06: phone login opens only accounts whose phone
+      // was confirmed. Do not create a second account for this number either.
+      return NextResponse.json(
+        { message: 'This phone number is not confirmed for an account. Please log in with your email instead.' },
+        { status: 403 },
+      );
+    }
 
     let userId: string;
     let isNewUser = false;

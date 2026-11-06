@@ -42,22 +42,9 @@ export async function createWhatsAppUser(
         return byPhone.id;
       }
 
-      // Try lookup by email
+      // The email was typed, not verified, so it must never link this phone to
+      // an existing account found by that email. Create a phone-only account.
       if (email) {
-        const { data: byEmail } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', email)
-          .maybeSingle();
-
-        if (byEmail?.id) {
-          await supabase
-            .from('profiles')
-            .update({ phone: fullPhone, first_name: firstName, last_name: lastName })
-            .eq('id', byEmail.id);
-          return byEmail.id;
-        }
-
         // Retry without email
         const { data: retryData, error: retryError } = await supabase.auth.admin.createUser({
           phone: fullPhone,

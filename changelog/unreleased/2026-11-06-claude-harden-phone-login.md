@@ -1,0 +1,25 @@
+## 2026-11-06 — Harden phone login account matching
+
+- **What changed:**
+  - Phone-code login (`app/api/auth/otp/verify/route.ts`) now signs in an existing account only when that account's own auth phone matches the verified phone and is marked confirmed (`phone_confirmed_at`).
+  - When a profile has the number but the account's phone is not confirmed, the person sees "This phone number is not confirmed for an account. Please log in with your email instead." (403). No new account is created for that number. (Owner decision 2026-11-06.)
+  - If the account lookup fails, the route also returns 403 and logs a warning.
+- **Bot and manual booking customer accounts (`lib/bot/flows/shared/user.ts`, `createWhatsAppUser`):**
+  - A typed email no longer links the WhatsApp number to an existing account found by that email.
+  - When the email belongs to another account, a separate phone-only customer account is created, as the code already did when no profile matched.
+- **Files:**
+  - `app/api/auth/otp/verify/route.ts`
+  - `lib/bot/flows/shared/user.ts`
+  - `lib/__tests__/otp-verify-confirmed-phone.test.ts`
+  - `lib/__tests__/whatsapp-user-email-no-link.test.ts`
+- **Unchanged:**
+  - The account lookup still matches the profile phone exactly as before (`+E.164`).
+  - New phone sign-up, including the sign-up gate.
+  - OTP checks, rate limits and lockouts.
+  - Email login.
+  - Returning WhatsApp customers found by phone (both phone formats).
+- **Could break:**
+  - **Merchants without a confirmed phone** lose phone login and must use email login. This includes merchants who signed up through WhatsApp onboarding, and anyone who signed up with email and only typed a phone into their profile. All of them have an email login.
+  - **Web customers who later book on WhatsApp** with the same email get a separate customer account, so their earlier history is not linked automatically.
+  - **Rare case:** if a phone already has an auth account but no profile shows that number, and an email is typed, the bot or manual booking can no longer fall back to the email match. The customer sees the existing "could not create account" error.
+- **Known, not changed here:** repeat phone login may already fail for accounts whose profile phone is stored without `+`. The lookup is exact, as before. This is tracked separately and needs a read-only data check.
