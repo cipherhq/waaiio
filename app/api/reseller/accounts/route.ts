@@ -74,12 +74,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, category, email, country_code, subscription_tier, phone, flow_type } = body as {
+    const { name, category, email, country_code, phone, flow_type } = body as {
       name: string;
       category: string;
       email: string;
       country_code: string;
-      subscription_tier?: string;
       phone?: string;
       flow_type?: string;
     };
@@ -93,7 +92,6 @@ export async function POST(request: NextRequest) {
 
     // Default flow_type to 'booking' — the most common type
     const resolvedFlowType = flow_type || 'booking';
-    const resolvedTier = subscription_tier || 'free';
 
     // Generate a slug from name
     const slug = name
@@ -111,7 +109,9 @@ export async function POST(request: NextRequest) {
         category,
         email,
         country_code,
-        subscription_tier: resolvedTier,
+        // Owner decision 2026-11-06: sub-accounts start free; paid plans come from
+        // paying or from a Waaiio admin, never from the reseller's request.
+        subscription_tier: 'free',
         phone: phone || null,
         flow_type: resolvedFlowType,
         reseller_id: reseller.id,
