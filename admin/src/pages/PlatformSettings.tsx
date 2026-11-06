@@ -891,6 +891,8 @@ export default function PlatformSettings() {
   const groupOrder = [...GROUPS.map(g => g.label), 'Other'];
 
   for (const s of settings) {
+    // The fee bank account has its own protected card (FeeBankCard); keep it out of the general editor.
+    if (s.key.trim().toLowerCase().startsWith('platform_bank_')) continue;
     const label = getGroupLabel(s.key);
     if (!grouped[label]) grouped[label] = [];
     grouped[label].push(s);

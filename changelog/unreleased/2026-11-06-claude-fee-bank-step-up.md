@@ -7,8 +7,8 @@
     - It then consumes a step-up bound to `provider_config`, target `platform_bank_ng`, and this exact value, upserts the setting, and writes an audit entry with a masked account number.
   - **`app/api/admin/platform-settings/route.ts` (general editor, PUT/POST/DELETE):** refuses any `platform_bank_*` key (case-insensitive, trimmed) with 403 `fee_bank_protected`.
   - **New `lib/fee-bank-setting.ts`:** key, validation and masking.
-  - **New `admin/src/components/FeeBankCard.tsx`:** card on the Platform Settings page that saves through the existing step-up dialog. It shows the current account (number masked) from the settings the page already loads, and makes no extra request until Save.
-  - **Tests:** `lib/__tests__/fee-bank-step-up.test.ts`.
+  - **New `admin/src/components/FeeBankCard.tsx`:** card on the Platform Settings page that saves through the existing step-up dialog. It shows the current account (number masked) from the settings the page already loads, and makes no extra request until Save. `platform_bank_*` keys no longer appear in the general settings list (`admin/src/pages/PlatformSettings.tsx`).
+  - **Tests:** `lib/__tests__/fee-bank-step-up.test.ts` and `admin/src/__tests__/fee-bank-card.test.tsx`.
 - **Unchanged:**
   - how `app/api/settings/payment-credentials` reads the setting;
   - every other platform setting;
