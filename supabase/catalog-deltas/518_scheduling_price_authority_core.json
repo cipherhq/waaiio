@@ -343,6 +343,6 @@
  "migration": "518_scheduling_price_authority_core.sql",
  "migration_sha256": "47ecdfbc6991c71b6a799a2204c9b190f93704ae380a0f7fb38f1d87206dab3a",
  "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }

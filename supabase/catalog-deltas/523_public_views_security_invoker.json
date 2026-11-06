@@ -8,6 +8,152 @@
       "grantable": false,
       "grantee": "anon",
       "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "pg_read_all_data",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "80a2d9330bf87ad360c4c331a6271f90b664ded78378ba4e7cf0347f3ac1bccb",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(id uuid, name character varying, slug character varying, description text, address text, city character varying, state character varying, country_code character varying, phone character varying, email character varying, logo_url text, cover_photo_url text, category business_category, flow_type flow_type, operating_hours jsonb, rating_avg numeric, rating_count integer, total_bookings integer, instagram_handle character varying, timezone character varying, recurring_enabled boolean, bot_code character varying, status restaurant_status, created_at timestamp with time zone, updated_at timestamp with time zone)",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "22cad3703032ec540e248804c83ec3e61d517f22ee8c3510703ecaff13fbda29",
+   "identity": "function:public_view_private.businesses_public_rows()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "anon",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "pg_read_all_data",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "9577eb37b6daa835368ed11402e10115b7429cf9ab3e23b8aa727d98bcfe5f4f",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(id uuid, country_code character varying, phone_number character varying, display_name character varying, channel_type character varying, is_active boolean)",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "19b9c81739b7c41e6880ed9a888061c8259fbb99e17ebb03ff4a17afcbb3ac07",
+   "identity": "function:public_view_private.whatsapp_channels_public_rows()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "anon",
+      "grantor": "postgres",
+      "privilege": "USAGE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "USAGE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "CREATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "USAGE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "USAGE"
+     }
+    ],
+    "owner": "postgres"
+   },
+   "after_sha256": "070c88e2814f7ad1e4866a6498450d699904a0ba6fc4dcf9808f521beda0fe62",
+   "identity": "schema:public_view_private",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "anon",
+      "grantor": "postgres",
       "privilege": "SELECT"
      },
      {
@@ -73,11 +219,15 @@
     ],
     "force_rls": false,
     "kind": "v",
+    "options": [
+     "security_barrier=true",
+     "security_invoker=true"
+    ],
     "owner": "postgres",
     "rls": false,
     "view": "3df9930f7196dc3b002e0da7fe5620278e6244904d70fdfb99a1790d03a046b2"
    },
-   "after_sha256": "96755726e35e4dbfb9643c48d23fedb0856aa9c792ba7f786c4f0beeb9239327",
+   "after_sha256": "e09476fc36d6ad6205f6ea5532d0f032f78628d306b66b3308048f50f3531e49",
    "identity": "table:public.businesses_public",
    "operation": "modify"
   },
@@ -153,11 +303,15 @@
     ],
     "force_rls": false,
     "kind": "v",
+    "options": [
+     "security_barrier=true",
+     "security_invoker=true"
+    ],
     "owner": "postgres",
     "rls": false,
     "view": "cdafbb81008d844670b94174c229e8b772891483a157dc0b2ca74a259c8ee424"
    },
-   "after_sha256": "91554749473a08e49df5d5c1d3a82505a91fa2694eed93d52260da2e20237a0b",
+   "after_sha256": "4f04a5b550fbd01df04a964e1786903d10bbe5634ff1fdc9bf4e01c4cf7b7bd9",
    "identity": "table:public.whatsapp_channels_public",
    "operation": "modify"
   }
@@ -165,6 +319,6 @@
  "migration": "523_public_views_security_invoker.sql",
  "migration_sha256": "d39c2a3e9c4885d5437e38c2568f616f75ee03715504411f4b470df553cd5745",
  "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }

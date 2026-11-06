@@ -84,6 +84,6 @@
  "migration": "508_business_control_columns_guard.sql",
  "migration_sha256": "dcaedb07da65a543d2b4bd5ca6b6a17d2890f559c07a022a1787149b12cf9e11",
  "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }

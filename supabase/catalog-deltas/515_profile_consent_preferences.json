@@ -29,6 +29,6 @@
  "migration": "515_profile_consent_preferences.sql",
  "migration_sha256": "d6203b79e8b23e293897603c48722c788ddb4bcef8b87dffeb676372187f6299",
  "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }
