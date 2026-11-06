@@ -125,6 +125,18 @@ describe('opt-in row wording', () => {
     }
   });
 
+  it('every wording, full and short, mentions updates or news, not only offers (one yes also covers service messages)', () => {
+    // The word for updates/news/info in each locale's lines.
+    const updatesWord: Record<string, RegExp> = {
+      en: /updates/, pcm: /updates/, yo: /ìròyìn/, ig: /ozi/, ha: /labarai/, tw: /nsɛm/, fr: /infos/, es: /novedades/,
+    };
+    for (const [lang, copy] of Object.entries(_FLOW_COPY_FOR_TESTS)) {
+      for (const k of ['updates.optin_desc', 'updates.optin_desc_short', 'updates.optin_desc_business', 'updates.optin_desc_business_short']) {
+        expect(copy[k], `${lang}.${k}`).toMatch(updatesWord[lang]);
+      }
+    }
+  });
+
   it('businesses cannot override the consent wording', () => {
     for (const k of ['updates.optin_title', 'updates.optin_desc', 'updates.thanks']) {
       expect(isBusinessEditableKey(k)).toBe(false);
@@ -351,6 +363,26 @@ describe('marketing + utility (Owner decision 2026-11-06)', () => {
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(true);
     await tap(db, BIZ_A);
     expect(consentsFor(db, BIZ_A).filter(r => r.id !== 'u0').map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
+  });
+
+  it('a revoked service (utility) consent also hides the offer and blocks the tap', async () => {
+    const db = seed({ customer_consents: [
+      { id: 'u1', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'utility', status: 'granted', created_at: '2026-10-01T00:00:00Z' },
+      { id: 'u2', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'utility', status: 'revoked', created_at: '2026-10-02T00:00:00Z' },
+    ] });
+    expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
+    const { replies } = await tap(db, BIZ_A);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // only the seeded rows
+    expect(replies[0]).toContain('START');
+  });
+
+  it("the shared function itself enforces the business's own-number rule", async () => {
+    const db = seed();
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', channelBusinessId: BIZ_WL }))
+      .toEqual({ status: 'channel_mismatch' });
+    expect(db.tables.customer_consents).toHaveLength(0);
+    expect((await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', channelBusinessId: BIZ_A, destinationPhone: 'pnid-dedicated-a' })).status)
+      .toBe('granted');
   });
 
   it('the exported recordUpdatesOptIn reports the outcome without sending anything', async () => {

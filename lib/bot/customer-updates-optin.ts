@@ -42,6 +42,12 @@ export const UPDATES_OPTIN_EVIDENCE: Record<UpdatesOptInSource, string> = {
   welcome: 'bot_welcome_menu',
 };
 
+/**
+ * Purposes one "yes" covers (Owner decision 2026-11-06, #591): marketing and
+ * utility (service messages about what the customer did with the business).
+ */
+export const UPDATES_OPTIN_PURPOSES = ['marketing', 'utility'] as const;
+
 /** Wording version recorded with each consent row. Bump when the copy changes. */
 export const UPDATES_OPTIN_POLICY_VERSION = 'bot-updates-optin-v1';
 
@@ -110,19 +116,27 @@ export function buildUpdatesOptInRow(
 
 type ConsentState = 'none' | 'granted' | 'blocked' | 'error';
 
-/** Latest WhatsApp marketing consent for this business only. */
+/**
+ * Consent state for this business only, from the latest WhatsApp row of each
+ * purpose a "yes" covers. A revoked latest row for EITHER purpose blocks (never
+ * re-ask). "granted" means marketing is granted (the offer's main promise).
+ */
 async function businessConsentState(supabase: SupabaseClient, phone: string, businessId: string): Promise<ConsentState> {
   const { data, error } = await supabase.from('customer_consents')
-    .select('status, expires_at')
+    .select('purpose, status, expires_at')
     .eq('business_id', businessId).in('phone', phoneVariants(phone))
-    .eq('channel', 'whatsapp').eq('purpose', 'marketing')
+    .eq('channel', 'whatsapp').in('purpose', [...UPDATES_OPTIN_PURPOSES])
     .order('created_at', { ascending: false }).order('id', { ascending: false })
-    .limit(1).maybeSingle();
+    .limit(200);
   if (error) return 'error';
-  if (!data) return 'none';
-  if (data.status === 'revoked') return 'blocked';
-  if (data.status === 'granted' && (!data.expires_at || new Date(data.expires_at) > new Date())) return 'granted';
-  return 'none'; // pending (unverified web tick), unknown or expired
+  const latest = new Map<string, { status: string; expires_at: string | null }>();
+  for (const row of (data || []) as Array<{ purpose: string; status: string; expires_at: string | null }>) {
+    if (!latest.has(row.purpose)) latest.set(row.purpose, row);
+  }
+  if ([...latest.values()].some(r => r.status === 'revoked')) return 'blocked';
+  const marketing = latest.get('marketing');
+  if (marketing?.status === 'granted' && (!marketing.expires_at || new Date(marketing.expires_at) > new Date())) return 'granted';
+  return 'none'; // pending (unverified web tick), unknown, expired or no row
 }
 
 /**
@@ -255,30 +269,45 @@ async function waaiioSenderFor(supabase: SupabaseClient, destinationPhone: strin
 export type UpdatesOptInResult =
   | { status: 'granted'; businessName: string; waaiioSubscribed: boolean }
   | { status: 'already' | 'opted_out'; businessName: string }
-  | { status: 'unknown_business' | 'no_contact' | 'error' };
-
-/**
- * Purposes one "yes" covers (Owner decision 2026-11-06, #591): marketing and
- * utility (service messages about what the customer did with the business).
- */
-export const UPDATES_OPTIN_PURPOSES = ['marketing', 'utility'] as const;
+  | { status: 'unknown_business' | 'channel_mismatch' | 'no_contact' | 'error' };
 
 /**
  * Record a customer's "yes" for one business (and Waaiio's list unless the
  * business is white-label). Shared by the menu tap and, later, other explicit
- * WhatsApp opt-in paths. The caller must already have the customer's explicit
- * action; this never infers consent. Never throws.
+ * WhatsApp opt-in paths. Never throws; never infers consent.
  *
- * Checks, in order: business exists; the number has dealt with it; no active
- * opt-out (business or global); latest consent not revoked; not already granted.
- * Then appends one granted customer_consents row per purpose in a single insert.
+ * CALLER REQUIREMENTS (this function trusts its inputs):
+ *   - `phone` must be the Meta-verified WhatsApp sender of the message that
+ *     carried the customer's explicit "yes" (the webhook's `from`). Never a
+ *     number typed into a form, a request body or any other unverified source.
+ *   - the "yes" must answer wording that names this business (and Waaiio when
+ *     it is included), e.g. a real list/button tap, not free text.
+ *   - pass `channelBusinessId` whenever the message arrived on a business's
+ *     own (dedicated) number: only that business can then be recorded.
+ *
+ * Checks, in order: number's own business (if given); business exists; the
+ * number has dealt with it; no active opt-out (business or global); latest
+ * consent for neither purpose revoked; not already granted. Then appends one
+ * granted customer_consents row per purpose in a single insert.
  */
 export async function recordUpdatesOptIn(
   supabase: SupabaseClient,
-  params: { phone: string; businessId: string; source: UpdatesOptInSource; destinationPhone?: string },
+  params: {
+    phone: string;
+    businessId: string;
+    source: UpdatesOptInSource;
+    destinationPhone?: string;
+    /** The business that owns the number the message arrived on, if it is a dedicated number. */
+    channelBusinessId?: string;
+  },
 ): Promise<UpdatesOptInResult> {
   const { phone, businessId, source } = params;
   if (!phone || !UUID_RE.test(businessId)) return { status: 'unknown_business' };
+  // On a business's own number only that business can be named.
+  if (params.channelBusinessId && params.channelBusinessId.toLowerCase() !== businessId.toLowerCase()) {
+    logger.warn('[UPDATES-OPTIN] Business mismatch on dedicated channel — not recorded');
+    return { status: 'channel_mismatch' };
+  }
   try {
     const { data: business, error: bizErr } = await supabase.from('businesses')
       .select('id, name, subscription_tier, is_whitelabel, country_code')
@@ -384,26 +413,22 @@ export async function handleUpdatesOptInTap(
   };
 
   try {
-    // On a business's own number only that business can be named.
-    if (params.preResolvedBusinessId && params.preResolvedBusinessId.toLowerCase() !== businessId) {
-      logger.warn('[UPDATES-OPTIN] Business mismatch on dedicated channel — ignoring tap');
-      await reply('updates.expired');
-      return true;
-    }
-
     const { data: lastSession } = await supabase.from('bot_sessions')
       .select('session_data').eq('business_id', businessId).in('whatsapp_number', phoneVariants(from))
       .order('updated_at', { ascending: false }).limit(1).maybeSingle();
     const detected = (lastSession?.session_data as Record<string, unknown> | null)?._detected_language;
     if (typeof detected === 'string' && detected) lang = detected;
 
-    const result = await recordUpdatesOptIn(supabase, { phone: from, businessId, source, destinationPhone: params.destinationPhone });
+    const result = await recordUpdatesOptIn(supabase, {
+      phone: from, businessId, source, destinationPhone: params.destinationPhone,
+      channelBusinessId: params.preResolvedBusinessId,
+    });
     switch (result.status) {
       case 'granted':
         await reply(result.waaiioSubscribed ? 'updates.thanks' : 'updates.thanks_business', result.businessName); break;
       case 'already': await reply('updates.already', result.businessName); break;
       case 'opted_out': await reply('updates.opted_out', result.businessName); break;
-      case 'unknown_business': case 'no_contact': await reply('updates.expired'); break;
+      case 'unknown_business': case 'channel_mismatch': case 'no_contact': await reply('updates.expired'); break;
       default: await reply('updates.save_failed');
     }
     return true;
