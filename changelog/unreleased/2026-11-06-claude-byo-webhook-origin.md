@@ -1,0 +1,21 @@
+## 2026-11-06 — BYO payment webhook acts only on BYO payments
+
+- **What changed:** `app/api/payments/byo-webhook/[businessId]/route.ts` now loads the payment's `gateway` and `metadata`. It continues only when all of these hold:
+  - the payment's origin is BYO, either `metadata.payment_origin = 'byo'` or the legacy `byo: true` (via the existing `resolvePaymentOrigin`);
+  - the payment's gateway equals the gateway of the business's active BYO credentials;
+  - `metadata.byo_business_id`, when present, equals the business in the URL.
+- **Otherwise:** the webhook is acknowledged with 200 `{ received: true }` and nothing is verified, changed or deduplicated. A Sentry warning is recorded with the business and payment ids.
+- **Why:** this endpoint verifies with the merchant's own provider key. Payments created on Waaiio's provider account (`platform`) or through a connected split (`connect`) are confirmed only by the platform webhooks and the reconciliation paths. Those already resolve the exact credential from the payment.
+- **Files:**
+  - `app/api/payments/byo-webhook/[businessId]/route.ts`
+  - `lib/__tests__/byo-webhook-payment-origin.test.ts` (new)
+  - `lib/__tests__/payment-integrity.test.ts`: fixture payment rows now carry the gateway and BYO origin that real BYO payments have. No expected outcome changed.
+- **Unchanged:**
+  - Signature checks.
+  - Provider verification, amount, currency and reference checks.
+  - Dedup, and the success and failure handlers for BYO payments.
+  - Platform Paystack, Stripe and Flutterwave webhooks.
+  - Connected-split payments (route A in `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`).
+  - Waaiio-custody payments and admin settlement (route B).
+  - Fees, refunds and payouts.
+- **Could break:** a BYO payment created before origin metadata existed, with neither `payment_origin` nor `byo: true`, is no longer confirmed by this webhook. Every BYO payment-creation path in `lib/bot/flows/shared/payment.ts` writes `payment_origin`, and the older path also writes `byo: true`.
