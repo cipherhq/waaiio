@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { hashOperationParams } from '@/lib/admin-step-up';
+import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 type StepUpRow = {
   id: string; admin_user_id: string; session_id: string; action_type: string;
@@ -169,6 +170,11 @@ describe('fee bank route requires a step-up bound to this exact value', () => {
       expect((await feeBank.PUT(req({ ...bad, stepUpId: id }))).status).toBe(400);
     }
     expect(state.stepUps[0].consumed_at).toBeNull();
+  });
+
+  it('the fee bank route requires the full admin role', async () => {
+    await feeBank.PUT(req({ ...VALUE, stepUpId: addStepUp() }));
+    expect(vi.mocked(requirePlatformAdmin)).toHaveBeenCalledWith(expect.anything(), { requiredRole: 'admin' });
   });
 
   it('non-admin → 403, nothing saved', async () => {

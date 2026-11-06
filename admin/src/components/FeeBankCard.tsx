@@ -39,6 +39,8 @@ export function FeeBankCard({ current, onSaved }: { current: FeeBankValue | null
   function handleSave() {
     setMessage('');
     setError('');
+    // Start fresh after an earlier failure, so a failed save never leaves the card stuck.
+    stepUp.reset();
     const value = {
       bank_code: bankCode.trim(),
       account_number: accountNumber.trim(),
@@ -63,7 +65,9 @@ export function FeeBankCard({ current, onSaved }: { current: FeeBankValue | null
       params: { key: FEE_BANK_KEY, value },
       description: `Change the platform fee bank account to ${value.account_name} (account ending ${value.account_number.slice(-4)})`,
       onAuthorized,
-    }).catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not start verification'));
+    }).catch(() => {
+      // useStepUp already records the error in stepUp.state.error, which the card shows.
+    });
   }
 
   return (
@@ -92,7 +96,7 @@ export function FeeBankCard({ current, onSaved }: { current: FeeBankValue | null
         <p className="mt-3 text-sm text-red-600">{stepUp.state.error}</p>
       )}
       {message && <p className="mt-3 text-sm text-green-700">{message}</p>}
-      <button onClick={handleSave} disabled={stepUp.isActive}
+      <button onClick={handleSave} disabled={stepUp.isActive && stepUp.state.phase !== 'error'}
         className="mt-4 rounded-xl bg-brand px-4 py-2 text-sm font-bold text-white hover:bg-brand-600 disabled:opacity-50">
         Save fee bank account
       </button>

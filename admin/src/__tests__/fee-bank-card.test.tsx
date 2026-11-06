@@ -67,4 +67,20 @@ describe('PlatformSettings — fee bank account card', () => {
     await waitFor(() => expect(screen.getByText('Platform fee bank account')).toBeInTheDocument());
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('after a failed save the error shows once and Save can be pressed again', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({ error: 'No authenticator enrolled' }) } as Response);
+    const user = userEvent.setup();
+    render(<PlatformSettings />);
+    await waitFor(() => expect(screen.getByText('Platform fee bank account')).toBeInTheDocument());
+    await user.type(screen.getByPlaceholderText('Bank code'), '058');
+    await user.type(screen.getByPlaceholderText('Account number'), '0123456789');
+    await user.type(screen.getByPlaceholderText('Account name'), 'Waaiio Ltd');
+    const save = screen.getByRole('button', { name: 'Save fee bank account' });
+    await user.click(save);
+    await waitFor(() => expect(screen.getAllByText('No authenticator enrolled')).toHaveLength(1));
+    expect(save).not.toBeDisabled();
+    await user.click(save);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  });
 });
