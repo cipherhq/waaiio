@@ -27,10 +27,10 @@
 --     security_invoker = true and security_barrier = true.
 --
 -- What does not change: which columns and rows any role can read through
--- the views; no base-table grant, RLS policy or app code changes. The views
--- keep their existing SELECT grants (CREATE OR REPLACE keeps the ACL);
--- service_role's view SELECT, already live in production, is stated
--- explicitly so replayed databases match.
+-- the views; no base-table grant, RLS policy or app code changes. View
+-- grants are set exactly to SELECT for anon, authenticated and service_role,
+-- which is what each already has in production for reading (an unused
+-- MAINTAIN bit on the views is dropped).
 --
 -- Compatible with the live app: callers use lib/supabase/safe-view-query.ts,
 -- which reads the views by name with the same columns and filters.
@@ -168,9 +168,13 @@ SELECT
   r.is_active
 FROM public_view_private.whatsapp_channels_public_rows() r;
 
--- Production already has this grant (Supabase default privileges); M293 alone
--- did not give it, so replayed databases need it stated.
-GRANT SELECT ON public.businesses_public, public.whatsapp_channels_public TO service_role;
+-- Exact view grants (as M519/M520): SELECT only, for the three API roles.
+-- Production's service_role SELECT came from Supabase default privileges
+-- (M293 alone did not give it); the MAINTAIN bit PostgreSQL 17 added there
+-- has no use on a view. Stating the grants makes production, staging and the
+-- catalog oracle end in the same state.
+REVOKE ALL ON public.businesses_public, public.whatsapp_channels_public FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.businesses_public, public.whatsapp_channels_public TO anon, authenticated, service_role;
 
 -- ── self-check (final state) ────────────────────────────
 
@@ -195,6 +199,14 @@ BEGIN
         RAISE EXCEPTION 'M523 self-check: % lost SELECT on %', v_role, v_view;
       END IF;
     END LOOP;
+    IF EXISTS (
+      SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
+      WHERE c.oid = v_view::regclass
+        AND (a.grantee = 0 OR a.grantee::regrole::text IN ('anon', 'authenticated', 'service_role'))
+        AND a.privilege_type <> 'SELECT'
+    ) THEN
+      RAISE EXCEPTION 'M523 self-check: % has API-role grants other than SELECT', v_view;
+    END IF;
   END LOOP;
 
   FOREACH v_fn IN ARRAY ARRAY[

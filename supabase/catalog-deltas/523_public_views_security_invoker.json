@@ -1,0 +1,170 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "anon",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "force_rls": false,
+    "kind": "v",
+    "owner": "postgres",
+    "rls": false,
+    "view": "3df9930f7196dc3b002e0da7fe5620278e6244904d70fdfb99a1790d03a046b2"
+   },
+   "after_sha256": "96755726e35e4dbfb9643c48d23fedb0856aa9c792ba7f786c4f0beeb9239327",
+   "identity": "table:public.businesses_public",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "anon",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "force_rls": false,
+    "kind": "v",
+    "owner": "postgres",
+    "rls": false,
+    "view": "cdafbb81008d844670b94174c229e8b772891483a157dc0b2ca74a259c8ee424"
+   },
+   "after_sha256": "91554749473a08e49df5d5c1d3a82505a91fa2694eed93d52260da2e20237a0b",
+   "identity": "table:public.whatsapp_channels_public",
+   "operation": "modify"
+  }
+ ],
+ "migration": "523_public_views_security_invoker.sql",
+ "migration_sha256": "d39c2a3e9c4885d5437e38c2568f616f75ee03715504411f4b470df553cd5745",
+ "postgres_major": 17,
+ "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "schema_version": 1
+}

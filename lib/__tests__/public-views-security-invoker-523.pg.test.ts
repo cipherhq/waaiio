@@ -427,6 +427,24 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
     expect(await viewAcl()).toEqual(aclBefore);
   });
 
+  it('sets exact view grants: extra API-role privileges (like the live PostgreSQL 17 MAINTAIN bit) are removed', async () => {
+    await q('BEGIN');
+    try {
+      // MAINTAIN needs PostgreSQL 17; REFERENCES/TRIGGER stand in for any extra bit.
+      await q(`GRANT REFERENCES, TRIGGER ON public.businesses_public, public.whatsapp_channels_public TO anon, authenticated, service_role`);
+      await q(m523);
+      const r = await q(`SELECT c.relname, a.grantee::regrole::text AS grantee, a.privilege_type
+        FROM pg_class c, aclexplode(c.relacl) a
+        WHERE c.oid IN ('public.businesses_public'::regclass, 'public.whatsapp_channels_public'::regclass)
+          AND a.grantee <> c.relowner
+        ORDER BY 1, 2, 3`);
+      expect(r.rows).toEqual(['businesses_public', 'whatsapp_channels_public'].flatMap(relname =>
+        ['anon', 'authenticated', 'service_role'].map(grantee => ({ relname, grantee, privilege_type: 'SELECT' }))));
+    } finally {
+      await q('ROLLBACK');
+    }
+  });
+
   it('fails closed if any function in public_view_private is executable by PUBLIC', async () => {
     await q('BEGIN');
     try {
