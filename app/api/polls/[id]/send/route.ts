@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
@@ -8,6 +9,9 @@ import { logger } from '@/lib/logger';
 
 type Params = { params: Promise<{ id: string }> };
 
+// Same per-request recipient cap as app/api/broadcasts/send (Owner decision 2026-11-06).
+const MAX_PER_REQUEST = 500;
+
 export async function POST(request: NextRequest, { params }: Params) {
   const { id: pollId } = await params;
   const supabase = await createClient();
@@ -15,7 +19,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { phones } = await request.json() as { phones: string[] };
-  if (!phones?.length) return NextResponse.json({ error: 'Missing phones' }, { status: 400 });
+  if (!Array.isArray(phones) || !phones.length) return NextResponse.json({ error: 'Missing phones' }, { status: 400 });
+  if (phones.length > MAX_PER_REQUEST) {
+    return NextResponse.json({ error: `Too many recipients. Maximum ${MAX_PER_REQUEST} per request.` }, { status: 400 });
+  }
 
   const { data: poll } = await supabase.from('polls').select('*').eq('id', pollId).single();
   if (!poll) return NextResponse.json({ error: 'Poll not found' }, { status: 404 });
@@ -54,9 +61,17 @@ export async function POST(request: NextRequest, { params }: Params) {
   const options = (poll.options as string[]) || [];
   let sent = 0;
   let failed = 0;
+  let skippedNoPermission = 0;
 
   for (const phone of phones) {
     try {
+      // Same consent rule as broadcasts: skip anyone without granted 'marketing'
+      // permission or who opted out. Checked before any session is created.
+      if (!await hasRecipientPermission(service, poll.business_id, phone, 'marketing')) {
+        skippedNoPermission++;
+        continue;
+      }
+
       // Create bot session for poll
       const { data: existingSession } = await service
         .from('bot_sessions')
@@ -130,5 +145,5 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
   }
 
-  return NextResponse.json({ sent, failed, total: phones.length });
+  return NextResponse.json({ sent, failed, skipped_no_permission: skippedNoPermission, total: phones.length });
 }

@@ -115,33 +115,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const tierInfo = RESELLER_TIERS[tier];
     const priceId = process.env[TIER_PRICE_ENV[tier]];
     const stripeKey = getStripeKey();
 
-    // Manual billing mode: no Stripe env vars configured
+    // Owner decision 2026-11-06 ("free until paid"): a reseller's plan and account
+    // cap change only after payment is confirmed. Without Stripe billing configured
+    // there is no payment to confirm here, so a Waaiio admin applies the change.
     if (!stripeKey || !priceId) {
-      const { error: updateError } = await supabase
-        .from('resellers')
-        .update({
-          tier,
-          max_sub_accounts: tierInfo.maxAccounts,
-        })
-        .eq('id', reseller.id);
-
-      if (updateError) {
-        logger.error('Failed to update reseller tier', { error: updateError });
-        return NextResponse.json({ error: 'Failed to update subscription' }, { status: 500 });
-      }
-
-      return NextResponse.json({
-        tier,
-        label: tierInfo.label,
-        price: tierInfo.price,
-        maxAccounts: tierInfo.maxAccounts,
-        mode: 'manual',
-        message: 'Tier updated. Billing will be handled manually.',
-      });
+      return NextResponse.json(
+        { error: 'Plan changes are applied by Waaiio once payment is confirmed. Please contact Waaiio support to upgrade.' },
+        { status: 409 },
+      );
     }
 
     // Create Stripe customer if needed
@@ -198,25 +182,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create subscription' }, { status: 500 });
     }
 
-    // Update reseller record
+    // Record the subscription only. The tier and account cap stay as they are until
+    // payment is confirmed (Owner decision 2026-11-06).
     const { error: updateError } = await supabase
       .from('resellers')
-      .update({
-        tier,
-        max_sub_accounts: tierInfo.maxAccounts,
-        stripe_subscription_id: subscription.id as string,
-      })
+      .update({ stripe_subscription_id: subscription.id as string })
       .eq('id', reseller.id);
 
     if (updateError) {
       logger.error('Failed to update reseller after subscription', { error: updateError });
     }
 
+    const currentTier = (reseller.tier as ResellerTier) in RESELLER_TIERS ? (reseller.tier as ResellerTier) : null;
     return NextResponse.json({
-      tier,
-      label: tierInfo.label,
-      price: tierInfo.price,
-      maxAccounts: tierInfo.maxAccounts,
+      tier: reseller.tier,
+      label: currentTier ? RESELLER_TIERS[currentTier].label : reseller.tier,
+      price: currentTier ? RESELLER_TIERS[currentTier].price : null,
+      maxAccounts: reseller.max_sub_accounts,
+      pending_tier: tier,
+      pending_payment: true,
       stripe_subscription_id: subscription.id,
       subscription_status: subscription.status,
       current_period_end: subscription.current_period_end,
