@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 
+// Public lookup: the API returns only non-personal reservation details here.
 interface ReservationInfo {
   reference_code: string;
-  guest_name: string;
   property_name: string;
   property_address: string;
   business_name: string;
@@ -193,7 +193,6 @@ export default function GuestPropertyCheckInPage() {
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
             <div className="text-center">
               <p className="text-sm text-gray-500">Reservation found</p>
-              <p className="mt-1 text-lg font-bold text-gray-900">{reservation.guest_name}</p>
             </div>
 
             <div className="rounded-lg bg-gray-50 p-4 space-y-2 text-sm">

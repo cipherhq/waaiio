@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { isSignedInBusinessMember } from '@/lib/api-auth';
 
 /**
  * GET /api/tickets/verify/[code]
  * Returns ticket details + validity status.
- * Optional ?business_id= param to verify ticket belongs to the scanning business.
- * Without business_id, guest details (phone) are masked for privacy.
+ * Optional ?business_id= param to check the ticket belongs to the scanning business.
+ * Guest phone is returned only when the signed-in caller is the owner or an
+ * active team member of the event's business; otherwise it is left out.
  */
 export async function GET(
   req: NextRequest,
@@ -69,8 +71,10 @@ export async function GET(
     );
   }
 
-  // Mask guest phone if no business_id (public/self-checkin view)
-  const guestPhone = businessId ? (ticket.guest_phone || '') : undefined;
+  // Guest phone only for the signed-in owner or team of the event's business.
+  // The ?business_id= param above only scopes the scan; it is not proof of who is asking.
+  const isBusinessTeam = await isSignedInBusinessMember(req, supabase, event?.business_id);
+  const guestPhone = isBusinessTeam ? (ticket.guest_phone || '') : undefined;
 
   const eventBiz = event?.businesses as unknown as { subscription_tier?: string } | null;
 

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
@@ -7,6 +8,9 @@ import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 type Params = { params: Promise<{ id: string }> };
+
+// Same per-request recipient cap as app/api/broadcasts/send (Owner decision 2026-11-06).
+const MAX_PER_REQUEST = 500;
 
 // POST /api/surveys/[id]/send — distribute survey to contacts via WhatsApp
 export async function POST(request: NextRequest, { params }: Params) {
@@ -18,8 +22,11 @@ export async function POST(request: NextRequest, { params }: Params) {
   const body = await request.json();
   const { phones } = body as { phones: string[] };
 
-  if (!phones?.length) {
+  if (!Array.isArray(phones) || !phones.length) {
     return NextResponse.json({ error: 'Missing phones array' }, { status: 400 });
+  }
+  if (phones.length > MAX_PER_REQUEST) {
+    return NextResponse.json({ error: `Too many recipients. Maximum ${MAX_PER_REQUEST} per request.` }, { status: 400 });
   }
 
   // Load survey
@@ -69,9 +76,17 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   let sent = 0;
   let failed = 0;
+  let skippedNoPermission = 0;
 
   for (const phone of phones) {
     try {
+      // Same consent rule as broadcasts: skip anyone without granted 'marketing'
+      // permission or who opted out. Checked before any session is created.
+      if (!await hasRecipientPermission(service, survey.business_id, phone, 'marketing')) {
+        skippedNoPermission++;
+        continue;
+      }
+
       // Create/update bot session for this customer with survey data
       const { data: existingSession } = await service
         .from('bot_sessions')
@@ -137,5 +152,5 @@ export async function POST(request: NextRequest, { params }: Params) {
     await supabase.from('surveys').update({ status: 'active' }).eq('id', surveyId);
   }
 
-  return NextResponse.json({ sent, failed, total: phones.length });
+  return NextResponse.json({ sent, failed, skipped_no_permission: skippedNoPermission, total: phones.length });
 }
