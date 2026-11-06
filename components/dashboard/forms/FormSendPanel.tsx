@@ -18,7 +18,7 @@ const REASON_TEXT: Record<string, string> = {
   invalid_phone: 'Not a valid phone number',
   opted_out: 'Opted out of messages',
   no_consent: 'Has not opted in, and has not messaged you in the last 24 hours',
-  check_failed: 'Consent could not be checked',
+  check_failed: 'Could not check their opt-in or recent messages, so nothing was sent',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
   stopped: 'Not sent: the send stopped early',
   no_template: 'Hasn’t messaged you in 24 hours and no template was chosen',
@@ -207,10 +207,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
         <button type="button" onClick={onClose} className="text-xs text-gray-500 hover:text-gray-700">Close</button>
       </div>
       <p className="text-xs text-gray-500">
-        Only people who opted in to updates from you will get this. Everyone else is skipped, and you’ll see why.
-      </p>
-      <p className="text-xs text-gray-500">
-        People who messaged you in the last 24 hours can also get it, as a normal message, while those 24 hours last. After that they need to opt in first.
+        This goes to people who opted in to updates from you, and to people who messaged you in the last 24 hours (as a normal message, while those 24 hours last). Everyone else is skipped, and you’ll see why.
       </p>
 
       <div className="flex flex-wrap gap-2">

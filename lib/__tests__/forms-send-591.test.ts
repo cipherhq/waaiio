@@ -538,6 +538,22 @@ describe('Owner option C — people who messaged this business in the last 24 ho
       expect(m.template).not.toHaveBeenCalled();
       expect(m.text).not.toHaveBeenCalled();
     });
+
+    it('if the 24-hour check cannot be read, the person is skipped as check_failed and nothing is sent', async () => {
+      m.db.failReads.add('whatsapp_inbound_receipts');
+      const data = await sendTo([P2], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P2, status: 'skipped', reason: 'check_failed' }]);
+      expect(m.text).not.toHaveBeenCalled();
+      expect(m.template).not.toHaveBeenCalled();
+    });
+
+    it('Owner decision 2026-11-06: an earlier "No thanks" does not block a reply inside the window', async () => {
+      m.db.tables.customer_consents.push(consent(P2, { status: 'revoked', created_at: new Date().toISOString() }));
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(12)));
+      const data = await sendTo([P2], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P2, status: 'sent', via: 'text' }]);
+      expect(m.template).not.toHaveBeenCalled();
+    });
   });
 
   describe('on a shared number (many businesses share its receipts)', () => {
@@ -571,6 +587,26 @@ describe('Owner option C — people who messaged this business in the last 24 ho
       m.db.tables.whatsapp_inbound_receipts = [];
       m.db.tables.bot_sessions.push(session(P2));
       expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+    });
+
+    it('at send time the window is re-checked against this business’s own conversation, not the receipt alone', async () => {
+      const { deliverInvite } = await import('@/lib/forms/form-send');
+      // The receipt is still there, but this business's conversation no longer shows a recent customer message.
+      const out = await deliverInvite({
+        db: m.db as never, businessId: BIZ, businessName: 'Ada Salon', phone: P2,
+        resolved: { channel: { id: SHARED, channel_type: 'shared', business_id: null }, sender: { sendText: m.text, sendTemplate: m.template } } as never,
+        form: { id: FORM, title: 'Guest list', description: null, token: 'tokA' },
+        template: null, eligibility: { eligible: true, basis: 'window' },
+      });
+      expect(out).toEqual({ phone: P2, status: 'skipped', reason: 'no_consent' });
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('if this business’s conversations cannot be read, the person is skipped as check_failed', async () => {
+      m.db.tables.bot_sessions.push(session(P2));
+      m.db.failReads.add('bot_sessions');
+      expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'check_failed' }]);
+      expect(m.text).not.toHaveBeenCalled();
     });
   });
 

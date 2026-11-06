@@ -8,6 +8,9 @@
   - Shared numbers: a receipt on a shared number does not say which business the person messaged. There, the person also needs this business's own bot conversation on that number with a customer message from the last 24 hours. A receipt alone never counts.
   - `GET /api/forms/recipients` also returns `recentChats` (`phone`, `name`, `lastMessageAt`, newest first, max 500, opt-outs removed) and `recentChatsTruncated`. If that list cannot be loaded it returns `recentChatsUnavailable: true` and the opted-in `contacts` as before.
   - The send panel shows that list as its own group, "Messaged you in the last 24 hours (can get a form now)", with each person's time left. The `no_consent` text now reads "Has not opted in, and has not messaged you in the last 24 hours".
+  - Owner decision 2026-11-06: inside the 24 hours, an earlier "No thanks" (revoked consent) does not block a reply. Only an opt-out (STOP) blocks.
+  - If the 24-hour evidence cannot be read, the person is skipped as `check_failed` (never sent). The `check_failed` text now reads "Could not check their opt-in or recent messages, so nothing was sent".
+  - The send route returns a Forms-specific `policy` text (`FORM_RECIPIENT_POLICY`) with skip results, instead of the broadcast wording.
 - **Files:**
   - `lib/forms/form-send.ts`
   - `lib/forms/opted-in-contacts.ts`

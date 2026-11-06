@@ -49,7 +49,7 @@ export const SKIP_REASON_TEXT: Record<SkipReason | FailReason, string> = {
   invalid_phone: 'Not a valid phone number',
   opted_out: 'Opted out of messages',
   no_consent: 'Has not opted in, and has not messaged you in the last 24 hours',
-  check_failed: 'Consent could not be checked',
+  check_failed: 'Could not check their opt-in or recent messages, so nothing was sent',
   not_attempted: 'Not attempted: ran out of time. Send again to these people',
   stopped: 'Not sent: the send stopped early',
   no_template: 'Outside the 24-hour window and no approved template',
@@ -125,23 +125,37 @@ export async function classifyRecipient(
     if (count > 0) return { eligible: false, reason: 'opted_out' };
   } catch { return { eligible: false, reason: 'check_failed' }; }
   if (await hasRecipientPermission(db, businessId, e164, FORM_INVITE_PURPOSE)) return { eligible: true, basis: 'consent' };
-  if (await hasBusinessChatWindow(db, businessId, channel, e164, now)) return { eligible: true, basis: 'window' };
-  return { eligible: false, reason: 'no_consent' };
+  // Owner decision 2026-11-06: inside the 24-hour window a "No thanks" (revoked consent) does not
+  // block a reply; only an opt-out (STOP) does, and that was checked above.
+  const window = await businessChatWindowState(db, businessId, channel, e164, now);
+  if (window === 'open') return { eligible: true, basis: 'window' };
+  return { eligible: false, reason: window === 'unknown' ? 'check_failed' : 'no_consent' };
 }
 
 export const WINDOW_MS = 24 * 60 * 60_000;
 
+/** Forms-specific recipient rule shown with skip results (broadcasts keep RECIPIENT_POLICY). */
+export const FORM_RECIPIENT_POLICY = 'Forms go only to people who opted in to updates from you, or who messaged you in the last 24 hours (as a normal reply while those 24 hours last). Anyone who sent STOP is never messaged. Cold messaging is not allowed.';
+
+/** 'unknown' means the evidence could not be read: callers must skip, never send. */
+export type WindowState = 'open' | 'closed' | 'unknown';
+
 /** Service-window evidence comes from the sending channel's inbound receipts, never a session row. */
-export async function hasServiceWindow(db: SupabaseClient, channelId: string | undefined, e164: string, now = Date.now()): Promise<boolean> {
-  if (!channelId) return false;
+export async function serviceWindowState(db: SupabaseClient, channelId: string | undefined, e164: string, now = Date.now()): Promise<WindowState> {
+  if (!channelId) return 'closed';
   try {
     const { data, error } = await db.from('whatsapp_inbound_receipts').select('provider_timestamp')
       .eq('channel_id', channelId).eq('sender_phone', e164.replace(/\D/g, ''))
       .gte('provider_timestamp', new Date(now - WINDOW_MS).toISOString())
       .lte('provider_timestamp', new Date(now).toISOString())
       .order('provider_timestamp', { ascending: false }).limit(1).maybeSingle();
-    return !error && !!data;
-  } catch { return false; }
+    if (error) return 'unknown';
+    return data ? 'open' : 'closed';
+  } catch { return 'unknown'; }
+}
+
+export async function hasServiceWindow(db: SupabaseClient, channelId: string | undefined, e164: string, now = Date.now()): Promise<boolean> {
+  return await serviceWindowState(db, channelId, e164, now) === 'open';
 }
 
 /** The fields of the sending channel that decide whose inbound messages it carries. */
@@ -176,9 +190,9 @@ export function latestCustomerMessageAt(log: unknown, since: number, now: number
  * writes these rows (merchants can only read them), and the shared-number router
  * attaches a conversation to a business only after the customer picks it.
  */
-export async function hasSharedChannelChat(
+export async function sharedChannelChatState(
   db: SupabaseClient, businessId: string, channelId: string, e164: string, now = Date.now(),
-): Promise<boolean> {
+): Promise<WindowState> {
   const digits = e164.replace(/\D/g, '');
   const since = now - WINDOW_MS;
   try {
@@ -187,9 +201,16 @@ export async function hasSharedChannelChat(
       .eq('session_data->>_inbound_channel_id', channelId)
       .gte('updated_at', new Date(since).toISOString())
       .order('updated_at', { ascending: false }).limit(20);
-    if (error || !data) return false;
-    return data.some(row => latestCustomerMessageAt((row as { conversation_log?: unknown }).conversation_log, since, now) !== null);
-  } catch { return false; }
+    if (error || !data) return 'unknown';
+    return data.some(row => latestCustomerMessageAt((row as { conversation_log?: unknown }).conversation_log, since, now) !== null)
+      ? 'open' : 'closed';
+  } catch { return 'unknown'; }
+}
+
+export async function hasSharedChannelChat(
+  db: SupabaseClient, businessId: string, channelId: string, e164: string, now = Date.now(),
+): Promise<boolean> {
+  return await sharedChannelChatState(db, businessId, channelId, e164, now) === 'open';
 }
 
 /**
@@ -198,13 +219,20 @@ export async function hasSharedChannelChat(
  * On a shared number it also needs business-scoped chat evidence, so one business
  * can never use another business's conversation to reach that person.
  */
+export async function businessChatWindowState(
+  db: SupabaseClient, businessId: string, channel: SendingChannel | null | undefined, e164: string, now = Date.now(),
+): Promise<WindowState> {
+  if (!channel?.id) return 'closed';
+  const receipt = await serviceWindowState(db, channel.id, e164, now);
+  if (receipt !== 'open') return receipt;
+  if (isOwnChannel(channel, businessId)) return 'open';
+  return sharedChannelChatState(db, businessId, channel.id, e164, now);
+}
+
 export async function hasBusinessChatWindow(
   db: SupabaseClient, businessId: string, channel: SendingChannel | null | undefined, e164: string, now = Date.now(),
 ): Promise<boolean> {
-  if (!channel?.id) return false;
-  if (!await hasServiceWindow(db, channel.id, e164, now)) return false;
-  if (isOwnChannel(channel, businessId)) return true;
-  return hasSharedChannelChat(db, businessId, channel.id, e164, now);
+  return await businessChatWindowState(db, businessId, channel, e164, now) === 'open';
 }
 
 const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
@@ -250,10 +278,11 @@ export async function deliverInvite(opts: {
   const windowOnly = opts.eligibility.basis !== 'consent';
   // Window-only: never a template, and the window is this business's own (re-checked now).
   const template = windowOnly ? null : opts.template;
-  const inWindow = windowOnly
-    ? await hasBusinessChatWindow(db, businessId, resolved.channel, phone)
-    : await hasServiceWindow(db, resolved.channel?.id, phone);
-  if (!inWindow && windowOnly) return { phone, status: 'skipped', reason: 'no_consent' };
+  const windowState = windowOnly
+    ? await businessChatWindowState(db, businessId, resolved.channel, phone)
+    : await serviceWindowState(db, resolved.channel?.id, phone);
+  const inWindow = windowState === 'open';
+  if (!inWindow && windowOnly) return { phone, status: 'skipped', reason: windowState === 'unknown' ? 'check_failed' : 'no_consent' };
   if (!inWindow && !template) {
     await logAttempt(db, businessId, phone, form, 'failed', SKIP_REASON_TEXT.no_template);
     return { phone, status: 'failed', reason: 'no_template' };

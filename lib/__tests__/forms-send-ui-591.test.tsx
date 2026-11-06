@@ -131,7 +131,7 @@ describe('Forms send panel', () => {
     expect(within(recent).getByText('Chidi')).toBeTruthy();
     expect(within(recent).getAllByText(/^21h \d+m left$/)).toHaveLength(2);
     expect(within(screen.getByRole('group', { name: 'Opted in to updates' })).getByText('Ada')).toBeTruthy();
-    expect(screen.getByText(/People who messaged you in the last 24 hours can also get it/)).toBeTruthy();
+    expect(screen.getByText(/and to people who messaged you in the last 24 hours \(as a normal message, while those 24 hours last\)/)).toBeTruthy();
     fireEvent.click(within(recent).getByText(/Select all \(2\)/));
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
     await waitFor(() => expect(fetchMock.mock.calls.some(c => c[0] === '/api/forms/send')).toBe(true));

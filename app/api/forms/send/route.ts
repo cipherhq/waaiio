@@ -4,11 +4,10 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { validateAudienceExpression, type AudienceExpression } from '@/lib/engage/audience-dsl';
 import { resolveAudienceExpression, AudienceTooLargeError, AudienceCountUnavailableError, AudienceIncompleteError } from '@/lib/engage/audience-resolver';
 import {
-  MAX_RECIPIENTS_PER_SEND, MAX_TYPED_ENTRIES, SEND_TIME_BUDGET_MS, TemplateLookupUnavailableError, classifyRecipient, loadInviteTemplate, normalizeRecipients, sendFormInvites, summarize,
+  FORM_RECIPIENT_POLICY, MAX_RECIPIENTS_PER_SEND, MAX_TYPED_ENTRIES, SEND_TIME_BUDGET_MS, TemplateLookupUnavailableError, classifyRecipient, loadInviteTemplate, normalizeRecipients, sendFormInvites, summarize,
   type RecipientOutcome,
 } from '@/lib/forms/form-send';
 
@@ -176,7 +175,7 @@ export async function POST(request: NextRequest) {
         });
       }
       if (eligible.length === 0) {
-        return NextResponse.json({ error: 'No one on this list has opted in or messaged you in the last 24 hours, so nothing was scheduled.', results: skips, policy: RECIPIENT_POLICY }, { status: 400 });
+        return NextResponse.json({ error: 'No one on this list has opted in or messaged you in the last 24 hours, so nothing was scheduled.', results: skips, policy: FORM_RECIPIENT_POLICY }, { status: 400 });
       }
       const { data: row, error: insertErr } = await service.from('form_sends').insert({
         business_id: businessId, form_id: form.id, created_by: user.id,
@@ -189,7 +188,7 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({
         scheduled: true, id: row.id, scheduledAt: row.scheduled_at, recipients: eligible.length,
-        skipped: skips.length, results: skips, ...(skips.length > 0 ? { policy: RECIPIENT_POLICY } : {}),
+        skipped: skips.length, results: skips, ...(skips.length > 0 ? { policy: FORM_RECIPIENT_POLICY } : {}),
       });
     }
 
@@ -226,7 +225,7 @@ export async function POST(request: NextRequest) {
       success: summary.sent > 0,
       ...summary,
       results: outcomes,
-      ...(summary.skipped > 0 ? { policy: RECIPIENT_POLICY } : {}),
+      ...(summary.skipped > 0 ? { policy: FORM_RECIPIENT_POLICY } : {}),
     });
   } catch (error) {
     logger.error('[FORMS] Send error:', error);
