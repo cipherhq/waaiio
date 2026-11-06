@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed, type SuccessOutcome } from '@/lib/payments/webhook-handler';
 import { decryptToken } from '@/lib/encryption';
+import { resolvePaymentOrigin } from '@/lib/payments/provider-adapters';
 
 // Terminal Paystack failure statuses — only these justify marking a payment failed
 const PAYSTACK_TERMINAL_FAILURES = new Set(['failed', 'reversed', 'abandoned']);
@@ -138,12 +139,30 @@ export async function POST(
 
     const { data: payment } = await supabase
       .from('payments')
-      .select('id, status, amount, currency')
+      .select('id, status, amount, currency, gateway, metadata')
       .eq('gateway_reference', reference)
       .eq('business_id', businessId)
       .maybeSingle();
 
     if (!payment) {
+      return NextResponse.json({ received: true });
+    }
+
+    // This endpoint is signed and verified with the merchant's own provider key,
+    // so it may only act on payments created on the merchant's own account
+    // (origin 'byo') for this business and gateway. Payments created on Waaiio's
+    // account or through a connected split are confirmed by the platform webhooks.
+    const paymentMeta = (payment.metadata || {}) as Record<string, unknown>;
+    const byoBusinessId = paymentMeta.byo_business_id as string | undefined;
+    if (
+      resolvePaymentOrigin(paymentMeta) !== 'byo'
+      || payment.gateway !== creds.gateway
+      || (byoBusinessId && byoBusinessId !== businessId)
+    ) {
+      Sentry.captureMessage('BYO webhook: payment is not a BYO payment for this business', {
+        level: 'warning',
+        extra: { businessId, paymentId: payment.id },
+      });
       return NextResponse.json({ received: true });
     }
 

@@ -209,7 +209,7 @@ describe('BYO Webhook — provider verification failure', () => {
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-1', status: 'pending', amount: 5000, currency: 'NGN' },
+      payment: { id: 'pay-1', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 5000, currency: 'NGN' },
     });
 
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -267,7 +267,7 @@ describe('BYO Webhook — provider verification failure', () => {
   it('marks payment failed when provider returns non-success status', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-2', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-2', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       updateResult: { data: [{ id: 'pay-2' }], error: null },
     });
 
@@ -476,7 +476,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
   it('(d) terminal Paystack failure marks payment failed', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-terminal', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-terminal', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       updateResult: { data: [{ id: 'pay-terminal' }], error: null },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -508,7 +508,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-unknown', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-unknown', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -541,7 +541,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-404', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-404', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -570,7 +570,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-curr', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-curr', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -606,7 +606,7 @@ describe('P1 fix: BYO webhook terminal failure vs integrity separation', () => {
   it('(f) transient verify errors return 503', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-503', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-503', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -908,7 +908,7 @@ describe('BYO Webhook — transient failures (503, retryable)', () => {
   }
 
   it('provider 503 → HTTP 503 response, payment unchanged', async () => {
-    const mockSb = setupMocks({ id: 'pay-t1', status: 'pending', amount: 1000, currency: 'NGN' });
+    const mockSb = setupMocks({ id: 'pay-t1', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' });
 
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 });
@@ -934,7 +934,7 @@ describe('BYO Webhook — transient failures (503, retryable)', () => {
   });
 
   it('provider timeout → HTTP 503 response, payment unchanged', async () => {
-    const mockSb = setupMocks({ id: 'pay-t2', status: 'pending', amount: 2000, currency: 'NGN' });
+    const mockSb = setupMocks({ id: 'pay-t2', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 2000, currency: 'NGN' });
 
     const originalFetch = globalThis.fetch;
     // DOMException with name='TimeoutError' (the second constructor arg sets the name)
@@ -962,7 +962,7 @@ describe('BYO Webhook — transient failures (503, retryable)', () => {
     // First call returns 503 (simulated above). Now simulate the retry succeeding.
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-retry', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-retry', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       // Dedup returns a new insert (event was NOT consumed by the 503 call)
       upsertResult: { data: [{ id: 'evt-retry' }] },
     });
@@ -1009,7 +1009,7 @@ describe('BYO Webhook — definitive mismatch marks payment failed', () => {
   it('amount mismatch (integrity case) — payment NOT marked failed, Sentry fired, gateway_status recorded', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-m1', status: 'pending', amount: 5000, currency: 'NGN' },
+      payment: { id: 'pay-m1', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 5000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1061,7 +1061,7 @@ describe('BYO Webhook — fractional amount comparison (1999.99)', () => {
   it('1999.99 naira matches 199999 kobo via integer minor-unit comparison', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-frac', status: 'pending', amount: 1999.99, currency: 'NGN' },
+      payment: { id: 'pay-frac', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1999.99, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1149,7 +1149,7 @@ describe('BYO Webhook — handler throws then retry succeeds', () => {
 
     const mockSb1 = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-throw', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-throw', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb1 }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1188,7 +1188,7 @@ describe('BYO Webhook — handler throws then retry succeeds', () => {
 
       const mockSb2 = createMockSupabase({
         credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-        payment: { id: 'pay-throw', status: 'pending', amount: 1000, currency: 'NGN' },
+        payment: { id: 'pay-throw', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
         // Dedup returns a new row — event was NOT consumed by the failed first call
         upsertResult: { data: [{ id: 'evt-retry-2' }] },
       });
@@ -1227,7 +1227,7 @@ describe('BYO Webhook — provider auth error (401) leaves payment unchanged', (
   it('provider 401 → 200 response, payment unchanged, Sentry error captured', async () => {
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-auth', status: 'pending', amount: 3000, currency: 'NGN' },
+      payment: { id: 'pay-auth', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 3000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1288,7 +1288,7 @@ describe('BYO Webhook — Flutterwave BYO success uses verified data (test a)', 
     const secretKey = 'fw_api_key';
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'flutterwave', webhook_secret_hash: webhookHash },
-      payment: { id: 'pay-fw-ok', status: 'pending', amount: 5000, currency: 'NGN' },
+      payment: { id: 'pay-fw-ok', gateway: 'flutterwave', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 5000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1349,7 +1349,7 @@ describe('BYO Webhook — Paystack verify values override webhook body (test b)'
     const secretKey = `${SK_TEST}override`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-ovr', status: 'pending', amount: 2000, currency: 'NGN' },
+      payment: { id: 'pay-ovr', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 2000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1415,7 +1415,7 @@ describe('BYO Webhook — Paystack ongoing status is transient (test c)', () => 
     const secretKey = `${SK_TEST}ongoing`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-ong', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-ong', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1455,7 +1455,7 @@ describe('BYO Webhook — 19.99 amount matches 1999 kobo (test d)', () => {
     const secretKey = `${SK_TEST}decimal`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-dec', status: 'pending', amount: 19.99, currency: 'NGN' },
+      payment: { id: 'pay-dec', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 19.99, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1499,7 +1499,7 @@ describe('BYO Webhook — dedup row already exists → 200, no processing (test 
     const secretKey = `${SK_TEST}dedup`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-dup', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-dup', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       existingDedupEvent: { event_id: 'existing' },
     });
 
@@ -1665,7 +1665,7 @@ describe('BYO Webhook — Paystack authorization_code stripped (test 2)', () => 
     const secretKey = `${SK_TEST}authstrip`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-strip', status: 'pending', amount: 500, currency: 'NGN' },
+      payment: { id: 'pay-strip', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 500, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1743,7 +1743,7 @@ describe('BYO Webhook — Flutterwave card has no authorization_code (test g)', 
     const secretKey = 'fw_key_g';
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'flutterwave', webhook_secret_hash: webhookHash },
-      payment: { id: 'pay-fw-card', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-fw-card', gateway: 'flutterwave', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1803,7 +1803,7 @@ describe('P1-A: scoped lookup — same reference, different business (test a)', 
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
       // The BYO route lookup (with business_id) finds pay-A
-      payment: { id: 'pay-A', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-A', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1851,7 +1851,7 @@ describe('P1-B: charge.failed with verify ongoing → 503 (test b)', () => {
     const secretKey = `${SK_TEST}failong`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-ong-f', status: 'pending', amount: 500, currency: 'NGN' },
+      payment: { id: 'pay-ong-f', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 500, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1893,7 +1893,7 @@ describe('P1-B: charge.failed with verify failed → pending→failed, success u
     const secretKey = `${SK_TEST}failterm`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-ft', status: 'pending', amount: 500, currency: 'NGN' },
+      payment: { id: 'pay-ft', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 500, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
@@ -1946,7 +1946,7 @@ describe('P1-C: incomplete finalization → 503, no dedup; retry finalizes → d
 
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-inc', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-inc', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
     });
     // Track upsert calls (dedup write)
     const origFrom = mockSb.from;
@@ -1994,7 +1994,7 @@ describe('P1-C: incomplete finalization → 503, no dedup; retry finalizes → d
       upsertCalled = false;
       const mockSb2 = createMockSupabase({
         credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-        payment: { id: 'pay-inc', status: 'pending', amount: 1000, currency: 'NGN' },
+        payment: { id: 'pay-inc', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       });
       const origFrom2 = mockSb2.from;
       mockSb2.from = vi.fn((table: string) => {
@@ -2034,7 +2034,7 @@ describe('P1-C: amount mismatch → failed, no dedup row (test e)', () => {
     let upsertCalled = false;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-nod', status: 'pending', amount: 5000, currency: 'NGN' },
+      payment: { id: 'pay-nod', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 5000, currency: 'NGN' },
     });
     const origFrom = mockSb.from;
     mockSb.from = vi.fn((table: string) => {
@@ -2104,7 +2104,7 @@ describe('P1-B: chargeFailed pending guard (test f — main webhook hardening)',
             select: () => ({
               eq: () => ({
                 single: () => Promise.resolve({
-                  data: { id: 'pay-suc', status: 'success', amount: 1000, business_id: 'biz-1' },
+                  data: { id: 'pay-suc', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'success', amount: 1000, business_id: 'biz-1' },
                   error: null,
                 }),
               }),
@@ -2347,7 +2347,7 @@ describe('Real handler: scoped processPaystackChargeFailed (1c)', () => {
           const c: Record<string, unknown> = {};
           c.eq = () => c;
           c.single = () => Promise.resolve({
-            data: { id: 'pay-suc', status: 'success', amount: 1000, business_id: 'biz-1' },
+            data: { id: 'pay-suc', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'success', amount: 1000, business_id: 'biz-1' },
             error: null,
           });
           return c;
@@ -2380,7 +2380,7 @@ describe('Real handler: scoped processPaystackChargeFailed (1c)', () => {
           const c: Record<string, unknown> = {};
           c.eq = () => c;
           c.single = () => Promise.resolve({
-            data: { id: 'pay-fail', status: 'failed', amount: 1000, business_id: 'biz-1' },
+            data: { id: 'pay-fail', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'failed', amount: 1000, business_id: 'biz-1' },
             error: null,
           });
           return c;
@@ -2700,7 +2700,7 @@ describe('Route: handler returns amount_mismatch → 200, no dedup (test 2)', ()
 
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-rmm', status: 'pending', amount: 5000, currency: 'NGN' },
+      payment: { id: 'pay-rmm', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 5000, currency: 'NGN' },
     });
     // Track dedup writes
     const origFrom = mockSb.from;
@@ -2759,7 +2759,7 @@ describe('Route + real handler: finalized → dedup; incomplete → 503 (test 3)
     vi.doUnmock('@/lib/payments/webhook-handler');
     const secretKey = `${SK_TEST}rh_fin`;
     let upsertCalled = false;
-    const paymentRow = { id: 'pay-rh', status: 'pending', amount: 1000, currency: 'NGN' };
+    const paymentRow = { id: 'pay-rh', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' };
     const handlerPaymentRow = {
       ...paymentRow, booking_id: null, invoice_id: null, campaign_id: null,
       reservation_id: null, order_id: null, metadata: {}, gateway: 'paystack',
@@ -2861,7 +2861,7 @@ describe('Route + real handler: incomplete → 503 (test 3b)', () => {
     vi.doUnmock('@/lib/payments/webhook-handler');
     const secretKey = `${SK_TEST}rh_fin`;
     let upsertCalled = false;
-    const paymentRow = { id: 'pay-rh2', status: 'pending', amount: 1000, currency: 'NGN' };
+    const paymentRow = { id: 'pay-rh2', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' };
     const handlerPaymentRow = {
       ...paymentRow, booking_id: null, invoice_id: null, campaign_id: null,
       reservation_id: null, order_id: null, metadata: {}, gateway: 'paystack',
@@ -3137,7 +3137,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-dberr', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-dberr', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       updateResult: { data: null, error: { message: 'connection reset' } },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -3170,7 +3170,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
     // Payment is already in a terminal state (success) — re-read confirms, safe to dedup
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-already', status: 'success', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-already', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'success', amount: 1000, currency: 'NGN' },
       updateResult: { data: [], error: null },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -3203,7 +3203,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-nonterm', status: 'pending', amount: 1000, currency: 'NGN' },
+      payment: { id: 'pay-nonterm', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' },
       updateResult: { data: [], error: null },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
@@ -3235,7 +3235,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
   it('charge.success terminal failure: zero rows + re-read fails → 503, NO dedup', async () => {
     // Re-read itself fails — cannot confirm terminal, must NOT dedup
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
-    const payment = { id: 'pay-rereadfail', status: 'pending', amount: 1000, currency: 'NGN' };
+    const payment = { id: 'pay-rereadfail', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 1000, currency: 'NGN' };
     const creds = { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null };
 
     // Custom mock: initial payment read succeeds, update returns 0 rows, re-read returns error
@@ -3307,7 +3307,7 @@ describe('P1: terminal-failure UPDATE result checked before dedup write', () => 
     const mockSentry = { captureException: vi.fn(), captureMessage: vi.fn() };
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
-      payment: { id: 'pay-failthrow', status: 'pending', amount: 500, currency: 'NGN' },
+      payment: { id: 'pay-failthrow', gateway: 'paystack', metadata: { payment_origin: 'byo' }, status: 'pending', amount: 500, currency: 'NGN' },
     });
     vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => mockSb }));
     vi.doMock('@/lib/encryption', () => ({ decryptToken: (s: string) => s }));
