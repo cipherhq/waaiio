@@ -143,6 +143,18 @@ suite('M524 resellers own record read-only (real PostgreSQL)', () => {
     expect(rls.relrowsecurity).toBe(true);
   });
 
+  it('from a state with column-level write grants: 524 clears them (no column ACLs remain)', async () => {
+    await q(`GRANT UPDATE (commission_percentage, max_sub_accounts, tier) ON public.resellers TO authenticated`);
+    const { rows: [before] } = await q(`SELECT count(*)::int AS n FROM pg_attribute
+      WHERE attrelid = 'public.resellers'::regclass AND attnum > 0 AND attacl IS NOT NULL`);
+    expect(before.n).toBe(3);
+    await q(m524);
+    const { rows: [after] } = await q(`SELECT count(*)::int AS n FROM pg_attribute
+      WHERE attrelid = 'public.resellers'::regclass AND attnum > 0 AND attacl IS NOT NULL`);
+    expect(after.n).toBe(0);
+    expect(await grants()).toEqual(EXPECTED);
+  });
+
   it('anon: no access of any kind', async () => {
     for (const sql of [
       'SELECT 1 FROM public.resellers',
