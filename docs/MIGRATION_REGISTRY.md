@@ -48,6 +48,7 @@ Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan 
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
+| 523 | `public_views_security_invoker` | RESERVED — NOT APPLIED | (this PR) | `businesses_public` and `whatsapp_channels_public` run as the caller (`security_invoker`) and read through two read-only functions in the new non-API schema `public_view_private`. Same public columns, rows and grants. Owner: claude/inspiring-franklin-90af36. |
 | 518 | `scheduling_price_authority_core` | RESERVED — NOT APPLIED | #806 (issue #602) | Core price authority; configurable modes excluded. Owner: codex/604-scheduling-price-authority-core. Renumbered from 497 to 518 on 2026-11-05 (497 is below the Release V3 lock at 508; 511–513 are #813's). Supersedes the stale M495 coordination allocation; preserves occupied M495/M496. |
 | 496 | `channel_number_continuity` | SOURCE ONLY — NOT APPLIED | #799 | Channel number continuity & recovery: merchant_step_up_authorizations, channel_change_approvals (two-admin), channel_transition_audit (append-only), atomic promotion/disconnect/execution wrappers, admin step-up CHECK extension. Disposable PG only. |
 | 495 | `embedded_signup_sessions` | MERGED — rollout not verified here | #805 | Embedded Signup session binding; preserved when renumbering continuity to M496. |
@@ -210,7 +211,7 @@ Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan 
 **Batch 8 repair summary:** 15 versions (227-241) now tracked in remote schema_migrations. Remote count 209 -> 224 (+15). 101-246 tracked count 113 -> 128 (+15). 120 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-08-production-verification.json` (V3 SHA: `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`). Repair evidence: `docs/migrations/evidence/batch-08-repair.json` (SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`). No migration SQL executed. History-only operation.
 **Batch 9 repair summary:** 4 versions (242, 243, 245, 246) now tracked in remote schema_migrations. Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4). 124 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-09-production-verification.json` (V3 SHA: `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`). Repair evidence: `docs/migrations/evidence/batch-09-repair.json` (SHA: `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`). No migration SQL executed. History-only operation.
 
-**Next available version:** 523 (recheck main and open PR reservations before use)
+**Next available version:** 524 (recheck main and open PR reservations before use)
 
 ## Storage security repair reservations — 2026-10-31
 
