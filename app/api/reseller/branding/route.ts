@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 
 const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
@@ -155,10 +156,13 @@ export async function PUT(request: NextRequest) {
       updatePayload.company_name = company_name;
     }
 
-    const { error: updateError } = await supabase
+    // Resellers can read but not write their own row (M524). The owner check above
+    // used the signed-in client; write only the branding fields with the service client.
+    const { error: updateError } = await createServiceClient()
       .from('resellers')
       .update(updatePayload)
-      .eq('id', reseller.id);
+      .eq('id', reseller.id)
+      .eq('user_id', user.id);
 
     if (updateError) {
       logger.error('[RESELLER_BRANDING] Update error:', updateError.message);
