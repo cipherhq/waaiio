@@ -58,6 +58,7 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
   let client: pg.Client;
   let columnsBefore: unknown[];
   let aclBefore: unknown[];
+  let readsBefore: unknown[];
 
   const q = (text: string, params?: unknown[]) => client.query(text, params);
 
@@ -82,6 +83,21 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
     WHERE c.oid IN ('public.businesses_public'::regclass, 'public.whatsapp_channels_public'::regclass)
       AND a.attnum > 0 AND NOT a.attisdropped
     ORDER BY c.relname, a.attnum`).then(r => r.rows);
+  /** Every row each role sees through both views (role, auth user). */
+  const READERS: [string, string | null][] = [
+    ['anon', null], ['authenticated', OWNER_A], ['authenticated', OWNER_B], ['service_role', null], ['m523_reader', null],
+  ];
+  async function readsPerRole() {
+    const out: unknown[] = [];
+    for (const [role, sub] of READERS) {
+      out.push(await as(role, sub, async () => ({
+        role, sub,
+        businesses: (await q(`SELECT * FROM public.businesses_public ORDER BY id`)).rows,
+        channels: (await q(`SELECT * FROM public.whatsapp_channels_public ORDER BY id`)).rows,
+      })));
+    }
+    return out;
+  }
   const viewAcl = () => q(`
     SELECT relname, relacl::text FROM pg_class
     WHERE oid IN ('public.businesses_public'::regclass, 'public.whatsapp_channels_public'::regclass)
@@ -189,6 +205,7 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'm523_outsider') THEN CREATE ROLE m523_outsider NOLOGIN; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'm523_reader') THEN CREATE ROLE m523_reader NOLOGIN IN ROLE pg_read_all_data; END IF;
       END $$`;
     try { await control.query(roleSetup); } catch (err) {
       const code = (err as DbError).code;
@@ -207,12 +224,15 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
     ]);
     columnsBefore = await viewColumns();
     aclBefore = await viewAcl();
+    readsBefore = await readsPerRole();
     await q(m523);
   });
 
   afterAll(async () => {
     await client?.end();
     await control?.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await control?.query(`DROP ROLE IF EXISTS m523_outsider`).catch(() => undefined);
+    await control?.query(`DROP ROLE IF EXISTS m523_reader`).catch(() => undefined);
     await control?.end();
   });
 
@@ -237,6 +257,34 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
     expect((columnsBefore as { relname: string; attname: string }[])
       .filter(c => c.relname === 'whatsapp_channels_public').map(c => c.attname)).toEqual(CHANNEL_VIEW_COLUMNS);
     expect(await viewAcl()).toEqual(aclBefore);
+  });
+
+  it('every role sees exactly the same rows and columns as before M523 (incl. a pg_read_all_data member)', async () => {
+    expect(await readsPerRole()).toEqual(readsBefore);
+    // Sanity: the comparison is not empty.
+    const anonBefore = readsBefore[0] as { businesses: unknown[]; channels: unknown[] };
+    expect(anonBefore.businesses).toHaveLength(2);
+    expect(anonBefore.channels).toHaveLength(2);
+  });
+
+  it('still refuses to drop or retype a base-table column the views use, as M293 did', async () => {
+    for (const sql of [
+      `ALTER TABLE public.businesses DROP COLUMN instagram_handle`,
+      `ALTER TABLE public.businesses ALTER COLUMN name TYPE varchar(300)`,
+      `ALTER TABLE public.whatsapp_channels DROP COLUMN display_name`,
+      `ALTER TABLE public.whatsapp_channels ALTER COLUMN phone_number TYPE varchar(40)`,
+    ]) {
+      await q('BEGIN');
+      try {
+        const err = await errorOf(() => q(sql));
+        expect(['2BP01', '0A000'], `${sql} → ${err.code} ${err.message}`).toContain(err.code);
+      } finally {
+        await q('ROLLBACK');
+      }
+    }
+    // Columns the views do not use can still change.
+    await q('BEGIN');
+    try { await q(`ALTER TABLE public.businesses DROP COLUMN metadata`); } finally { await q('ROLLBACK'); }
   });
 
   it('anon reads only active businesses through businesses_public', async () => {
@@ -367,7 +415,7 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
       WHERE n.nspname = 'public_view_private' ORDER BY p.proname`);
     for (const row of r.rows) {
       expect(row).toMatchObject({ prosecdef: true, provolatile: 's', proconfig: ['search_path=""'], public_grant: false,
-        executors: ['anon', 'authenticated', 'service_role'] });
+        executors: ['anon', 'authenticated', 'pg_read_all_data', 'service_role'] });
     }
     expect(r.rows).toHaveLength(2);
   });
@@ -377,6 +425,17 @@ suite('M523 public views run as the caller (real PostgreSQL)', () => {
     await q(m523);
     expect(await viewColumns()).toEqual(before);
     expect(await viewAcl()).toEqual(aclBefore);
+  });
+
+  it('fails closed if any function in public_view_private is executable by PUBLIC', async () => {
+    await q('BEGIN');
+    try {
+      await q(`CREATE FUNCTION public_view_private.m523_probe() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$`);
+      const err = await errorOf(() => q(m523));
+      expect(err.message).toContain('M523 self-check: a function in public_view_private is executable by PUBLIC');
+    } finally {
+      await q('ROLLBACK');
+    }
   });
 
   it('fails closed if anon has been given direct base-table read access', async () => {

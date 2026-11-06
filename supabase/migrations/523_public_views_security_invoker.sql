@@ -18,14 +18,19 @@
 --     search_path = '' and fully qualified names. They return exactly the
 --     columns and rows the views return today (same column list, same
 --     status = 'active' / shared + active filters). EXECUTE: anon,
---     authenticated, service_role; revoked from PUBLIC;
+--     authenticated, service_role and pg_read_all_data (whose members could
+--     read the views before); revoked from PUBLIC. Bodies are BEGIN ATOMIC so
+--     PostgreSQL keeps refusing to drop or retype a base-table column they
+--     use, as it did for the M293 views;
 --   * both views are replaced in place (same name, columns, types, order
 --     and grants) to read from those functions, with
 --     security_invoker = true and security_barrier = true.
 --
--- What does not change: which columns and rows anon and authenticated can
--- read; no base-table grant, RLS policy or app code changes. The views keep
--- their existing SELECT grants (CREATE OR REPLACE keeps the ACL).
+-- What does not change: which columns and rows any role can read through
+-- the views; no base-table grant, RLS policy or app code changes. The views
+-- keep their existing SELECT grants (CREATE OR REPLACE keeps the ACL);
+-- service_role's view SELECT, already live in production, is stated
+-- explicitly so replayed databases match.
 --
 -- Compatible with the live app: callers use lib/supabase/safe-view-query.ts,
 -- which reads the views by name with the same columns and filters.
@@ -35,6 +40,10 @@
 -- ALTER VIEW ... RESET (security_invoker), then drop schema
 -- public_view_private CASCADE.
 --
+-- Rule for the new schema: every function added later must REVOKE EXECUTE
+-- FROM PUBLIC (PostgreSQL's built-in default grants it, and anon has USAGE).
+-- This migration's self-check refuses any PUBLIC-executable function there.
+--
 -- Idempotent: a re-run replaces the same objects and passes the self-check.
 -- No BEGIN/COMMIT: applied as one whole-file statement.
 -- ═══════════════════════════════════════════════════════
@@ -42,6 +51,8 @@
 CREATE SCHEMA IF NOT EXISTS public_view_private;
 REVOKE ALL ON SCHEMA public_view_private FROM PUBLIC;
 GRANT USAGE ON SCHEMA public_view_private TO anon, authenticated, service_role;
+COMMENT ON SCHEMA public_view_private IS
+  'Read-only helpers behind public security_invoker views (M523). Not exposed through the Data API. Every function here must REVOKE EXECUTE FROM PUBLIC.';
 
 -- ── businesses ──────────────────────────────────────────
 
@@ -77,7 +88,7 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = ''
-AS $$
+BEGIN ATOMIC
   SELECT
     b.id, b.name, b.slug, b.description, b.address, b.city, b.state,
     b.country_code, b.phone, b.email, b.logo_url, b.cover_photo_url,
@@ -85,11 +96,11 @@ AS $$
     b.total_bookings, b.instagram_handle, b.timezone, b.recurring_enabled,
     b.bot_code, b.status, b.created_at, b.updated_at
   FROM public.businesses b
-  WHERE b.status = 'active'::public.restaurant_status
-$$;
+  WHERE b.status = 'active'::public.restaurant_status;
+END;
 
 REVOKE ALL ON FUNCTION public_view_private.businesses_public_rows() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public_view_private.businesses_public_rows() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public_view_private.businesses_public_rows() TO anon, authenticated, service_role, pg_read_all_data;
 
 -- Casts keep each view column's exact type (function results drop length limits).
 CREATE OR REPLACE VIEW public.businesses_public
@@ -137,14 +148,14 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = ''
-AS $$
+BEGIN ATOMIC
   SELECT c.id, c.country_code, c.phone_number, c.display_name, c.channel_type, c.is_active
   FROM public.whatsapp_channels c
-  WHERE c.channel_type::text = 'shared' AND c.is_active = true
-$$;
+  WHERE c.channel_type::text = 'shared' AND c.is_active = true;
+END;
 
 REVOKE ALL ON FUNCTION public_view_private.whatsapp_channels_public_rows() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public_view_private.whatsapp_channels_public_rows() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public_view_private.whatsapp_channels_public_rows() TO anon, authenticated, service_role, pg_read_all_data;
 
 CREATE OR REPLACE VIEW public.whatsapp_channels_public
   WITH (security_barrier = true, security_invoker = true) AS
@@ -157,12 +168,17 @@ SELECT
   r.is_active
 FROM public_view_private.whatsapp_channels_public_rows() r;
 
+-- Production already has this grant (Supabase default privileges); M293 alone
+-- did not give it, so replayed databases need it stated.
+GRANT SELECT ON public.businesses_public, public.whatsapp_channels_public TO service_role;
+
 -- ── self-check (final state) ────────────────────────────
 
 DO $$
 DECLARE
   v_view text;
   v_fn regprocedure;
+  v_role text;
   v_opts text[];
 BEGIN
   FOREACH v_view IN ARRAY ARRAY['public.businesses_public', 'public.whatsapp_channels_public'] LOOP
@@ -174,9 +190,11 @@ BEGIN
        OR has_table_privilege('anon', v_view, 'DELETE') THEN
       RAISE EXCEPTION 'M523 self-check: anon can write %', v_view;
     END IF;
-    IF NOT (has_table_privilege('anon', v_view, 'SELECT') AND has_table_privilege('authenticated', v_view, 'SELECT')) THEN
-      RAISE EXCEPTION 'M523 self-check: anon/authenticated lost SELECT on %', v_view;
-    END IF;
+    FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF NOT has_table_privilege(v_role, v_view, 'SELECT') THEN
+        RAISE EXCEPTION 'M523 self-check: % lost SELECT on %', v_role, v_view;
+      END IF;
+    END LOOP;
   END LOOP;
 
   FOREACH v_fn IN ARRAY ARRAY[
@@ -190,11 +208,26 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'M523 self-check: % is not SECURITY DEFINER STABLE with search_path ''''', v_fn;
     END IF;
-    IF EXISTS (
-      SELECT 1 FROM pg_proc p, aclexplode(p.proacl) a
-      WHERE p.oid = v_fn AND a.grantee = 0 AND a.privilege_type = 'EXECUTE'
-    ) OR (SELECT proacl IS NULL FROM pg_proc WHERE oid = v_fn) THEN
-      RAISE EXCEPTION 'M523 self-check: PUBLIC can execute %', v_fn;
+    FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'pg_read_all_data'] LOOP
+      IF NOT has_function_privilege(v_role, v_fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'M523 self-check: % cannot execute %', v_role, v_fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- No function in the schema may be executable by PUBLIC.
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public_view_private'
+      AND (p.proacl IS NULL OR EXISTS (
+        SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'))
+  ) THEN
+    RAISE EXCEPTION 'M523 self-check: a function in public_view_private is executable by PUBLIC';
+  END IF;
+
+  FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF NOT has_schema_privilege(v_role, 'public_view_private', 'USAGE') THEN
+      RAISE EXCEPTION 'M523 self-check: % lacks USAGE on public_view_private', v_role;
     END IF;
   END LOOP;
 
