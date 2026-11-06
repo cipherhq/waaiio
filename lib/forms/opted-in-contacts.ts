@@ -1,8 +1,9 @@
 /**
- * Contacts a merchant can pick when sending a form: people whose latest WhatsApp
- * consent record for this business and purpose is "granted" and unexpired, and who
- * have not opted out. This list is a convenience for the picker only; the send
- * route re-checks every recipient with hasRecipientPermission before sending.
+ * Contacts a merchant can pick when sending a form (or a broadcast): people whose
+ * latest WhatsApp consent record for this business and purpose is "granted" and
+ * unexpired, and who have not opted out. Mirrors hasRecipientPermission, so the
+ * list is a convenience for the picker only; the send routes re-check every
+ * recipient with hasRecipientPermission before sending.
  * listRecentChats (below) is the separate list of people who messaged this business
  * in the last 24 hours.
  */
@@ -19,17 +20,23 @@ export class ContactsUnavailableError extends Error {
 
 const digitsOf = (p: string) => (p || '').replace(/\D/g, '');
 
-export async function listOptedInContacts(db: SupabaseClient, businessId: string, now = Date.now()) {
+export async function listOptedInContacts(
+  db: SupabaseClient, businessId: string, now = Date.now(),
+  purpose: 'utility' | 'marketing' = FORM_INVITE_PURPOSE,
+) {
   // Newest first, so the first row seen per phone is that phone's current state.
   const latest = new Map<string, { phone: string; status: string; expires_at: string | null }>();
   for (let from = 0; from < MAX_CONSENT_ROWS; from += PAGE) {
     const { data, error } = await db.from('customer_consents').select('phone, status, expires_at')
-      .eq('business_id', businessId).eq('channel', 'whatsapp').eq('purpose', FORM_INVITE_PURPOSE)
+      .eq('business_id', businessId).eq('channel', 'whatsapp').eq('purpose', purpose)
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) throw new ContactsUnavailableError();
     for (const row of data || []) {
       const d = digitsOf(row.phone);
+      // hasRecipientPermission only reads the "digits" and "+digits" spellings, so
+      // a row stored any other way must not decide this list either.
+      if (row.phone !== d && row.phone !== `+${d}`) continue;
       if (/^[1-9]\d{6,14}$/.test(d) && !latest.has(d)) latest.set(d, row);
     }
     if (!data || data.length < PAGE) break;
