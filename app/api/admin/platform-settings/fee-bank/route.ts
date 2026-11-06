@@ -22,32 +22,6 @@ export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
 }
 
-export async function GET(request: NextRequest) {
-  const cors = adminCorsHeaders(request.headers.get('origin'));
-  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
-  if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: cors });
-
-  const { data, error } = await createServiceClient()
-    .from('platform_settings')
-    .select('value, updated_at')
-    .eq('key', FEE_BANK_SETTING_KEY)
-    .maybeSingle();
-
-  if (error) {
-    logger.error('[FEE_BANK] read failed', { message: error.message });
-    return NextResponse.json({ error: 'Failed to load fee bank account' }, { status: 500, headers: cors });
-  }
-
-  const value = (data?.value ?? null) as { bank_code?: string; account_number?: string; account_name?: string } | null;
-  return NextResponse.json({
-    configured: !!value,
-    bank_code: value?.bank_code ?? null,
-    account_name: value?.account_name ?? null,
-    account_number_masked: value?.account_number ? maskAccountNumber(value.account_number) : null,
-    updated_at: data?.updated_at ?? null,
-  }, { headers: cors });
-}
-
 export async function PUT(request: NextRequest) {
   const cors = adminCorsHeaders(request.headers.get('origin'));
   try {

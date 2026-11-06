@@ -171,15 +171,9 @@ describe('fee bank route requires a step-up bound to this exact value', () => {
     expect(state.stepUps[0].consumed_at).toBeNull();
   });
 
-  it('non-admin → 403; GET shows only a masked account number', async () => {
-    state.settings.set('platform_bank_ng', VALUE);
-    const got = await feeBank.GET(req(undefined));
-    const body = await got.json();
-    expect(body.account_number_masked).toBe('******6789');
-    expect(JSON.stringify(body)).not.toContain('0123456789');
-
+  it('non-admin → 403, nothing saved', async () => {
     state.admin = null;
     expect((await feeBank.PUT(req({ ...VALUE, stepUpId: addStepUp() }))).status).toBe(403);
-    expect((await feeBank.GET(req(undefined))).status).toBe(403);
+    expect(state.upserts).toBe(0);
   });
 });

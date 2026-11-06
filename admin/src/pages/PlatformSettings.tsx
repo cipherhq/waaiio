@@ -1181,7 +1181,10 @@ export default function PlatformSettings() {
         </button>
       </div>
 
-      <FeeBankCard />
+      <FeeBankCard
+        current={(settings.find(s => s.key === 'platform_bank_ng')?.value as { bank_code?: string; account_number?: string; account_name?: string } | undefined) ?? null}
+        onSaved={loadData}
+      />
 
       {/* Add Setting Form */}
       {showAdd && (

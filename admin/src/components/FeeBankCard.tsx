@@ -6,22 +6,28 @@
  * The general settings editor refuses platform_bank_* keys.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { adminApiGet, adminApiPut } from '@/lib/adminApi';
+import { useRef, useState } from 'react';
+import { adminApiPut } from '@/lib/adminApi';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 
 const FEE_BANK_KEY = 'platform_bank_ng';
 
-interface CurrentFeeBank {
-  configured: boolean;
-  bank_code: string | null;
-  account_name: string | null;
-  account_number_masked: string | null;
+interface FeeBankValue {
+  bank_code?: string;
+  account_number?: string;
+  account_name?: string;
 }
 
-export function FeeBankCard() {
-  const [current, setCurrent] = useState<CurrentFeeBank | null>(null);
+function maskAccountNumber(accountNumber: string): string {
+  return accountNumber.length <= 4 ? '****' : `******${accountNumber.slice(-4)}`;
+}
+
+/**
+ * `current` is the platform_bank_ng value the Platform Settings page already loaded;
+ * `onSaved` reloads that page's settings. The card makes no request until Save.
+ */
+export function FeeBankCard({ current, onSaved }: { current: FeeBankValue | null; onSaved: () => void }) {
   const [bankCode, setBankCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
@@ -29,17 +35,6 @@ export function FeeBankCard() {
   const [error, setError] = useState('');
   const stepUp = useStepUp();
   const onAuthorizedRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
-
-  async function load() {
-    try {
-      const res = await adminApiGet('/api/admin/platform-settings/fee-bank');
-      if (res.ok) setCurrent(await res.json());
-    } catch {
-      // Leave the current value unknown; saving still works.
-    }
-  }
-
-  useEffect(() => { load(); }, []);
 
   function handleSave() {
     setMessage('');
@@ -59,7 +54,7 @@ export function FeeBankCard() {
       if (!res.ok) throw new Error(data.error || 'Failed to save');
       setMessage('Fee bank account saved.');
       setAccountNumber('');
-      await load();
+      onSaved();
     };
     onAuthorizedRef.current = onAuthorized;
     stepUp.execute({
@@ -80,8 +75,8 @@ export function FeeBankCard() {
       </p>
       <p className="mt-3 text-sm text-gray-700">
         Current:{' '}
-        {current?.configured
-          ? `${current.account_name} · bank ${current.bank_code} · ${current.account_number_masked}`
+        {current?.account_number
+          ? `${current.account_name ?? ''} · bank ${current.bank_code ?? ''} · ${maskAccountNumber(String(current.account_number))}`
           : 'not set'}
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
