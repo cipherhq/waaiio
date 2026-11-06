@@ -1,7 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export const runtime = 'edge';
 
@@ -15,18 +14,18 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Try bookings first, then orders, then donations
+  // Anyone holding the reference code can open this image, so it shows only
+  // non-personal details: status, date, business and service. The customer's
+  // name and the amount are left out (Owner decision 2026-11-06).
+  // Try bookings first, then orders.
   let receiptData: {
     type: string;
     businessName: string;
     logoUrl?: string;
     serviceName: string;
     date: string;
-    amount: number;
-    countryCode: string;
     referenceCode: string;
     status: string;
-    guestName: string;
     quantity?: number;
     subscriptionTier?: string;
   } | null = null;
@@ -34,25 +33,21 @@ export async function GET(request: NextRequest) {
   // Check bookings
   const { data: booking } = await supabase
     .from('bookings')
-    .select('reference_code, date, total_amount, status, guest_name, quantity, services(name), businesses(name, logo_url, country_code, subscription_tier)')
+    .select('reference_code, date, status, quantity, services(name), businesses(name, logo_url, subscription_tier)')
     .eq('reference_code', ref)
     .maybeSingle();
 
   if (booking) {
-    const biz = booking.businesses as unknown as { name: string; logo_url?: string; country_code?: string; subscription_tier?: string } | null;
+    const biz = booking.businesses as unknown as { name: string; logo_url?: string; subscription_tier?: string } | null;
     const svc = booking.services as unknown as { name: string } | null;
-    const cc = biz?.country_code || 'NG';
     receiptData = {
       type: 'Booking Receipt',
       businessName: biz?.name || 'Business',
       logoUrl: biz?.logo_url || undefined,
       serviceName: svc?.name || 'Service',
       date: new Date(booking.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-      amount: booking.total_amount || 0,
-      countryCode: cc,
       referenceCode: booking.reference_code,
       status: booking.status,
-      guestName: booking.guest_name || 'Customer',
       quantity: booking.quantity || 1,
       subscriptionTier: biz?.subscription_tier || 'free',
     };
@@ -62,25 +57,20 @@ export async function GET(request: NextRequest) {
   if (!receiptData) {
     const { data: order } = await supabase
       .from('orders')
-      .select('reference_code, total_amount, status, created_at, businesses:business_id(name, logo_url, country_code, subscription_tier), user:profiles!orders_user_id_fkey(first_name, last_name)')
+      .select('reference_code, status, created_at, businesses:business_id(name, logo_url, subscription_tier)')
       .eq('reference_code', ref)
       .maybeSingle();
 
     if (order) {
-      const biz = order.businesses as unknown as { name: string; logo_url?: string; country_code?: string; subscription_tier?: string } | null;
-      const user = order.user as unknown as { first_name?: string; last_name?: string } | null;
-      const cc = biz?.country_code || 'NG';
+      const biz = order.businesses as unknown as { name: string; logo_url?: string; subscription_tier?: string } | null;
       receiptData = {
         type: 'Order Receipt',
         businessName: biz?.name || 'Business',
         logoUrl: biz?.logo_url || undefined,
         serviceName: 'Order',
         date: new Date(order.created_at).toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-        amount: order.total_amount || 0,
-        countryCode: cc,
         referenceCode: order.reference_code,
         status: order.status,
-        guestName: `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Customer',
         subscriptionTier: biz?.subscription_tier || 'free',
       };
     }
@@ -91,7 +81,6 @@ export async function GET(request: NextRequest) {
   }
 
   const r = receiptData;
-  const formattedAmount = formatCurrency(r.amount, (r.countryCode || 'NG') as CountryCode);
   const statusColor = r.status === 'confirmed' || r.status === 'completed' || r.status === 'delivered'
     ? '#22c55e' : r.status === 'pending' ? '#f59e0b' : r.status === 'cancelled' ? '#ef4444' : '#6C2BD9';
   const statusLabel = r.status.charAt(0).toUpperCase() + r.status.slice(1);
@@ -142,11 +131,6 @@ export async function GET(request: NextRequest) {
           {/* Left — details */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex' }}>Customer</div>
-              <div style={{ fontSize: 16, fontWeight: 'bold', color: '#1a1a1a', display: 'flex' }}>{r.guestName}</div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex' }}>Service</div>
               <div style={{ fontSize: 15, color: '#333', display: 'flex' }}>{r.serviceName}{r.quantity && r.quantity > 1 ? ` x${r.quantity}` : ''}</div>
             </div>
@@ -160,12 +144,6 @@ export async function GET(request: NextRequest) {
               <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex' }}>Reference</div>
               <div style={{ fontSize: 14, color: '#6C2BD9', fontWeight: 'bold', display: 'flex' }}>{r.referenceCode}</div>
             </div>
-          </div>
-
-          {/* Right — amount */}
-          <div style={{ width: '220px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderLeft: '1px solid #eee', paddingLeft: '30px' }}>
-            <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex' }}>Amount Paid</div>
-            <div style={{ fontSize: 36, fontWeight: 'bold', color: '#1a1a1a', marginTop: '8px', display: 'flex' }}>{formattedAmount}</div>
           </div>
         </div>
 

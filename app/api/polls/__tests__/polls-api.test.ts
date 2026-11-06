@@ -12,6 +12,7 @@ const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 const mockServiceFrom = vi.fn();
 const mockSendWithTemplate = vi.fn<() => Promise<{ sent: boolean }>>();
+const mockHasRecipientPermission = vi.fn<() => Promise<boolean>>();
 
 // Helper: build a chainable query mock
 function chainable(finalResult: { data: unknown; error: unknown; count?: number }) {
@@ -476,6 +477,12 @@ describe('POST /api/polls/[id]/send', () => {
 
   beforeEach(async () => {
     mockSendWithTemplate.mockReset().mockResolvedValue({ sent: true });
+    // These tests cover delivery outcomes for permitted recipients; consent skips are
+    // covered against the real helper in lib/__tests__/poll-survey-recipient-rules.test.ts.
+    mockHasRecipientPermission.mockReset().mockResolvedValue(true);
+    vi.doMock('@/lib/merchants/recipient-permission', () => ({
+      hasRecipientPermission: mockHasRecipientPermission,
+    }));
     // Set up isolated channel and guard boundaries for the send handler
     vi.doMock('@/lib/rate-limit', () => ({
       rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
@@ -520,7 +527,7 @@ describe('POST /api/polls/[id]/send', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sent: 1, failed: 0, total: 1 });
+    expect(await res.json()).toEqual({ sent: 1, failed: 0, skipped_no_permission: 0, total: 1 });
     expect(sessionQuery.maybeSingle).toHaveBeenCalledOnce();
     expect(sessionQuery.update).toHaveBeenCalledWith(expect.objectContaining({ current_step: 'poll_question' }));
     expect(sessionQuery.eq).toHaveBeenCalledWith('id', 'session-1');
@@ -544,7 +551,7 @@ describe('POST /api/polls/[id]/send', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sent: 0, failed: 1, total: 1 });
+    expect(await res.json()).toEqual({ sent: 0, failed: 1, skipped_no_permission: 0, total: 1 });
     expect(sessionQuery.maybeSingle).toHaveBeenCalledOnce();
     expect(sessionQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
       whatsapp_number: '+15555550102', business_id: BIZ.id, current_step: 'poll_question', is_active: true,
@@ -564,7 +571,7 @@ describe('POST /api/polls/[id]/send', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sent: 0, failed: 1, total: 1 });
+    expect(await res.json()).toEqual({ sent: 0, failed: 1, skipped_no_permission: 0, total: 1 });
     expect(mockSendWithTemplate).toHaveBeenCalledTimes(1);
     expect(mockSendWithTemplate).toHaveBeenCalledWith(expect.objectContaining({ to: '+15555550103' }));
   });
@@ -585,7 +592,7 @@ describe('POST /api/polls/[id]/send', () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ sent: 2, failed: 2, total: 4 });
+    expect(body).toEqual({ sent: 2, failed: 2, skipped_no_permission: 0, total: 4 });
     expect(body.sent + body.failed).toBe(body.total);
     expect(mockSendWithTemplate).toHaveBeenCalledTimes(phones.length);
     phones.forEach((phone, index) => {
