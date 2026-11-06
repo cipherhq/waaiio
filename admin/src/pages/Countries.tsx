@@ -634,6 +634,9 @@ export default function Countries() {
 
       {/* Provider Configuration Panel */}
       <ProviderConfigPanel countries={countries} canMutate={canMutate} onSaved={load} />
+
+      {/* Messaging Financial Controls (trial credit, spend caps, included credit, message rates) */}
+      <MessagingFinancialControls countries={countries} canMutate={canMutate} onSaved={load} />
     </div>
   );
 }
@@ -1204,6 +1207,22 @@ export function buildMessagingPayload(
   return { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes };
 }
 
+/** Shows a smallest-unit amount as normal money (e.g. 600000 NGN -> ₦6,000.00) so a
+ *  factor-of-100 slip is visible before saving. Display only; the saved value is unchanged. */
+export function MinorAmountHint({ value, currency, locale }: { value: string; currency: string; locale?: string }) {
+  const minor = parseMinorInt(value);
+  if (minor === null) return null;
+  let text: string;
+  try {
+    const format = new Intl.NumberFormat(locale || undefined, { style: 'currency', currency });
+    const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
+    text = format.format(minor / 10 ** digits);
+  } catch {
+    return null;
+  }
+  return <div className="mt-0.5 text-[11px] text-gray-500">= {text}</div>;
+}
+
 /** Messaging Financial Controls — currency-scoped shared values + country-scoped rates/plan codes */
 function MessagingFinancialControls({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [saving, setSaving] = useState(false);
@@ -1350,7 +1369,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   return (
     <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-6">
       <h3 className="text-lg font-bold text-gray-900 mb-1">Messaging Financial Controls</h3>
-      <p className="text-sm text-gray-500 mb-4">Configure messaging rates, spend caps, trial credits, and tier included credits. Currency-scoped values are shared across all countries using that currency. All values in minor currency units. Saved atomically via versioned config.</p>
+      <p className="text-sm text-gray-500 mb-4">Configure messaging rates, spend caps, trial credits, and tier included credits. Currency-scoped values are shared across all countries using that currency. Type every amount in the smallest unit of the currency (cents, kobo, pence): 500 means $5.00. The normal amount shows under each box. Saved atomically via versioned config.</p>
 
       {error && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
       {success && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{success}</div>}
@@ -1375,10 +1394,10 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
                   <td className="py-2 font-medium">
                     {currency} <span className="text-xs text-gray-400">({cList.map(c => c.code).join(', ')})</span>
                   </td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-24 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.spendCap} onChange={e => updateCurr('spendCap', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.trialCredit} onChange={e => updateCurr('trialCredit', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.growthIncluded} onChange={e => updateCurr('growthIncluded', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.businessIncluded} onChange={e => updateCurr('businessIncluded', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${currency} spend cap`} className="w-24 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.spendCap} onChange={e => updateCurr('spendCap', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.spendCap} currency={currency} locale={cList[0]?.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${currency} trial credit`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.trialCredit} onChange={e => updateCurr('trialCredit', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.trialCredit} currency={currency} locale={cList[0]?.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${currency} growth included credit`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.growthIncluded} onChange={e => updateCurr('growthIncluded', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.growthIncluded} currency={currency} locale={cList[0]?.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${currency} business included credit`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.businessIncluded} onChange={e => updateCurr('businessIncluded', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.businessIncluded} currency={currency} locale={cList[0]?.currency_locale} /></td>
                 </tr>
               );
             })}
@@ -1395,6 +1414,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
               <th className="px-2 py-2 text-left font-medium text-gray-500">Currency</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500">Utility Rate</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500">Marketing Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500" title="Used for any message without its own rate, such as bot replies to customers">All Other Messages Rate</th>
               {hasPaystack && (
                 <>
                   <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
@@ -1414,8 +1434,9 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
                 <tr key={c.code} className={!c.is_active ? 'opacity-50' : ''}>
                   <td className="py-2 font-medium">{c.flag} {c.code}</td>
                   <td className="px-2 py-2 text-gray-500">{c.currency_code}</td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.utility || ''} onChange={e => updateRate('utility', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} utility rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.utility || ''} onChange={e => updateRate('utility', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.utility || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} marketing rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.marketing || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} all other messages rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates['*'] || ''} onChange={e => updateRate('*', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates['*'] || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
                   {hasPaystack && (
                     <>
                       <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-500" value={cs.paystackGrowthPlan} readOnly disabled title="Manage via Provider Configuration panel" /> : <span className="text-gray-300">—</span>}</td>
