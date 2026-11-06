@@ -20,6 +20,73 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 
+/**
+ * Finished stays free their nights; every other status holds them. Same
+ * deny-list as M522's reservations_no_overlapping_stay.
+ */
+const FINISHED_STAY_STATUSES = '(cancelled,no_show,checked_out,completed)';
+
+/**
+ * Are any nights in [checkIn, checkOut) taken at this property? Looks at
+ * stays that are not finished (including legacy rows that only carry
+ * service_id, which M522 does not cover) and the merchant's blocked dates
+ * (date_from..date_to, both ends blocked, as in the date lists). A stay
+ * created by this same bot session is not a conflict: a double tap must
+ * reach the existing same-session reuse, not "not available".
+ */
+async function findStayConflict(
+  ctx: FlowContext,
+  propertyId: string,
+  checkIn: string,
+  checkOut: string,
+): Promise<'free' | 'taken' | 'error'> {
+  const [stays, blocked] = await Promise.all([
+    ctx.supabase
+      .from('reservations')
+      .select('id')
+      .eq('business_id', ctx.business!.id)
+      .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
+      .or(`bot_session_id.is.null,bot_session_id.neq.${sanitizeFilterValue(ctx.session.id)}`)
+      .not('status', 'in', FINISHED_STAY_STATUSES)
+      .lt('check_in', checkOut)
+      .gt('check_out', checkIn)
+      .limit(1),
+    ctx.supabase
+      .from('property_blocked_dates')
+      .select('id')
+      .eq('business_id', ctx.business!.id)
+      .eq('property_id', propertyId)
+      .lt('date_from', checkOut)
+      .gte('date_to', checkIn)
+      .limit(1),
+  ]);
+  if (stays.error || blocked.error) return 'error';
+  return (stays.data?.length || blocked.data?.length) ? 'taken' : 'free';
+}
+
+/**
+ * Clear the chosen dates (keep the property) and offer Choose New Dates / Cancel.
+ * The terms flags are cleared too, so the second pass (new dates, then
+ * "I Accept & Confirm" again) runs exactly like the first.
+ */
+function datesTakenPrompt(d: Record<string, unknown>): PromptMessage[] {
+  delete d.check_in;
+  delete d.check_out;
+  delete d.nights;
+  delete d._availability_checked;
+  delete d._terms_accepted;
+  delete d._terms_cancelled;
+  delete d._terms_loop_consumed;
+  return [{
+    type: 'buttons',
+    body: 'Sorry, this property is not available for the selected dates.',
+    buttons: [
+      { id: 'recovery_change_dates', title: 'Choose New Dates' },
+      { id: 'recovery_exit', title: 'Cancel' },
+    ],
+  }];
+}
+
 export const reservationFlow: FlowDefinition = {
   type: 'reservation',
   steps: [
@@ -746,6 +813,8 @@ export const reservationFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         // #393: Suppress re-prompt while awaiting saved-card PIN entry
         if (d._awaiting_card_pin) return [];
+        // #922: dates were cleared by a "not available" answer — offer the same choice again.
+        if (!d.reservation_id && (!d.check_in || !d.check_out)) return datesTakenPrompt(d);
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         // Ensure user exists
@@ -779,32 +848,12 @@ export const reservationFlow: FlowDefinition = {
 
         // Check availability FIRST — before T&C, so user doesn't accept terms for unavailable dates
         const propertyId = (d.property_id as string) || null;
+        // #922: true once this pass has seen the nights free, so the pre-insert check below is not repeated.
+        let nightsCheckedThisPass = false;
         if (propertyId && !d._availability_checked) {
-          const { data: overlapping } = await ctx.supabase
-            .from('reservations')
-            .select('id')
-            .eq('business_id', ctx.business!.id)
-            .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
-            .in('status', ['pending', 'confirmed'])
-            .lt('check_in', d.check_out as string)
-            .gt('check_out', d.check_in as string)
-            .limit(1);
-
-          if (overlapping && overlapping.length > 0) {
-            // Clear date selections so user can pick new ones, but preserve property choice
-            delete d.check_in;
-            delete d.check_out;
-            delete d.nights;
-            delete d._availability_checked;
-            return [{
-              type: 'buttons',
-              body: 'Sorry, this property is not available for the selected dates.',
-              buttons: [
-                { id: 'recovery_change_dates', title: 'Choose New Dates' },
-                { id: 'recovery_exit', title: 'Cancel' },
-              ],
-            }];
-          }
+          const availability = await findStayConflict(ctx, propertyId, d.check_in as string, d.check_out as string);
+          if (availability === 'taken') return datesTakenPrompt(d);
+          nightsCheckedThisPass = availability === 'free';
           d._availability_checked = true;
         }
 
@@ -861,6 +910,18 @@ export const reservationFlow: FlowDefinition = {
           }
         }
 
+        // #922: check the nights again right before creating the stay. The check
+        // above is skipped when this step re-runs after the terms prompt, and
+        // someone else may have booked (or the merchant blocked) the nights since.
+        if (propertyId && !nightsCheckedThisPass) {
+          const availability = await findStayConflict(ctx, propertyId, d.check_in as string, d.check_out as string);
+          if (availability === 'taken') return datesTakenPrompt(d);
+          if (availability === 'error') {
+            logger.withContext({ op: 'reservation.availability' }).error('[RESERVATION] Pre-insert availability check failed');
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          }
+        }
+
         const { data: resData, error: insertError } = await ctx.supabase
           .from('reservations')
           .insert(insertPayload)
@@ -877,6 +938,16 @@ export const reservationFlow: FlowDefinition = {
             .single();
           if (existing) {
             reservation = existing;
+          } else if (
+            insertError?.code === '23P01'
+            // A claim that loses a simultaneous race can also be aborted as a deadlock;
+            // it means "taken" only if the nights are now held by someone else.
+            || (insertError?.code === '40P01'
+              && propertyId !== null
+              && await findStayConflict(ctx, propertyId, d.check_in as string, d.check_out as string) === 'taken')
+          ) {
+            // M522 exclusion constraint: another stay took these nights first.
+            return datesTakenPrompt(d);
           } else {
             logger.withContext({ op: 'reservation.create', ...safeLogErrorContext(insertError) }).error('[RESERVATION] Failed to create reservation');
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
@@ -1201,6 +1272,10 @@ export const reservationFlow: FlowDefinition = {
         }
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
+        }
+        // #922: after "not available" the dates are cleared; only the two buttons move on.
+        if (!ctx.session.session_data.reservation_id && (!ctx.session.session_data.check_in || !ctx.session.session_data.check_out)) {
+          return { valid: false, errorMessage: 'Please tap *Choose New Dates* or *Cancel*.' };
         }
         // #268: Handle saved-card input
         const d = ctx.session.session_data;

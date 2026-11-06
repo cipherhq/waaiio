@@ -450,11 +450,14 @@ describe('CREATE_NEW commit wiring (Point C)', () => {
         c.insert = insertSpy;
         insertSpy.mockReturnValue(c);
         c.select = vi.fn().mockReturnValue(c);
+        // #922 pre-insert availability check: no overlapping stays.
+        for (const m of ['eq', 'or', 'not', 'lt', 'gt']) c[m] = vi.fn().mockReturnValue(c);
+        c.limit = vi.fn().mockResolvedValue({ data: [], error: null });
         c.single = vi.fn().mockResolvedValue({ data: { id: 'res-1', reference_code: 'RES-001' }, error: null });
         return c;
       }
       const c: Record<string, any> = {};
-      for (const m of ['select','insert','update','upsert','delete','eq','neq','or','in','is','not','order','limit','gte','lte']) c[m] = vi.fn().mockReturnValue(c);
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','or','in','is','not','order','limit','lt','gt','gte','lte']) c[m] = vi.fn().mockReturnValue(c);
       c.single = vi.fn().mockResolvedValue({ data: null, error: null });
       c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
       return c;
