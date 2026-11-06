@@ -116,7 +116,7 @@ suite('M524 resellers own record read-only (real PostgreSQL)', () => {
     await control?.end();
   });
 
-  it('before M524 the fixture reproduces the gap: a reseller can raise its own commission', async () => {
+  it('fixture starts from the pre-M524 policy (owner-writable row)', async () => {
     await q(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.resellers TO anon, authenticated, service_role`);
     await as('authenticated', RESELLER_USER, async () => {
       expect((await q(`UPDATE public.resellers SET commission_percentage = 100 WHERE id = $1`, [RESELLER_ID])).rowCount).toBe(1);

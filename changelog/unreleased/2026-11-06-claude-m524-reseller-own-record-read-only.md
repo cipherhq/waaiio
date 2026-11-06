@@ -8,7 +8,7 @@
     - anon and PUBLIC: nothing.
   - It keeps "Admin manages resellers" and "Service role manages resellers".
   - It self-checks the grants, RLS, and that the only non-service write policy is the admin one.
-- **Effect:** a reseller can still read its own row (dashboard and API lookups), but can no longer change its commission, account cap, plan, status or branding directly. Admins (aal2) and server routes still can.
+- **Effect:** a reseller can still read its own row (dashboard and API lookups). Changes to the row go through admins (aal2) and server routes only.
 - **Precondition:** apply only after the app change in `claude/reseller-free-until-paid` (branding saved with the service client) is in the production build.
 - **Files:**
   - the migration;
