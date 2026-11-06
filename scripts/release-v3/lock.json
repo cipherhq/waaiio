@@ -41,7 +41,7 @@
    "report_sha256": "f220ec749a14271d5b836044c1023dd584171bbf6e95494b4bcaaa42175aa40f"
   },
   "catalog_query_rebase_929": {
-   "decision": "Owner 2026-11-06: #929 (Option B from #927) — widen the catalog at the next lock update; Owner asked to do it now",
+   "decision": "#929 (Option B from #927): widen the catalog. Owner in chat 2026-11-06, approving the lock translation instead of a lock-map re-bootstrap and keeping the session search_path rule for function bodies (same as views): \"Yes, approve both\" (PR #940)",
    "environments": {
     "production": {
      "changed": {
