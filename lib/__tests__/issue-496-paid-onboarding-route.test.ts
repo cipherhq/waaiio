@@ -40,6 +40,11 @@ vi.mock('@/lib/onboarding/finalize', () => ({
   finalizeOnboarding: (...args: unknown[]) => state.finalize(...args),
 }));
 
+// Server-side plan price for the Paystack fixture below (growth plan, 14,999 NGN).
+vi.mock('@/lib/payments/subscription-expected-price', () => ({
+  resolveExpectedPlanPrice: vi.fn().mockResolvedValue({ ok: true, amountMinor: 1_499_900, currency: 'NGN' }),
+}));
+
 import { POST } from '@/app/api/onboarding/verify/route';
 
 type Result = { data?: unknown; error?: unknown };
