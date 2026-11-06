@@ -26,6 +26,8 @@ const m = vi.hoisted(() => ({
   text: vi.fn(), template: vi.fn(), getTemplates: vi.fn(), rpc: vi.fn(),
   resolvedFor: [] as string[],
   conv: { allowed: true, used: 0, limit: 100 },
+  /** Sending channel shape. Default: a shared number (its receipts alone name no business). */
+  channel: null as null | ((businessId: string) => Record<string, unknown>),
 }));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ auth: { getUser: async () => ({ data: { user: m.user } }) }, from: (t: string) => m.db.from(t) }),
@@ -39,7 +41,7 @@ vi.mock('@/lib/channels/channel-resolver', () => ({
     async resolveByBusinessId(businessId: string) {
       m.resolvedFor.push(businessId);
       return {
-        channel: { id: `chan-${businessId}` },
+        channel: m.channel ? m.channel(businessId) : { id: `chan-${businessId}`, channel_type: 'shared', business_id: null },
         cloud: { getTemplates: m.getTemplates },
         sender: { sendText: m.text, sendTemplate: m.template },
       };
@@ -80,6 +82,7 @@ beforeEach(() => {
   m.user = { id: 'owner-a' };
   m.resolvedFor = [];
   m.conv = { allowed: true, used: 0, limit: 100 };
+  m.channel = null;
   m.text.mockResolvedValue({ success: true, messageId: 'wamid.text' });
   m.template.mockResolvedValue({ success: true, messageId: 'wamid.tpl' });
   m.getTemplates.mockResolvedValue({ data: [template()] });
@@ -100,6 +103,7 @@ beforeEach(() => {
     form_responses: [],
     customer_profiles: [],
     engage_segments: [],
+    bot_sessions: [],
   });
 });
 
@@ -141,7 +145,7 @@ describe('POST /api/forms/send — consent and opt-outs (no cold sending)', () =
     for (const p of [P1, P2, P3]) m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-${BIZ}`, sender_phone: p.slice(1), provider_timestamp: hourAgo() });
   });
 
-  it('skips a recipient with no recorded consent, even inside the 24-hour window', async () => {
+  it('skips a recipient with no recorded consent whose window on a shared number is not a chat with this business', async () => {
     const res = await send(post('/api/forms/send', sendBody({ phone: P2 })));
     const data = await res.json();
     expect(res.status).toBe(200);
@@ -373,7 +377,7 @@ describe('GET /api/forms/recipients — opted-in contacts picker', () => {
     m.db.tables.customer_profiles.push({ business_id: BIZ, phone: P1, name: 'Ada' });
     const res = await get();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ contacts: [{ phone: P1, name: 'Ada' }], truncated: false });
+    expect(await res.json()).toEqual({ contacts: [{ phone: P1, name: 'Ada' }], truncated: false, recentChats: [], recentChatsTruncated: false });
   });
 
   it('is owner-only and fails closed', async () => {
@@ -412,7 +416,8 @@ describe('Optional "Yes, send me updates" on the public form', () => {
     }) })]);
     expect(consents().some(w => w.row.status === 'granted')).toBe(false);
     expect(m.db.tables.form_responses[0]).toMatchObject({ consent_given: true });
-    // Nobody proved they own the typed number, so it cannot be messaged, even inside the window.
+    // Nobody proved they own the typed number, so a web tick alone never makes it sendable
+    // (here the window is on a shared number with no chat with this business).
     m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-${BIZ}`, sender_phone: P2.slice(1), provider_timestamp: hourAgo() });
     const sent = await (await send(post('/api/forms/send', sendBody({ phone: P2 })))).json();
     expect(sent.results[0]).toEqual({ phone: P2, status: 'skipped', reason: 'no_consent' });
@@ -444,6 +449,215 @@ describe('Optional "Yes, send me updates" on the public form', () => {
     m.db.tables.whatsapp_channels = [];
     const res = await publicForm(new NextRequest('https://example.test/api/forms/public/tokA'), { params: Promise.resolve({ token: 'tokA' }) });
     expect(await res.json()).toMatchObject({ marketing_opt_in: true });
+  });
+});
+
+describe('Owner option C — people who messaged this business in the last 24 hours', () => {
+  const SHARED = 'chan-shared-ng';
+  const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+  const receipt = (phone: string, at: string, channel = `chan-${BIZ}`) => ({ channel_id: channel, sender_phone: phone.slice(1), provider_timestamp: at });
+  const dedicated = () => { m.channel = (b: string) => ({ id: `chan-${b}`, channel_type: 'dedicated', business_id: b }); };
+  const shared = () => { m.channel = () => ({ id: SHARED, channel_type: 'shared', business_id: null }); };
+  /** A bot conversation as the webhook pipeline stores it. */
+  const session = (phone: string, extra: Record<string, unknown> = {}, userAt = minutesAgo(30)) => ({
+    id: `s-${Math.random()}`, whatsapp_number: phone.slice(1), business_id: BIZ, is_active: true,
+    session_data: { _inbound_channel_id: SHARED }, updated_at: userAt,
+    conversation_log: [{ role: 'bot', content: 'Hi', timestamp: userAt }, { role: 'user', content: '1', timestamp: userAt }],
+    ...extra,
+  });
+  const sendTo = async (phones: string[], extra: Record<string, unknown> = {}) =>
+    (await (await send(post('/api/forms/send', sendBody({ phones, ...extra })))).json());
+
+  beforeEach(() => { m.db.tables.customer_consents = []; });
+
+  describe('on this business’s own (dedicated) number', () => {
+    beforeEach(dedicated);
+
+    it('sends the free-text invite to someone who messaged in the last 24 hours, with no opt-in', async () => {
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(12)));
+      const data = await sendTo([P2]);
+      expect(data.results).toEqual([{ phone: P2, status: 'sent', via: 'text' }]);
+      expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ to: P2.slice(1), messageCategory: 'service' }));
+      expect(m.template).not.toHaveBeenCalled();
+    });
+
+    it('a window-only person still gets text, not the template, when a template is chosen', async () => {
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(12)));
+      const data = await sendTo([P2], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P2, status: 'sent', via: 'text' }]);
+      expect(m.template).not.toHaveBeenCalled();
+    });
+
+    it('once the window has closed a person without opt-in is skipped, never sent the template', async () => {
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, dayAgo()));
+      const data = await sendTo([P2], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+      expect(m.template).not.toHaveBeenCalled();
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('someone with recorded consent outside the window still gets the approved template', async () => {
+      m.db.tables.customer_consents.push(consent(P1));
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P1, dayAgo()));
+      const data = await sendTo([P1], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P1, status: 'sent', via: 'template' }]);
+      expect(m.template).toHaveBeenCalledTimes(1);
+    });
+
+    it('an opt-out wins even inside the window', async () => {
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(5)));
+      m.db.tables.messaging_opt_outs.push({ phone: P2, business_id: BIZ, channel: 'whatsapp', resubscribed_at: null });
+      const data = await sendTo([P2]);
+      expect(data.results).toEqual([{ phone: P2, status: 'skipped', reason: 'opted_out' }]);
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('a message to a different channel does not count', async () => {
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(5), 'chan-other'));
+      const data = await sendTo([P2]);
+      expect(data.results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('a dedicated number recorded for another business is not treated as this business’s own', async () => {
+      m.channel = (b: string) => ({ id: `chan-${b}`, channel_type: 'dedicated', business_id: OTHER });
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(5)));
+      expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+    });
+
+    it('a window that closes between the check and the send means skip, never a template', async () => {
+      const { deliverInvite } = await import('@/lib/forms/form-send');
+      // No receipt any more at delivery time: the window has closed.
+      const out = await deliverInvite({
+        db: m.db as never, businessId: BIZ, businessName: 'Ada Salon', phone: P2,
+        resolved: { channel: { id: `chan-${BIZ}`, channel_type: 'dedicated', business_id: BIZ }, sender: { sendText: m.text, sendTemplate: m.template } } as never,
+        form: { id: FORM, title: 'Guest list', description: null, token: 'tokA' },
+        template: { name: 'feedback_request', category: 'marketing' }, eligibility: { eligible: true, basis: 'window' },
+      });
+      expect(out).toEqual({ phone: P2, status: 'skipped', reason: 'no_consent' });
+      expect(m.template).not.toHaveBeenCalled();
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('if the 24-hour check cannot be read, the person is skipped as check_failed and nothing is sent', async () => {
+      m.db.failReads.add('whatsapp_inbound_receipts');
+      const data = await sendTo([P2], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P2, status: 'skipped', reason: 'check_failed' }]);
+      expect(m.text).not.toHaveBeenCalled();
+      expect(m.template).not.toHaveBeenCalled();
+    });
+
+    it('Owner decision 2026-11-06: an earlier "No thanks" does not block a reply inside the window', async () => {
+      m.db.tables.customer_consents.push(consent(P2, { status: 'revoked', created_at: new Date().toISOString() }));
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(12)));
+      const data = await sendTo([P2], { templateName: 'feedback_request' });
+      expect(data.results).toEqual([{ phone: P2, status: 'sent', via: 'text' }]);
+      expect(m.template).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('on a shared number (many businesses share its receipts)', () => {
+    beforeEach(() => {
+      shared();
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P2, minutesAgo(30), SHARED));
+    });
+
+    it('a receipt alone is not enough: the person may have been talking to another business', async () => {
+      m.db.tables.bot_sessions.push(session(P2, { business_id: OTHER }));
+      expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('sends text when this business’s own conversation on this number has their message from the last 24 hours', async () => {
+      m.db.tables.bot_sessions.push(session(P2));
+      expect((await sendTo([P2], { templateName: 'feedback_request' })).results).toEqual([{ phone: P2, status: 'sent', via: 'text' }]);
+      expect(m.template).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['on another channel', { session_data: { _inbound_channel_id: 'chan-elsewhere' } }, minutesAgo(30)],
+      ['whose last customer message is older than 24 hours', {}, dayAgo()],
+      ['with only bot messages', { conversation_log: [{ role: 'bot', content: 'Hi', timestamp: minutesAgo(10) }] }, minutesAgo(10)],
+    ])('does not count this business’s conversation %s', async (_l, extra, at) => {
+      m.db.tables.bot_sessions.push(session(P2, extra, at));
+      expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+    });
+
+    it('needs the provider receipt too, not only the conversation', async () => {
+      m.db.tables.whatsapp_inbound_receipts = [];
+      m.db.tables.bot_sessions.push(session(P2));
+      expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'no_consent' }]);
+    });
+
+    it('at send time the window is re-checked against this business’s own conversation, not the receipt alone', async () => {
+      const { deliverInvite } = await import('@/lib/forms/form-send');
+      // The receipt is still there, but this business's conversation no longer shows a recent customer message.
+      const out = await deliverInvite({
+        db: m.db as never, businessId: BIZ, businessName: 'Ada Salon', phone: P2,
+        resolved: { channel: { id: SHARED, channel_type: 'shared', business_id: null }, sender: { sendText: m.text, sendTemplate: m.template } } as never,
+        form: { id: FORM, title: 'Guest list', description: null, token: 'tokA' },
+        template: null, eligibility: { eligible: true, basis: 'window' },
+      });
+      expect(out).toEqual({ phone: P2, status: 'skipped', reason: 'no_consent' });
+      expect(m.text).not.toHaveBeenCalled();
+    });
+
+    it('if this business’s conversations cannot be read, the person is skipped as check_failed', async () => {
+      m.db.tables.bot_sessions.push(session(P2));
+      m.db.failReads.add('bot_sessions');
+      expect((await sendTo([P2])).results).toEqual([{ phone: P2, status: 'skipped', reason: 'check_failed' }]);
+      expect(m.text).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/forms/recipients — recentChats', () => {
+    const get = async () => (await contacts(new NextRequest(`https://example.test/api/forms/recipients?businessId=${BIZ}`)));
+
+    it('lists people who messaged this business’s own number in the last 24 hours, newest first, without opt-outs', async () => {
+      dedicated();
+      m.db.tables.whatsapp_inbound_receipts.push(
+        receipt(P1, minutesAgo(90)), receipt(P1, minutesAgo(200)),
+        receipt(P2, minutesAgo(10)),
+        receipt(P3, minutesAgo(20)),
+        receipt('+2348034444444', dayAgo()),
+        receipt('+2348035555555', minutesAgo(5), 'chan-other'),
+      );
+      m.db.tables.messaging_opt_outs.push({ phone: P3.slice(1), business_id: null, channel: 'whatsapp', resubscribed_at: null });
+      m.db.tables.customer_profiles.push({ business_id: BIZ, phone: P2, name: 'Bola' }, { business_id: OTHER, phone: P1, name: 'Not mine' });
+      const res = await get();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.contacts).toEqual([]);
+      expect(data.recentChats.map((c: { phone: string; name: string | null }) => [c.phone, c.name])).toEqual([[P2, 'Bola'], [P1, null]]);
+      expect(Date.parse(data.recentChats[1].lastMessageAt)).toBeGreaterThan(Date.now() - 91 * 60_000);
+      expect(data.recentChatsTruncated).toBe(false);
+    });
+
+    it('on a shared number lists only people in this business’s own conversations who also have a receipt', async () => {
+      shared();
+      m.db.tables.whatsapp_inbound_receipts.push(receipt(P1, minutesAgo(15), SHARED), receipt(P2, minutesAgo(15), SHARED), receipt(P3, minutesAgo(15), SHARED));
+      m.db.tables.bot_sessions.push(
+        session(P1),
+        session(P2, { business_id: OTHER }),
+        // P3 messaged the shared number, but this business has no conversation with them.
+        session('+2348036666666'), // conversation but no receipt
+      );
+      const data = await (await get()).json();
+      expect(data.recentChats.map((c: { phone: string }) => c.phone)).toEqual([P1]);
+    });
+
+    it('is owner-only, and a failure on this list does not hide the opted-in contacts', async () => {
+      m.user = null;
+      expect((await get()).status).toBe(401);
+      m.user = { id: 'owner-b' };
+      expect((await get()).status).toBe(403);
+      m.user = { id: 'owner-a' };
+      dedicated();
+      m.db.tables.customer_consents.push(consent(P1));
+      m.db.failReads.add('whatsapp_inbound_receipts');
+      const data = await (await get()).json();
+      expect(data).toMatchObject({ contacts: [{ phone: P1, name: null }], recentChats: [], recentChatsUnavailable: true });
+    });
   });
 });
 
