@@ -18,6 +18,7 @@
  */
 import type { FlowContext } from '../types';
 import { generateTimeSlots } from '@/lib/constants';
+import { tableTimeInsideBusinessHours } from './slot-availability';
 
 export interface BusinessLocalNow {
   /** Local calendar date in the business timezone, YYYY-MM-DD */
@@ -133,6 +134,10 @@ export async function hasTableSlotLeftToday(ctx: FlowContext, local: BusinessLoc
     const closeMin = toMinutes((sd._seating_available_to as string | null) || closeTime);
     slots = slots.filter(slot => toMinutes(slot) + duration <= closeMin);
   }
+  // The business must also be open for the whole booking (book_table_atomic, M510)
+  const tableDuration = (sd._seating_duration as number) || 90;
+  slots = slots.filter(slot =>
+    tableTimeInsideBusinessHours(local.date, toMinutes(slot), tableDuration, ctx.business?.operating_hours));
   slots = filterSlotsAfterNow(slots, local.minutes);
   if (slots.length === 0) return false;
 
