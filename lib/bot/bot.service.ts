@@ -205,7 +205,8 @@ export class BotService {
     // tap works whatever state the chat is in; it never touches the session, so
     // the menu the customer is on keeps working.
     const updatesOptInHandled = await handleUpdatesOptInTap(this.supabase, {
-      from, text, preResolvedBusinessId, destinationPhone,
+      from, text, messageType, preResolvedBusinessId, destinationPhone,
+      // Platform-scoped like the STOP and launch opt-in replies: a consent-control message.
       sendReply: (phone, msg) => this.sendPlatformText(phone, msg),
     });
     if (updatesOptInHandled) return;

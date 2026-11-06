@@ -163,7 +163,8 @@ async function waaiioListState(supabase: SupabaseClient, phone: string): Promise
 }
 
 /**
- * Show the row only to someone who has not agreed yet and never unsubscribed.
+ * Show the row only to someone who has dealt with this business, has not
+ * agreed yet and never unsubscribed.
  * Never throws; any error means "don't show".
  */
 export async function shouldOfferUpdatesOptIn(
@@ -174,12 +175,14 @@ export async function shouldOfferUpdatesOptIn(
 ): Promise<boolean> {
   if (!phone || !businessId || !UUID_RE.test(businessId)) return false;
   try {
-    const [consent, optOut, waaiio] = await Promise.all([
+    const [consent, optOut, waaiio, contact] = await Promise.all([
       businessConsentState(supabase, phone, businessId),
       optOutState(supabase, phone, businessId, true),
       includesWaaiio ? waaiioListState(supabase, phone) : Promise.resolve('none' as const),
+      // Same prior-contact rule as the tap, so an offer shown can always be accepted.
+      hasContactWithBusiness(supabase, phone, businessId),
     ]);
-    return consent === 'none' && optOut === 'none' && (waaiio === 'none' || waaiio === 'active');
+    return consent === 'none' && optOut === 'none' && (waaiio === 'none' || waaiio === 'active') && contact === true;
   } catch (err) {
     logger.warn('[UPDATES-OPTIN] Eligibility check failed — not offering', { err: String(err) });
     return false;
@@ -194,13 +197,58 @@ export async function updatesOptInRowFor(
     lang: string;
     source: UpdatesOptInSource;
     business: { id: string; name: string; subscription_tier?: string | null; is_whitelabel?: boolean | null } | null | undefined;
+    /** Welcome only: the current chat session. Any other session with this business means it is not a first visit. */
+    firstVisitSessionId?: string;
   },
 ): Promise<{ title: string; description: string; postbackText: string } | null> {
   const biz = params.business;
-  if (!biz?.id || !biz.name) return null;
-  const includesWaaiio = updatesOptInIncludesWaaiio(biz.subscription_tier, biz.is_whitelabel);
-  if (!await shouldOfferUpdatesOptIn(supabase, params.phone, biz.id, includesWaaiio)) return null;
-  return buildUpdatesOptInRow(params.lang, biz.name, includesWaaiio, params.source, biz.id);
+  if (!biz?.id || !biz.name || !UUID_RE.test(biz.id)) return null;
+  try {
+    // Some paths load the business without its white-label switch. Read it
+    // rather than guess, so a white-label business is never shown "Waaiio".
+    let branding = { subscription_tier: biz.subscription_tier, is_whitelabel: biz.is_whitelabel };
+    if (biz.is_whitelabel === undefined) {
+      const { data, error } = await supabase.from('businesses')
+        .select('subscription_tier, is_whitelabel').eq('id', biz.id).maybeSingle();
+      if (error || !data) return null;
+      branding = data;
+    }
+    if (params.firstVisitSessionId) {
+      const { count, error } = await supabase.from('bot_sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', biz.id).in('whatsapp_number', phoneVariants(params.phone))
+        .neq('id', params.firstVisitSessionId);
+      if (error || count === null || count === undefined || count > 0) return null;
+    }
+    const includesWaaiio = updatesOptInIncludesWaaiio(branding.subscription_tier, branding.is_whitelabel);
+    if (!await shouldOfferUpdatesOptIn(supabase, params.phone, biz.id, includesWaaiio)) return null;
+    return buildUpdatesOptInRow(params.lang, biz.name, includesWaaiio, params.source, biz.id);
+  } catch (err) {
+    logger.warn('[UPDATES-OPTIN] Row check failed — not offering', { err: String(err) });
+    return null;
+  }
+}
+
+/**
+ * The Waaiio number that will message this customer: launch delivery only sends
+ * from an active shared Waaiio number. A tap on a shared number uses that
+ * number; a tap on a business's own number uses Waaiio's shared number for the
+ * business's country. Null when there is none (Waaiio is then not added).
+ */
+async function waaiioSenderFor(supabase: SupabaseClient, destinationPhone: string | undefined, countryCode: string | null): Promise<string | null> {
+  if (destinationPhone) {
+    const { data, error } = await supabase.from('whatsapp_channels').select('phone_number_id')
+      .eq('phone_number_id', destinationPhone).eq('channel_type', 'shared').eq('is_active', true)
+      .limit(1);
+    if (error) return null;
+    if (data && data.length > 0) return destinationPhone;
+  }
+  if (!countryCode) return null;
+  const { data, error } = await supabase.from('whatsapp_channels').select('phone_number_id')
+    .eq('country_code', countryCode).eq('channel_type', 'shared').eq('is_active', true)
+    .order('created_at', { ascending: true }).limit(1);
+  if (error || !data || data.length === 0) return null;
+  return (data[0] as { phone_number_id: string | null }).phone_number_id || null;
 }
 
 /**
@@ -213,13 +261,15 @@ export async function handleUpdatesOptInTap(
   params: {
     from: string;
     text: string;
+    /** Only a real tap counts ('list' or 'button'); typed text is not consent to the shown wording. */
+    messageType: string;
     preResolvedBusinessId?: string;
     destinationPhone?: string;
     sendReply: (to: string, text: string) => Promise<void>;
   },
 ): Promise<boolean> {
   const parsed = parseUpdatesOptInPostback(params.text);
-  if (!parsed) return false;
+  if (!parsed || (params.messageType !== 'list' && params.messageType !== 'button')) return false;
   const { from, sendReply } = params;
   const { businessId, source } = parsed;
 
@@ -296,16 +346,21 @@ export async function handleUpdatesOptInTap(
       if (waaiio === 'active') {
         waaiioSubscribed = true;
       } else if (waaiio === 'none') {
-        const { error: subErr } = await supabase.from('launch_subscribers').insert({
-          wa_number: from,
-          market: String(business.country_code || 'XX').slice(0, 4),
-          receiving_number: params.destinationPhone || 'unknown',
-          signup_source: UPDATES_OPTIN_EVIDENCE[source],
-          opt_in_status: 'active',
-        });
-        // 23505: a concurrent tap or launch sign-up just added this number as active.
-        waaiioSubscribed = !subErr || subErr.code === '23505';
-        if (subErr && subErr.code !== '23505') logger.error('[UPDATES-OPTIN] Waaiio subscriber not recorded:', subErr.message);
+        const waaiioSender = await waaiioSenderFor(supabase, params.destinationPhone, business.country_code ?? null);
+        if (!waaiioSender) {
+          logger.warn('[UPDATES-OPTIN] No shared Waaiio number for this market — business consent only');
+        } else {
+          const { error: subErr } = await supabase.from('launch_subscribers').insert({
+            wa_number: from,
+            market: String(business.country_code || 'XX').slice(0, 4),
+            receiving_number: waaiioSender,
+            signup_source: UPDATES_OPTIN_EVIDENCE[source],
+            opt_in_status: 'active',
+          });
+          // 23505: a concurrent tap or launch sign-up just added this number as active.
+          waaiioSubscribed = !subErr || subErr.code === '23505';
+          if (subErr && subErr.code !== '23505') logger.error('[UPDATES-OPTIN] Waaiio subscriber not recorded:', subErr.message);
+        }
       }
     }
 

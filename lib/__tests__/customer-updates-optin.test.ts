@@ -44,6 +44,11 @@ function seed(extra: Record<string, Array<Record<string, unknown>>> = {}): Memor
       { id: 's-wl', business_id: BIZ_WL, whatsapp_number: PHONE, session_data: {}, updated_at: '2026-11-06T10:00:00Z' },
     ],
     customer_profiles: [],
+    // Waaiio's shared Nigerian number (launch delivery only sends from shared numbers).
+    whatsapp_channels: [
+      { id: 'ch-ng', phone_number_id: 'pnid-shared-ng', channel_type: 'shared', is_active: true, country_code: 'NG', created_at: '2026-01-01T00:00:00Z' },
+      { id: 'ch-a', phone_number_id: 'pnid-dedicated-a', channel_type: 'dedicated', is_active: true, country_code: 'NG', created_at: '2026-01-01T00:00:00Z' },
+    ],
     customer_consents: [],
     messaging_opt_outs: [],
     launch_subscribers: [],
@@ -51,13 +56,14 @@ function seed(extra: Record<string, Array<Record<string, unknown>>> = {}): Memor
   });
 }
 
-function tap(db: MemoryDb, businessId: string, opts: { source?: 'menu' | 'welcome'; preResolvedBusinessId?: string } = {}) {
+function tap(db: MemoryDb, businessId: string, opts: { source?: 'menu' | 'welcome'; preResolvedBusinessId?: string; destinationPhone?: string; messageType?: string } = {}) {
   const replies: string[] = [];
   const handled = handleUpdatesOptInTap(db as any, {
     from: PHONE,
     text: updatesOptInPostback(opts.source ?? 'menu', businessId),
+    messageType: opts.messageType ?? 'list',
     preResolvedBusinessId: opts.preResolvedBusinessId,
-    destinationPhone: 'pnid-shared-ng',
+    destinationPhone: opts.destinationPhone ?? 'pnid-shared-ng',
     sendReply: async (_to, text) => { replies.push(text); },
   });
   return handled.then(h => ({ handled: h, replies }));
@@ -157,7 +163,7 @@ describe('shown once, recorded, not shown again', () => {
     });
 
     expect(replies).toEqual([
-      "🎉 You're in! Mama Put Kitchen and Waaiio will send you offers and updates here. Reply STOP anytime to unsubscribe.",
+      "🎉 You're in! Mama Put Kitchen and Waaiio will send you offers and updates. Reply STOP anytime to unsubscribe.",
     ]);
 
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
@@ -291,6 +297,49 @@ describe('white-label businesses', () => {
   });
 });
 
+describe('reviewer follow-ups', () => {
+  it("tap on the business's own number → Waaiio list uses Waaiio's shared number for that country, so Waaiio can deliver", async () => {
+    const db = seed();
+    await tap(db, BIZ_A, { preResolvedBusinessId: BIZ_A, destinationPhone: 'pnid-dedicated-a' });
+    expect(db.tables.launch_subscribers[0].receiving_number).toBe('pnid-shared-ng');
+  });
+
+  it('no shared Waaiio number for the market → business consent only, and the reply says so', async () => {
+    const db = seed({ whatsapp_channels: [] });
+    const { replies } = await tap(db, BIZ_A, { destinationPhone: 'pnid-unknown' });
+    expect(consentsFor(db, BIZ_A)).toHaveLength(1);
+    expect(db.tables.launch_subscribers).toHaveLength(0);
+    expect(replies[0]).not.toContain('Waaiio');
+  });
+
+  it('typed text that looks like the postback is not consent', async () => {
+    const db = seed();
+    const { handled } = await tap(db, BIZ_A, { messageType: 'text' });
+    expect(handled).toBe(false);
+    expect(db.writes).toHaveLength(0);
+  });
+
+  it('no prior contact with the business → offer not shown (it could not be accepted)', async () => {
+    expect(await shouldOfferUpdatesOptIn(seed() as any, PHONE, BIZ_B, true)).toBe(false);
+  });
+
+  it('white-label switch not loaded by the caller → read from the database, never guessed', async () => {
+    const db = seed();
+    const row = await updatesOptInRowFor(db as any, { phone: PHONE, lang: 'en', source: 'menu', business: { id: BIZ_WL, name: 'Private Label Spa', subscription_tier: 'growth' } });
+    expect(row?.description).toBe('Offers, reminders & updates from Private Label Spa. Stop anytime.');
+    db.failReads.add('businesses');
+    expect(await updatesOptInRowFor(db as any, { phone: PHONE, lang: 'en', source: 'menu', business: { id: BIZ_WL, name: 'Private Label Spa' } })).toBeNull();
+  });
+
+  it('welcome: shown only on a first visit (no other chat with this business)', async () => {
+    const db = seed();
+    const biz = { id: BIZ_A, name: 'Mama Put Kitchen', subscription_tier: 'growth', is_whitelabel: false };
+    expect(await updatesOptInRowFor(db as any, { phone: PHONE, lang: 'en', source: 'welcome', business: biz, firstVisitSessionId: 's-a' })).not.toBeNull();
+    db.tables.bot_sessions.push({ id: 's-old', business_id: BIZ_A, whatsapp_number: PHONE, session_data: {} });
+    expect(await updatesOptInRowFor(db as any, { phone: PHONE, lang: 'en', source: 'welcome', business: biz, firstVisitSessionId: 's-a' })).toBeNull();
+  });
+});
+
 describe('fails closed', () => {
   for (const table of ['customer_consents', 'messaging_opt_outs', 'launch_subscribers']) {
     it(`${table} read error → offer hidden`, async () => {
@@ -315,7 +364,7 @@ describe('fails closed', () => {
 
   it('other text is not handled', async () => {
     const db = seed();
-    const handled = await handleUpdatesOptInTap(db as any, { from: PHONE, text: 'yes', sendReply: async () => {} });
+    const handled = await handleUpdatesOptInTap(db as any, { from: PHONE, text: 'yes', messageType: 'list', sendReply: async () => {} });
     expect(handled).toBe(false);
     expect(db.writes).toHaveLength(0);
   });

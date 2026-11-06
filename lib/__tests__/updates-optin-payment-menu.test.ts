@@ -123,7 +123,8 @@ async function confirm(eventLog: string[] = []) {
 }
 
 function seedConsents(extra: Record<string, Array<Record<string, unknown>>> = {}) {
-  consentDb = createMemoryDb({ customer_consents: [], messaging_opt_outs: [], launch_subscribers: [], bot_sessions: [], customer_profiles: [], ...extra });
+  consentDb = createMemoryDb({ customer_consents: [], messaging_opt_outs: [], launch_subscribers: [], customer_profiles: [],
+    bot_sessions: [{ id: 's1', business_id: BIZ, whatsapp_number: '234123', session_data: {} }], ...extra });
 }
 
 describe('Stage 3 payment menu: updates opt-in', () => {

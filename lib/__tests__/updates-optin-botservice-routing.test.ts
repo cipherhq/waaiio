@@ -35,6 +35,7 @@ function setup() {
     businesses: [{ id: BIZ, name: 'Mama Put Kitchen', subscription_tier: 'growth', is_whitelabel: false, country_code: 'NG' }],
     bot_sessions: [postCompletion],
     customer_profiles: [], customer_consents: [], messaging_opt_outs: [], launch_subscribers: [],
+    whatsapp_channels: [{ id: 'ch-ng', phone_number_id: 'pnid-shared', channel_type: 'shared', is_active: true, country_code: 'NG' }],
   });
   db.rpc = vi.fn().mockResolvedValue({ data: null, error: null });
   db.storage = { from: vi.fn() };
@@ -66,12 +67,12 @@ describe('BotService: updates opt-in tap', () => {
     const { db, bot, sent, postCompletion } = setup();
     const before = JSON.stringify(db.tables.bot_sessions);
 
-    await bot.handleMessage(PHONE, `updates_yes:menu:${BIZ}`, 'interactive', 'pnid-shared', undefined);
+    await bot.handleMessage(PHONE, `updates_yes:menu:${BIZ}`, 'list', 'pnid-shared', undefined);
 
     expect(db.tables.customer_consents).toHaveLength(1);
     expect(db.tables.customer_consents[0]).toMatchObject({ business_id: BIZ, status: 'granted', evidence_reference: 'bot_next_steps_menu' });
     expect(db.tables.launch_subscribers).toHaveLength(1);
-    expect(sent).toEqual(["🎉 You're in! Mama Put Kitchen and Waaiio will send you offers and updates here. Reply STOP anytime to unsubscribe."]);
+    expect(sent).toEqual(["🎉 You're in! Mama Put Kitchen and Waaiio will send you offers and updates. Reply STOP anytime to unsubscribe."]);
 
     // Session not advanced, ended or rewritten: the other menu options still work.
     expect(JSON.stringify(db.tables.bot_sessions)).toBe(before);
@@ -84,7 +85,7 @@ describe('BotService: updates opt-in tap', () => {
 
   it("on another business's own number the tap records nothing", async () => {
     const { db, bot } = setup();
-    await bot.handleMessage(PHONE, `updates_yes:menu:${BIZ}`, 'interactive', 'pnid-dedicated', OTHER_BIZ);
+    await bot.handleMessage(PHONE, `updates_yes:menu:${BIZ}`, 'list', 'pnid-dedicated', OTHER_BIZ);
     expect(db.tables.customer_consents).toHaveLength(0);
     expect(db.tables.launch_subscribers).toHaveLength(0);
   });

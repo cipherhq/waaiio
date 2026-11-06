@@ -1277,7 +1277,8 @@ export class FlowExecutor {
         buttonLabel: getFlowCopy(cl, 'nav.view_options'),
         items: listItems,
         // The opt-in line must keep naming the business and Waaiio after translation.
-        ...(optInRow && ctx.business?.name ? { _localization: { protectedValues: [ctx.business.name, 'Waaiio'] } } : {}) }
+        // When the list replaces the buttons, its option titles are Waaiio's own labels and translate like the buttons did.
+        ...(optInRow && ctx.business?.name ? { _localization: { protectedValues: [ctx.business.name, 'Waaiio'], waaiioOwnedItemTitles: !shared } } : {}) }
       : { type: 'buttons', body: bodyText, buttons };
     const shouldTranslate = lang && lang !== 'en';
     const localizedMsg = shouldTranslate

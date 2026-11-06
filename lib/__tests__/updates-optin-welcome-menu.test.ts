@@ -12,10 +12,12 @@ vi.mock('@/lib/promotions/history', () => ({ hasPromoHistory: vi.fn().mockResolv
 const BIZ = '11111111-1111-4111-8111-111111111111';
 const PHONE = '2348012345678';
 
-async function welcome(opts: { greeting?: boolean; returning?: boolean; caps?: string[]; consents?: Array<Record<string, unknown>> } = {}) {
+async function welcome(opts: { greeting?: boolean; returning?: boolean; priorVisit?: boolean; caps?: string[]; consents?: Array<Record<string, unknown>> } = {}) {
   const db: any = createMemoryDb({
     profiles: [], capability_custom_labels: [], customer_consents: opts.consents ?? [],
-    messaging_opt_outs: [], launch_subscribers: [], bot_sessions: [], customer_profiles: [],
+    messaging_opt_outs: [], launch_subscribers: [], customer_profiles: [],
+    // The chat this welcome belongs to; any other session with this business means not a first visit.
+    bot_sessions: [{ id: 'test-session-id', business_id: BIZ, whatsapp_number: PHONE, session_data: {} }, ...(opts.priorVisit ? [{ id: 'older', business_id: BIZ, whatsapp_number: PHONE, session_data: {} }] : [])],
   });
   const { capabilitySelectionFlow } = await import('@/lib/bot/flows/capability-selection.flow');
   const ctx = createMockContext({ supabase: db });
@@ -49,6 +51,11 @@ describe('Welcome menu: updates opt-in for first-time customers', () => {
     const [msg] = await welcome({ returning: true });
     expect(msg.type).toBe('buttons');
     if (msg.type === 'buttons') expect(msg.buttons.map(b => b.id)).toEqual(['cap_chat', 'cap_queue']);
+  });
+
+  it('came back without booking (an earlier chat with this business) → no opt-in on the welcome', async () => {
+    const [msg] = await welcome({ priorVisit: true });
+    expect(msg.type).toBe('buttons');
   });
 
   it('menu shown again later in the chat (no greeting) → no opt-in', async () => {

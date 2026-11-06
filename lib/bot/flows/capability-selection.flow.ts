@@ -270,6 +270,7 @@ const selectCapabilityStep: FlowStepConfig = {
     if (greeting && !ctx.session.session_data._customer_history && capItems.length > 0 && capItems.length < 10) {
       const optInRow = await updatesOptInRowFor(ctx.supabase, {
         phone: ctx.from, lang: ctx.copyLang, source: 'welcome', business: ctx.business,
+        firstVisitSessionId: ctx.session.id,
       });
       if (optInRow) {
         capItems.push({ id: optInRow.postbackText, ...optInRow });
