@@ -16,7 +16,7 @@ import { safeButtons } from './shared/safe-interactive';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { notifyOwnerNewBooking, notifyOwnerNewPayment } from './shared/notify-owner';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
@@ -2706,7 +2706,7 @@ export const schedulingFlow: FlowDefinition = {
         const payableAmount = servicePrice > 0 ? servicePrice : deposit;
         const requireTerms = payableAmount > 0 && confirmMeta.require_terms_before_payment !== false;
         if (requireTerms) {
-          const termsUrl = (confirmMeta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+          const termsUrl = getBusinessTermsUrl(ctx.business);
           lines.push('', `📎 Terms: ${termsUrl}`);
         }
 

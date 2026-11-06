@@ -4,6 +4,19 @@ const DEFAULT_TERMS = (businessName: string) =>
   `By tapping *Continue*, you agree to *${businessName}*'s terms and policies.`;
 
 /**
+ * The link the bot sends next to "📎 Terms:" in payment summaries.
+ * A merchant-set metadata.terms_url wins. Otherwise it is the business's public
+ * terms page (app/t/[slug]) on this deployment's own domain, so staging links
+ * open on staging. Without a slug it is Waaiio's own /terms page.
+ */
+export function getBusinessTermsUrl(business?: { slug?: string | null; metadata?: unknown } | null): string {
+  const meta = (business?.metadata || {}) as Record<string, unknown>;
+  if (typeof meta.terms_url === 'string' && meta.terms_url) return meta.terms_url;
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com').replace(/\/+$/, '');
+  return business?.slug ? `${appUrl}/t/${encodeURIComponent(business.slug)}` : `${appUrl}/terms`;
+}
+
+/**
  * Generate the T&C prompt with optional business-specific terms URL.
  * @param businessName - Display name of the business
  * @param customTermsText - Custom terms text from business metadata (optional)
