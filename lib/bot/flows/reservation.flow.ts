@@ -13,7 +13,7 @@ import { handlePostCompletion } from './shared/post-completion';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getPoweredByFooter } from '@/lib/whitelabel';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import type { SubscriptionTier } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -712,7 +712,7 @@ export const reservationFlow: FlowDefinition = {
         // #268: Add T&C if required
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const requireTerms = payableAmount > 0 && meta.require_terms_before_payment !== false;
-        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsUrl = getBusinessTermsUrl(ctx.business);
         const termsLine = requireTerms ? `\n\n📎 Terms: ${termsUrl}` : '';
 
         // #268: Consolidated into 1 buttons message (no sendText side-effect)

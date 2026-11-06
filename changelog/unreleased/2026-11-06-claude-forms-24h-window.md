@@ -1,0 +1,27 @@
+## 2026-11-06 — Forms: send to people who messaged you in the last 24 hours (#591, Owner option C part A)
+
+- **What changed:** a form can now go to someone who has not opted in if they messaged this business on its sending WhatsApp number in the last 24 hours. Opt-outs still always win. Recorded opt-in is still needed outside the 24 hours.
+  - Window-only people get the free-text invite only. They never get a template. If their 24 hours have passed by the time it sends, they are skipped as `no_consent`.
+  - People with recorded consent keep today's behaviour: text inside the window, approved template outside it, `no_template` failure without one.
+  - `classifyRecipient` now returns `{ eligible, basis: 'consent' | 'window' }` or `{ eligible: false, reason }`. `deliverInvite` requires that result and never uses a template for `basis: 'window'`.
+  - Scheduled sends accept window-only people who are in their window now. The cron re-classifies everyone at send time through the same code.
+  - Shared numbers: a receipt on a shared number does not say which business the person messaged. There, the person also needs this business's own bot conversation on that number with a customer message from the last 24 hours. A receipt alone never counts.
+  - `GET /api/forms/recipients` also returns `recentChats` (`phone`, `name`, `lastMessageAt`, newest first, max 500, opt-outs removed) and `recentChatsTruncated`. If that list cannot be loaded it returns `recentChatsUnavailable: true` and the opted-in `contacts` as before.
+  - The send panel shows that list as its own group, "Messaged you in the last 24 hours (can get a form now)", with each person's time left. The `no_consent` text now reads "Has not opted in, and has not messaged you in the last 24 hours".
+  - Owner decision 2026-11-06: inside the 24 hours, an earlier "No thanks" (revoked consent) does not block a reply. Only an opt-out (STOP) blocks.
+  - If the 24-hour evidence cannot be read, the person is skipped as `check_failed` (never sent). The `check_failed` text now reads "Could not check their opt-in or recent messages, so nothing was sent".
+  - The send route returns a Forms-specific `policy` text (`FORM_RECIPIENT_POLICY`) with skip results, instead of the broadcast wording.
+- **Files:**
+  - `lib/forms/form-send.ts`
+  - `lib/forms/opted-in-contacts.ts`
+  - `app/api/forms/send/route.ts`
+  - `app/api/forms/recipients/route.ts`
+  - `app/api/cron/scheduled-form-sends/route.ts` (comment only; it already re-classifies through `sendFormInvites`)
+  - `components/dashboard/forms/FormSendPanel.tsx`
+  - Tests: `lib/__tests__/forms-send-591.test.ts`, `lib/__tests__/forms-scheduled-send-591.test.ts`, `lib/__tests__/forms-send-ui-591.test.tsx`, and `lib/__tests__/helpers/memory-db.ts` (supports `json_col->>key` in `eq`).
+- **Unchanged:**
+  - Broadcasts and `RECIPIENT_POLICY`.
+  - Consent semantics (`hasRecipientPermission`).
+  - The form submit route's pending opt-in.
+  - Payments, rate limits and the 100-per-send cap.
+- **Could break:** on a shared number, someone who chatted with this business only through paths that do not write the bot conversation log (for example human chat handoff) is not counted. They are skipped as `no_consent`, never sent to the wrong business.

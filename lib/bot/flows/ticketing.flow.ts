@@ -6,7 +6,7 @@ import { truncTitle } from '../utils/truncate';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getTicketConfirmationMessage } from './shared/templates';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
 import { notifyOwnerNewTicketSale } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
@@ -443,7 +443,7 @@ export const ticketingFlow: FlowDefinition = {
         const total = d.total_amount as number;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const requireTerms = total > 0 && meta.require_terms_before_payment !== false;
-        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsUrl = getBusinessTermsUrl(ctx.business);
 
         const lines = [
           getFlowCopy(ctx.copyLang, 'ticketing.ticket_summary'),

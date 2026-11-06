@@ -40,6 +40,6 @@
  "migration": "512_merchant_notification_invitation_lifetime.sql",
  "migration_sha256": "42270e4383aea5056e9e154663c361f0eff6555abc5f3123e273e36de1d0179b",
  "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }

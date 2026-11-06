@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { tableTimeInsideBusinessHours } from '@/lib/bot/flows/shared/slot-availability';
 
 const url = process.env.TEST_DATABASE_URL;
 if (process.env.REQUIRE_PG_TESTS === 'true' && !url) throw new Error('Disposable PostgreSQL is required for the M510 proof');
@@ -662,5 +663,72 @@ suite('M510 overnight table reservations (real PostgreSQL)', () => {
     );
     expect(r.slot_available).toBe(true);
     expect(r.booking_id).toBeTruthy();
+  });
+  // The bot's time list drops the table times this function would refuse over
+  // business hours (tableTimeInsideBusinessHours). Same inputs, same answer:
+  // every half hour of the day, on a day with open, closed, overnight, 24-hour,
+  // unknown and malformed hours around it. The table has no window of its own,
+  // so only the business-hours rule decides.
+  describe('bot time list matches the business-hours rule (tableTimeInsideBusinessHours)', () => {
+    const HOURS_ERROR = /^(before_opening|after_closing|day_unavailable|past_midnight):/;
+    const configs: Array<[string, unknown]> = [
+      ['TestBiz: weekdays 09:00-17:00, weekend closed', {
+        monday: { open: '09:00', close: '17:00' }, tuesday: { open: '09:00', close: '17:00' },
+        wednesday: { open: '09:00', close: '17:00' }, thursday: { open: '09:00', close: '17:00' },
+        friday: { open: '09:00', close: '17:00' },
+        saturday: { open: '09:00', close: '17:00', closed: true }, sunday: { open: '09:00', close: '17:00', closed: true },
+      }],
+      ['late nights Thu/Fri 18:00-02:00, Sat missing', HOURS],
+      ['Fri late, Sat closed', { friday: LATE, saturday: { closed: true } }],
+      ['Thu late, Fri closed', { thursday: LATE, friday: { closed: true } }],
+      ['Fri is_open false', { friday: { ...LATE, is_open: false } }],
+      ['Fri and Sat 24 hours from 18:00', { friday: { open: '18:00', close: '18:00' }, saturday: { open: '18:00', close: '18:00' } }],
+      ['Fri 00:00-00:00', { friday: { open: '00:00', close: '00:00' } }],
+      ['Fri 09:00-00:00, Sat 00:00-03:00 (joined)', { friday: { open: '09:00', close: '00:00' }, saturday: { open: '00:00', close: '03:00' } }],
+      ['Sat only 20:00-02:00 (bot test T: no Friday night before it)', { saturday: { open: '20:00', close: '02:00' } }],
+      ['Fri malformed (closed "false")', { friday: { ...LATE, closed: 'false' } }],
+      ['Fri missing close', { friday: { open: '18:00' } }],
+      ['empty hours', {}],
+      ['hours is an array', [LATE]],
+    ];
+    it('Saturday 20:00-02:00 alone: Saturday 00:30 is before Saturday opens (the bot listed it under Saturday)', async () => {
+      const hours = { saturday: { open: '20:00', close: '02:00' } };
+      const biz = await business(hours);
+      const res = await resource(biz, { duration: 90 });
+      await expect(bookErr(biz, res, SAT, '00:30')).rejects.toThrow(/^before_opening:Earliest reservation time is 20:00$/);
+      expect(tableTimeInsideBusinessHours(SAT, 30, 90, hours)).toBe(false);
+      expect(tableTimeInsideBusinessHours(SAT, 23 * 60, 90, hours)).toBe(true);
+    });
+
+    const times = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
+
+    for (const [name, hours] of configs) {
+      it(name, async () => {
+        const biz = await business(hours);
+        const mismatches: string[] = [];
+        for (const duration of [60, 150]) {
+          const res = await resource(biz, { duration });
+          for (const date of [FRI, SAT]) {
+            for (const time of times) {
+              let dbAllows: boolean;
+              await q('BEGIN');
+              try {
+                const r = await book(client, biz, res, date, time);
+                expect(r.slot_available).toBe(true);
+                dbAllows = true;
+              } catch (err) {
+                const message = (err as Error).message;
+                if (!HOURS_ERROR.test(message)) throw err;
+                dbAllows = false;
+              } finally { await q('ROLLBACK'); }
+              const [h, m] = time.split(':').map(Number);
+              const botAllows = tableTimeInsideBusinessHours(date, h * 60 + m, duration, hours);
+              if (botAllows !== dbAllows) mismatches.push(`${date} ${time} +${duration}: db ${dbAllows}, bot ${botAllows}`);
+            }
+          }
+        }
+        expect(mismatches).toEqual([]);
+      }, 120000);
+    }
   });
 });

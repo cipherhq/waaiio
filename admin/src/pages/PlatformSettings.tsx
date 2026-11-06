@@ -6,6 +6,7 @@ import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import { FeeBankCard } from '@/components/FeeBankCard';
 import {
   isCountryAmountKey,
   validateCountryAmounts,
@@ -890,6 +891,8 @@ export default function PlatformSettings() {
   const groupOrder = [...GROUPS.map(g => g.label), 'Other'];
 
   for (const s of settings) {
+    // The fee bank account has its own protected card (FeeBankCard); keep it out of the general editor.
+    if (s.key.trim().toLowerCase().startsWith('platform_bank_')) continue;
     const label = getGroupLabel(s.key);
     if (!grouped[label]) grouped[label] = [];
     grouped[label].push(s);
@@ -1179,6 +1182,11 @@ export default function PlatformSettings() {
           </span>
         </button>
       </div>
+
+      <FeeBankCard
+        current={(settings.find(s => s.key === 'platform_bank_ng')?.value as { bank_code?: string; account_number?: string; account_name?: string } | undefined) ?? null}
+        onSaved={loadData}
+      />
 
       {/* Add Setting Form */}
       {showAdd && (

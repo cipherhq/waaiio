@@ -40,7 +40,7 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
     // Owner decision 2026-11-04 (#813 option A, staging plan S1): the staging entry then leaves out #813's
     // 91 catalog objects and 2 ledger rows (scripts/release-v3/staging-813-teardown.sql removes them).
     expect(lock.environments.staging).toEqual({ project_ref: 'tqjvrzopvtczxfxiwmnz', catalog_map: 'scripts/release-v3/lock-catalog-staging.json',
-      catalog: { count: 6309, sha256: 'feeb53c0fdfa155aa3bf3453925c8c2f67d3c1f03cfb62176710006ece524180' },
+      catalog: { count: 6309, sha256: '567d514762deea655bf2b944d23ee84e26fb506b083c0eedc558ec0f235d9638' },
       ledger: { count: 442, sha256: 'dca1b4e090e9876be8f73d210771c905234c2d473f4b98fa15aa7966e74fe5b6' } });
     expect(lock.observed.staging_813_teardown.previous).toEqual({
       catalog: { count: 6400, sha256: '12ff1745a19c0fda57d11971782d58cca353c0fd9f73b438786de899d69df463' },

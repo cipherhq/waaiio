@@ -29,6 +29,6 @@
  "migration": "516_seating_resource_gallery.sql",
  "migration_sha256": "f762127594756c0a6b567230272841a048dc61e5e822b993573bed04a37c4c9f",
  "postgres_major": 17,
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }

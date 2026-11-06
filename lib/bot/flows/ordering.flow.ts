@@ -7,7 +7,7 @@ import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility'
 import { truncTitle } from '../utils/truncate';
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { notifyOwnerNewOrder, notifyOwnerNewQuoteRequest } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
@@ -2418,7 +2418,7 @@ export const orderingFlow: FlowDefinition = {
         // Add T&C link if terms are required for paid orders
         const meta268 = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const requireTerms268 = total > 0 && meta268.require_terms_before_payment !== false;
-        const termsUrl268 = (meta268.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsUrl268 = getBusinessTermsUrl(ctx.business);
         if (requireTerms268 && !isForceQuote) {
           summary.push('', `📎 Terms: ${termsUrl268}`);
         }

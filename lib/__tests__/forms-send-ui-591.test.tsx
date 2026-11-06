@@ -3,7 +3,7 @@
  * #591 — rendered UI for the public form opt-in box and the Forms send panel.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({ useParams: () => ({ token: 'tokA' }) }));
 vi.mock('next/image', () => ({ default: () => null }));
@@ -112,7 +112,31 @@ describe('Forms send panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Type numbers' }));
     fireEvent.change(screen.getByLabelText('Phone numbers'), { target: { value: '08039999999' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
-    expect(await screen.findByText(/Skipped — Has not opted in to updates/)).toBeTruthy();
+    expect(await screen.findByText(/Skipped — Has not opted in, and has not messaged you in the last 24 hours/)).toBeTruthy();
+  });
+
+  it('shows people who messaged in the last 24 hours as their own group, with time left, and sends to the ones picked', async () => {
+    const lastMessageAt = new Date(Date.now() - 2 * 60 * 60_000 - 5 * 60_000).toISOString(); // 2h05m ago
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/forms/recipients')) return json({
+        contacts: [{ phone: '+2348031111111', name: 'Ada' }], truncated: false,
+        recentChats: [{ phone: '+2348037777777', name: 'Chidi', lastMessageAt }, { phone: '+2348038888888', name: null, lastMessageAt }],
+        recentChatsTruncated: false,
+      });
+      if (url === '/api/forms/send') return json({ success: true, sent: 2, failed: 0, skipped: 0, results: [] });
+      return json({}, 404);
+    });
+    render(<FormSendPanel businessId="biz-a" formId="form-a" onClose={() => {}} />);
+    const recent = await screen.findByRole('group', { name: 'Messaged you in the last 24 hours (can get a form now)' });
+    expect(within(recent).getByText('Chidi')).toBeTruthy();
+    expect(within(recent).getAllByText(/^21h \d+m left$/)).toHaveLength(2);
+    expect(within(screen.getByRole('group', { name: 'Opted in to updates' })).getByText('Ada')).toBeTruthy();
+    expect(screen.getByText(/and to people who messaged you in the last 24 hours \(as a normal message, while those 24 hours last\)/)).toBeTruthy();
+    fireEvent.click(within(recent).getByText(/Select all \(2\)/));
+    fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(c => c[0] === '/api/forms/send')).toBe(true));
+    const body = JSON.parse(fetchMock.mock.calls.find(c => c[0] === '/api/forms/send')![1].body);
+    expect(body.phones).toEqual(['+2348037777777', '+2348038888888']);
   });
 
   it('schedules for later, shows the summary, and lets the owner cancel a scheduled send', async () => {

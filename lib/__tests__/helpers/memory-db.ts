@@ -83,7 +83,16 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
         },
         insert(row: Row | Row[]) { mode = 'insert'; payload = row; return q; },
         update(row: Row) { mode = 'update'; payload = row; return q; },
-        eq(c: string, v: unknown) { preds.push(r => r[c] === v); return q; },
+        eq(c: string, v: unknown) {
+          // `json_col->>key` compares one key of a JSON column as text, like PostgREST.
+          const [col, key] = c.split('->>');
+          if (key === undefined) { preds.push(r => r[c] === v); return q; }
+          preds.push(r => {
+            const val = (r[col] as Row | null | undefined)?.[key];
+            return val !== null && val !== undefined && String(val) === v;
+          });
+          return q;
+        },
         neq(c: string, v: unknown) { preds.push(r => r[c] !== v); return q; },
         in(c: string, vs: unknown[]) { preds.push(r => vs.includes(r[c])); return q; },
         is(c: string, v: null) { if (v !== null) throw new Error('memory-db: is() only supports null'); preds.push(r => r[c] === null || r[c] === undefined); return q; },
