@@ -76,15 +76,21 @@ function phoneVariants(phone: string): string[] {
   return [digits, `+${digits}`];
 }
 
-/** Fill the description, shortening only the business name so the row always names both parties. */
+/**
+ * Fill the description. The Owner's full line is used whenever the business
+ * name fits; a long name gets the shorter line, and only if that still does
+ * not fit is the business name shortened. Both parties are always named.
+ */
 function describe(lang: string, businessName: string, includesWaaiio: boolean): string {
   const key = includesWaaiio ? 'updates.optin_desc' : 'updates.optin_desc_business';
   const name = businessName.trim() || 'this business';
-  let text = fillFlowCopy(lang, key, { businessName: name });
-  if (text.length <= ROW_DESCRIPTION_MAX) return text;
-  const room = ROW_DESCRIPTION_MAX - (text.length - name.length) - 1;
-  text = fillFlowCopy(lang, key, { businessName: `${name.slice(0, Math.max(room, 1)).trimEnd()}…` });
-  return text.slice(0, ROW_DESCRIPTION_MAX);
+  const full = fillFlowCopy(lang, key, { businessName: name });
+  if (full.length <= ROW_DESCRIPTION_MAX) return full;
+  const short = fillFlowCopy(lang, `${key}_short`, { businessName: name });
+  if (short.length <= ROW_DESCRIPTION_MAX) return short;
+  const room = ROW_DESCRIPTION_MAX - (short.length - name.length) - 1;
+  return fillFlowCopy(lang, `${key}_short`, { businessName: `${name.slice(0, Math.max(room, 1)).trimEnd()}…` })
+    .slice(0, ROW_DESCRIPTION_MAX);
 }
 
 /** The list row: short value-led title, one line naming the business (and Waaiio). */

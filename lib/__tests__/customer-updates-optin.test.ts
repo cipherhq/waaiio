@@ -78,6 +78,11 @@ describe('opt-in row wording', () => {
     expect(row.postbackText).toBe(`updates_yes:menu:${BIZ_A}`);
   });
 
+  it("short business name → the Owner's exact wording A", () => {
+    const row = buildUpdatesOptInRow('en', "Kemi's Spa", true, 'menu', BIZ_A);
+    expect(row.description).toBe("Offers, reminders & updates from Kemi's Spa and Waaiio. Stop anytime.");
+  });
+
   it('a very long business name is shortened, never the parties or the way out', () => {
     const name = 'The Extremely Long Named Restaurant And Lounge Of Victoria Island';
     for (const lang of Object.keys(_FLOW_COPY_FOR_TESTS)) {
@@ -90,18 +95,22 @@ describe('opt-in row wording', () => {
 
   it('white-label businesses: the row names only the business', () => {
     const row = buildUpdatesOptInRow('en', 'Private Label Spa', false, 'menu', BIZ_WL);
-    expect(row.description).toBe('Offers & updates from Private Label Spa. Stop anytime.');
+    expect(row.description).toBe('Offers, reminders & updates from Private Label Spa. Stop anytime.');
     expect(row.description).not.toContain('Waaiio');
   });
 
   it('every locale has every opt-in key, the title fits 24 chars and leaves room for a 20-char name', () => {
-    const keys = ['updates.optin_title', 'updates.optin_desc', 'updates.optin_desc_business', 'updates.thanks',
+    const keys = ['updates.optin_title', 'updates.optin_desc', 'updates.optin_desc_business', 'updates.optin_desc_short',
+      'updates.optin_desc_business_short', 'updates.thanks',
       'updates.thanks_business', 'updates.already', 'updates.opted_out', 'updates.save_failed', 'updates.expired'];
     for (const [lang, copy] of Object.entries(_FLOW_COPY_FOR_TESTS)) {
       for (const k of keys) expect(copy[k], `${lang}.${k}`).toBeTruthy();
       expect(copy['updates.optin_title'].length, lang).toBeLessThanOrEqual(24);
-      expect(copy['updates.optin_desc'].replace('{businessName}', 'x'.repeat(20)).length, lang).toBeLessThanOrEqual(72);
+      expect(copy['updates.optin_desc_short'].replace('{businessName}', 'x'.repeat(20)).length, lang).toBeLessThanOrEqual(72);
       expect(copy['updates.optin_desc'], lang).toContain('Waaiio');
+      expect(copy['updates.optin_desc_short'], lang).toContain('Waaiio');
+      expect(copy['updates.optin_desc_business'], lang).not.toContain('Waaiio');
+      expect(copy['updates.optin_desc_business_short'], lang).not.toContain('Waaiio');
       expect(copy['updates.thanks'], lang).toContain('Waaiio');
       expect(copy['updates.thanks'], lang).toContain('STOP');
       expect(copy['updates.thanks_business'], lang).not.toContain('Waaiio');

@@ -174,7 +174,7 @@ describe('Stage 3 payment menu: updates opt-in', () => {
     setupDb('growth', true); setupRpc([]);
     await confirm();
     const menu = mockList.mock.calls[0][0];
-    expect(menu.items[0].description).toBe('Offers & updates from Mama Put Kitchen. Stop anytime.');
+    expect(menu.items[0].description).toBe('Offers, reminders & updates from Mama Put Kitchen. Stop anytime.');
     expect(menu.footer).toBeUndefined();
   });
 

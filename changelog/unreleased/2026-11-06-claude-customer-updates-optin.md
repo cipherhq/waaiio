@@ -1,6 +1,6 @@
 ## 2026-11-06 — Customer updates opt-in on the next-steps and welcome menus
 
-Owner decision 2026-11-06 (Option A): one tap to get offers and updates from **that business and Waaiio**, inside a menu the customer already receives.
+Owner decision 2026-11-06 (Option A): one tap to get offers and updates from **that business and Waaiio**, inside a menu the customer already receives. Wording A (Owner pick 2026-11-06): "🎁 Get first dibs" / "Offers, reminders & updates from {Business} and Waaiio. Stop anytime." For a business name too long for WhatsApp's 72-character line, the shorter "Offers & updates from {Business} and Waaiio. Stop anytime." is used, and the name itself is shortened only if that still does not fit.
 
 - **What changed**
   - `lib/bot/customer-updates-optin.ts` (new): builds the opt-in row, decides who sees it, and handles the tap. A tap records an append-only `customer_consents` row (whatsapp / marketing / granted, `source='whatsapp'`, `evidence_reference` `bot_next_steps_menu` or `bot_welcome_menu`, `policy_version` `bot-updates-optin-v1:business+waaiio|business`, `granted_at`) and, unless the business is white-label, adds the number to Waaiio's updates list (`launch_subscribers`, `signup_source` as above), which STOP already offers as "Waaiio updates".

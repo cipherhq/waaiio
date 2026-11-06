@@ -159,7 +159,7 @@ describe('Chat next-steps menu: updates opt-in', () => {
   it('white-label business → opt-in names only the business; no footer', async () => {
     const sender = await complete(makeDb(), makeBusiness({ is_whitelabel: true }));
     const menu = sender.sendList.mock.calls[0][0];
-    expect(menu.items[0].description).toBe('Offers & updates from Mama Put Kitchen. Stop anytime.');
+    expect(menu.items[0].description).toBe('Offers, reminders & updates from Mama Put Kitchen. Stop anytime.');
     expect(menu.footer).toBeUndefined();
   });
 
