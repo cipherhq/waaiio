@@ -90,9 +90,12 @@ export async function POST(request: NextRequest) {
     let existingProfile: { id: string } | null = null;
     let hasUnconfirmedMatch = false;
     for (const candidate of candidateProfiles ?? []) {
-      const { data: candidateUser } = await serviceClient.auth.admin.getUserById(candidate.id);
+      const { data: candidateUser, error: candidateError } = await serviceClient.auth.admin.getUserById(candidate.id);
+      if (candidateError) {
+        logger.withContext({ op: 'otp-verify.candidate-lookup', ...safeLogErrorContext(candidateError) }).warn('[OTP Verify] Account lookup failed');
+      }
       const authDigits = (candidateUser?.user?.phone || '').replace(/\D/g, '');
-      if (authDigits && authDigits === verifiedDigits) {
+      if (authDigits && authDigits === verifiedDigits && candidateUser?.user?.phone_confirmed_at) {
         existingProfile = candidate;
         break;
       }
