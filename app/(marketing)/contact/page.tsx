@@ -45,7 +45,7 @@ export default function ContactPage() {
                 href={line.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex min-h-[3.5rem] w-full items-center justify-center gap-3 rounded-xl bg-whatsapp px-4 py-3 text-left text-gray-900 shadow-sm transition hover:bg-whatsapp/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-whatsapp"
+                className="flex min-h-[3.5rem] w-full items-center justify-center gap-3 rounded-xl bg-whatsapp px-4 py-3 text-left text-gray-900 shadow-sm transition hover:bg-whatsapp/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
               >
                 <svg aria-hidden="true" className="h-6 w-6 shrink-0" fill="currentColor" viewBox="0 0 24 24">
                   <path d={WHATSAPP_ICON_PATH} />
