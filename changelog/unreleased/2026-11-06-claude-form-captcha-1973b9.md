@@ -4,7 +4,7 @@
   - The public form page (`/form/<token>`) now runs a Cloudflare Turnstile check. It is set to show only when Cloudflare wants a click ("interaction-only"), so most people see no extra step.
   - `POST /api/forms/submit` verifies the Turnstile token with Cloudflare on the server before it reads or saves anything. It fails closed: no token, a bad token, Cloudflare unreachable, or no secret key in production all return 403/503 and save nothing.
   - Tokens are single-use. After a refused submission the page asks Cloudflare for a new one.
-  - Site security headers (`middleware.ts`, Content-Security-Policy) now allow `https://challenges.cloudflare.com` in `script-src` and `frame-src`, which Cloudflare requires for the widget. Before this, the browser would have blocked the existing contact-page widget too.
+  - Site security headers (`middleware.ts`, Content-Security-Policy) now allow `https://challenges.cloudflare.com` in `script-src` and `frame-src`, as Cloudflare documents for the widget.
 - **Env vars (Owner adds in Vercel, production and staging):** `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (public) and `TURNSTILE_SECRET_KEY` (server only). These are the same names the contact page already reads. Local dev and tests use Cloudflare's documented always-pass test keys when these are unset (never in production builds).
 - **Files:**
   - `lib/security/turnstile.ts` (new server-side verifier)
