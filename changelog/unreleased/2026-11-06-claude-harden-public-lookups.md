@@ -1,0 +1,26 @@
+## 2026-11-06 — Show only non-personal details on public lookup links
+
+- **What changed (Owner decision 2026-11-06):** reservation, ticket and receipt links that anyone with the reference code can open now show only non-personal details. Guest contact details are shown only to the signed-in business owner or an active team member of that business.
+  - `GET /api/reservations/verify/[code]`: public responses keep reference code, status, check-in/out dates, nights, guest count, property name/address/id, business name and check-in/out times. Guest name, phone, email, special requests, amount and `checked_in_by` are added only for the signed-in owner or active team member of the reservation's business.
+  - `GET /api/tickets/verify/[code]`: the guest phone is returned only for the signed-in owner or active team member of the event's business.
+  - `?business_id=` on both routes no longer adds personal details. It still returns 403 when it does not match, as before.
+  - `GET /api/receipts/image`: the receipt image no longer shows the customer name or amount, and no longer reads them. It still shows the receipt type, business, service (and quantity), date, reference and status.
+  - New helper `isSignedInBusinessMember()` in `lib/api-auth.ts` reads the session from the request cookies and uses the existing `resolveBusinessRole()` (owner, or active `business_members` row). Any error counts as "not a member".
+  - The public guest check-in page (`/checkin/property/[id]`) no longer shows the guest name.
+- **Files:**
+  - `app/api/reservations/verify/[code]/route.ts`
+  - `app/api/tickets/verify/[code]/route.ts`
+  - `app/api/receipts/image/route.tsx`
+  - `app/checkin/property/[id]/page.tsx`
+  - `lib/api-auth.ts`
+  - `lib/__tests__/public-lookup-privacy.test.ts`
+- **Unchanged:**
+  - Existing reference codes and links keep working.
+  - Check-in and check-out (POST) on both routes.
+  - The dashboard property check-in and event scan pages: the signed-in owner still sees guest names.
+  - The ticket page still shows the ticket holder's name.
+  - The bot receipt: the PDF comes first; the text receipt that follows the image fallback still has the amount.
+- **Could break:**
+  - Anyone reading the amount or customer name from the receipt image now has to use the PDF or text receipt.
+  - A signed-in team member (not only the owner) now sees reservation contact details and ticket phone numbers on these routes, in line with their dashboard access.
+  - Reservation API callers that are not signed in no longer get `guest_name`, `total_amount` or `checked_in_by`.
