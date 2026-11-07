@@ -154,6 +154,12 @@ describe('/dashboard/claim-credit page', () => {
     expect(screen.getByRole('button', { name: 'Use a different number' })).toBeTruthy();
   });
 
+  it('verified, but the credit was used on another of the owner\'s businesses: no false promise', async () => {
+    state.status = { phone_verified: true, credited: false, owner_already_has_trial: true, amount_minor: 500000, currency: 'NGN' };
+    render(<ClaimCreditPage />);
+    expect(await screen.findByText('Phone verified. The free credit has already been used on another business you own.')).toBeTruthy();
+  });
+
   it('already credited: shows done, no form', async () => {
     state.status = { phone_verified: true, credited: true, amount_minor: 500000, currency: 'NGN' };
     render(<ClaimCreditPage />);

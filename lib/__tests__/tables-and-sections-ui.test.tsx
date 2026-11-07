@@ -65,7 +65,7 @@ beforeEach(() => {
   state.queries = [];
   localStorage.clear();
   // The claim-credit step (Owner decision 2026-11-07) is covered in
-  // claim-credit-checklist.test.tsx; here it is already done.
+  // claim-credit-ui.test.tsx; here it is already done.
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ phone_verified: true, credited: false }), { status: 200 })));
 });
 afterEach(cleanup);

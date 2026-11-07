@@ -30,6 +30,8 @@ export async function POST(request: NextRequest) {
   // receive the code, so say so up front instead of after a wasted send.
   if (body.check === true) {
     if (!PHONE_REGEX.test(phone)) return NextResponse.json({ message: 'Enter a valid phone number.' }, { status: 400 });
+    const checkLimited = await rateLimitResponseAsync(`claim-check:${user.id}`, 10, 10 * 60 * 1000);
+    if (checkLimited) return checkLimited;
     try {
       if (await isConnectedWaaiioNumber(service, phone)) {
         return NextResponse.json({ code: 'connected_number', message: CONNECTED_NUMBER_MESSAGE }, { status: 400 });

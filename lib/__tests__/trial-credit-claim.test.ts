@@ -112,9 +112,15 @@ describe('POST /api/trial-credit/claim', () => {
   it('pre-check accepts any other number and verifies nothing', async () => {
     const r = await POST(req({ business_id: BIZ, phone: PHONE, check: true }));
     expect(r.status).toBe(200);
+    expect(m.rateLimit).toHaveBeenCalledWith('claim-check:owner', 10, 10 * 60 * 1000);
     expect(await r.json()).toEqual({ ok: true });
     expect(m.verify).not.toHaveBeenCalled();
     expect(m.updates).toEqual([]);
+  });
+
+  it('pre-check is rate limited per login', async () => {
+    m.rateLimit.mockResolvedValueOnce(NextResponse.json({ error: 'slow down' }, { status: 429 }));
+    expect((await POST(req({ business_id: BIZ, phone: PHONE, check: true }))).status).toBe(429);
   });
 
   it('pre-check fails closed when the channel lookup fails', async () => {

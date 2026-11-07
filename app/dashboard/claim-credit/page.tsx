@@ -16,6 +16,7 @@ import { formatCurrencyCode, type CountryCode } from '@/lib/constants';
 interface Status {
   phone_verified: boolean;
   credited: boolean;
+  owner_already_has_trial?: boolean;
   amount_minor: number | null;
   currency: string | null;
 }
@@ -54,7 +55,9 @@ export default function ClaimCreditPage() {
           setDoneMessage('Your free messaging credit has been added.');
         } else if (data.phone_verified) {
           setStep('done');
-          setDoneMessage('Phone verified. Your free credit will be added automatically when it becomes available.');
+          setDoneMessage(data.owner_already_has_trial
+            ? verifiedWithoutCreditMessage('owner_already_has_trial')
+            : 'Phone verified. Your free credit will be added automatically when it becomes available.');
         }
       })
       .catch(() => {});

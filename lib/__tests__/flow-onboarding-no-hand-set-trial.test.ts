@@ -1,8 +1,8 @@
 /**
- * WhatsApp Flow sign-up (Owner decision 2026-11-07): the WhatsApp number that
- * sent the Flow becomes the owner's confirmed phone, the trial is never set by
- * hand, and the normal free-credit check (activate_trial_if_eligible) runs once
- * the business is live. A number already on another login is left off.
+ * WhatsApp Flow sign-up (Owner decision 2026-11-07): the trial is never set by
+ * hand. The free credit starts only through activate_trial_if_eligible after
+ * the owner verifies a phone on /dashboard/claim-credit, so this path neither
+ * trusts the number in the flow token nor runs the credit check itself.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -71,16 +71,16 @@ beforeEach(() => {
   m.channelReady = true;
   m.allocated = true;
   m.createUser.mockResolvedValue({ data: { user: { id: 'owner-1' } }, error: null });
-  m.rpc.mockResolvedValue({ data: { activated: false, reason: 'financial_gate_off' }, error: null });
 });
 
 describe('WhatsApp Flow sign-up and the free credit', () => {
-  it('saves the sending WhatsApp number as the confirmed phone of the new login', async () => {
+  it('completes, and never saves the flow-token number as a confirmed phone', async () => {
     expect((await run()).success).toBe(true);
     expect(m.createUser).toHaveBeenCalledTimes(1);
-    expect(m.createUser).toHaveBeenCalledWith(expect.objectContaining({
-      email: 'owner@example.com', email_confirm: true, phone: '+2348012345678', phone_confirm: true,
-    }));
+    const attrs = m.createUser.mock.calls[0][0];
+    expect(attrs).toMatchObject({ email: 'owner@example.com', email_confirm: true });
+    expect(attrs).not.toHaveProperty('phone');
+    expect(attrs).not.toHaveProperty('phone_confirm');
   });
 
   it('never sets the trial by hand on the new business', async () => {
@@ -90,38 +90,8 @@ describe('WhatsApp Flow sign-up and the free credit', () => {
     expect(biz.subscription_tier).toBe('free');
   });
 
-  it('runs the normal free-credit check once the business is live', async () => {
+  it('does not run the credit check itself (it runs when the owner claims)', async () => {
     await run();
-    expect(m.rpc).toHaveBeenCalledWith('activate_trial_if_eligible', { p_business_id: 'biz-1' });
-  });
-
-  it.each([
-    ['no shared number was allocated', () => { m.allocated = false; }],
-    ['the assigned number is not connection-ready', () => { m.channelReady = false; }],
-  ])('does not run the check when %s (the business is not live)', async (_name, setup) => {
-    setup();
-    await run();
-    expect(m.rpc).not.toHaveBeenCalled();
-  });
-
-  it('a number already on another login is left off and sign-up still completes', async () => {
-    m.createUser
-      .mockResolvedValueOnce({ data: { user: null }, error: { code: 'phone_exists', message: 'Phone number already registered by another user' } })
-      .mockResolvedValueOnce({ data: { user: { id: 'owner-1' } }, error: null });
-    expect((await run()).success).toBe(true);
-    expect(m.createUser).toHaveBeenCalledTimes(2);
-    expect(m.createUser.mock.calls[1][0]).not.toHaveProperty('phone');
-    expect(m.createUser.mock.calls[1][0]).not.toHaveProperty('phone_confirm');
-  });
-
-  it('other account errors are not retried', async () => {
-    m.createUser.mockResolvedValueOnce({ data: { user: null }, error: { code: 'unexpected_failure', message: 'Database error' } });
-    expect(await run()).toEqual({ success: false, error: 'Failed to create account' });
-    expect(m.createUser).toHaveBeenCalledTimes(1);
-  });
-
-  it('a failed or ineligible trial never blocks sign-up', async () => {
-    m.rpc.mockRejectedValueOnce(new Error('network'));
-    expect((await run()).success).toBe(true);
+    expect(m.rpc).not.toHaveBeenCalledWith('activate_trial_if_eligible', expect.anything());
   });
 });

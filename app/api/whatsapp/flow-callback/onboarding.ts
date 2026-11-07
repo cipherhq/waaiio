@@ -8,7 +8,6 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { allocateSharedChannelForNewBusiness, SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
-import { isPhoneInUseError } from '@/lib/trial-credit/verified-phone';
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -49,25 +48,13 @@ export async function handleOnboardingComplete(
 
   try {
     // 1. Create user via admin API (skip email confirmation — WhatsApp verified)
-    // The WhatsApp number that sent the Flow is the owner's verified phone
-    // (the flow token is ours and the callback is Meta-signed), so it is
-    // saved as the login's confirmed phone and the normal free-credit check
-    // runs below (Owner decision 2026-11-07). A number already on another
-    // login is left off; the owner can verify a different one later.
     let userId: string;
-    const ownerPhone = customerPhone ? (customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`) : '';
-    const newUser = {
+    const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
       user_metadata: { first_name: firstName, last_name: lastName },
-    };
-    let { data: authData, error: authErr } = await supabase.auth.admin.createUser(
-      ownerPhone ? { ...newUser, phone: ownerPhone, phone_confirm: true } : newUser,
-    );
-    if (authErr && ownerPhone && isPhoneInUseError(authErr)) {
-      ({ data: authData, error: authErr } = await supabase.auth.admin.createUser(newUser));
-    }
+    });
 
     if (authErr) {
       // If user exists, try to find them
@@ -86,10 +73,8 @@ export async function handleOnboardingComplete(
         logger.error('[WA-ONBOARD] Auth error:', authErr);
         return { success: false, error: 'Failed to create account' };
       }
-    } else if (authData.user) {
-      userId = authData.user.id;
     } else {
-      return { success: false, error: 'Failed to create account' };
+      userId = authData.user.id;
     }
 
     // 2. Check business count limit (prevent abuse — same as web onboarding)
@@ -138,8 +123,10 @@ export async function handleOnboardingComplete(
     const GIVING_CATEGORIES = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
     const flowType = GIVING_CATEGORIES.includes(category) ? 'payment' : 'scheduling';
 
-    // 5. Create business (the free trial is started only by
-    // activate_trial_if_eligible below, never set by hand)
+    // 5. Create business. No hand-set trial: the free credit starts only
+    // through activate_trial_if_eligible once the owner verifies a phone on
+    // /dashboard/claim-credit (Owner decision 2026-11-07). The number in the
+    // flow token is not treated as verified.
     const { data: biz, error: bizErr } = await supabase
       .from('businesses')
       .insert({
@@ -200,18 +187,6 @@ export async function handleOnboardingComplete(
           .maybeSingle();
         if (verifiedCh) {
           allocationSucceeded = true;
-          // Same free-credit check as web sign-up (needs the business active).
-          // A failed or ineligible trial never blocks the sign-up.
-          try {
-            const { data: trialResult, error: trialRpcError } = await supabase.rpc('activate_trial_if_eligible', { p_business_id: biz.id });
-            if (trialRpcError) {
-              logger.warn('[WA-ONBOARD] Trial activation RPC error (non-fatal):', trialRpcError.message);
-            } else if (trialResult && trialResult.activated !== true) {
-              logger.warn('[WA-ONBOARD] Trial not activated (non-fatal):', trialResult.reason || 'unknown');
-            }
-          } catch (trialErr) {
-            logger.warn('[WA-ONBOARD] Trial activation transport error (non-fatal):', trialErr);
-          }
         } else {
           logger.warn('[WA-ONBOARD] Assigned channel not connection-ready:', biz.id, activated.assigned_channel_id);
         }
