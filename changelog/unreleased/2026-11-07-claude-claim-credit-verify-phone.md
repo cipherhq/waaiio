@@ -1,0 +1,40 @@
+## 2026-11-07 — Verify your phone number to claim the free messaging credit
+
+- **What changed (Owner decisions 2026-11-07):** sign-up stays smooth with no phone step. Afterwards, the owner verifies a phone number to claim the free messaging (trial) credit, like the "add bank account" step.
+  - **Which numbers count:** any number the owner gets WhatsApp messages on, either their personal number or their everyday business number. A number connected to Waaiio (any active `whatsapp_channels` row) is refused, because it can't receive the code.
+  - **Numbers already in use:** a number already on another Waaiio login is refused for now ("rule B"). Moving a number off a customer-only login is a follow-up.
+  - **New sign-ups only:** existing businesses are not back-filled.
+- **Server.**
+  - New `POST /api/trial-credit/claim`:
+    - Requires ownership of `business_id`.
+    - `check: true` only refuses a number connected to Waaiio, before any code is sent (limited to 10 checks per 10 minutes per login).
+    - Otherwise it verifies the code with the existing `verifyPhoneOtp`, using the same 5 per 15 minutes per-phone limit and the brute-force counters as the login code. It then saves the number as the login's confirmed phone (`updateUserById {phone, phone_confirm: true}`) and runs the normal trial check `activate_trial_if_eligible` (M465) with all of its rules.
+    - It never replaces a different phone already confirmed on the login.
+    - Returns `{verified, credited, reason}`.
+  - New `GET /api/trial-credit/status` (owner only, read-only) returns:
+    - `phone_verified` and `credited` (this business's `trial_grant`/`trial_v2` row)
+    - the credit amount for the business's currency
+  - Helpers live in `lib/trial-credit/verified-phone.ts`.
+- **Dashboard.**
+  - New page `/dashboard/claim-credit` (`app/dashboard/claim-credit/page.tsx`), with the Owner-agreed copy.
+  - New first "Getting started" item, "Claim your free messaging credit" (`components/dashboard/OnboardingChecklist.tsx`). It is done once the number is verified or the credit was added.
+  - While message billing is off, the page says "Phone verified. Your free credit will be added automatically when message billing starts." The hourly trial-activation job adds it then, once that job is scheduled (PR #954). If another of the owner's businesses already has the free credit, the page says so instead.
+- **WhatsApp Flow sign-up** (`app/api/whatsapp/flow-callback/onboarding.ts`; only reachable where channel operations are enabled): the hand-set 30-day `trial_ends_at` is removed. These owners claim the credit on `/dashboard/claim-credit` like everyone else. The number in the flow token is not treated as verified: it is plain text echoed back by the client, not signed by Waaiio.
+- **Tests:**
+  - `lib/__tests__/trial-credit-claim.test.ts`
+  - `lib/__tests__/trial-credit-status.test.ts`
+  - `lib/__tests__/claim-credit-ui.test.tsx` (rendered checklist and page)
+  - `lib/__tests__/flow-onboarding-no-hand-set-trial.test.ts`
+  - The two existing checklist suites now stub the status call as already done, and their step counts gained the new step.
+- **What could break:**
+  - Every visible "Getting started" checklist gains one step, so the counts shift by one.
+  - A Flow sign-up no longer gets a trial end date at sign-up. Its WhatsApp and email welcome text still mention a 30-day trial; that wording is unchanged and needs an Owner decision.
+  - Supabase Auth phone uniqueness is the "one number, one login" rule. A merchant who once messaged a Waaiio bot as a customer already has their number on a customer login, and must use a different number until the follow-up lands.
+  - **Known limits (follow-ups):**
+    - The hourly trial-activation job picks the oldest 100 free, active businesses with no trial. Sign-ups that never verify stay in that batch, so at larger scale they could crowd out verified owners waiting for billing to start.
+    - A claimed number does not yet work for "log in with phone". `profiles.phone` is not set, so that login tries to create a new account and fails.
+    - The status amount reads `trial_credit_minor_by_currency` directly, not the versioned config the RPC uses. This only affects what is displayed.
+    - "One credit per number" relies on Supabase Auth's exact phone match, so number variants are not merged.
+    - Phone login with a claimed number signs the owner into their account and, as phone login already does today, replaces their password. An email-and-password owner who later uses phone login loses their email password.
+    - The connected-number check reads active channels in one query (default row limit about 1000).
+  - No database change.

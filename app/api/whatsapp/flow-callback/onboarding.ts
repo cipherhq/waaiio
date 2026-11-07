@@ -123,10 +123,10 @@ export async function handleOnboardingComplete(
     const GIVING_CATEGORIES = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
     const flowType = GIVING_CATEGORIES.includes(category) ? 'payment' : 'scheduling';
 
-    // 5. Create business
-    const trialEnd = new Date();
-    trialEnd.setDate(trialEnd.getDate() + 30);
-
+    // 5. Create business. No hand-set trial: the free credit starts only
+    // through activate_trial_if_eligible once the owner verifies a phone on
+    // /dashboard/claim-credit (Owner decision 2026-11-07). The number in the
+    // flow token is not treated as verified.
     const { data: biz, error: bizErr } = await supabase
       .from('businesses')
       .insert({
@@ -143,7 +143,6 @@ export async function handleOnboardingComplete(
         wa_method: 'shared',
         subscription_tier: 'free',
         status: 'pending',
-        trial_ends_at: trialEnd.toISOString(),
         verification_level: 'unverified',
       })
       .select('id, name, bot_code')

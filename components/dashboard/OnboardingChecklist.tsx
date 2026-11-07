@@ -130,7 +130,24 @@ function BusinessOnboardingChecklist() {
     },
   }] : [];
 
+  // Owner decision 2026-11-07: first step after sign-up is verifying a phone
+  // number to claim the free messaging credit. Done once the number is
+  // verified or the credit was added.
+  const claimCreditStep: ChecklistItem = {
+    key: 'claim_credit',
+    label: 'Claim your free messaging credit',
+    description: 'Verify your phone number to get free messaging credit.',
+    href: '/dashboard/claim-credit',
+    check: async () => {
+      const res = await fetch(`/api/trial-credit/status?business_id=${encodeURIComponent(business.id)}`);
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.phone_verified === true || data.credited === true;
+    },
+  };
+
   const items: ChecklistItem[] = [
+    claimCreditStep,
     setupStep(),
     ...tablesStep,
     {
