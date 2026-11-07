@@ -52,6 +52,21 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
     const extra = JSON.parse(text); extra.override = true;
     expect(() => loadLock(JSON.stringify(extra))).toThrow('Release lock is invalid or was made with a different query');
   });
+  it('re-certification (Recovery): the committed entry names release #4 (run 42136027063, 466e0691) and the redeployed merchant; malformed entries fail closed', () => {
+    expect(lock.recertified).toMatchObject({ after_deploy_run: 42136027063, sha: '466e0691459cef44b104b51f0542da52a402129e',
+      merchant_deployment_sha256: 'bc8a500582053572c39dbbfb411e03ae9a5c7d74f5da28574b8ebb741b287881',
+      admin_deployment_sha256: '73dbe116c8dd8e00ee75f76b0e8f99c7af763c61e19113f261d093d59b5308d2' });
+    const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
+    const without = JSON.parse(text); delete without.recertified;
+    expect(loadLock(JSON.stringify(without)).recertified).toBeUndefined();
+    const bad = (patch: Record<string, unknown>) => { const l = JSON.parse(text); l.recertified = { ...l.recertified, ...patch }; return JSON.stringify(l); };
+    for (const patch of [{ after_deploy_run: 0 }, { after_deploy_run: '42136027063' }, { sha: '466e0691' }, { merchant_deployment_sha256: 'x' },
+      { admin_deployment_sha256: null }, { reason: ' ' }, { reason: 'r'.repeat(501) }, { extra: true }]) {
+      expect(() => loadLock(bad(patch))).toThrow('Release lock re-certification is invalid');
+    }
+    const missing = JSON.parse(text); delete missing.recertified.reason;
+    expect(() => loadLock(JSON.stringify(missing))).toThrow('Release lock re-certification is invalid');
+  });
   it('the PG17 oracle delta for M508 equals the change measured in production (bot-code-lock contract)', () => {
     const file = readFileSync('supabase/migrations/508_business_control_columns_guard.sql');
     const d = validateDelta(JSON.parse(readFileSync('supabase/catalog-deltas/508_business_control_columns_guard.json', 'utf8')), '508_business_control_columns_guard.sql', sha(file));

@@ -93,8 +93,20 @@ export async function certifiedBaseline(gh, token, lock, fetchImpl = fetch) {
   const artifact = oneArtifact(await gh(`/actions/runs/${run.id}/artifacts?per_page=100`), `release-record-${run.id}-${run.run_attempt}`, run.id);
   const record = JSON.parse((await downloadArtifactFile(artifact, token, 'record.json', fetchImpl)).toString('utf8'));
   if (record?.schema_version !== 1 || !SHA.test(record.target_sha || '') || !HASH.test(record.merchant_deployment_sha256 || '') || !HASH.test(record.admin_deployment_sha256 || '')) fail('Release record is invalid');
-  return { source: `release-deploy run ${run.id}`, merchant: { sha: record.target_sha, deployment_sha256: record.merchant_deployment_sha256 },
-    admin: { sha: record.target_sha, deployment_sha256: record.admin_deployment_sha256 } };
+  return applyRecertification({ source: `release-deploy run ${run.id}`, merchant: { sha: record.target_sha, deployment_sha256: record.merchant_deployment_sha256 },
+    admin: { sha: record.target_sha, deployment_sha256: record.admin_deployment_sha256 } }, run.id, lock);
+}
+// An Owner-approved, reviewed lock re-certification (docs: "Recovery") replaces
+// the last release record's deployments when production was redeployed at the
+// same code, e.g. to pick up changed environment variables. It applies only to
+// the exact deploy run it names and only at that run's SHA; once a newer release
+// deploys, that run's record is the baseline again and the entry no longer applies.
+export function applyRecertification(certified, runId, lock) {
+  const re = lock.recertified;
+  if (!re || String(re.after_deploy_run) !== String(runId)) return certified;
+  if (re.sha !== certified.merchant.sha || re.sha !== certified.admin.sha) fail('Lock re-certification does not match the last release record');
+  return { source: `lock re-certification after release-deploy run ${runId}`,
+    merchant: { sha: re.sha, deployment_sha256: re.merchant_deployment_sha256 }, admin: { sha: re.sha, deployment_sha256: re.admin_deployment_sha256 } };
 }
 
 // ---------- included pull requests and their review records (§9.3) ----------

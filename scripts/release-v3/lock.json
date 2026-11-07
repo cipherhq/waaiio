@@ -138,6 +138,13 @@
    }
   }
  },
+ "recertified": {
+  "admin_deployment_sha256": "73dbe116c8dd8e00ee75f76b0e8f99c7af763c61e19113f261d093d59b5308d2",
+  "after_deploy_run": 42136027063,
+  "merchant_deployment_sha256": "bc8a500582053572c39dbbfb411e03ae9a5c7d74f5da28574b8ebb741b287881",
+  "reason": "Owner 2026-11-07: production merchant redeployed by CLI at 466e0691 on 2026-11-06 03:28 UTC (dpl_9jdnT2Lx...) after the Owner changed the Stripe keys; same code as release #4, admin unchanged.",
+  "sha": "466e0691459cef44b104b51f0542da52a402129e"
+ },
  "reviewed_prs": {
   "844": "2a91ec57404aac66144ac209da122fdfaaeee883",
   "846": "6b3488b95895d57c31a961b8cecdb57b8b21ec6c",

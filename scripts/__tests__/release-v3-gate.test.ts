@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { prepare, deploy, captureLockMaps, validateDispatchRun } from '../release-gate-v3.mjs';
+import { prepare, deploy, captureLockMaps, validateDispatchRun, certifiedBaseline, applyRecertification } from '../release-gate-v3.mjs';
 import { observeProject, checkProductionConsistency, observeHoldFlags, validateMainCI, validateJobs, hashId, PROJECTS, REQUIRED_CI_JOBS } from '../release-v3/platform.mjs';
 import { buildPacket, packetBytes, packetDigest, acceptPacket, verifySingleUse, verifyRecordComment, verifyPullRequestReviews, APPROVAL_LINE, parseCommentUrl, PACKET_TTL_MS } from '../release-v3/packet.mjs';
 import { parseObservation, connectionEnvironment, OBSERVATION_SQL, observeDatabase } from '../release-v3/db-observe.mjs';
@@ -508,5 +508,54 @@ describe('deploy (end to end, faked platforms)', { timeout: 60_000 }, () => {
     };
     await expect(deploy({ env: deployEnv(digest), control: repo.dir, sources, now: NOW + 3600_000, fetchImpl: w.fetchImpl as never, observe: observeWith() as never, run: run as never, pause: async () => {} })).rejects.toThrow('Admin production target changed');
     expect(w.state.aliasPosts).toBe(0);
+  });
+});
+
+// ---------------- certified baseline: last release record, lock re-certification (docs: "Recovery") ----------------
+describe('certified baseline from the last release record and a lock re-certification', () => {
+  const T = '4'.repeat(40);
+  const RUN = 4213;
+  const record = { schema_version: 1, target_sha: T, packet_sha256: 'a'.repeat(64), completed_at: '2026-11-06T00:24:49.864Z',
+    merchant_deployment_sha256: hashId('dpl_release4'), admin_deployment_sha256: hashId('dpl_admin4') };
+  const deployRun = { id: RUN, run_attempt: 1, repository: { full_name: 'cipherhq/waaiio' }, path: '.github/workflows/release-deploy.yml', event: 'workflow_dispatch',
+    head_branch: 'main', actor: { login: 'cipherhq' }, triggering_actor: { login: 'cipherhq' }, status: 'completed', conclusion: 'success', head_sha: '5'.repeat(40) };
+  let zip: Buffer;
+  beforeAll(() => {
+    const dir = mkdtempSync(join(tmpdir(), 'recertify-'));
+    writeFileSync(join(dir, 'record.json'), JSON.stringify(record));
+    execFileSync('zip', ['-q', '-j', join(dir, 'a.zip'), join(dir, 'record.json')]);
+    zip = readFileSync(join(dir, 'a.zip'));
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const gh = async (p: string) => {
+    if (p.startsWith('/actions/workflows/release-deploy.yml/runs?')) return { total_count: 1, workflow_runs: [deployRun] };
+    if (p === `/actions/runs/${RUN}`) return deployRun;
+    if (p.startsWith(`/actions/runs/${RUN}/artifacts`)) return { total_count: 1, artifacts: [{ id: 9, name: `release-record-${RUN}-1`, expired: false, workflow_run: { id: RUN }, digest: `sha256:${sha(zip)}` }] };
+    throw new Error(`unexpected github ${p}`);
+  };
+  const fetchImpl = async (url: string) => url.endsWith('/actions/artifacts/9/zip') ? response(302, null, { location: 'https://blob.example/a.zip' }) : response(200, zip);
+  const lock = (recertified?: Json) => ({ certified: { merchant: '1'.repeat(40), admin: '1'.repeat(40) }, ...(recertified ? { recertified } : {}) });
+  const entry = (over: Json = {}) => ({ after_deploy_run: RUN, sha: T, merchant_deployment_sha256: hashId('dpl_redeployed'), admin_deployment_sha256: hashId('dpl_admin4'), reason: 'env-only redeploy', ...over });
+
+  it('without a re-certification the last release record is the baseline (deployment hashes included)', async () => {
+    expect(await certifiedBaseline(gh, 'gh', lock(), fetchImpl as never)).toEqual({ source: `release-deploy run ${RUN}`,
+      merchant: { sha: T, deployment_sha256: hashId('dpl_release4') }, admin: { sha: T, deployment_sha256: hashId('dpl_admin4') } });
+  });
+  it('a re-certification naming that run at its SHA replaces the deployments (same-SHA redeploy, e.g. changed env vars)', async () => {
+    expect(await certifiedBaseline(gh, 'gh', lock(entry()), fetchImpl as never)).toEqual({ source: `lock re-certification after release-deploy run ${RUN}`,
+      merchant: { sha: T, deployment_sha256: hashId('dpl_redeployed') }, admin: { sha: T, deployment_sha256: hashId('dpl_admin4') } });
+  });
+  it('a re-certification for an older run is ignored once a newer release has deployed', async () => {
+    const baseline = await certifiedBaseline(gh, 'gh', lock(entry({ after_deploy_run: RUN - 1 })), fetchImpl as never);
+    expect(baseline.source).toBe(`release-deploy run ${RUN}`);
+    expect(baseline.merchant.deployment_sha256).toBe(hashId('dpl_release4'));
+  });
+  it('a re-certification of that run at another SHA fails closed (it cannot move the baseline to other code)', async () => {
+    await expect(certifiedBaseline(gh, 'gh', lock(entry({ sha: '6'.repeat(40) })), fetchImpl as never)).rejects.toThrow('Lock re-certification does not match the last release record');
+  });
+  it('applyRecertification leaves a lock-sourced baseline alone when no record run matches', () => {
+    const fromRecord = { source: 'release-deploy run 7', merchant: { sha: T, deployment_sha256: 'm' }, admin: { sha: T, deployment_sha256: 'a' } };
+    expect(applyRecertification(fromRecord, 7, lock())).toBe(fromRecord);
+    expect(applyRecertification(fromRecord, 8, lock(entry({ after_deploy_run: 7 })))).toBe(fromRecord);
   });
 });
