@@ -94,6 +94,11 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
           return q;
         },
         neq(c: string, v: unknown) { preds.push(r => r[c] !== v); return q; },
+        ilike(c: string, v: string) {
+          // Only the wildcard-free form (case-insensitive equality) is supported.
+          if (/[%_]/.test(v)) throw new Error('memory-db: ilike() wildcards are not supported');
+          preds.push(r => typeof r[c] === 'string' && (r[c] as string).toLowerCase() === v.toLowerCase()); return q;
+        },
         in(c: string, vs: unknown[]) { preds.push(r => vs.includes(r[c])); return q; },
         is(c: string, v: null) { if (v !== null) throw new Error('memory-db: is() only supports null'); preds.push(r => r[c] === null || r[c] === undefined); return q; },
         not(c: string, op: string, v: unknown) {

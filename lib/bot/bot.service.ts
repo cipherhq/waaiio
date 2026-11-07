@@ -11,7 +11,11 @@ import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
 import { handleLaunchOptIn } from './launch-optin';
-import { handleUpdatesOptInTap } from './customer-updates-optin';
+import {
+  handleUpdatesOptInTap, askUpdatesOptIn, handleUpdatesConfirmTap, isUpdatesKeyword,
+  parseUpdatesConfirmPostback, UPDATES_DECLINE_POSTBACK,
+} from './customer-updates-optin';
+import { getFlowCopy } from './flows/flow-localization';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
@@ -29,7 +33,7 @@ import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { ensurePlus } from '@/lib/utils/phone';
-import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
+import { getPoweredByFooter, getPoweredByHtml, getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
@@ -1210,6 +1214,21 @@ export class BotService {
     // Update session in case handleGlobalQuery modified it (e.g. reference code fall-through)
     session = globalResult.session;
 
+    // Customer updates confirmation taps (typed "updates" / My Account, #591 Q6).
+    // Recorded only for the business of the chat the customer is in now; the
+    // #942 hook above never matches these ids. Leaves the chat session as it is.
+    if (text.trim() === UPDATES_DECLINE_POSTBACK || parseUpdatesConfirmPostback(text)) {
+      const lang = session ? await this.resolveHandlerCopyLang(session) : 'en';
+      const reply = await handleUpdatesConfirmTap(this.supabase, {
+        from, text, messageType, lang, sessionBusinessId: session?.business_id,
+        channelBusinessId: preResolvedBusinessId, destinationPhone,
+      });
+      if (reply) {
+        await this.sendUpdatesOptInReply(from, session, lang, reply);
+        return;
+      }
+    }
+
     // Check for "connect <name>" / "switch <keyword>" command — lets users swap between businesses.
     // Owner rule: message must START with the keyword; look up first; only deactivate
     // the current session on a match or suggestions. Inside an active business flow
@@ -1567,6 +1586,20 @@ export class BotService {
       const { handleRemoveCard } = await import('./handlers/saved-cards');
       await handleRemoveCard(this.supabase, this.sendText.bind(this), from, session);
       return;
+    }
+
+    // Typed "updates" before any business is chosen (shared number): ask the
+    // customer to choose one first (#591 Q6). A business whose code is
+    // "updates" still wins, as it does for a customer already in a chat.
+    if (isUpdatesKeyword(text) && !session?.business_id && !preResolvedBusinessId && !isFreeTextStep && !isRestart) {
+      const isBusinessCode = !session && /^[a-z0-9-]{2,30}$/i.test(text.trim())
+        && !!(await this.supabase.from('businesses').select('id')
+          .ilike('bot_code', text.trim().toLowerCase()).eq('status', 'active').maybeSingle()).data;
+      if (!isBusinessCode) {
+        const lang = (session?.session_data?._detected_language as string | undefined) || undefined;
+        await this.sendPlatformText(from, getFlowCopy(lang, 'updates.choose_business'));
+        return;
+      }
     }
 
     if (!session || isRestart) {
@@ -3689,6 +3722,20 @@ export class BotService {
       (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
 
     if (!isFreeTextStepForKeywords && !inputOwnedByStep) {
+      // Typed "updates" / "get updates" (Owner decision 2026-11-06, #591 Q6):
+      // ask to confirm updates from this chat's business. Same guard as every
+      // other keyword, so a free-text step still gets the words as its answer.
+      if (session.business_id && isUpdatesKeyword(text)) {
+        const lang = await this.resolveHandlerCopyLang(session);
+        await askUpdatesOptIn(this.supabase, {
+          phone: from, lang, source: 'keyword', businessId: session.business_id,
+          // Consent-control replies are platform-scoped, like the #942 tap replies.
+          sendText: (msg) => this.sendPlatformText(from, msg),
+          sendButtons: (body, buttons) => this.messageSender.sendButtons({ to: from, body, buttons }),
+        });
+        return;
+      }
+
       // Use cached category from session_data (saved during session creation)
       const businessCategory = (session.session_data?.business_category as string) || null;
 
@@ -4948,6 +4995,42 @@ export class BotService {
       // Fallback for non-MetaCloudSender implementations (tests)
       await this.messageSender.sendText({ to, text });
     }
+  }
+
+  /**
+   * Reply to a customer updates confirmation tap (#591 Q6). After a recorded Yes
+   * or a No thanks inside a business chat, the reply comes with the next-steps
+   * menu and "Powered by Waaiio.com" (Owner rule: every completed transaction
+   * ends with a menu). Button ids are the words the customer could type, so
+   * they work whatever step the chat is on.
+   */
+  private async sendUpdatesOptInReply(
+    from: string,
+    session: BotSession | null,
+    lang: string,
+    reply: { text: string; nextSteps: boolean },
+  ): Promise<void> {
+    if (!reply.nextSteps || !session?.business_id) {
+      await this.sendPlatformText(from, reply.text);
+      return;
+    }
+    const [{ data: biz }, shared] = await Promise.all([
+      this.supabase.from('businesses').select('subscription_tier, is_whitelabel').eq('id', session.business_id).maybeSingle(),
+      isSharedConversation(this.supabase, session.session_data),
+    ]);
+    const buttons = [
+      // My Account needs a customer profile, which a session with a user has.
+      ...(session.user_id ? [{ id: 'my account', title: getFlowCopy(lang, 'account.title') }] : []),
+      { id: 'menu', title: getFlowCopy(lang, 'nav.view_options') },
+      ...(shared ? [{ id: 'directory', title: 'Search directory' }] : []),
+    ];
+    await this.messageSender.sendButtons({
+      to: from,
+      body: `${reply.text}\n\n${getFlowCopy(lang, 'menu.what_next')}`,
+      buttons,
+      // No branding line when the business could not be read (it may be white-label).
+      footer: biz ? getPoweredByInteractiveFooter(biz.subscription_tier, biz.is_whitelabel) : undefined,
+    });
   }
 
   /**

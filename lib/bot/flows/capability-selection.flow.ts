@@ -10,7 +10,10 @@ import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { getUserFacingCapabilities } from '@/lib/bot/handlers/flow-routing';
 import { getFlowCopy } from './flow-localization';
-import { updatesOptInRowFor } from '@/lib/bot/customer-updates-optin';
+import { updatesOptInRowFor, updatesAccountRowFor, askUpdatesOptIn, UPDATES_ACCOUNT_POSTBACK } from '@/lib/bot/customer-updates-optin';
+
+/** WhatsApp list messages show at most 10 rows (meta-cloud sendList keeps the first 10). */
+const MY_ACCOUNT_MAX_ROWS = 10;
 
 export { getCapabilityLabel };
 
@@ -813,6 +816,19 @@ const myAccountMenuStep: FlowStepConfig = {
       .filter(i => i.show)
       .map(({ title, description, postbackText }) => ({ title, description, postbackText }));
 
+    // Owner decision 2026-11-06 (#591 Q6): "Get updates" last, before Back, for
+    // customers who have not agreed yet and never unsubscribed. WhatsApp shows
+    // at most 10 rows, so it is added only when it fits with Back; it never
+    // pushes an existing row out (typing "updates" still works).
+    let updatesRowShown = false;
+    if (ctx.business && items.length + 2 <= MY_ACCOUNT_MAX_ROWS) {
+      const updatesRow = await updatesAccountRowFor(ctx.supabase, { phone: ctx.from, lang: ctx.copyLang, business: ctx.business });
+      if (updatesRow) {
+        items.push(updatesRow);
+        updatesRowShown = true;
+      }
+    }
+
     items.push({ title: getFlowCopy(ctx.copyLang, 'nav.back'), description: getFlowCopy(ctx.copyLang, 'nav.back_desc'), postbackText: 'acct_back' });
 
     return [{
@@ -821,6 +837,8 @@ const myAccountMenuStep: FlowStepConfig = {
       body: getFlowCopy(ctx.copyLang, 'account.body'),
       buttonLabel: getFlowCopy(ctx.copyLang, 'account.title'),
       items,
+      // The updates line must keep naming the business and Waaiio after translation.
+      ...(updatesRowShown && ctx.business?.name ? { _localization: { protectedValues: [ctx.business.name, 'Waaiio'] } } : {}),
     }];
   },
 
@@ -836,6 +854,23 @@ const myAccountMenuStep: FlowStepConfig = {
     // Handle back to main capability menu
     if (action === 'acct_back') {
       return { valid: true, data: { _my_account_route: 'back_to_capabilities' } };
+    }
+
+    // "Get updates" (#591 Q6): the same confirmation as typing "updates". The
+    // chat stays on this menu without re-sending it, so the confirmation is the
+    // last message; its Yes / No thanks are handled in bot.service.
+    if (action === UPDATES_ACCOUNT_POSTBACK) {
+      const to = ctx.from;
+      if (ctx.business?.id) {
+        await askUpdatesOptIn(ctx.supabase, {
+          phone: ctx.from, lang: ctx.copyLang, source: 'account', businessId: ctx.business.id,
+          sendText: (text) => ctx.sender.sendText({ to, text }),
+          sendButtons: (body, buttons) => ctx.sender.sendButtons({ to, body, buttons }),
+        });
+      } else {
+        await ctx.sender.sendText({ to, text: getFlowCopy(ctx.copyLang, 'updates.expired') });
+      }
+      return { valid: false, abortSilently: true };
     }
 
     // Map selections to built-in bot.service.ts handlers via session step

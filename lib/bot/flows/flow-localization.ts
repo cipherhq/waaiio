@@ -110,6 +110,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "You unsubscribed from {businessName} earlier, so we haven't signed you up. Send START if you'd like their messages again.",
     'updates.save_failed': "We couldn't save that right now. Please try again in a moment.",
     'updates.expired': "That option is no longer available. Type *menu* to see your options.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Get updates",
+    'updates.confirm': "Get offers and updates from {businessName} and Waaiio on WhatsApp? You can reply STOP any time.",
+    'updates.confirm_business': "Get offers and updates from {businessName} on WhatsApp? You can reply STOP any time.",
+    'updates.confirm_yes': "Yes, get updates",
+    'updates.confirm_no': "No thanks",
+    'updates.declined': "No problem, nothing has changed.",
+    'updates.choose_business': "Choose a business first: send its code, or type *directory* to find one. Then type *updates* to get their offers and updates.",
 
     // Account menu
     'account.title': 'My Account',
@@ -942,6 +950,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "You don comot from {businessName} before, so we no add you. Send START if you wan dey hear from dem again.",
     'updates.save_failed': "We no fit save am now. Abeg try again small time.",
     'updates.expired': "That option no dey again. Type *menu* to see your options.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Get updates",
+    'updates.confirm': "You wan dey get offers and updates from {businessName} and Waaiio for WhatsApp? You fit reply STOP anytime.",
+    'updates.confirm_business': "You wan dey get offers and updates from {businessName} for WhatsApp? You fit reply STOP anytime.",
+    'updates.confirm_yes': "Yes, I want am",
+    'updates.confirm_no': "No, thank you",
+    'updates.declined': "No wahala, nothing don change.",
+    'updates.choose_business': "First choose one business: send im code, or type *directory* to find am. Then type *updates* to dey get their offers and updates.",
 
     // Account menu
     'account.title': "My Account",
@@ -1755,6 +1771,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "O ti kúrò lọ́dọ̀ {businessName} tẹ́lẹ̀, nítorí náà a kò fi ọ́ kún un. Fi START ránṣẹ́ tí o bá fẹ́ gbọ́ láti ọ̀dọ̀ wọn lẹ́ẹ̀kan sí i.",
     'updates.save_failed': "A kò lè fi pamọ́ báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí i láìpẹ́.",
     'updates.expired': "Àṣàyàn yẹn kò sí mọ́. Tẹ *menu* láti rí àwọn àṣàyàn rẹ.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Gba ìròyìn",
+    'updates.confirm': "Ṣé o fẹ́ máa gba ìpèsè àti ìròyìn láti {businessName} àti Waaiio lórí WhatsApp? O lè fèsì STOP nígbàkígbà.",
+    'updates.confirm_business': "Ṣé o fẹ́ máa gba ìpèsè àti ìròyìn láti {businessName} lórí WhatsApp? O lè fèsì STOP nígbàkígbà.",
+    'updates.confirm_yes': "Bẹ́ẹ̀ni, mo fẹ́",
+    'updates.confirm_no': "Rárá, ẹ ṣé",
+    'updates.declined': "Kò burú, kò sí ohun tó yí padà.",
+    'updates.choose_business': "Kọ́kọ́ yan iṣẹ́ kan: fi kóòdù rẹ̀ ránṣẹ́, tàbí tẹ *directory* láti wá a. Lẹ́yìn náà tẹ *updates* láti máa gba ìpèsè àti ìròyìn wọn.",
     'account.title': 'Àkọọ́lẹ̀ Mi',
     'account.body': 'Ṣàkóso àwọn ìpèdè, àwọn pàṣẹ, àti díẹ̀ síi.\n\nTẹ *cancel* láti jáde tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí.',
     'account.my_bookings': 'Àwọn Ìpèdè Mi',
@@ -2512,6 +2536,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "Ị kwụsịrị {businessName} na mbụ, ya mere anyị etinyeghị gị. Ziga START ma ọ bụrụ na ịchọrọ ozi ha ọzọ.",
     'updates.save_failed': "Anyị enweghị ike ichekwa ya ugbu a. Biko nwaa ọzọ n'oge na-adịghị anya.",
     'updates.expired': "Nhọrọ ahụ adịghịzi. Pịa *menu* ka ịhụ nhọrọ gị.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Nweta ozi",
+    'updates.confirm': "Ị chọrọ ịnata onyinye na ozi site na {businessName} na Waaiio na WhatsApp? Ị nwere ike ịza STOP mgbe ọbụla.",
+    'updates.confirm_business': "Ị chọrọ ịnata onyinye na ozi site na {businessName} na WhatsApp? Ị nwere ike ịza STOP mgbe ọbụla.",
+    'updates.confirm_yes': "Ee, achọrọ m",
+    'updates.confirm_no': "Mba, daalụ",
+    'updates.declined': "Ọ dị mma, ọ dịghị ihe gbanwere.",
+    'updates.choose_business': "Buru ụzọ họrọ azụmahịa: ziga koodu ya, ma ọ bụ pịa *directory* ịchọta ya. Mgbe ahụ pịa *updates* ịnata onyinye na ozi ha.",
     'account.title': 'Akaụntụ M',
     'account.body': 'Chekwaa ndekọ ndebi gị, iwu, na ihe ndị ọzọ.\n\nPịnye *cancel* ịhapụ ma ọ bụ *Hi* ịmalite ọzọ.',
     'account.my_bookings': 'Ndebi m',
@@ -3269,6 +3301,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "Ka fita daga {businessName} a baya, don haka ba mu saka ka ba. Aika START idan kana son saƙonninsu kuma.",
     'updates.save_failed': "Ba mu iya ajiye shi yanzu ba. Da fatan za ka sake gwadawa nan ba da jimawa ba.",
     'updates.expired': "Wannan zaɓin babu shi yanzu. Rubuta *menu* don ganin zaɓuɓɓukanka.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Samu labarai",
+    'updates.confirm': "Kana son samun tayi da labarai daga {businessName} da Waaiio a WhatsApp? Za ka iya aika STOP kowane lokaci.",
+    'updates.confirm_business': "Kana son samun tayi da labarai daga {businessName} a WhatsApp? Za ka iya aika STOP kowane lokaci.",
+    'updates.confirm_yes': "Eh, ina so",
+    'updates.confirm_no': "A'a, na gode",
+    'updates.declined': "Ba komai, babu abin da ya canza.",
+    'updates.choose_business': "Da farko zaɓi kasuwanci: aika lambarsa, ko rubuta *directory* don nemo shi. Sannan rubuta *updates* don samun tayinsu da labaransu.",
     'account.title': 'Asusuna Ta',
     'account.body': 'Sarrafa ajiyarku, oda, da ƙari.\n\nRubuta *cancel* don fita ko *Hi* don sake fara.',
     'account.my_bookings': 'Ajiyata',
@@ -4026,6 +4066,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "Wogyaee {businessName} kan, enti yɛmmfaa wo nkaa ho. Soma START sɛ wopɛ wɔn nkra bio a.",
     'updates.save_failed': "Yɛntumi nkora so seesei. Yɛsrɛ wo, san sɔ hwɛ bio.",
     'updates.expired': "Saa nhyehyɛe no nni hɔ bio. Twerɛ *menu* na hwɛ wo nhyehyɛe.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Nya nsɛm",
+    'updates.confirm': "Wopɛ sɛ wunya nneɛma pa ne nsɛm fi {businessName} ne Waaiio hɔ wɔ WhatsApp so? Wubetumi de STOP abua bere biara.",
+    'updates.confirm_business': "Wopɛ sɛ wunya nneɛma pa ne nsɛm fi {businessName} hɔ wɔ WhatsApp so? Wubetumi de STOP abua bere biara.",
+    'updates.confirm_yes': "Aane, mepɛ",
+    'updates.confirm_no': "Dabi, meda wo ase",
+    'updates.declined': "Ɛnyɛ hwee, biribiara nsesaeɛ.",
+    'updates.choose_business': "Di kan paw adwuma bi: fa ne code mena, anaa twerɛ *directory* na hwehwɛ. Afei twerɛ *updates* na nya wɔn nneɛma pa ne nsɛm.",
     'account.title': 'Me Account',
     'account.body': 'Tua w\'adeyɛ, order, ne biribi foforɔ so.\n\nDaa *cancel* kɔ fi, anaa *Hi* kɔ firi ase.',
     'account.my_bookings': 'Me Booking',
@@ -4783,6 +4831,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "Vous vous êtes désabonné de {businessName}, nous ne vous avons donc pas inscrit. Envoyez START pour recevoir à nouveau leurs messages.",
     'updates.save_failed': "Impossible d'enregistrer pour le moment. Réessayez dans un instant.",
     'updates.expired': "Cette option n'est plus disponible. Tapez *menu* pour voir vos options.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Recevoir les infos",
+    'updates.confirm': "Recevoir les offres et actualités de {businessName} et Waaiio sur WhatsApp ? Vous pouvez répondre STOP à tout moment.",
+    'updates.confirm_business': "Recevoir les offres et actualités de {businessName} sur WhatsApp ? Vous pouvez répondre STOP à tout moment.",
+    'updates.confirm_yes': "Oui, je veux",
+    'updates.confirm_no': "Non merci",
+    'updates.declined': "Pas de souci, rien n'a changé.",
+    'updates.choose_business': "Choisissez d'abord une entreprise : envoyez son code, ou tapez *directory* pour la trouver. Puis tapez *updates* pour recevoir ses offres et actualités.",
     'account.title': 'Mon compte',
     'account.body': 'Gérez vos réservations, commandes et plus encore.\n\nTapez *cancel* pour quitter ou *Hi* pour recommencer.',
     'account.my_bookings': 'Mes réservations',
@@ -5540,6 +5596,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'updates.opted_out': "Te diste de baja de {businessName}, así que no te suscribimos. Envía START si quieres recibir sus mensajes otra vez.",
     'updates.save_failed': "No pudimos guardarlo ahora. Inténtalo de nuevo en un momento.",
     'updates.expired': "Esa opción ya no está disponible. Escribe *menu* para ver tus opciones.",
+    // Asked-for opt-in: typed "updates" and My Account (#591 Q6)
+    'updates.account_title': "🎁 Recibir novedades",
+    'updates.confirm': "¿Recibir ofertas y novedades de {businessName} y Waaiio por WhatsApp? Puedes responder STOP en cualquier momento.",
+    'updates.confirm_business': "¿Recibir ofertas y novedades de {businessName} por WhatsApp? Puedes responder STOP en cualquier momento.",
+    'updates.confirm_yes': "Sí, quiero",
+    'updates.confirm_no': "No, gracias",
+    'updates.declined': "No hay problema, no ha cambiado nada.",
+    'updates.choose_business': "Primero elige un negocio: envía su código, o escribe *directory* para encontrarlo. Luego escribe *updates* para recibir sus ofertas y novedades.",
     'account.title': 'Mi cuenta',
     'account.body': 'Administre sus reservas, pedidos y más.\n\nEscriba *cancel* para salir o *Hi* para reiniciar.',
     'account.my_bookings': 'Mis reservas',
@@ -6289,6 +6353,10 @@ export const OWNER_REVIEW_ITEMS: ReadonlyArray<{
   { locale: 'tw', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
   { locale: 'fr', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
   { locale: 'es', key: 'updates.optin_title', issue: 'Customer updates opt-in copy added 2026-11-06 is best-effort; native review for the row title, its line and the replies (updates.*). Must keep naming the business and Waaiio, and keep STOP/START in English' },
+  ...(['pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es'] as const).map(locale => ({
+    locale, key: 'updates.confirm',
+    issue: 'Typed "updates" / My Account confirmation copy added 2026-11-06 (#591 Q6) is best-effort; native review for updates.account_title, confirm, confirm_business, confirm_yes, confirm_no, declined and choose_business. Must keep naming the business and Waaiio, keep STOP in English, and keep the typed words *updates* and *directory* in English',
+  })),
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -6360,6 +6428,8 @@ export const PLACEHOLDER_SCHEMA: ReadonlyMap<string, readonly string[]> = new Ma
   ['updates.thanks_business', ['businessName']],
   ['updates.already', ['businessName']],
   ['updates.opted_out', ['businessName']],
+  ['updates.confirm', ['businessName']],
+  ['updates.confirm_business', ['businessName']],
 ]);
 
 /** Keys used as WhatsApp button titles (max 20 chars). */
@@ -6413,6 +6483,8 @@ export const BUTTON_TITLE_KEYS: readonly string[] = [
   'greeting.chat_with_us',
   'lang.picker_button',
   'yes', 'stayHere',
+  // Customer updates confirmation (#591 Q6)
+  'updates.confirm_yes', 'updates.confirm_no',
 ];
 
 /** Keys used as WhatsApp list titles (max 24 chars). */
@@ -6442,6 +6514,8 @@ export const LIST_TITLE_KEYS: readonly string[] = [
   'booking.later_dates', 'booking.earlier_dates',
   // Customer updates opt-in row (2026-11-06)
   'updates.optin_title',
+  // My Account "Get updates" row (#591 Q6)
+  'updates.account_title',
 ];
 
 /** Keys used as WhatsApp footer (max 60 chars). */
@@ -6488,7 +6562,7 @@ export const KEYS_WITH_COMMANDS: readonly string[] = [
   'tips.subscriptions', 'tips.my_reservations', 'tips.my_tickets',
   'tips.receipt_purchase',
   'greeting.cancel_hint',
-  'updates.expired',
+  'updates.expired', 'updates.choose_business',
 ];
 
 // ═══════════════════════════════════════════════════════════════
