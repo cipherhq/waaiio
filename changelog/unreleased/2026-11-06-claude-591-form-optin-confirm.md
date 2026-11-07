@@ -3,7 +3,7 @@
 - **What changed (Owner decisions 2026-11-06, issue #591):**
   - **Recording a tick.** A ticked "send me updates" box on a public form records a pending request: `evidence_reference = form:<formId>|confirm:<sha256(nonce)>`, `policy_version = 'optin-v1'`. The 32-byte nonce is never stored. A request that was actually delivered gets `|sent:<iso>` appended.
   - **Re-ticks.** A re-tick adds no new row when the latest record is granted, or is a live request (pending, sent, at most 30 days old). Owner decision 2026-11-06: an expired request, a request that was never sent, or a pre-release tick does not block a fresh tick. A new request is recorded and sent, and the old one becomes stale.
-  - **Opted-out numbers** (business or global) are not recorded and are not reported as pending (`optInPending: false`). Nothing is sent to them.
+  - **Opted-out numbers** (business or global) are not recorded and nothing is sent to them: from a form tick, a customer who sent STOP is never sent a request, so they re-subscribe via START or the in-chat opt-in. Uniform opt-in response: every valid ticked number gets `optInPending: true`.
   - **Q7.** Ticks recorded before this release get no message unless the customer ticks again.
   - **Sending the request.** After the response is saved (`after()`), Waaiio asks the typed number to confirm:
     - Inside THIS business's own 24-hour window (the shared `businessChatWindowState` rule), it sends free-form "Yes, send updates" / "No thanks" buttons, in a single attempt (`sendButtons` gains `noRetry`).
@@ -13,7 +13,7 @@
     - A send failure never fails the submit.
   - **Handling the tap.** New `lib/consent/optin-confirmation.ts` handles the tap. It is called from the verified Meta webhook right after the merchant-alert opt-in and before the bot.
     - The business comes only from the matching pending row for the Meta-verified sender, and the tap must arrive on that business's sending number.
-    - Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business.
+    - Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business (kept only as a race guard, since opted-out numbers are never sent a request).
     - Nothing is granted when there is a STOP newer than the request, or any global opt-out (the global-opt-out refusal was accepted by the Owner 2026-11-06).
     - No writes one revoked `marketing` row only, even for a request older than 30 days (Owner decision 2026-11-06, "Promotions only"). Existing utility consent is left as it is.
     - A Yes on a request older than 30 days, a stale request or an unknown nonce gets an "expired" reply.

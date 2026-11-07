@@ -25,26 +25,27 @@ function isLiveRequest(row: { status?: string | null; evidence_reference?: strin
  * Never blocks the saved response.
  * A NEW row carries sha256 of a one-time nonce; the nonce itself goes only to the
  * typed number (WhatsApp confirmation, #591 part B1) and is never stored.
+ * Returns the new request to send, or null when there is nothing to send.
  */
 async function recordPendingOptIn(
   db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string,
-): Promise<{ pending: boolean; request: { id: string; nonce: string; evidence: string } | null }> {
+): Promise<{ id: string; nonce: string; evidence: string } | null> {
   try {
     const digits = e164.replace(/\D/g, '');
     // An opted-out number is never sent a request (a web tick is not a verified
-    // re-start after STOP), so the tick is not recorded and is not reported as pending.
+    // re-start after STOP), so the tick is not recorded.
     const { count: optedOut, error: optOutError } = await db.from('messaging_opt_outs')
       .select('id', { count: 'exact', head: true }).in('phone', [digits, `+${digits}`])
       .or(`business_id.eq.${sanitizeFilterValue(businessId)},business_id.is.null`)
       .eq('channel', 'whatsapp').is('resubscribed_at', null);
-    if (optOutError || optedOut !== 0) return { pending: false, request: null };
+    if (optOutError || optedOut !== 0) return null;
     const { data: latest, error } = await db.from('customer_consents').select('status, evidence_reference, created_at')
       .eq('business_id', businessId).in('phone', [digits, `+${digits}`])
       .eq('channel', 'whatsapp').eq('purpose', 'marketing')
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .limit(1).maybeSingle();
-    if (error) return { pending: false, request: null };
-    if (latest?.status === 'granted' || isLiveRequest(latest)) return { pending: true, request: null };
+    if (error) return null;
+    if (latest?.status === 'granted' || isLiveRequest(latest)) return null;
     const nonce = newOptInNonce();
     const evidence = pendingEvidence(formId, nonce);
     const { data: inserted, error: insertError } = await db.from('customer_consents').insert({
@@ -54,10 +55,10 @@ async function recordPendingOptIn(
     }).select('id').single();
     if (insertError || !inserted?.id) {
       logger.warn('[FORMS] Opt-in not recorded:', insertError?.message);
-      return { pending: false, request: null };
+      return null;
     }
-    return { pending: true, request: { id: inserted.id as string, nonce, evidence } };
-  } catch { return { pending: false, request: null }; }
+    return { id: inserted.id as string, nonce, evidence };
+  } catch { return null; }
 }
 
 export async function POST(request: NextRequest) {
@@ -201,11 +202,12 @@ export async function POST(request: NextRequest) {
     let optInPending: boolean | undefined;
     if (optIn && optInPhone) {
       const recorded = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
-      optInPending = recorded.pending;
-      if (recorded.request) {
+      // Uniform opt-in response: the same for every valid ticked number.
+      optInPending = true;
+      if (recorded) {
         // Ask the typed number to confirm on WhatsApp after the response is sent. It
         // never blocks or fails the submit (the sender never throws).
-        const request = { businessId: form.business_id as string, phone: optInPhone, requestId: recorded.request.id, nonce: recorded.request.nonce, evidenceReference: recorded.request.evidence };
+        const request = { businessId: form.business_id as string, phone: optInPhone, requestId: recorded.id, nonce: recorded.nonce, evidenceReference: recorded.evidence };
         try {
           after(() => sendOptInConfirmationRequest(supabase, request).then(() => undefined));
         } catch (err) {

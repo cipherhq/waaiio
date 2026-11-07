@@ -634,29 +634,72 @@ describe('form submit: pending request and confirmation send', () => {
       expect(m.sendButtons).toHaveBeenCalledTimes(1);
     });
 
-    it('an opted-out number is not recorded or reported as pending, and nothing is sent', async () => {
+    it('an opted-out number gets no new row and nothing is sent', async () => {
       windowOpen();
       seedRequest(A, newOptInNonce(), 31 * DAY);
       optOut(A, DAY);
       const res = await post({});
-      expect(await res.json()).toEqual({ success: true, optInPending: false });
+      expect(await res.json()).toEqual({ success: true, optInPending: true });
       expect(m.afterTasks).toHaveLength(0);
       expect(pending()).toHaveLength(1);
       expect(m.sendButtons).not.toHaveBeenCalled();
     });
 
-    it('granted but opted out (business or global): not reported as pending, no row, nothing sent', async () => {
+    it('granted but opted out (business or global): no row, nothing sent', async () => {
       windowOpen();
       for (const scope of [A, null]) {
         m.db.tables.messaging_opt_outs = [];
         m.db.tables.customer_consents = [{ id: 'g', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status: 'granted', source: 'whatsapp', created_at: ago(2 * DAY) }];
         optOut(scope, DAY);
         const res = await post({});
-        expect(await res.json()).toEqual({ success: true, optInPending: false });
+        expect(await res.json()).toEqual({ success: true, optInPending: true });
         expect(consents()).toHaveLength(1);
       }
       expect(m.afterTasks).toHaveLength(0);
       expect(m.sendButtons).not.toHaveBeenCalled();
+    });
+
+    it('uniform opt-in response: opted-out (business or global) and fresh numbers get byte-identical bodies', async () => {
+      const fresh = await (await post({ customer_phone: OTHER_PHONE })).text();
+      expect(consents().filter(r => r.phone === OTHER_PHONE)).toHaveLength(1);
+      for (const scope of [A, null]) {
+        m.db.tables.messaging_opt_outs = [];
+        optOut(scope, DAY);
+        const body = await (await post({})).text();
+        expect(body).toBe(fresh);
+        expect(consents().some(r => r.phone === PHONE)).toBe(false);
+      }
+    });
+
+    it('another business\'s STOP does not block this business\'s tick', async () => {
+      windowOpen();
+      optOut(B, DAY);
+      await post({});
+      await runAfter();
+      expect(pending()).toHaveLength(1);
+      expect(m.sendButtons).toHaveBeenCalledTimes(1);
+    });
+
+    it('marking a request sent touches only that pending row with its exact evidence', async () => {
+      windowOpen();
+      const nonce = newOptInNonce();
+      const evidence = pendingEvidence('form-x', nonce);
+      const target = { id: 'req-target', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status: 'pending', evidence_reference: evidence, created_at: ago(0) };
+      const sibling = { ...target, id: 'req-sibling' };
+      consents().push(target, sibling);
+      const send = (over: Record<string, unknown> = {}) => sendOptInConfirmationRequest(m.db as never, { businessId: A, phone: PHONE, requestId: target.id, nonce, evidenceReference: evidence, ...over });
+      // Not pending any more: not marked.
+      target.status = 'granted';
+      expect(await send()).toBe('sent_buttons');
+      expect(target.evidence_reference).toBe(evidence);
+      // Evidence changed since the request was recorded: not marked.
+      target.status = 'pending';
+      expect(await send({ evidenceReference: `${evidence}|other` })).toBe('sent_buttons');
+      expect(target.evidence_reference).toBe(evidence);
+      // Normal case: only the target row is marked, never a sibling.
+      expect(await send()).toBe('sent_buttons');
+      expect(target.evidence_reference).toMatch(new RegExp(`^${evidence.replace(/[|]/g, '\\|')}\\|sent:`));
+      expect(sibling.evidence_reference).toBe(evidence);
     });
 
     it('a request that was never sent does not block a re-tick', async () => {
