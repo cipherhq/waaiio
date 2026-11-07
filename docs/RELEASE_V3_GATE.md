@@ -193,6 +193,14 @@ The gate stops; it never rolls back. After a partial deploy (for example merchan
 
 Re-certification sets the lock's `certified` to what each project actually serves. If the two differ, one must be an ancestor of the other. Prepare then computes the change set, lane and included pull requests from the older SHA, so every change that either project lacks is classified and needs its review records. Each project's deploy still checks its own serving deployment. Mixed baselines are accepted only from the lock, never from a release record. First use: run 41937185420 deployed merchant and stopped before the admin alias, so the lock certifies merchant `2b578c5b` and admin `bdc007a8`.
 
+### Same-code redeploy (re-certifying the last release's deployments)
+
+Production can be rebuilt at the certified SHA outside a release, for example after the Owner changes environment variables (first case: 2026-11-06 03:28 UTC, the merchant site was rebuilt at `466e0691` after the Owner changed the Stripe keys). The code is the certified code, but the serving deployment is not the one in the last release record, so prepare stops ("stale or uncertified baseline"). Rolling back to the recorded deployment would undo the environment change.
+
+The Owner-approved recovery is a reviewed lock entry `recertified`: `after_deploy_run` (the last successful release-deploy run), `sha` (that run's target), the `merchant_deployment_sha256` and `admin_deployment_sha256` now serving (`sha256("waaiio-deployment:" + deployment id)`), and a `reason`. Prepare uses it in place of that run's record only when `after_deploy_run` is exactly the newest successful deploy run and `sha` equals the record's target; a different SHA fails closed. Once a newer release deploys, its record is the baseline again and the entry no longer applies (it can then be removed in a later PR). It cannot move the baseline to another SHA. The SHA is the one Vercel reports for the deployment (`meta.githubCommitSha`), which a CLI deploy sets itself, so reviewers of an entry confirm the redeploy was built from that commit: the same git metadata as the recorded deployment, no dirty-tree flag, and a matching source file listing.
+
+Not covered yet: once any release record exists, prepare never reads the lock's `certified`, so a rollback to another SHA, a partial deploy after the first record, or an expired record (above) cannot be recovered with a lock update alone. Those still fail closed and need a reviewed gate change.
+
 ## Retiring old profiles
 
 The schema 2–7 and 9 profiles stay until the first successful schema 8 release, then a separate PR retires them.
