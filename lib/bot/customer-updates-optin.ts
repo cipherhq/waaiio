@@ -11,7 +11,9 @@
  *   - nothing is pre-ticked, silence is never consent, not tapping is "no";
  *   - consent for one business never covers another business;
  *   - anyone who ever unsubscribed from the business (STOP), revoked consent,
- *     or unsubscribed from Waaiio updates is never shown the offer again.
+ *     or unsubscribed from Waaiio updates is never shown the offer again;
+ *   - an explicit yes newer than a revoked consent ("No thanks") still counts
+ *     (Owner decision 2026-11-06, latest row wins); an active STOP always wins.
  *
  * Storage (no new tables):
  *   - business: append-only `customer_consents` row (whatsapp / marketing /
@@ -31,7 +33,12 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { logger } from '@/lib/logger';
 
-export type UpdatesOptInSource = 'menu' | 'welcome';
+/**
+ * Where the customer's "yes" came from. 'menu' and 'welcome' are one-tap rows
+ * (#942). 'keyword' (typed "updates") and 'account' (My Account row) ask a
+ * confirmation first; its Yes is bound to the chat's business (#591 Q6).
+ */
+export type UpdatesOptInSource = 'menu' | 'welcome' | 'keyword' | 'account';
 
 /** Postback prefix. Taps arrive as the row id, so the id carries the business. */
 export const UPDATES_OPTIN_PREFIX = 'updates_yes';
@@ -40,6 +47,8 @@ export const UPDATES_OPTIN_PREFIX = 'updates_yes';
 export const UPDATES_OPTIN_EVIDENCE: Record<UpdatesOptInSource, string> = {
   menu: 'bot_next_steps_menu',
   welcome: 'bot_welcome_menu',
+  keyword: 'bot_updates_keyword',
+  account: 'bot_my_account_menu',
 };
 
 /**
@@ -114,12 +123,14 @@ export function buildUpdatesOptInRow(
   };
 }
 
-type ConsentState = 'none' | 'granted' | 'blocked' | 'error';
+type ConsentState = 'none' | 'granted' | 'revoked' | 'error';
 
 /**
  * Consent state for this business only, from the latest WhatsApp row of each
- * purpose a "yes" covers. A revoked latest row for EITHER purpose blocks (never
- * re-ask). "granted" means marketing is granted (the offer's main promise).
+ * purpose a "yes" covers. "revoked": the latest row of EITHER purpose is
+ * revoked (e.g. an earlier "No thanks"); the offer is then never shown again,
+ * but a later explicit Yes still records (Owner decision 2026-11-06: the newer
+ * explicit yes wins). "granted" means marketing is granted (the offer's main promise).
  */
 async function businessConsentState(supabase: SupabaseClient, phone: string, businessId: string): Promise<ConsentState> {
   const { data, error } = await supabase.from('customer_consents')
@@ -133,7 +144,7 @@ async function businessConsentState(supabase: SupabaseClient, phone: string, bus
   for (const row of (data || []) as Array<{ purpose: string; status: string; expires_at: string | null }>) {
     if (!latest.has(row.purpose)) latest.set(row.purpose, row);
   }
-  if ([...latest.values()].some(r => r.status === 'revoked')) return 'blocked';
+  if ([...latest.values()].some(r => r.status === 'revoked')) return 'revoked';
   const marketing = latest.get('marketing');
   if (marketing?.status === 'granted' && (!marketing.expires_at || new Date(marketing.expires_at) > new Date())) return 'granted';
   return 'none'; // pending (unverified web tick), unknown, expired or no row
@@ -286,9 +297,10 @@ export type UpdatesOptInResult =
  *     own (dedicated) number: only that business can then be recorded.
  *
  * Checks, in order: number's own business (if given); business exists; the
- * number has dealt with it; no active opt-out (business or global); latest
- * consent for neither purpose revoked; not already granted. Then appends one
- * granted customer_consents row per purpose in a single insert.
+ * number has dealt with it; no active opt-out (business or global); not
+ * already granted. An earlier revoked consent does not block: the newer
+ * explicit yes wins (Owner decision 2026-11-06). Then appends one granted
+ * customer_consents row per purpose in a single insert.
  */
 export async function recordUpdatesOptIn(
   supabase: SupabaseClient,
@@ -327,9 +339,10 @@ export async function recordUpdatesOptIn(
     if (optOut === 'error') return { status: 'error' };
     if (optOut === 'opted_out') return { status: 'opted_out', businessName: business.name };
 
+    // Latest row wins (Owner decision 2026-11-06): an earlier revoked consent
+    // ("No thanks") does not block this newer explicit yes. STOP is checked above and still wins.
     const consent = await businessConsentState(supabase, phone, businessId);
     if (consent === 'error') return { status: 'error' };
-    if (consent === 'blocked') return { status: 'opted_out', businessName: business.name };
     if (consent === 'granted') return { status: 'already', businessName: business.name };
 
     const includesWaaiio = updatesOptInIncludesWaaiio(business.subscription_tier, business.is_whitelabel);
@@ -436,5 +449,169 @@ export async function handleUpdatesOptInTap(
     logger.error('[UPDATES-OPTIN] Tap handling failed:', String(err));
     await reply('updates.save_failed').catch(() => {});
     return true;
+  }
+}
+
+// ── Asked-for opt-in: typed "updates" and the My Account row (Owner decision 2026-11-06, #591 Q6) ──
+//
+// Unlike the one-tap rows above, these first ask a confirmation that names the
+// business (and Waaiio when included). Its Yes button carries the business id,
+// and is recorded only when that id is the business of the chat the customer
+// is in now (shared-number isolation), on top of recordUpdatesOptIn's checks.
+
+/** Sources that ask a confirmation first. */
+export type UpdatesConfirmSource = Extract<UpdatesOptInSource, 'keyword' | 'account'>;
+
+/** Typed keywords: exact, trimmed, case-insensitive. "subscribe" is a START word, so it is not one. */
+const UPDATES_KEYWORDS = new Set(['updates', 'get updates']);
+
+export function isUpdatesKeyword(text: string): boolean {
+  return UPDATES_KEYWORDS.has(text.trim().toLowerCase());
+}
+
+/** My Account row id. */
+export const UPDATES_ACCOUNT_POSTBACK = 'acct_updates';
+/** "No thanks" on the confirmation. */
+export const UPDATES_DECLINE_POSTBACK = 'updates_no';
+
+const CONFIRM_POSTBACK_RE = new RegExp(`^${UPDATES_OPTIN_PREFIX}:(keyword|account):(${UUID})$`, 'i');
+
+/** Parse a confirmation Yes (`updates_yes:<keyword|account>:<businessId>`). The #942 tap hook never matches these. */
+export function parseUpdatesConfirmPostback(text: string): { source: UpdatesConfirmSource; businessId: string } | null {
+  const m = CONFIRM_POSTBACK_RE.exec(text.trim());
+  if (!m) return null;
+  return { source: m[1].toLowerCase() as UpdatesConfirmSource, businessId: m[2].toLowerCase() };
+}
+
+/**
+ * The My Account row ("🎁 Get updates"), shown to the same customers as the
+ * #942 row: dealt with this business, not agreed yet, never unsubscribed.
+ * Its line is the #942 line naming the business (and Waaiio). Never throws.
+ */
+export async function updatesAccountRowFor(
+  supabase: SupabaseClient,
+  params: {
+    phone: string;
+    lang: string;
+    business: { id: string; name: string; subscription_tier?: string | null; is_whitelabel?: boolean | null } | null | undefined;
+  },
+): Promise<{ title: string; description: string; postbackText: string } | null> {
+  const row = await updatesOptInRowFor(supabase, { ...params, source: 'account' });
+  if (!row) return null;
+  return { title: getFlowCopy(params.lang, 'updates.account_title'), description: row.description, postbackText: UPDATES_ACCOUNT_POSTBACK };
+}
+
+/** Read-only version of recordUpdatesOptIn's checks, in the same order. */
+async function updatesOptInState(supabase: SupabaseClient, phone: string, businessId: string): Promise<'eligible' | 'already' | 'opted_out' | 'unavailable' | 'error'> {
+  const contact = await hasContactWithBusiness(supabase, phone, businessId);
+  if (contact === 'error') return 'error';
+  if (!contact) return 'unavailable';
+  const optOut = await optOutState(supabase, phone, businessId, false);
+  if (optOut === 'error') return 'error';
+  if (optOut === 'opted_out') return 'opted_out';
+  const consent = await businessConsentState(supabase, phone, businessId);
+  if (consent === 'error') return 'error';
+  // An earlier "No thanks" (revoked) does not block an explicit ask (Owner decision 2026-11-06).
+  return consent === 'granted' ? 'already' : 'eligible';
+}
+
+/**
+ * Ask "Get offers and updates from {Business} (and Waaiio) on WhatsApp?" with
+ * Yes / No thanks, or say why not (already signed up, unsubscribed). Records
+ * nothing and never throws. `businessId` must be the business of the chat the
+ * customer is in, never an id taken from the message.
+ */
+export async function askUpdatesOptIn(
+  supabase: SupabaseClient,
+  params: {
+    phone: string;
+    lang: string;
+    source: UpdatesConfirmSource;
+    businessId: string;
+    sendText: (text: string) => Promise<unknown>;
+    sendButtons: (body: string, buttons: Array<{ id: string; title: string }>) => Promise<unknown>;
+  },
+): Promise<void> {
+  const { phone, lang, source, businessId, sendText, sendButtons } = params;
+  try {
+    if (!phone || !UUID_RE.test(businessId)) { await sendText(getFlowCopy(lang, 'updates.expired')); return; }
+    const { data: business, error } = await supabase.from('businesses')
+      .select('id, name, subscription_tier, is_whitelabel').eq('id', businessId).maybeSingle();
+    if (error) { await sendText(getFlowCopy(lang, 'updates.save_failed')); return; }
+    if (!business) { await sendText(getFlowCopy(lang, 'updates.expired')); return; }
+    const businessName = business.name || 'this business';
+    switch (await updatesOptInState(supabase, phone, businessId)) {
+      case 'eligible': {
+        const includesWaaiio = updatesOptInIncludesWaaiio(business.subscription_tier, business.is_whitelabel);
+        await sendButtons(
+          fillFlowCopy(lang, includesWaaiio ? 'updates.confirm' : 'updates.confirm_business', { businessName }),
+          [
+            { id: updatesOptInPostback(source, businessId), title: getFlowCopy(lang, 'updates.confirm_yes') },
+            { id: UPDATES_DECLINE_POSTBACK, title: getFlowCopy(lang, 'updates.confirm_no') },
+          ],
+        );
+        return;
+      }
+      case 'already': await sendText(fillFlowCopy(lang, 'updates.already', { businessName })); return;
+      case 'opted_out': await sendText(fillFlowCopy(lang, 'updates.opted_out', { businessName })); return;
+      case 'unavailable': await sendText(getFlowCopy(lang, 'updates.expired')); return;
+      default: await sendText(getFlowCopy(lang, 'updates.save_failed'));
+    }
+  } catch (err) {
+    logger.error('[UPDATES-OPTIN] Asking failed:', String(err));
+    await sendText(getFlowCopy(lang, 'updates.save_failed')).catch(() => {});
+  }
+}
+
+/**
+ * Handle a tap on the confirmation's Yes or No thanks. Returns null when the
+ * text is not one (caller continues). Otherwise the reply, and whether to
+ * follow it with the next-steps menu (after a recorded Yes, or a No thanks
+ * inside a business chat). Never throws.
+ *
+ * The Yes counts only as a real button tap, and only when its business is the
+ * business of the chat the customer is in now (`sessionBusinessId`): a Yes for
+ * another business on a shared number records nothing.
+ */
+export async function handleUpdatesConfirmTap(
+  supabase: SupabaseClient,
+  params: {
+    from: string;
+    text: string;
+    messageType: string;
+    lang: string;
+    sessionBusinessId: string | null | undefined;
+    /** The business that owns the number the message arrived on, if it is a dedicated number. */
+    channelBusinessId?: string;
+    destinationPhone?: string;
+  },
+): Promise<{ text: string; nextSteps: boolean } | null> {
+  const { from, text, messageType, lang, sessionBusinessId } = params;
+  // Typed text that looks like a button id is not a tap on the shown wording.
+  const isTap = messageType === 'button' || messageType === 'list';
+  if (text.trim() === UPDATES_DECLINE_POSTBACK) {
+    if (!isTap) return null;
+    return { text: getFlowCopy(lang, 'updates.declined'), nextSteps: !!sessionBusinessId };
+  }
+  const parsed = parseUpdatesConfirmPostback(text);
+  if (!parsed || !isTap) return null;
+  if (!sessionBusinessId || sessionBusinessId.toLowerCase() !== parsed.businessId) {
+    logger.warn('[UPDATES-OPTIN] Confirmation is for another business than this chat — not recorded');
+    return { text: getFlowCopy(lang, 'updates.expired'), nextSteps: false };
+  }
+  const result = await recordUpdatesOptIn(supabase, {
+    phone: from, businessId: parsed.businessId, source: parsed.source,
+    destinationPhone: params.destinationPhone, channelBusinessId: params.channelBusinessId,
+  });
+  switch (result.status) {
+    case 'granted':
+      return {
+        text: fillFlowCopy(lang, result.waaiioSubscribed ? 'updates.thanks' : 'updates.thanks_business', { businessName: result.businessName }),
+        nextSteps: true,
+      };
+    case 'already': return { text: fillFlowCopy(lang, 'updates.already', { businessName: result.businessName }), nextSteps: false };
+    case 'opted_out': return { text: fillFlowCopy(lang, 'updates.opted_out', { businessName: result.businessName }), nextSteps: false };
+    case 'unknown_business': case 'channel_mismatch': case 'no_contact': return { text: getFlowCopy(lang, 'updates.expired'), nextSteps: false };
+    default: return { text: getFlowCopy(lang, 'updates.save_failed'), nextSteps: false };
   }
 }
