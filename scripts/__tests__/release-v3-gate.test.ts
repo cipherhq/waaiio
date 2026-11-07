@@ -553,7 +553,7 @@ describe('certified baseline from the last release record and a lock re-certific
   it('a re-certification of that run at another SHA fails closed (it cannot move the baseline to other code)', async () => {
     await expect(certifiedBaseline(gh, 'gh', lock(entry({ sha: '6'.repeat(40) })), fetchImpl as never)).rejects.toThrow('Lock re-certification does not match the last release record');
   });
-  it('applyRecertification leaves a lock-sourced baseline alone when no record run matches', () => {
+  it('applyRecertification leaves the record baseline alone when there is no entry or it names another run', () => {
     const fromRecord = { source: 'release-deploy run 7', merchant: { sha: T, deployment_sha256: 'm' }, admin: { sha: T, deployment_sha256: 'a' } };
     expect(applyRecertification(fromRecord, 7, lock())).toBe(fromRecord);
     expect(applyRecertification(fromRecord, 8, lock(entry({ after_deploy_run: 7 })))).toBe(fromRecord);
