@@ -274,6 +274,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const service = createServiceClient();
+
+    // Check the Paystack amount and currency against the server-side plan price
+    // (same source as the subscribe route) before anything is written. The
+    // subscription row is created from the payment only after this passes.
+    // Stripe Checkout sessions are created by the subscribe route with server
+    // prices, so the Stripe path is unchanged.
+    if (gateway === 'paystack') {
+      const { resolveExpectedPlanPrice } = await import('@/lib/payments/subscription-expected-price');
+      const expected = await resolveExpectedPlanPrice(service, businessId, plan);
+      if (!expected.ok) {
+        console.warn('[ONBOARDING-VERIFY] Plan price unavailable:', businessId, expected.reason);
+        return NextResponse.json(
+          { message: 'Plan pricing is unavailable. Please try again later.', recoverable: true },
+          { status: 503 },
+        );
+      }
+      if (currency !== expected.currency) {
+        return NextResponse.json(
+          { message: 'Payment currency does not match the plan currency. Contact support.', reason: 'currency_mismatch', recoverable: false },
+          { status: 400 },
+        );
+      }
+      if (amountSmallest !== expected.amountMinor) {
+        return NextResponse.json(
+          { message: 'Payment amount does not match the plan price. Contact support.', reason: 'amount_mismatch', recoverable: false },
+          { status: 400 },
+        );
+      }
+    }
+
     if (!channelOperationsEnabled() && (!ownerCheck.wa_method || ownerCheck.wa_method === 'shared') && !ownerCheck.assigned_channel_id) {
       if (!firstSharedAssignmentEnabled()) {
         return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
@@ -287,8 +318,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(WHATSAPP_NUMBER_UNAVAILABLE, { status: 503 });
       }
     }
-
-    const service = createServiceClient();
 
     // ── Setup-complete gate: BEFORE any subscription/activation mutation ──
     // 1. Load configured capability rows from DB (trusted, not request-supplied)
