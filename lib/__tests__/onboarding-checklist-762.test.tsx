@@ -67,6 +67,9 @@ beforeEach(() => {
   state.responses.clear();
   state.queries = [];
   localStorage.clear();
+  // The claim-credit step (Owner decision 2026-11-07) is covered in
+  // claim-credit-checklist.test.tsx; here it is already done.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ phone_verified: true, credited: false }), { status: 200 })));
 });
 afterEach(cleanup);
 
@@ -76,7 +79,7 @@ describe('#762 actual onboarding checklist', () => {
     render(<OnboardingChecklist />);
     await settled();
     expect(done('Test your bot')).toBe(true);
-    expect(screen.getByText('1 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('2 of 5 steps completed')).toBeTruthy();
   });
 
   it('retains legitimate own inbound-chat fallback', async () => {
@@ -118,7 +121,7 @@ describe('#762 actual onboarding checklist', () => {
     render(<OnboardingChecklist />);
     await settled();
     expect(done('Test your bot')).toBe(false);
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
   });
 
   it('does not trust counts accompanying returned query errors', async () => {
@@ -173,9 +176,9 @@ describe('#762 actual onboarding checklist', () => {
     state.business = { id: 'other', bot_code: '' };
     view.rerender(<OnboardingChecklist />);
     await settled();
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
     await act(async () => { pending.resolve({ count: 1, error: null }); });
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
     expect(done('Test your bot')).toBe(false);
     expect(localStorage.getItem('waaiio-checklist-dismissed-own')).toBeNull();
     expect(localStorage.getItem('waaiio-checklist-dismissed-other')).toBeNull();
@@ -204,7 +207,7 @@ describe('#762 actual onboarding checklist', () => {
     state.business = { id: 'other', bot_code: '' };
     view.rerender(<OnboardingChecklist />);
     await settled();
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
     state.business = { id: 'own', bot_code: '' };
     view.rerender(<OnboardingChecklist />);
     expect(screen.queryByText('Test your bot')).toBeNull();

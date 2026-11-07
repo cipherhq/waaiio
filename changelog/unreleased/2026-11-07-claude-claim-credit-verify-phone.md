@@ -1,0 +1,35 @@
+## 2026-11-07 — Verify your phone number to claim the free messaging credit
+
+- **What changed (Owner decisions 2026-11-07):** sign-up stays smooth with no phone step. Afterwards, the owner verifies a phone number to claim the free messaging (trial) credit, like the "add bank account" step.
+  - **Which numbers count:** any number the owner gets WhatsApp messages on, either their personal number or their everyday business number. A number connected to Waaiio (any active `whatsapp_channels` row) is refused, because it can't receive the code.
+  - **Numbers already in use:** a number already on another Waaiio login is refused for now ("rule B"). Moving a number off a customer-only login is a follow-up.
+  - **New sign-ups only:** existing businesses are not back-filled.
+- **Server.**
+  - New `POST /api/trial-credit/claim`:
+    - Requires ownership of `business_id`.
+    - `check: true` only refuses a number connected to Waaiio, before any code is sent.
+    - Otherwise it verifies the code with the existing `verifyPhoneOtp`, using the same 5 per 15 minutes per-phone limit and the brute-force counters as the login code. It then saves the number as the login's confirmed phone (`updateUserById {phone, phone_confirm: true}`) and runs the normal trial check `activate_trial_if_eligible` (M465) with all of its rules.
+    - It never replaces a different phone already confirmed on the login.
+    - Returns `{verified, credited, reason}`.
+  - New `GET /api/trial-credit/status` (owner only, read-only) returns:
+    - `phone_verified` and `credited` (this business's `trial_grant`/`trial_v2` row)
+    - the credit amount for the business's currency
+  - Helpers live in `lib/trial-credit/verified-phone.ts`.
+- **Dashboard.**
+  - New page `/dashboard/claim-credit` (`app/dashboard/claim-credit/page.tsx`), with the Owner-agreed copy.
+  - New first "Getting started" item, "Claim your free messaging credit" (`components/dashboard/OnboardingChecklist.tsx`). It is done once the number is verified or the credit was added.
+  - While message billing is off, the page says "Phone verified. Your free credit will be added automatically when message billing starts." The hourly trial-activation job adds it then.
+- **WhatsApp Flow sign-up** (`app/api/whatsapp/flow-callback/onboarding.ts`; only reachable where channel operations are enabled):
+  - The WhatsApp number that sent the Flow is saved as the new login's confirmed phone. The callback is Meta-signed and the flow token is set by Waaiio for that sender. If the number is already on another login, the account is created without it.
+  - The hand-set 30-day `trial_ends_at` is removed. The trial now starts only through `activate_trial_if_eligible`, called once the business is live, the same way as web sign-up. This means a Flow sign-up no longer gets a trial clock with no verified phone and no credit.
+- **Tests:**
+  - `lib/__tests__/trial-credit-claim.test.ts`
+  - `lib/__tests__/trial-credit-status.test.ts`
+  - `lib/__tests__/claim-credit-ui.test.tsx` (rendered checklist and page)
+  - `lib/__tests__/flow-onboarding-verified-phone.test.ts`
+  - The two existing checklist suites now stub the status call as already done, and their step counts gained the new step.
+- **What could break:**
+  - Every visible "Getting started" checklist gains one step, so the counts shift by one.
+  - A Flow sign-up while billing is off no longer has a trial end date. Its WhatsApp and email welcome text still mention a 30-day trial; that wording is unchanged and needs an Owner decision.
+  - Supabase Auth phone uniqueness is the "one number, one login" rule. A merchant who once messaged a Waaiio bot as a customer already has their number on a customer login, and must use a different number until the follow-up lands.
+  - No database change.
