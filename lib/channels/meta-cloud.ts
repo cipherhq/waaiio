@@ -28,7 +28,10 @@ export interface CloudTemplateMessage {
   languageCode?: string;
   components?: Array<{
     type: 'header' | 'body' | 'button';
-    parameters: Array<{ type: 'text'; text: string }>;
+    /** Button components only: 'url' or 'quick_reply', and the button's position. */
+    sub_type?: string;
+    index?: number;
+    parameters: Array<{ type: 'text'; text: string } | { type: 'payload'; payload: string }>;
   }>;
 }
 
