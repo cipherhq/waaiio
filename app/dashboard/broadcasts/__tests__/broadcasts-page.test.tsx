@@ -148,3 +148,59 @@ describe('Broadcasts page audience (#591 Part B)', () => {
     expect(screen.getByText('Promo')).toBeTruthy();
   });
 });
+
+describe('Broadcasts page: why people were left out (#948 follow-up)', () => {
+  const pasteAndAdd = async (numbers: string) => {
+    fireEvent.click(screen.getByText('Import'));
+    fireEvent.change(screen.getByPlaceholderText(/Enter phone numbers/), { target: { value: numbers } });
+    fireEvent.click(screen.getByText('Add to Recipients'));
+  };
+
+  it('campaign respondents who have not opted in are counted in a skipped note (one per number)', async () => {
+    state.searchParams = new URLSearchParams('campaign_id=camp-1');
+    campaignResponse = () => json(200, { campaign_name: 'Promo', responses: [
+      { phone: ADA.phone }, { phone: '+2348039999999' }, { phone: '+2348039999999' }, { phone: '+2348038888888' },
+    ] });
+    render(<BroadcastsPage />);
+    expect(await screen.findByText('Skipped 2 respondents who have not opted in.')).toBeTruthy();
+    expect(screen.getByText('Sending to 1 recipient')).toBeTruthy();
+    expect(screen.queryByText(/could not be confirmed/)).toBeNull();
+  });
+
+  it('explains "Sending to 0 respondents" when no respondent opted in', async () => {
+    state.searchParams = new URLSearchParams('campaign_id=camp-1');
+    campaignResponse = () => json(200, { campaign_name: 'Promo', responses: [{ phone: '+2348039999999' }] });
+    render(<BroadcastsPage />);
+    expect(await screen.findByText('Skipped 1 respondent who has not opted in.')).toBeTruthy();
+    expect(screen.getByText('Promo').closest('p')!.textContent).toMatch(/^Sending to 0 respondents from campaign: Promo/);
+  });
+
+  it('when the opted-in list is capped, unmatched campaign respondents "could not be confirmed"', async () => {
+    recipientsResponse = () => json(200, { recipients: [ADA, BOLA, CHI], truncated: true });
+    state.searchParams = new URLSearchParams('campaign_id=camp-1');
+    campaignResponse = () => json(200, { campaign_name: 'Promo', responses: [{ phone: ADA.phone }, { phone: '+2348039999999' }] });
+    render(<BroadcastsPage />);
+    expect(await screen.findByText('1 respondent could not be confirmed as opted in (your list is too long to check them all here).')).toBeTruthy();
+    expect(screen.queryByText(/not opted in\.$/)).toBeNull();
+  });
+
+  it('when the opted-in list is capped, unmatched imports "could not be confirmed" and the "Showing the first" note stays', async () => {
+    recipientsResponse = () => json(200, { recipients: [ADA, BOLA], truncated: true });
+    render(<BroadcastsPage />);
+    await waitFor(() => screen.getByText('Sending to 2 recipients'));
+    expect(screen.getByText('Showing the first 2 people who opted in.')).toBeTruthy();
+    await pasteAndAdd('+2348039999999\n+2348038888888');
+    expect(await screen.findByText('2 numbers could not be confirmed as opted in (your list is too long to check them all here).')).toBeTruthy();
+    expect(screen.queryByText(/that have not opted in/)).toBeNull();
+    expect(screen.getByText('Sending to 2 recipients')).toBeTruthy();
+  });
+
+  it('when the list is complete, unmatched imports are "not opted in" and there is no "Showing the first" note', async () => {
+    render(<BroadcastsPage />);
+    await waitFor(() => screen.getByText('Sending to 3 recipients'));
+    expect(screen.queryByText(/Showing the first/)).toBeNull();
+    await pasteAndAdd('+2348039999999\n+2348038888888');
+    expect(await screen.findByText('Skipped 2 numbers that have not opted in.')).toBeTruthy();
+    expect(screen.queryByText(/could not be confirmed/)).toBeNull();
+  });
+});

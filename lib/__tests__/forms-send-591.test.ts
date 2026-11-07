@@ -387,6 +387,15 @@ describe('GET /api/forms/recipients — opted-in contacts picker', () => {
     m.db.failReads.add('messaging_opt_outs');
     expect((await get()).status).toBe(503);
   });
+
+  it('says truncated when the consent scan cap is reached (#948 follow-up)', async () => {
+    for (let i = 0; i < 5100; i++) {
+      m.db.tables.customer_consents.push(consent(`+234810${String(i % 102).padStart(7, '0')}`, { created_at: new Date(Date.now() - 3_600_000 - i).toISOString() }));
+    }
+    const body = await (await get()).json();
+    expect(body.contacts.length).toBeLessThan(500);
+    expect(body.truncated).toBe(true);
+  });
 });
 
 describe('Optional "Yes, send me updates" on the public form', () => {

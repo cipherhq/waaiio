@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { PageHelp } from '@/components/dashboard/PageHelp';
-import { filterEligibleAudience, eligibleTags, keepEligible, type EligibleContact } from '@/lib/broadcasts/audience-filter';
+import { filterEligibleAudience, eligibleTags, keepEligible, phoneDigits, type EligibleContact } from '@/lib/broadcasts/audience-filter';
 
 interface BroadcastContact {
   phone: string;
@@ -52,6 +52,19 @@ interface BroadcastUsage {
   tier: string;
 }
 
+/**
+ * Why some numbers were left out. When the opted-in list is capped (truncated), a
+ * number missing from it may still have opted in, so it is "could not be confirmed",
+ * never "not opted in".
+ */
+function skippedNote(n: number, noun: 'number' | 'respondent', listTruncated: boolean): string {
+  const many = n !== 1;
+  if (listTruncated) {
+    return `${n} ${noun}${many ? 's' : ''} could not be confirmed as opted in (your list is too long to check them all here).`;
+  }
+  return `Skipped ${n} ${noun}${many ? 's' : ''} ${noun === 'number' ? 'that' : 'who'} ${many ? 'have' : 'has'} not opted in.`;
+}
+
 export default function BroadcastsPage() {
   const business = useBusiness();
   const capReady = useRequireCapability('broadcast');
@@ -92,7 +105,7 @@ export default function BroadcastsPage() {
   const [importMode, setImportMode] = useState<'csv' | 'paste'>('paste');
   const [pasteInput, setPasteInput] = useState('');
   const [importCount, setImportCount] = useState<number | null>(null);
-  const [campaignBanner, setCampaignBanner] = useState<{ name: string; count: number } | null>(null);
+  const [campaignBanner, setCampaignBanner] = useState<{ name: string; count: number; skipped: number } | null>(null);
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
@@ -190,9 +203,11 @@ export default function BroadcastsPage() {
           const campaignName = data.campaign_name || 'Unknown Campaign';
           const phones: string[] = (data.responses || []).map((r: { phone: string }) => r.phone);
           if (phones.length > 0) {
-            const { kept } = keepEligible(phones, optedIn);
+            // One entry per number, so someone who replied twice is counted once.
+            const unique = Array.from(new Map(phones.map(p => [phoneDigits(p), p])).values());
+            const { kept, skipped } = keepEligible(unique, optedIn);
             setContacts(kept.map(toBroadcastContact));
-            setCampaignBanner({ name: campaignName, count: kept.length });
+            setCampaignBanner({ name: campaignName, count: kept.length, skipped });
           }
         }
       } catch {
@@ -562,6 +577,11 @@ export default function BroadcastsPage() {
               </svg>
               <p className="text-sm text-gray-700 dark:text-gray-300">
                 Sending to <span className="font-semibold">{campaignBanner.count}</span> respondent{campaignBanner.count !== 1 ? 's' : ''} from campaign: <span className="font-semibold">{campaignBanner.name}</span>
+                {campaignBanner.skipped > 0 && (
+                  <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">
+                    {skippedNote(campaignBanner.skipped, 'respondent', eligibleTruncated)}
+                  </span>
+                )}
               </p>
               <button
                 onClick={() => setCampaignBanner(null)}
@@ -663,7 +683,7 @@ export default function BroadcastsPage() {
                           </p>
                           {importSkipped > 0 && (
                             <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
-                              Skipped {importSkipped} number{importSkipped !== 1 ? 's' : ''} that {importSkipped !== 1 ? 'have' : 'has'} not opted in.
+                              {skippedNote(importSkipped, 'number', eligibleTruncated)}
                             </p>
                           )}
                         </div>
