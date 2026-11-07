@@ -14,13 +14,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const rpc = vi.fn();
-const upsert = vi.fn(async () => ({ error: null }));
+const insert = vi.fn(async (_row: Record<string, unknown>) => ({ error: null as null | { code: string; message: string } }));
 let businesses: Array<{ id: string; name: string }> = [];
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (table: string) => {
-      if (table === 'alerts') return { upsert };
+      if (table === 'alerts') return { insert };
       const chain: Record<string, unknown> = {};
       for (const m of ['select', 'eq', 'is', 'or', 'order']) chain[m] = () => chain;
       chain.limit = async () => ({ data: businesses, error: null });
@@ -46,7 +46,7 @@ describe('GET /api/cron/trial-activation', () => {
   beforeEach(() => {
     vi.stubEnv('CRON_SECRET', 'test-cron-secret');
     rpc.mockReset();
-    upsert.mockClear();
+    insert.mockReset(); insert.mockImplementation(async () => ({ error: null }));
     businesses = [];
   });
   afterEach(() => { vi.unstubAllEnvs(); });
@@ -70,15 +70,29 @@ describe('GET /api/cron/trial-activation', () => {
     expect(rpc).toHaveBeenCalledWith('activate_trial_if_eligible', { p_business_id: 'biz-1' });
   });
 
-  it('while charging is off it grants nothing and raises one deduplicated alert', async () => {
+  it('while charging is off it grants nothing and inserts one pending alert (plain insert, no upsert)', async () => {
     businesses = [{ id: 'biz-2', name: 'Cafe' }];
     rpc.mockImplementation(async (name: string) => name === 'activate_trial_if_eligible'
       ? { data: { activated: false, reason: 'financial_gate_off' }, error: null }
       : { data: [], error: null });
     const { GET } = await import('@/app/api/cron/trial-activation/route');
     const res = await GET(request('Bearer test-cron-secret'));
-    expect(await res.json()).toMatchObject({ activated: 0, pending: 1 });
-    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ business_id: 'biz-2', type: 'trial_config_missing' }),
-      { onConflict: 'business_id,type', ignoreDuplicates: true });
+    expect(await res.json()).toMatchObject({ activated: 0, pending: 1, errors: 0 });
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert.mock.calls[0][0]).toMatchObject({ business_id: 'biz-2', type: 'trial_config_missing', severity: 'warning' });
+  });
+
+  it('an existing pending alert (23505 from uq_trial_pending_alert) is treated as already alerted', async () => {
+    businesses = [{ id: 'biz-3', name: 'Barber' }];
+    insert.mockImplementation(async () => ({ error: { code: '23505', message: 'duplicate key value violates unique constraint "uq_trial_pending_alert"' } }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    rpc.mockImplementation(async (name: string) => name === 'activate_trial_if_eligible'
+      ? { data: { activated: false, reason: 'financial_gate_off' }, error: null }
+      : { data: [], error: null });
+    const { GET } = await import('@/app/api/cron/trial-activation/route');
+    const res = await GET(request('Bearer test-cron-secret'));
+    expect(await res.json()).toMatchObject({ activated: 0, pending: 1, errors: 0 });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

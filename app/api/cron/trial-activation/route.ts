@@ -106,17 +106,21 @@ export async function GET(request: NextRequest) {
             reason === 'invalid_trial_days' ||
             reason === 'financial_gate_off'
           ) {
-            await supabase.from('alerts').upsert(
-              {
-                business_id: biz.id,
-                type: 'trial_config_missing',
-                severity: 'warning',
-                title: 'Trial activation pending',
-                message: `Trial could not be activated: ${reason}. Configure platform settings to resolve.`,
-                metadata: { reason, cron_run: new Date().toISOString() },
-              },
-              { onConflict: 'business_id,type', ignoreDuplicates: true },
-            );
+            // One alert per business: uq_trial_pending_alert (M372) is a partial
+            // unique index (WHERE type = 'trial_config_missing'), which an
+            // upsert's ON CONFLICT cannot target, so insert and treat a
+            // duplicate (23505) as "already alerted".
+            const { error: alertErr } = await supabase.from('alerts').insert({
+              business_id: biz.id,
+              type: 'trial_config_missing',
+              severity: 'warning',
+              title: 'Trial activation pending',
+              message: `Trial could not be activated: ${reason}. Configure platform settings to resolve.`,
+              metadata: { reason, cron_run: new Date().toISOString() },
+            });
+            if (alertErr && alertErr.code !== '23505') {
+              console.warn(`[TRIAL-ACTIVATION-CRON] alert insert error for ${biz.id}:`, alertErr.message);
+            }
           }
         }
       } catch (err) {
