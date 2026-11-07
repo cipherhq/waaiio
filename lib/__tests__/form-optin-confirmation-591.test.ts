@@ -177,23 +177,35 @@ describe('confirmation handler: rows and the permission gate', () => {
     expect(lastReply()).toMatchObject({ body: expect.stringContaining("You're subscribed"), buttons: [{ id: 'menu', title: 'Main menu' }], footer: 'Powered by Waaiio.com' });
   });
 
-  it('No appends revoked marketing and utility rows and the gate stays closed', async () => {
+  it('No appends a revoked marketing row only ("Promotions only") and the marketing gate stays closed', async () => {
     const nonce = newOptInNonce();
     seedRequest(A, nonce);
     expect(await tap(nonce, { answer: 'no' })).toBe(true);
     const revoked = consents().filter(r => r.status === 'revoked');
-    expect(revoked.map(r => r.purpose)).toEqual(['marketing', 'utility']);
+    expect(revoked.map(r => r.purpose)).toEqual(['marketing']);
+    expect(consents().some(r => r.purpose === 'utility')).toBe(false);
     expect(revoked.every(r => r.source === 'whatsapp' && typeof r.revoked_at === 'string')).toBe(true);
     expect(granted()).toEqual([]);
     expect(await allowed(A)).toBe(false);
     expect(lastReply().body).toContain('will not send you updates');
   });
 
+  it('No leaves an existing utility grant in place: the utility gate still passes', async () => {
+    const nonce = newOptInNonce();
+    consents().push({ id: 'util', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'utility', status: 'granted', source: 'checkout', expires_at: null, created_at: ago(2 * HOUR) });
+    seedRequest(A, nonce);
+    expect(await allowed(A, 'utility')).toBe(true);
+    await tap(nonce, { answer: 'no' });
+    expect(consents().filter(r => r.purpose === 'utility')).toHaveLength(1);
+    expect(await allowed(A, 'utility')).toBe(true);
+    expect(await allowed(A, 'marketing')).toBe(false);
+  });
+
   it('"No thanks" on a request older than 30 days still records the decline', async () => {
     const nonce = newOptInNonce();
     seedRequest(A, nonce, 31 * DAY);
     await tap(nonce, { answer: 'no' });
-    expect(consents().filter(r => r.status === 'revoked').map(r => r.purpose)).toEqual(['marketing', 'utility']);
+    expect(consents().filter(r => r.status === 'revoked').map(r => r.purpose)).toEqual(['marketing']);
     expect(lastReply().body).toContain('will not send you updates');
   });
 
@@ -732,7 +744,7 @@ describe('Meta webhook: template quick replies and interactive buttons', () => {
     seedRequest(A, nonce);
     await inbound({ type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: `optin_no:${nonce}`, title: 'No thanks' } } });
     expect(m.bot).not.toHaveBeenCalled();
-    expect(consents().filter(r => r.status === 'revoked')).toHaveLength(2);
+    expect(consents().filter(r => r.status === 'revoked').map(r => r.purpose)).toEqual(['marketing']);
   });
 
   it('ordinary interactive buttons still go to the bot', async () => {

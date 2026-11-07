@@ -15,7 +15,7 @@
     - The business comes only from the matching pending row for the Meta-verified sender, and the tap must arrive on that business's sending number.
     - Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business.
     - Nothing is granted when there is a STOP newer than the request, or any global opt-out (the global-opt-out refusal was accepted by the Owner 2026-11-06).
-    - No writes revoked rows, even for a request older than 30 days.
+    - No writes one revoked `marketing` row only, even for a request older than 30 days (Owner decision 2026-11-06, "Promotions only"). Existing utility consent is left as it is.
     - A Yes on a request older than 30 days, a stale request or an unknown nonce gets an "expired" reply.
     - Typed text is never accepted.
   - **Webhook.** The Meta webhook now reads template quick-reply taps (`type: 'button'`) only when the payload matches `optin_(yes|no):<nonce>`. Every other template button is still dropped.

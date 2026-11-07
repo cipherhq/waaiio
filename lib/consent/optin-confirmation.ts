@@ -283,9 +283,11 @@ export async function handleOptInConfirmation(input: {
     };
 
     if (match[1] === 'no') {
-      const { error } = await db.from('customer_consents').insert(['marketing', 'utility'].map(purpose => ({
-        ...base, purpose, status: 'revoked', revoked_at: nowIso,
-      })));
+      // Owner decision 2026-11-06 ("Promotions only"): a decline revokes marketing only;
+      // any existing utility permission is left as it is.
+      const { error } = await db.from('customer_consents').insert({
+        ...base, purpose: 'marketing', status: 'revoked', revoked_at: nowIso,
+      });
       if (error) {
         logger.warn('[OPTIN] Decline not recorded:', error.message);
         await reply({ body: 'Sorry, we could not save your answer. Please tap the button again.', buttons: MENU_BUTTONS, footer });
