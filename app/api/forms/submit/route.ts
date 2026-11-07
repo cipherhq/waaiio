@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
+import { verifyTurnstileToken } from '@/lib/security/turnstile';
 import { OPTIN_POLICY_VERSION, OPTIN_REQUEST_TTL_MS, SENT_REQUEST_RE, newOptInNonce, pendingEvidence, sendOptInConfirmationRequest } from '@/lib/consent/optin-confirmation';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'form-submit'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
-    const { token, answers, customer_name, customer_phone, customer_email, marketing_opt_in } = await request.json();
+    const { token, answers, customer_name, customer_phone, customer_email, marketing_opt_in, turnstileToken } = await request.json();
 
     if (!token || !answers || typeof answers !== 'object') {
       return NextResponse.json({ error: 'Token and answers required' }, { status: 400 });
@@ -88,6 +89,12 @@ export async function POST(request: NextRequest) {
       if (typeof value === 'string' && value.length > 5000) {
         return NextResponse.json({ error: `Answer for "${key}" is too long (max 5000 characters)` }, { status: 400 });
       }
+    }
+
+    // Bot check (Cloudflare Turnstile). Fails closed, and runs before anything is read or saved.
+    const botCheck = await verifyTurnstileToken(turnstileToken);
+    if (!botCheck.ok) {
+      return NextResponse.json({ error: botCheck.error }, { status: botCheck.status });
     }
 
     const supabase = createServiceClient();

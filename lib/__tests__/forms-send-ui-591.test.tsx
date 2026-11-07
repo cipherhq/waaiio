@@ -14,8 +14,18 @@ import PublicFormPage from '@/app/form/[token]/page';
 import { FormSendPanel } from '@/components/dashboard/forms/FormSendPanel';
 
 const fetchMock = vi.fn();
-beforeEach(() => { fetchMock.mockReset(); globalThis.fetch = fetchMock as unknown as typeof fetch; });
-afterEach(() => cleanup());
+let botCheckPassed = false;
+beforeEach(() => {
+  botCheckPassed = false;
+  fetchMock.mockReset();
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  // Bot check passes at once here; form-turnstile-ui.test.tsx covers the widget itself.
+  (window as unknown as { turnstile: unknown }).turnstile = {
+    render: (_el: HTMLElement, opts: { callback: (t: string) => void }) => { opts.callback('test-token'); botCheckPassed = true; return 'w'; },
+    reset: () => {}, remove: () => {},
+  };
+});
+afterEach(() => { cleanup(); delete (window as unknown as { turnstile?: unknown }).turnstile; });
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 
 const publicForm = (optIn: boolean) => ({
@@ -38,6 +48,7 @@ describe('public form "Yes, send me updates" box', () => {
     const box = await screen.findByTestId('marketing-opt-in') as HTMLInputElement;
     expect(box.checked).toBe(false);
     expect(screen.getByText(/Yes, send me updates from Ada Salon on WhatsApp/)).toBeTruthy();
+    await waitFor(() => expect(botCheckPassed).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ marketing_opt_in: false });
