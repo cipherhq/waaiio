@@ -15,6 +15,7 @@ import { resolveProactiveLocalization } from '@/lib/payments/proactive-localizat
 import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
 import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
+import { updatesOptInRowFor } from '@/lib/bot/customer-updates-optin';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -446,11 +447,15 @@ export async function sendProactiveConfirmation(
   let isWl = false;
   let subscriptionTier: string | null = null;
   let businessIsWhitelabel: boolean | null = null;
+  // Set only when this lookup succeeds: the updates opt-in names Waaiio only
+  // when the business's branding is known.
+  let optInBusinessName: string | null = null;
   try {
-    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier, is_whitelabel').eq('id', businessId).single();
+    const { data: bizTier } = await supabase.from('businesses').select('name, subscription_tier, is_whitelabel').eq('id', businessId).single();
     const { isWhiteLabel } = await import('@/lib/whitelabel');
     subscriptionTier = (bizTier?.subscription_tier as string | null | undefined) ?? null;
     businessIsWhitelabel = (bizTier?.is_whitelabel as boolean | null | undefined) ?? null;
+    optInBusinessName = (bizTier?.name as string | null | undefined) ?? null;
     isWl = isWhiteLabel(subscriptionTier);
   } catch { /* non-critical */ }
 
@@ -898,13 +903,37 @@ export async function sendProactiveConfirmation(
               // retry never repeats it. Its own try/catch: a menu failure must not
               // mark the already-accepted confirmation as failed.
               try {
-                await resolved.sender.sendButtons({
-                  to: phone,
-                  body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
-                  buttons: buildPaymentNextStepsButtons(nextStepsKind, nextStepsShared, proactiveLanguage),
-                  footer: getPoweredByInteractiveFooter(subscriptionTier, businessIsWhitelabel),
-                  messageCategory: 'service',
+                const nextStepsButtons = buildPaymentNextStepsButtons(nextStepsKind, nextStepsShared, proactiveLanguage);
+                const menuFooter = getPoweredByInteractiveFooter(subscriptionTier, businessIsWhitelabel);
+                // Owner decision 2026-11-06: one tap for offers and updates from this
+                // business (and Waaiio) until the customer agrees. Buttons have no
+                // description, so when offered the same options go in a list.
+                const optInRow = await updatesOptInRowFor(supabase, {
+                  phone, lang: proactiveLanguage, source: 'menu',
+                  business: businessId && optInBusinessName ? {
+                    id: businessId, name: optInBusinessName,
+                    subscription_tier: subscriptionTier, is_whitelabel: businessIsWhitelabel,
+                  } : null,
                 });
+                if (optInRow) {
+                  await resolved.sender.sendList({
+                    to: phone,
+                    title: getFlowCopy(proactiveLanguage, 'menu.title'),
+                    body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
+                    buttonLabel: getFlowCopy(proactiveLanguage, 'nav.view_options'),
+                    items: [optInRow, ...nextStepsButtons.map(b => ({ title: b.title, postbackText: b.id }))],
+                    footer: menuFooter,
+                    messageCategory: 'service',
+                  });
+                } else {
+                  await resolved.sender.sendButtons({
+                    to: phone,
+                    body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
+                    buttons: nextStepsButtons,
+                    footer: menuFooter,
+                    messageCategory: 'service',
+                  });
+                }
               } catch (menuErr) {
                 logSafeError(logPrefix, 'next-steps-menu', menuErr);
               }

@@ -73,7 +73,9 @@ type Due = {
  * Sends scheduled form invitations (#591).
  * - Each due send is claimed with a status-guarded update that must return its row,
  *   so overlapping runs send it once.
- * - Consent and opt-outs are checked again for every recipient now.
+ * - Consent, opt-outs and the 24-hour window are checked again for every recipient
+ *   now (sendFormInvites → classifyRecipient). Someone accepted only because they had
+ *   messaged the business is skipped if that window has closed, never templated.
  * - People not reached before the run's time budget are put back in the queue,
  *   never dropped; a send left in "sending" by a killed run is marked interrupted
  *   and never re-sent.

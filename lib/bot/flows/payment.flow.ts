@@ -4,7 +4,7 @@ import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constan
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { notifyOwnerNewPayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
@@ -217,7 +217,7 @@ export const paymentFlow: FlowDefinition = {
         const amount = d.amount as number;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const requireTerms = amount > 0 && meta.require_terms_before_payment !== false;
-        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsUrl = getBusinessTermsUrl(ctx.business);
 
         const summaryLines = [
           `📋 *${summaryTitle}*`,

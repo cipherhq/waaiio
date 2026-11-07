@@ -39,6 +39,7 @@ vi.mock('@/lib/bot/flows/shared/bank-transfer', () => ({
 
 vi.mock('@/lib/bot/flows/shared/terms', () => ({
   getTermsPrompt: vi.fn(() => [{ type: 'text', text: 'Terms prompt' }]),
+  getBusinessTermsUrl: vi.fn(() => 'https://www.waaiio.com/t/test'),
 }));
 vi.mock('@/lib/bot/flows/shared/templates', () => ({
   getOrderConfirmationMessage: vi.fn(() => 'Order summary'),
