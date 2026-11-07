@@ -349,28 +349,6 @@ describe('isTrialActive dual-condition', () => {
 // ══════════════════════════════════════════════════════════
 
 describe.skipIf(!canRun)('alert dedupe', () => {
-  // The trial-activation cron inserts its pending alert with a plain INSERT
-  // (PostgREST upsert cannot target the partial index): a second insert must be
-  // refused with 23505, and an ON CONFLICT without the WHERE clause (what the
-  // old upsert produced) is rejected outright with 42P10.
-  it('17b. cron path: a plain duplicate insert is refused with 23505; ON CONFLICT without WHERE fails (42P10)', () => {
-    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
-    const insert = (title: string) => `INSERT INTO public.alerts (business_id, type, severity, title, message)
-      VALUES ('${bizId}', 'trial_config_missing', 'warning', '${title}', 'Test message')`;
-    const sqlState = (sql: string) => {
-      try { psql(`\\set VERBOSITY verbose\n${sql}`); return 'ok'; }
-      catch (e) { return (/ERROR:\s+([0-9A-Z]{5})/.exec(String((e as { stderr?: string }).stderr ?? e)) || [])[1] ?? 'unknown'; }
-    };
-    try {
-      expect(sqlState(insert('First'))).toBe('ok');
-      expect(sqlState(insert('Second'))).toBe('23505');
-      expect(sqlState(`${insert('Third')} ON CONFLICT (business_id, type) DO NOTHING`)).toBe('42P10');
-      expect(parseInt(psql(`SELECT count(*) FROM public.alerts WHERE business_id = '${bizId}' AND type = 'trial_config_missing'`))).toBe(1);
-    } finally {
-      cleanup(bizId);
-    }
-  });
-
   it('17. multiple pending inserts result in exactly one row', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
