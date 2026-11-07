@@ -1,3 +1,181 @@
+## 2026-11-07 — Schedule the trial-credit activation job (before message charging is switched on)
+
+**Why:** the Owner chose to make message charging safe before switching it on ("Make it safe first", 2026-11-07).
+- Trial message credit is granted by `activate_trial_if_eligible`. It is called when a business goes live (`app/api/onboarding/verify`, `app/api/whatsapp/embedded-signup`) and when an owner verifies a phone on `/dashboard/claim-credit` (#955).
+- While `messaging_financial_gate` is off, it answers `financial_gate_off` and grants nothing.
+- The only retry is `/api/cron/trial-activation`, and it was never in `vercel.json`. It was not in the database scheduler either (`cron.job` holds only chat-timeout and session-cleanup).
+- So with charging switched on, businesses that went live or verified a phone earlier would never get their trial credit, and their messages would be blocked (`insufficient_allowance_balance`). The claim page's "added automatically when message billing starts" depends on this job.
+
+**What changed**
+- `vercel.json`: `/api/cron/trial-activation` runs hourly at :30.
+- `lib/__tests__/trial-activation-cron-schedule.test.ts` (new) checks:
+  - the schedule entry;
+  - that the route refuses a request without the cron secret;
+  - that it activates an eligible business;
+  - that while charging is off it grants nothing.
+
+**Unchanged:** the route code, `activate_trial_if_eligible`, trial amounts, the one-trial-per-owner and per-phone rules, and every other cron.
+
+**Effect while charging is off:**
+- Each run finds free, active businesses without a trial. They get `financial_gate_off` (or `phone_not_verified`), and nothing is granted.
+- A business whose owner already has a trial is marked ineligible and leaves the queue.
+
+**Known limits (follow-ups):**
+- **The "Trial activation pending" alert is never written.** The route writes it with an upsert on `business_id,type`, but the matching unique index (`uq_trial_pending_alert`, M372) is partial, so Postgres refuses the upsert (42P10). The route ignores that result. The fix is a plain insert that treats a duplicate as already alerted. It was left out of this PR because writing the alert would show a new banner to merchants, and who sees it and its wording are an Owner decision.
+- **The job takes the oldest 100 waiting businesses each run.** Sign-ups that never verify a phone are never marked done, so once there are more than 100 of them, owners who did verify could stop being reached. This needs fixing before many sign-ups arrive with charging on.
+- **The one-trial-per-owner check counts only current (v2) trial grants, not older clock-only trials.** A second business of an owner whose earlier trial was clock-only can still get a trial once its owner's phone is verified.
+- **Legacy reconciliation (Phase 2) does not re-check status, owner or phone.**
+  - It matches 0 rows on production today.
+  - Since #955, WhatsApp Flow sign-ups no longer get a hand-set trial clock, so new sign-ups no longer enter it.
+
+**Could break:** one more cron run an hour; nothing else. The route fails closed without `CRON_SECRET`, and production answers 401, so the secret is set.
+
+## 2026-11-07 — Release V3: re-certify the last release after a same-code redeploy
+
+**Why:** release #5 prepare (run 42320623698) stopped with "Production merchant is not serving the last certified release (stale or uncertified baseline)".
+- On 2026-11-06 at 03:28 UTC, after the Owner changed the production Stripe keys, the merchant site was rebuilt by CLI at release #4's own SHA `466e0691` (deployment `dpl_9jdnT2Lx…`).
+- The code was the same, but it was a different deployment from the one in release #4's record (`dpl_GGSn7F8F…`).
+- The documented recovery ("reviewed lock update") had no effect, because prepare reads the lock only when no release record exists.
+- Rolling back would bring back the old Stripe keys.
+
+**What changed**
+- `scripts/release-v3/lock.json`: new `recertified` entry (Owner-approved 2026-11-07). It names deploy run 42136027063, SHA `466e0691`, the merchant deployment now serving (sha256 `bc8a5005…`), and the unchanged admin deployment (`73dbe116…`).
+- `scripts/release-v3/admission.mjs` `loadLock`: accepts an optional `recertified` with exactly these keys and valid values; anything else fails closed.
+- `scripts/release-gate-v3.mjs`: `certifiedBaseline` passes the last record through the new `applyRecertification`. The lock entry replaces the record's deployment hashes only when it names exactly the newest successful deploy run and that run's SHA. A different SHA fails closed. An entry for an older run is ignored. The packet's `certified_by` says "lock re-certification after release-deploy run N".
+- `docs/RELEASE_V3_GATE.md`: "Same-code redeploy" under Recovery.
+
+**Unchanged:** every other prepare and deploy check (CI, staging, database admission, reviews, lane, packet, single use, deploy identity); mixed baselines (still lock `certified` only); rollback rules; migrations, app code.
+
+**Tests:** `scripts/__tests__/release-v3-gate.test.ts` covers `certifiedBaseline` with a real release-record zip (record only, matching re-certification, older run ignored, other SHA refused). `scripts/__tests__/release-v3-admission.test.ts` covers the committed entry and malformed entries.
+
+**Could break:** nothing outside the release gate. A wrong deployment hash in the entry would make prepare stop again (fail closed).
+
+## 2026-11-07 — Verify your phone number to claim the free messaging credit
+
+- **What changed (Owner decisions 2026-11-07):** sign-up stays smooth with no phone step. Afterwards, the owner verifies a phone number to claim the free messaging (trial) credit, like the "add bank account" step.
+  - **Which numbers count:** any number the owner gets WhatsApp messages on, either their personal number or their everyday business number. A number connected to Waaiio (any active `whatsapp_channels` row) is refused, because it can't receive the code.
+  - **Numbers already in use:** a number already on another Waaiio login is refused for now ("rule B"). Moving a number off a customer-only login is a follow-up.
+  - **New sign-ups only:** existing businesses are not back-filled.
+- **Server.**
+  - New `POST /api/trial-credit/claim`:
+    - Requires ownership of `business_id`.
+    - `check: true` only refuses a number connected to Waaiio, before any code is sent (limited to 10 checks per 10 minutes per login).
+    - Otherwise it verifies the code with the existing `verifyPhoneOtp`, using the same 5 per 15 minutes per-phone limit and the brute-force counters as the login code. It then saves the number as the login's confirmed phone (`updateUserById {phone, phone_confirm: true}`) and runs the normal trial check `activate_trial_if_eligible` (M465) with all of its rules.
+    - It never replaces a different phone already confirmed on the login.
+    - Returns `{verified, credited, reason}`.
+  - New `GET /api/trial-credit/status` (owner only, read-only) returns:
+    - `phone_verified` and `credited` (this business's `trial_grant`/`trial_v2` row)
+    - the credit amount for the business's currency
+  - Helpers live in `lib/trial-credit/verified-phone.ts`.
+- **Dashboard.**
+  - New page `/dashboard/claim-credit` (`app/dashboard/claim-credit/page.tsx`), with the Owner-agreed copy.
+  - New first "Getting started" item, "Claim your free messaging credit" (`components/dashboard/OnboardingChecklist.tsx`). It is done once the number is verified or the credit was added.
+  - While message billing is off, the page says "Phone verified. Your free credit will be added automatically when message billing starts." The hourly trial-activation job adds it then, once that job is scheduled (PR #954). If another of the owner's businesses already has the free credit, the page says so instead.
+- **WhatsApp Flow sign-up** (`app/api/whatsapp/flow-callback/onboarding.ts`; only reachable where channel operations are enabled): the hand-set 30-day `trial_ends_at` is removed. These owners claim the credit on `/dashboard/claim-credit` like everyone else. The number in the flow token is not treated as verified: it is plain text echoed back by the client, not signed by Waaiio.
+- **Tests:**
+  - `lib/__tests__/trial-credit-claim.test.ts`
+  - `lib/__tests__/trial-credit-status.test.ts`
+  - `lib/__tests__/claim-credit-ui.test.tsx` (rendered checklist and page)
+  - `lib/__tests__/flow-onboarding-no-hand-set-trial.test.ts`
+  - The two existing checklist suites now stub the status call as already done, and their step counts gained the new step.
+- **What could break:**
+  - Every visible "Getting started" checklist gains one step, so the counts shift by one.
+  - A Flow sign-up no longer gets a trial end date at sign-up. Its WhatsApp and email welcome text still mention a 30-day trial; that wording is unchanged and needs an Owner decision.
+  - Supabase Auth phone uniqueness is the "one number, one login" rule. A merchant who once messaged a Waaiio bot as a customer already has their number on a customer login, and must use a different number until the follow-up lands.
+  - **Known limits (follow-ups):**
+    - The hourly trial-activation job picks the oldest 100 free, active businesses with no trial. Sign-ups that never verify stay in that batch, so at larger scale they could crowd out verified owners waiting for billing to start.
+    - A claimed number does not yet work for "log in with phone". `profiles.phone` is not set, so that login tries to create a new account and fails.
+    - The status amount reads `trial_credit_minor_by_currency` directly, not the versioned config the RPC uses. This only affects what is displayed.
+    - "One credit per number" relies on Supabase Auth's exact phone match, so number variants are not merged.
+    - Phone login with a claimed number signs the owner into their account and, as phone login already does today, replaces their password. An email-and-password owner who later uses phone login loses their email password.
+    - The connected-number check reads active channels in one query (default row limit about 1000).
+  - No database change.
+
+## 2026-11-06 — Broadcasts: say why people were skipped, and "could not be confirmed" when the list is capped (#948 follow-up)
+
+**Problem:** two copy gaps the #948 reviewers raised (P2s, Owner approved a follow-up).
+1. Keyword-campaign respondents who had not opted in were dropped silently: the banner read "Sending to {kept} respondents", or "Sending to 0 respondents", with no reason.
+2. The opted-in list is capped at 500 people and at a 5,000-row consent scan. Hitting the scan cap left `truncated` false, and with a capped list the page still called unmatched imported numbers "not opted in" although they might have opted in.
+
+**What changed**
+- `lib/forms/opted-in-contacts.ts`: `listOptedInContacts` sets `truncated: true` when the consent scan stops at `MAX_CONSENT_ROWS` with rows possibly unread (a full last page), as well as when more than 500 people are eligible. `MAX_CONSENT_ROWS` is exported for tests. Who is listed is unchanged.
+- `app/dashboard/broadcasts/page.tsx`: the campaign banner adds "Skipped N respondents who have not opted in." (respondents counted once per number). When the opted-in list is truncated, unmatched campaign respondents and pasted/CSV numbers read "N … could not be confirmed as opted in (your list is too long to check them all here)." instead of "not opted in". When not truncated the "not opted in" wording is kept. The "Showing the first N people who opted in." note is unchanged and now also shows at the scan cap.
+- `components/dashboard/forms/FormSendPanel.tsx`: the capped-list label says "showing the first {count}" instead of a fixed "500", since the scan cap can cap the list below 500.
+- `/api/broadcasts/recipients` and `/api/forms/recipients` already pass `truncated` through unchanged; tests now prove it at the scan cap.
+
+**Unchanged:** send, schedule and cron routes; `hasRecipientPermission`; consent rules; who is included in any audience; the Forms picker's behaviour.
+
+**Tests:** `lib/__tests__/opted-in-contacts-scan-cap.test.ts` (new), plus additions to `lib/__tests__/broadcasts-recipients-591b.test.ts`, `lib/__tests__/forms-send-591.test.ts`, `lib/__tests__/forms-send-ui-591.test.tsx`, `app/dashboard/broadcasts/__tests__/broadcasts-page.test.tsx`.
+
+**Could break:** nothing functional. A business with exactly 5,000 consent rows will see the "capped" wording although nothing was missed (the scan cannot tell without another read).
+
+## 2026-11-06 — Bot: typed "updates" and My Account "Get updates" (#591 Part B)
+
+Owner decisions 2026-11-06 on #591: Q6, customers can ask for updates in **My Account** and by typing **"updates"** (or "get updates"), but not from the main menu; Q1, one Yes covers marketing **and** utility; Q3, STOP wins. This reuses #942's `recordUpdatesOptIn`; there is no migration.
+
+- **What changed**
+  - `lib/bot/customer-updates-optin.ts`: new sources `keyword` and `account`, with evidence values `bot_updates_keyword` and `bot_my_account_menu`.
+    - `askUpdatesOptIn` sends the confirmation "Get offers and updates from {Business} (and Waaiio) on WhatsApp? You can reply STOP any time." with **Yes, get updates** / **No thanks**. If the customer already agreed or unsubscribed, it uses the #942 wording instead. It records nothing.
+    - `handleUpdatesConfirmTap` handles the Yes, whose id is `updates_yes:<keyword|account>:<businessId>`. It records only on a real button tap, and only when the id's business is the business of the chat the customer is in now. Otherwise it records nothing and replies "That option is no longer available".
+    - `updatesAccountRowFor` builds the My Account row. It uses the same who-sees-it rule as the #942 row.
+    - #942's own tap ids (`menu`/`welcome`) and hook are unchanged.
+  - `lib/bot/bot.service.ts`:
+    - **Typed keyword.** Handled in the unified-keyword block, under the same free-text and step-owned guards as every other keyword. The business is the chat session's business only.
+    - **No business yet (shared number).** Typing the keyword before a business is chosen replies "Choose a business first…", unless a business's code is "updates".
+    - **Yes / No thanks taps.** Handled right after the global queries, and they leave the chat session as it was. A recorded Yes, or a No thanks, ends with the next-steps menu (My Account if the customer has an account, View Options, Search directory on a shared number) and "Powered by Waaiio.com" (hidden for white-label).
+  - `lib/bot/flows/capability-selection.flow.ts`: My Account gets "🎁 Get updates" as its last row before Back. The row is added only if it fits within WhatsApp's 10-row limit; it never pushes an existing row out. It is hidden once the customer has agreed or after a STOP. Tapping it sends the same confirmation and keeps the chat on My Account without re-sending the list.
+  - `lib/bot/flows/flow-localization.ts`: 7 new `updates.*` keys in all 8 locales, added to the button, list, placeholder, command and native-review registries.
+  - `lib/__tests__/helpers/memory-db.ts`: case-insensitive `ilike` (no wildcards), for the bot-code check.
+- **Owner decision 2026-11-06 (relayed by the coordinator): latest row wins.** An earlier "No thanks" (a `revoked` marketing or utility consent) no longer blocks a later explicit Yes on any opt-in path: the #942 menu and welcome rows, the typed-keyword confirmation, and My Account.
+  - `recordUpdatesOptIn` now appends granted marketing + utility rows over a revoked one.
+  - Unchanged: `granted` still returns `already`; an active STOP (business or global) still blocks and returns `opted_out`; the channel and business checks are the same.
+  - A revoked customer still does not get the offer row shown again (#942's visibility rule is unchanged). The typed keyword asks them as usual.
+  - #942's tests that asserted "revoked blocks" were updated to the new behaviour, and a test was added for revoked plus an active STOP, which is still blocked.
+- **Unchanged:** the main menu (#507), payment code, #942's menu and welcome rows, STOP/START words, and Forms/broadcasts.
+- **What could break:**
+  - A merchant keyword "updates" is now answered by this built-in word first.
+  - A customer on a business's own number with no open chat who types "updates" gets the normal welcome, not the confirmation.
+  - With many My Account rows (9 or more before Back), the row is not shown; typing "updates" still works.
+
+## 2026-11-06 — Forms: confirm "send me updates" on WhatsApp (#591, Owner option C part B1)
+
+- **What changed (Owner decisions 2026-11-06, issue #591):**
+  - **Recording a tick.** A ticked "send me updates" box on a public form records a pending request: `evidence_reference = form:<formId>|confirm:<sha256(nonce)>`, `policy_version = 'optin-v1'`. The 32-byte nonce is never stored. A request that was actually delivered gets `|sent:<iso>` appended.
+  - **Re-ticks.** A re-tick adds no new row when the latest record is granted, or is a live request (pending, sent, at most 30 days old). Owner decision 2026-11-06: an expired request, a request that was never sent, or a pre-release tick does not block a fresh tick. A new request is recorded and sent, and the old one becomes stale.
+  - **Opted-out numbers** (business or global) are not recorded and nothing is sent to them: from a form tick, a customer who sent STOP is never sent a request, so they re-subscribe via START or the in-chat opt-in. Uniform opt-in response: every valid ticked number gets `optInPending: true`.
+  - **Q7.** Ticks recorded before this release get no message unless the customer ticks again.
+  - **Sending the request.** After the response is saved (`after()`), Waaiio asks the typed number to confirm:
+    - Inside THIS business's own 24-hour window (the shared `businessChatWindowState` rule), it sends free-form "Yes, send updates" / "No thanks" buttons, in a single attempt (`sendButtons` gains `noRetry`).
+    - Otherwise, only on Waaiio's shared number, it sends the template `waaiio_updates_optin_v1` (`en`), when APPROVED.
+    - Otherwise, including when the window cannot be read, nothing is sent and the request stays pending.
+    - Nothing is sent to a phone with 3 or more requests in the last 24 hours, or once a business has 200 requests today (UTC).
+    - A send failure never fails the submit.
+  - **Handling the tap.** New `lib/consent/optin-confirmation.ts` handles the tap. It is called from the verified Meta webhook right after the merchant-alert opt-in and before the bot.
+    - The business comes only from the matching pending row for the Meta-verified sender, and the tap must arrive on that business's sending number.
+    - Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business (kept only as a race guard, since opted-out numbers are never sent a request).
+    - Nothing is granted when there is a STOP newer than the request, or any global opt-out (the global-opt-out refusal was accepted by the Owner 2026-11-06).
+    - No writes one revoked `marketing` row only, even for a request older than 30 days (Owner decision 2026-11-06, "Promotions only"). Existing utility consent is left as it is.
+    - A Yes on a request older than 30 days, a stale request or an unknown nonce gets an "expired" reply.
+    - Typed text is never accepted.
+  - **Webhook.** The Meta webhook now reads template quick-reply taps (`type: 'button'`) only when the payload matches `optin_(yes|no):<nonce>`. Every other template button is still dropped.
+  - **Sender.** `MessageSender.sendTemplate` gains `quickReplyPayloads` (button components with `sub_type: 'quick_reply'`), and `CloudTemplateMessage` types are widened to match.
+- **Files:**
+  - `lib/consent/optin-confirmation.ts` (new)
+  - `app/api/forms/submit/route.ts`
+  - `app/api/webhook/meta-cloud/route.ts`
+  - `lib/channels/message-sender.ts`
+  - `lib/channels/meta-cloud.ts`
+  - `lib/__tests__/helpers/memory-db.ts` (adds `like`)
+  - `lib/__tests__/forms-send-591.test.ts` (new evidence format)
+  - `lib/__tests__/form-optin-confirmation-591.test.ts` (new)
+  - `lib/__tests__/optin-template-quick-reply-591.test.ts` (new)
+- **No migration.** `customer_consents` CHECKs already allow `source 'whatsapp'` and status `pending`/`granted`/`revoked`. `evidence_reference` is plain text. Writes use the service role.
+- **Owner action:** submit the `waaiio_updates_optin_v1` template on the platform account (definition in the PR). Until it is approved, only in-window confirmations go out. Dedicated numbers only ever get in-window confirmations.
+- **Could break:**
+  - Template buttons other than opt-in payloads are unchanged (still dropped).
+  - A customer who ticks the box on many businesses' forms in one day gets at most 3 requests.
+  - `sendButtons` keeps retrying by default; only callers that pass `noRetry` get a single attempt.
+
 ## 2026-11-06 — Broadcasts page shows only people who opted in (#591 Part B)
 
 **Problem:** the Broadcasts page built its audience and "Sending to N" count from `customer_profiles.notification_opt_in`, which defaults to true (migration 021). The send routes (`/api/broadcasts/send`, `/api/broadcasts/schedule`, the scheduled-broadcasts cron) only message people whose latest WhatsApp **marketing** consent for the business is granted, unexpired and not opted out (`hasRecipientPermission(..., 'marketing')`). So the page promised N people while the server sent to the granted subset, often none. People who opted in without a profile never appeared.
