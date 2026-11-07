@@ -61,3 +61,30 @@ describe('sendTemplate quick-reply payloads', () => {
     expect(body.template.components).toEqual([{ type: 'body', parameters: [{ type: 'text', text: 'Test Shop' }] }]);
   });
 });
+
+describe('sendButtons noRetry', () => {
+  it('makes a single provider attempt when noRetry is set', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Service unavailable' } }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const cloud = new MetaCloudService({ accessToken: 'test-only', phoneNumberId: 'test-phone', wabaId: 'test-waba' });
+    const sender = new MetaCloudSender(cloud, createTestSupabase());
+    sender.bindBusiness('test-business');
+    await expect(sender.sendButtons({
+      to: '15550001111', body: 'Confirm?', buttons: [{ id: 'optin_yes:x', title: 'Yes' }], messageCategory: 'service', noRetry: true,
+    })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps retrying by default (existing behaviour)', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'Service unavailable' } }), { status: 503, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'wamid.retry' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const cloud = new MetaCloudService({ accessToken: 'test-only', phoneNumberId: 'test-phone', wabaId: 'test-waba' });
+    const sender = new MetaCloudSender(cloud, createTestSupabase());
+    sender.bindBusiness('test-business');
+    const result = await sender.sendButtons({ to: '15550001111', body: 'Confirm?', buttons: [{ id: 'x', title: 'Yes' }], messageCategory: 'service' });
+    expect(result.messageId).toBe('wamid.retry');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

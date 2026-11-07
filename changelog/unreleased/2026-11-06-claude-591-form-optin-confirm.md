@@ -1,12 +1,38 @@
 ## 2026-11-06 — Forms: confirm "send me updates" on WhatsApp (#591, Owner option C part B1)
 
 - **What changed (Owner decisions 2026-11-06, issue #591):**
-  - A ticked "send me updates" box on a public form now records the pending request with `evidence_reference = form:<formId>|confirm:<sha256(nonce)>` and `policy_version = 'optin-v1'`. The 32-byte nonce is never stored. No new row is added when the latest record is granted, or is a live request (pending, with a `confirm:` hash, at most 30 days old). Owner decision 2026-11-06: an expired request (over 30 days) or a pre-release tick (no hash) does not block a fresh tick; a new request is recorded and sent, and the old one becomes stale. Ticks recorded before this release still get no message unless the customer ticks again (Q7).
-  - After the response is saved (`after()`), Waaiio asks the typed number to confirm. Inside a 24-hour window this is a free-form message with "Yes, send updates" / "No thanks" buttons. Outside it, the template `waaiio_updates_optin_v1` (`en`) is used, but only when it is APPROVED on the sending account. With neither, nothing is sent and the request stays pending. Nothing is sent to opted-out numbers (business or global), to a phone with 3 or more requests in the last 24 hours, or once a business has 200 requests today (UTC). A send failure never fails the submit.
-  - New `lib/consent/optin-confirmation.ts` handles the tap, called from the verified Meta webhook right after the merchant-alert opt-in and before the bot. The business comes only from the matching pending row for the Meta-verified sender, and the tap must arrive on that business's sending number. Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business. A STOP newer than the request, or any global opt-out, means nothing is granted (global opt-out refusal accepted by the Owner 2026-11-06). No writes revoked rows. Requests older than 30 days, stale requests and unknown nonces get an "expired" reply. Typed text is never accepted.
-  - The Meta webhook now reads template quick-reply taps (`type: 'button'`) only when the payload matches `optin_(yes|no):<nonce>`. Every other template button is still dropped.
-  - `MessageSender.sendTemplate` gains `quickReplyPayloads` (button components with `sub_type: 'quick_reply'`). `CloudTemplateMessage` types widened to match.
-- **Files:** `lib/consent/optin-confirmation.ts` (new), `app/api/forms/submit/route.ts`, `app/api/webhook/meta-cloud/route.ts`, `lib/channels/message-sender.ts`, `lib/channels/meta-cloud.ts`, `lib/__tests__/helpers/memory-db.ts` (adds `like`), `lib/__tests__/forms-send-591.test.ts` (new evidence format), `lib/__tests__/form-optin-confirmation-591.test.ts` (new), `lib/__tests__/optin-template-quick-reply-591.test.ts` (new).
-- **No migration.** `customer_consents` CHECKs already allow `source 'whatsapp'` and status `pending`/`granted`/`revoked`; writes use the service role.
-- **Owner action:** submit the `waaiio_updates_optin_v1` template (definition in the PR). Until it is approved, only in-window confirmations go out.
-- **Could break:** template buttons other than opt-in payloads are unchanged (still dropped). A customer who ticks the box on many businesses' forms in one day gets at most 3 requests. Ticks recorded before this release get no message (Owner Q7) until the customer ticks again.
+  - **Recording a tick.** A ticked "send me updates" box on a public form records a pending request: `evidence_reference = form:<formId>|confirm:<sha256(nonce)>`, `policy_version = 'optin-v1'`. The 32-byte nonce is never stored. A request that was actually delivered gets `|sent:<iso>` appended.
+  - **Re-ticks.** A re-tick adds no new row when the latest record is granted, or is a live request (pending, sent, at most 30 days old). Owner decision 2026-11-06: an expired request, a request that was never sent, or a pre-release tick does not block a fresh tick. A new request is recorded and sent, and the old one becomes stale.
+  - **Opted-out numbers** (business or global) are not recorded and are not reported as pending (`optInPending: false`). Nothing is sent to them.
+  - **Q7.** Ticks recorded before this release get no message unless the customer ticks again.
+  - **Sending the request.** After the response is saved (`after()`), Waaiio asks the typed number to confirm:
+    - Inside THIS business's own 24-hour window (the shared `businessChatWindowState` rule), it sends free-form "Yes, send updates" / "No thanks" buttons, in a single attempt (`sendButtons` gains `noRetry`).
+    - Otherwise, only on Waaiio's shared number, it sends the template `waaiio_updates_optin_v1` (`en`), when APPROVED.
+    - Otherwise, including when the window cannot be read, nothing is sent and the request stays pending.
+    - Nothing is sent to a phone with 3 or more requests in the last 24 hours, or once a business has 200 requests today (UTC).
+    - A send failure never fails the submit.
+  - **Handling the tap.** New `lib/consent/optin-confirmation.ts` handles the tap. It is called from the verified Meta webhook right after the merchant-alert opt-in and before the bot.
+    - The business comes only from the matching pending row for the Meta-verified sender, and the tap must arrive on that business's sending number.
+    - Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business.
+    - Nothing is granted when there is a STOP newer than the request, or any global opt-out (the global-opt-out refusal was accepted by the Owner 2026-11-06).
+    - No writes revoked rows, even for a request older than 30 days.
+    - A Yes on a request older than 30 days, a stale request or an unknown nonce gets an "expired" reply.
+    - Typed text is never accepted.
+  - **Webhook.** The Meta webhook now reads template quick-reply taps (`type: 'button'`) only when the payload matches `optin_(yes|no):<nonce>`. Every other template button is still dropped.
+  - **Sender.** `MessageSender.sendTemplate` gains `quickReplyPayloads` (button components with `sub_type: 'quick_reply'`), and `CloudTemplateMessage` types are widened to match.
+- **Files:**
+  - `lib/consent/optin-confirmation.ts` (new)
+  - `app/api/forms/submit/route.ts`
+  - `app/api/webhook/meta-cloud/route.ts`
+  - `lib/channels/message-sender.ts`
+  - `lib/channels/meta-cloud.ts`
+  - `lib/__tests__/helpers/memory-db.ts` (adds `like`)
+  - `lib/__tests__/forms-send-591.test.ts` (new evidence format)
+  - `lib/__tests__/form-optin-confirmation-591.test.ts` (new)
+  - `lib/__tests__/optin-template-quick-reply-591.test.ts` (new)
+- **No migration.** `customer_consents` CHECKs already allow `source 'whatsapp'` and status `pending`/`granted`/`revoked`. `evidence_reference` is plain text. Writes use the service role.
+- **Owner action:** submit the `waaiio_updates_optin_v1` template on the platform account (definition in the PR). Until it is approved, only in-window confirmations go out. Dedicated numbers only ever get in-window confirmations.
+- **Could break:**
+  - Template buttons other than opt-in payloads are unchanged (still dropped).
+  - A customer who ticks the box on many businesses' forms in one day gets at most 3 requests.
+  - `sendButtons` keeps retrying by default; only callers that pass `noRetry` get a single attempt.

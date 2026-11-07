@@ -19,7 +19,7 @@ import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver, type ResolvedChannel } from '@/lib/channels/channel-resolver';
 import type { MessageSender } from '@/lib/channels/message-sender';
-import { hasServiceWindow } from '@/lib/forms/form-send';
+import { businessChatWindowState } from '@/lib/forms/form-send';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -56,6 +56,12 @@ export function hashOptInNonce(nonce: string): string {
 export function pendingEvidence(formId: string, nonce: string): string {
   return `form:${formId}|confirm:${hashOptInNonce(nonce)}`;
 }
+
+/**
+ * A request that was actually delivered gets "|sent:<iso>" appended. A request that
+ * was never sent does not block a fresh tick (see the form submit route).
+ */
+export const SENT_REQUEST_RE = /\|confirm:[0-9a-f]{64}\|sent:[^|]+$/;
 
 /** Meta rejects template parameters containing new lines, tabs or 4+ spaces. */
 function oneLine(s: string): string {
@@ -100,16 +106,35 @@ export async function loadOptInTemplate(resolved: ResolvedChannel): Promise<{ ca
 export type ConfirmationSendOutcome =
   | 'sent_buttons' | 'sent_template' | 'failed'
   | 'skipped_opted_out' | 'skipped_phone_cap' | 'skipped_business_cap'
-  | 'skipped_no_business' | 'skipped_no_channel' | 'skipped_no_template';
+  | 'skipped_no_business' | 'skipped_no_channel' | 'skipped_no_template' | 'skipped_window_unknown'
+  | 'skipped_no_window_dedicated';
 
 /**
  * Send the confirmation request for a NEW pending row. Never throws, so it can never
  * fail the form submit. Any failed check means skip; the row then stays pending.
+ * A delivered request is marked "|sent:<iso>" on its evidence_reference.
  */
 export async function sendOptInConfirmationRequest(
   db: SupabaseClient,
-  request: { businessId: string; phone: string; requestId: string; nonce: string },
+  request: { businessId: string; phone: string; requestId: string; nonce: string; evidenceReference: string },
   now = Date.now(),
+): Promise<ConfirmationSendOutcome> {
+  const outcome = await deliverConfirmationRequest(db, request, now);
+  if (outcome === 'sent_buttons' || outcome === 'sent_template') {
+    try {
+      const { error } = await db.from('customer_consents')
+        .update({ evidence_reference: `${request.evidenceReference}|sent:${new Date(now).toISOString()}` })
+        .eq('id', request.requestId).eq('status', 'pending').eq('evidence_reference', request.evidenceReference);
+      if (error) logger.warn('[OPTIN] Request not marked sent:', error.message);
+    } catch (err) { logger.warn('[OPTIN] Request not marked sent:', (err as Error).message); }
+  }
+  return outcome;
+}
+
+async function deliverConfirmationRequest(
+  db: SupabaseClient,
+  request: { businessId: string; phone: string; requestId: string; nonce: string },
+  now: number,
 ): Promise<ConfirmationSendOutcome> {
   const { businessId, requestId, nonce } = request;
   const digits = request.phone.replace(/\D/g, '');
@@ -145,16 +170,23 @@ export async function sendOptInConfirmationRequest(
 
     const yes = `optin_yes:${nonce}`;
     const no = `optin_no:${nonce}`;
-    if (await hasServiceWindow(db, resolved.channel.id, request.phone, now)) {
+    // Free-form only inside THIS business's own window: on a shared number a receipt
+    // alone may come from a chat with another business. Unreadable evidence: skip.
+    const window = await businessChatWindowState(db, businessId, resolved.channel, request.phone, now);
+    if (window === 'unknown') return 'skipped_window_unknown';
+    if (window === 'open') {
+      // Single attempt: an ambiguous retry could deliver the request twice.
       const result = await resolved.sender.sendButtons({
         to: digits, body: requestText(biz.name),
         buttons: [{ id: yes, title: YES_TITLE }, { id: no, title: NO_TITLE }],
         footer: getPoweredByInteractiveFooter(biz.subscription_tier, biz.is_whitelabel),
-        messageCategory: 'service',
+        messageCategory: 'service', noRetry: true,
       });
       return result?.success === false ? 'failed' : 'sent_buttons';
     }
 
+    // Templates are used only on Waaiio's shared number (the platform account).
+    if (resolved.channel.channel_type !== 'shared') return 'skipped_no_window_dedicated';
     const template = await loadOptInTemplate(resolved);
     if (!template) return 'skipped_no_template';
     // Single attempt: an ambiguous retry could deliver the request twice.
@@ -220,7 +252,7 @@ export async function handleOptInConfirmation(input: {
     const { data: row, error: rowError } = await db.from('customer_consents')
       .select('id, business_id, created_at').in('phone', variants)
       .eq('channel', 'whatsapp').eq('purpose', 'marketing').eq('status', 'pending')
-      .like('evidence_reference', `%|confirm:${hash}`)
+      .like('evidence_reference', `%|confirm:${hash}%`)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     if (rowError || !row) { await expired(); return true; }
     const businessId = row.business_id as string;
@@ -234,8 +266,10 @@ export async function handleOptInConfirmation(input: {
       await expired(); return true;
     }
 
+    // Only a Yes needs a live request (Q5); recording a decline is always safe.
     const requestedAt = Date.parse(row.created_at as string);
-    if (!Number.isFinite(requestedAt) || now - requestedAt > OPTIN_REQUEST_TTL_MS) { await expired(); return true; }
+    const isExpired = !Number.isFinite(requestedAt) || now - requestedAt > OPTIN_REQUEST_TTL_MS;
+    if (match[1] === 'yes' && isExpired) { await expired(); return true; }
 
     const { data: biz } = await db.from('businesses')
       .select('name, subscription_tier, is_whitelabel').eq('id', businessId).maybeSingle();

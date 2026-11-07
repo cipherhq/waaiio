@@ -103,11 +103,13 @@ const optInTemplate = (over: Record<string, unknown> = {}) => ({
 });
 
 /** A pending confirmation request as the form submit records it. */
-function seedRequest(businessId: string, nonce: string, ageMs = HOUR, phone = PHONE) {
+/** A delivered request carries "|sent:<iso>"; pass sent=false for one that never went out. */
+function seedRequest(businessId: string, nonce: string, ageMs = HOUR, phone = PHONE, sent = true) {
   const row = {
     id: `req-${businessId}-${m.db.tables.customer_consents.length}`, business_id: businessId, phone,
     channel: 'whatsapp', purpose: 'marketing', status: 'pending', source: 'website',
-    evidence_reference: pendingEvidence('form-x', nonce), policy_version: 'optin-v1', created_at: ago(ageMs),
+    evidence_reference: pendingEvidence('form-x', nonce) + (sent ? `|sent:${ago(ageMs)}` : ''),
+    policy_version: 'optin-v1', created_at: ago(ageMs),
   };
   m.db.tables.customer_consents.push(row);
   return row;
@@ -154,6 +156,7 @@ beforeEach(() => {
     customer_consents: [],
     messaging_opt_outs: [],
     whatsapp_inbound_receipts: [],
+    bot_sessions: [],
   });
 });
 
@@ -184,6 +187,23 @@ describe('confirmation handler: rows and the permission gate', () => {
     expect(granted()).toEqual([]);
     expect(await allowed(A)).toBe(false);
     expect(lastReply().body).toContain('will not send you updates');
+  });
+
+  it('"No thanks" on a request older than 30 days still records the decline', async () => {
+    const nonce = newOptInNonce();
+    seedRequest(A, nonce, 31 * DAY);
+    await tap(nonce, { answer: 'no' });
+    expect(consents().filter(r => r.status === 'revoked').map(r => r.purpose)).toEqual(['marketing', 'utility']);
+    expect(lastReply().body).toContain('will not send you updates');
+  });
+
+  it('"No thanks" with another phone\'s nonce writes nothing for the tapping phone', async () => {
+    const nonce = newOptInNonce();
+    seedRequest(A, nonce);
+    const before = consents().length;
+    await tap(nonce, { answer: 'no', from: OTHER_PHONE });
+    expect(consents()).toHaveLength(before);
+    expect(lastReply().body).toContain('expired');
   });
 
   it('a request older than 30 days has expired: nothing is written', async () => {
@@ -256,6 +276,16 @@ describe('confirmation handler: cross-business isolation', () => {
     expect(granted()).toEqual([]);
   });
 
+  it('"No" with A\'s nonce on B\'s dedicated channel is rejected and writes nothing', async () => {
+    const nonce = newOptInNonce();
+    seedRequest(A, nonce);
+    const before = consents().length;
+    expect(await tap(nonce, { answer: 'no', channel: dedicatedOf(B) })).toBe(true);
+    expect(consents()).toHaveLength(before);
+    expect(consents().some(r => r.business_id === B)).toBe(false);
+    expect(lastReply().body).toContain('expired');
+  });
+
   it('a shared number that is not the business\'s sending number is rejected', async () => {
     const nonce = newOptInNonce();
     seedRequest(A, nonce);
@@ -306,6 +336,42 @@ describe('confirmation handler: STOP always wins', () => {
     expect(await allowed(A)).toBe(false);
   });
 
+  it('another business\'s STOP (even a newer one) does not block this business\'s Yes', async () => {
+    const nonce = newOptInNonce();
+    seedRequest(A, nonce, 2 * HOUR);
+    const stopB = optOut(B, HOUR);
+    await tap(nonce);
+    expect(await allowed(A)).toBe(true);
+    expect(stopB.resubscribed_at).toBeNull();
+  });
+
+  it('a STOP that lands between the check and the clear is never cleared', async () => {
+    const nonce = newOptInNonce();
+    seedRequest(A, nonce, 2 * HOUR);
+    optOut(A, 3 * HOUR); // older STOP: will be cleared
+    const racing = {
+      from(table: string) {
+        const q = m.db.from(table);
+        if (table === 'messaging_opt_outs') {
+          const update = q.update;
+          q.update = (row: Record<string, unknown>) => {
+            m.db.tables.messaging_opt_outs.push({ id: 'oo-race', phone: PHONE, business_id: A, channel: 'whatsapp', opt_out_type: 'all', opted_out_at: new Date().toISOString(), resubscribed_at: null });
+            return update(row);
+          };
+        }
+        return q;
+      },
+    };
+    await handleOptInConfirmation({
+      db: racing as never, provenance: 'verified_meta_webhook', from: PHONE.slice(1), text: `optin_yes:${nonce}`,
+      messageType: 'button', messageId: 'wamid.inbound', channel: sharedChannel as never, sendReply: reply,
+    });
+    const [older, race] = m.db.tables.messaging_opt_outs;
+    expect(typeof older.resubscribed_at).toBe('string');
+    expect(race.resubscribed_at).toBeNull();
+    expect(await allowed(A)).toBe(false);
+  });
+
   it('after a grant, a new STOP closes the gate again', async () => {
     const nonce = newOptInNonce();
     seedRequest(A, nonce);
@@ -322,7 +388,16 @@ describe('form submit: pending request and confirmation send', () => {
     method: 'POST', body: JSON.stringify({ token: 'tokA', answers: {}, customer_phone: PHONE, marketing_opt_in: true, ...body }),
   }));
   const runAfter = () => Promise.all(m.afterTasks.splice(0).map(task => task()));
-  const windowOpen = () => m.db.tables.whatsapp_inbound_receipts.push({ channel_id: SHARED, sender_phone: PHONE.slice(1), provider_timestamp: ago(HOUR) });
+  /** A provider receipt on the shared number: on its own it names no business. */
+  const receiptOnly = () => m.db.tables.whatsapp_inbound_receipts.push({ channel_id: SHARED, sender_phone: PHONE.slice(1), provider_timestamp: ago(HOUR) });
+  /** A bot conversation on the shared number, as the webhook pipeline stores it. */
+  const chatWith = (businessId: string) => m.db.tables.bot_sessions.push({
+    id: `s-${businessId}`, whatsapp_number: PHONE.slice(1), business_id: businessId, is_active: true,
+    session_data: { _inbound_channel_id: SHARED }, updated_at: ago(HOUR),
+    conversation_log: [{ role: 'bot', content: 'Hi', timestamp: ago(HOUR) }, { role: 'user', content: '1', timestamp: ago(HOUR) }],
+  });
+  /** This business's own 24-hour window on the shared number: a receipt AND a chat with business A. */
+  const windowOpen = () => { receiptOnly(); chatWith(A); };
   const pending = () => consents().filter(r => r.status === 'pending');
 
   it('stores only the nonce hash; the nonce goes only in the message', async () => {
@@ -340,18 +415,85 @@ describe('form submit: pending request and confirmation send', () => {
     expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(hashOptInNonce(nonce)).toBe(hash);
     expect(JSON.stringify(m.db.tables)).not.toContain(nonce);
+    // Delivered, so the request is marked sent (and can still be confirmed).
+    expect(pending()[0].evidence_reference).toMatch(new RegExp(`^form:form-a\\|confirm:${hash}\\|sent:\\d{4}-`));
+    await tap(nonce);
+    expect(await allowed(A)).toBe(true);
   });
 
-  it('inside the 24-hour window it sends free-form Yes/No buttons', async () => {
+  it('inside this business\'s own 24-hour window it sends free-form Yes/No buttons, once', async () => {
     windowOpen();
     await post({});
     await runAfter();
     expect(m.sendButtons).toHaveBeenCalledTimes(1);
     const sent = m.sendButtons.mock.calls[0][0];
-    expect(sent).toMatchObject({ to: PHONE.slice(1), messageCategory: 'service', body: expect.stringContaining('Test Shop') });
+    expect(sent).toMatchObject({ to: PHONE.slice(1), messageCategory: 'service', noRetry: true, body: expect.stringContaining('Test Shop') });
     expect(sent.buttons.map((b: { title: string }) => b.title)).toEqual(['Yes, send updates', 'No thanks']);
     expect(sent.buttons[1].id).toMatch(/^optin_no:[A-Za-z0-9_-]{43}$/);
     expect(m.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('a shared-number receipt from a chat with ANOTHER business is not this business\'s window: template if approved', async () => {
+    receiptOnly();
+    chatWith(B);
+    m.getTemplates.mockResolvedValue({ data: [optInTemplate()] });
+    await post({});
+    await runAfter();
+    expect(m.sendButtons).not.toHaveBeenCalled();
+    expect(m.sendTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a shared-number receipt from another business\'s chat, and no approved template: nothing is sent', async () => {
+    receiptOnly();
+    chatWith(B);
+    await post({});
+    await runAfter();
+    expect(m.sendButtons).not.toHaveBeenCalled();
+    expect(m.sendTemplate).not.toHaveBeenCalled();
+    expect(pending()).toHaveLength(1);
+  });
+
+  it('a shared-number receipt alone (no chat with this business) is not a window', async () => {
+    receiptOnly();
+    await post({});
+    await runAfter();
+    expect(m.sendButtons).not.toHaveBeenCalled();
+  });
+
+  it('when the window cannot be read nothing is sent (not even an approved template), and the row stays pending', async () => {
+    windowOpen();
+    m.getTemplates.mockResolvedValue({ data: [optInTemplate()] });
+    m.db.failReads.add('whatsapp_inbound_receipts');
+    const res = await post({});
+    expect(res.status).toBe(200);
+    expect(await Promise.all(m.afterTasks.splice(0).map(task => task()))).toEqual([undefined]);
+    expect(m.sendButtons).not.toHaveBeenCalled();
+    expect(m.sendTemplate).not.toHaveBeenCalled();
+    expect(pending()).toHaveLength(1);
+    m.db.failReads.delete('whatsapp_inbound_receipts');
+    m.db.failReads.add('bot_sessions');
+    const nonce = newOptInNonce();
+    const row = seedRequest(A, nonce, 0, OTHER_PHONE);
+    expect(await sendOptInConfirmationRequest(m.db as never, { businessId: A, phone: PHONE, requestId: row.id, nonce, evidenceReference: row.evidence_reference })).toBe('skipped_window_unknown');
+  });
+
+  it('on the business\'s own dedicated number a receipt alone opens the window', async () => {
+    m.channelFor = (b: string) => dedicatedOf(b);
+    m.db.tables.whatsapp_inbound_receipts.push({ channel_id: `chan-ded-${A}`, sender_phone: PHONE.slice(1), provider_timestamp: ago(HOUR) });
+    await post({});
+    await runAfter();
+    expect(m.sendButtons).toHaveBeenCalledTimes(1);
+  });
+
+  it('on a dedicated number, outside the window, no template is used (even an approved one) and nothing is sent', async () => {
+    m.channelFor = (b: string) => dedicatedOf(b);
+    m.getTemplates.mockResolvedValue({ data: [optInTemplate()] });
+    await post({});
+    await runAfter();
+    expect(m.sendTemplate).not.toHaveBeenCalled();
+    expect(m.getTemplates).not.toHaveBeenCalled();
+    expect(m.sendButtons).not.toHaveBeenCalled();
+    expect(pending()).toHaveLength(1);
   });
 
   it('outside the window, with the approved template, it sends the template with both payloads', async () => {
@@ -480,14 +622,55 @@ describe('form submit: pending request and confirmation send', () => {
       expect(m.sendButtons).toHaveBeenCalledTimes(1);
     });
 
-    it('existing guards still apply to a re-tick (an opt-out means no send)', async () => {
+    it('an opted-out number is not recorded or reported as pending, and nothing is sent', async () => {
       windowOpen();
       seedRequest(A, newOptInNonce(), 31 * DAY);
       optOut(A, DAY);
+      const res = await post({});
+      expect(await res.json()).toEqual({ success: true, optInPending: false });
+      expect(m.afterTasks).toHaveLength(0);
+      expect(pending()).toHaveLength(1);
+      expect(m.sendButtons).not.toHaveBeenCalled();
+    });
+
+    it('granted but opted out (business or global): not reported as pending, no row, nothing sent', async () => {
+      windowOpen();
+      for (const scope of [A, null]) {
+        m.db.tables.messaging_opt_outs = [];
+        m.db.tables.customer_consents = [{ id: 'g', business_id: A, phone: PHONE, channel: 'whatsapp', purpose: 'marketing', status: 'granted', source: 'whatsapp', created_at: ago(2 * DAY) }];
+        optOut(scope, DAY);
+        const res = await post({});
+        expect(await res.json()).toEqual({ success: true, optInPending: false });
+        expect(consents()).toHaveLength(1);
+      }
+      expect(m.afterTasks).toHaveLength(0);
+      expect(m.sendButtons).not.toHaveBeenCalled();
+    });
+
+    it('a request that was never sent does not block a re-tick', async () => {
+      // First tick: no window and no template, so nothing goes out.
+      await post({});
+      await runAfter();
+      expect(m.sendButtons).not.toHaveBeenCalled();
+      expect(pending()[0].evidence_reference).not.toContain('|sent:');
+      // Re-tick after the customer has chatted with the business: a new request goes out.
+      windowOpen();
       await post({});
       await runAfter();
       expect(pending()).toHaveLength(2);
-      expect(m.sendButtons).not.toHaveBeenCalled();
+      expect(m.sendButtons).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failed send is not marked sent, so a re-tick can try again', async () => {
+      windowOpen();
+      m.sendButtons.mockRejectedValueOnce(new Error('provider down'));
+      await post({});
+      await runAfter();
+      expect(pending()[0].evidence_reference).not.toContain('|sent:');
+      await post({});
+      await runAfter();
+      expect(pending()).toHaveLength(2);
+      expect(m.sendButtons).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -509,9 +692,9 @@ describe('form submit: pending request and confirmation send', () => {
   it('the sender reports why it skipped (direct call)', async () => {
     const nonce = newOptInNonce();
     const row = seedRequest(A, nonce, 0);
-    expect(await sendOptInConfirmationRequest(m.db as never, { businessId: A, phone: PHONE, requestId: row.id, nonce })).toBe('skipped_no_template');
+    expect(await sendOptInConfirmationRequest(m.db as never, { businessId: A, phone: PHONE, requestId: row.id, nonce, evidenceReference: row.evidence_reference })).toBe('skipped_no_template');
     m.channelFor = () => null;
-    expect(await sendOptInConfirmationRequest(m.db as never, { businessId: A, phone: PHONE, requestId: row.id, nonce })).toBe('skipped_no_channel');
+    expect(await sendOptInConfirmationRequest(m.db as never, { businessId: A, phone: PHONE, requestId: row.id, nonce, evidenceReference: row.evidence_reference })).toBe('skipped_no_channel');
   });
 });
 

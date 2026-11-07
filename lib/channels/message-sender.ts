@@ -186,6 +186,8 @@ export interface MessageSender {
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
     messageCategory?: string;
+    /** Single application attempt where an ambiguous retry must not send twice. */
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendImage(msg: {
     to: string;
@@ -618,13 +620,15 @@ export class MetaCloudSender implements MessageSender {
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
     messageCategory?: string;
+    noRetry?: boolean;
   }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendButtons({
+    const buttonsCall = async () => this.withAttemptAndGuard(() => this.cloud.sendButtons({
       to: msg.to,
       bodyText: msg.body.slice(0, 1024),
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
-    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory });
+    const result = msg.noRetry ? await buttonsCall() : await withRetry(buttonsCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
