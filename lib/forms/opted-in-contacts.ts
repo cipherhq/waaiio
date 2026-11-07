@@ -11,7 +11,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { FORM_INVITE_PURPOSE, WINDOW_MS, isOwnChannel, latestCustomerMessageAt, type SendingChannel } from './form-send';
 
 const PAGE = 500;
-const MAX_CONSENT_ROWS = 5000;
+/** Most consent rows read for one list; past this, older rows are not checked. */
+export const MAX_CONSENT_ROWS = 5000;
 export const MAX_CONTACTS = 500;
 
 export class ContactsUnavailableError extends Error {
@@ -26,6 +27,9 @@ export async function listOptedInContacts(
 ) {
   // Newest first, so the first row seen per phone is that phone's current state.
   const latest = new Map<string, { phone: string; status: string; expires_at: string | null }>();
+  // Set when the scan stops at MAX_CONSENT_ROWS with rows possibly left unread, so
+  // the list may be missing people; callers must not treat it as complete.
+  let scanCapped = false;
   for (let from = 0; from < MAX_CONSENT_ROWS; from += PAGE) {
     const { data, error } = await db.from('customer_consents').select('phone, status, expires_at')
       .eq('business_id', businessId).eq('channel', 'whatsapp').eq('purpose', purpose)
@@ -40,6 +44,7 @@ export async function listOptedInContacts(
       if (/^[1-9]\d{6,14}$/.test(d) && !latest.has(d)) latest.set(d, row);
     }
     if (!data || data.length < PAGE) break;
+    if (from + PAGE >= MAX_CONSENT_ROWS) scanCapped = true;
   }
   const granted = Array.from(latest.entries())
     .filter(([, r]) => r.status === 'granted' && (!r.expires_at || Date.parse(r.expires_at) > now))
@@ -60,7 +65,7 @@ export async function listOptedInContacts(
   const eligible = granted.filter(d => !blocked.has(d));
   return {
     contacts: eligible.slice(0, MAX_CONTACTS).map(d => ({ phone: `+${d}`, name: names.get(d) || null })),
-    truncated: eligible.length > MAX_CONTACTS,
+    truncated: scanCapped || eligible.length > MAX_CONTACTS,
   };
 }
 

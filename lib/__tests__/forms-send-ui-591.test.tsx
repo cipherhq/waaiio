@@ -89,6 +89,15 @@ describe('Forms send panel', () => {
     expect((screen.getByRole('button', { name: 'Send now' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('a capped opted-in list says how many it is showing (#948 follow-up: the scan cap can cap it below 500)', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/forms/recipients')) return json({ contacts: [{ phone: '+2348031111111', name: 'Ada' }, { phone: '+2348032222222', name: null }], truncated: true });
+      return json({}, 404);
+    });
+    render(<FormSendPanel businessId="biz-a" formId="form-a" onClose={() => {}} />);
+    expect(await screen.findByText('Select all (2) — showing the first 2')).toBeTruthy();
+  });
+
   it('blocks more than 100 people and warns when results cannot be read', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/forms/recipients')) return json({ contacts: [], truncated: false });

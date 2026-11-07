@@ -135,7 +135,7 @@ export function FormSendPanel({ businessId, formId, onClose }: { businessId: str
       <p className="mb-1 text-xs font-medium text-gray-700">{label}</p>
       <label className="mb-1 flex items-center gap-2 text-xs text-gray-600">
         <input type="checkbox" checked={allPicked(list)} onChange={e => pickAll(list, e.target.checked)} />
-        Select all ({list.length}){more ? ' — showing the first 500' : ''}
+        Select all ({list.length}){more ? ` — showing the first ${list.length}` : ''}
       </label>
       <div className="max-h-48 overflow-y-auto rounded border border-gray-200 bg-white">
         {list.map(c => (

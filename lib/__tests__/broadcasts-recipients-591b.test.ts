@@ -205,3 +205,17 @@ describe('the list matches what POST /api/broadcasts/send actually does', () => 
     expect(m.delivered).toEqual([]);
   });
 });
+
+describe('GET /api/broadcasts/recipients — truncated (#948 follow-up)', () => {
+  it('passes truncated: true through when the consent scan cap is reached', async () => {
+    // 5,100 older rows for 102 extra people, so the scan stops before reading them all.
+    for (let i = 0; i < 5100; i++) {
+      m.db.tables.customer_consents.push(consent(`+234810${String(i % 102).padStart(7, '0')}`, { created_at: ago(3_600_000 + i) }));
+    }
+    const res = await get();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.recipients.length).toBeLessThan(500);
+    expect(body.truncated).toBe(true);
+  });
+});
