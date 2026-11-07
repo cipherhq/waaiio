@@ -5,6 +5,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
+import { updatesOptInRowFor } from '@/lib/bot/customer-updates-optin';
 import { paymentNextStepsMenuSent } from '@/lib/payments/next-steps-menu';
 import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
@@ -1260,10 +1261,24 @@ export class FlowExecutor {
       buttons = [{ id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
         { id: 'history', title: 'Payment history' }];
     }
-    const postCompletionMsg: PromptMessage = shared
+    // Owner decision 2026-11-06: one tap to get offers and updates from this
+    // business (and Waaiio), shown only until the customer agrees and never
+    // after they unsubscribed. WhatsApp allows 3 buttons and buttons have no
+    // description, so when offered the menu is a list with the opt-in on top.
+    const optInRow = await updatesOptInRowFor(this.supabase, {
+      phone: from, lang: cl, source: 'menu', business: ctx.business,
+    });
+    const listItems = [
+      ...(optInRow ? [optInRow] : []),
+      ...[...buttons, ...(shared ? [DIRECTORY_ACTION] : [])].map(b => ({ title: b.title, postbackText: b.id })),
+    ];
+    const postCompletionMsg: PromptMessage = shared || optInRow
       ? { type: 'list', title: getFlowCopy(cl, 'menu.title'), body: bodyText,
         buttonLabel: getFlowCopy(cl, 'nav.view_options'),
-        items: [...buttons, DIRECTORY_ACTION].map(b => ({ title: b.title, postbackText: b.id })) }
+        items: listItems,
+        // The opt-in line must keep naming the business and Waaiio after translation.
+        // When the list replaces the buttons, its option titles are Waaiio's own labels and translate like the buttons did.
+        ...(optInRow && ctx.business?.name ? { _localization: { protectedValues: [ctx.business.name, 'Waaiio'], waaiioOwnedItemTitles: !shared } } : {}) }
       : { type: 'buttons', body: bodyText, buttons };
     const shouldTranslate = lang && lang !== 'en';
     const localizedMsg = shouldTranslate

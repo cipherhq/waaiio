@@ -10,6 +10,7 @@ import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { getUserFacingCapabilities } from '@/lib/bot/handlers/flow-routing';
 import { getFlowCopy } from './flow-localization';
+import { updatesOptInRowFor } from '@/lib/bot/customer-updates-optin';
 
 export { getCapabilityLabel };
 
@@ -243,7 +244,7 @@ const selectCapabilityStep: FlowStepConfig = {
     }
 
     // Build capability items
-    const capItems = userFacing.map(cap => ({
+    const capItems: Array<{ id: string; title: string; postbackText: string; description?: string }> = userFacing.map(cap => ({
       id: `cap_${cap}`,
       title: getCapabilityLabel(cap, category, customLabels[cap], ctx.copyLang),
       postbackText: `cap_${cap}`,
@@ -261,6 +262,21 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // Use greeting as body if available (first-time display), then clear it
     const greeting = ctx.session.session_data._greeting as string | undefined;
+
+    // Owner decision 2026-11-06: on a first-time customer's welcome menu, one
+    // row to get offers and updates from this business (and Waaiio). Only when
+    // it fits on one page, so the capability menu and its paging are unchanged.
+    let optInOffered = false;
+    if (greeting && !ctx.session.session_data._customer_history && capItems.length > 0 && capItems.length < 10) {
+      const optInRow = await updatesOptInRowFor(ctx.supabase, {
+        phone: ctx.from, lang: ctx.copyLang, source: 'welcome', business: ctx.business,
+        firstVisitSessionId: ctx.session.id,
+      });
+      if (optInRow) {
+        capItems.push({ id: optInRow.postbackText, ...optInRow });
+        optInOffered = true;
+      }
+    }
     const bodyText = greeting
       ? `${greeting}\n\n${getFlowCopy(ctx.copyLang, 'menu.what_to_do')}`
       : getFlowCopy(ctx.copyLang, 'menu.what_to_do');
@@ -275,6 +291,7 @@ const selectCapabilityStep: FlowStepConfig = {
     }
     const bizName = ctx.business?.name;
     if (bizName) merchantProtected.push(bizName);
+    if (optInOffered) merchantProtected.push('Waaiio');
     const locMeta = {
       waaiioOwnedItemTitles: true,
       ...(merchantProtected.length ? { protectedValues: merchantProtected } : {}),
@@ -298,8 +315,9 @@ const selectCapabilityStep: FlowStepConfig = {
       }];
     }
 
-    // WhatsApp buttons max 3 — use a list for more options
-    if (capItems.length <= 3) {
+    // WhatsApp buttons max 3 — use a list for more options.
+    // The opt-in row needs its description, which buttons cannot show.
+    if (capItems.length <= 3 && !optInOffered) {
       return [{
         type: 'buttons' as const,
         body: bodyText,
@@ -312,7 +330,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // WhatsApp list body max is 1024 chars — trim greeting if needed
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
 
-    const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText }));
+    const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText, ...(i.description ? { description: i.description } : {}) }));
 
     // If everything fits in one page, no pagination needed
     if (allListItems.length <= META_MAX_ROWS) {
