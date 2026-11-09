@@ -80,7 +80,7 @@ describe('plan emails quote the current rates', () => {
     ].join('\n');
     expect(html).not.toMatch(/2\.5%|₦75|7-day/);
     expect(t.trialExpiringEmail('Biz', 3).html).toMatch(/3% per transaction[\s\S]*1\.5% per transaction[\s\S]*1% per transaction/);
-    expect(t.trialEndedEmail('Biz').html).toContain('Pro and Premium features are now switched off. Your fee stays at 3% per paid transaction.');
+    expect(t.trialEndedEmail('Biz').html).toContain('Pro and Premium features are now switched off. Your per-transaction fee stays the same.');
     expect(t.trialExpiringEmail('Biz', 3).html).not.toMatch(/start paying per-transaction fees/);
     expect(t.subscriptionExpiredEmail('Biz', 'https://x').html).toContain('3%');
   });

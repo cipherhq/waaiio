@@ -158,7 +158,7 @@ With Waaiio, the bot handles 90% of orders. You only step in for special request
 
 ## Try It Free
 
-Free trial with everything included. Add your menu and start taking WhatsApp orders today.
+14-day free trial of all Pro and Premium features. Add your menu and start taking WhatsApp orders today.
 
 [Start your free trial →](https://waaiio.com/get-started)
     `,

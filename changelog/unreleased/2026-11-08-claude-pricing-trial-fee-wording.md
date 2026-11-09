@@ -39,8 +39,10 @@
 - `app/api/whatsapp/flow-callback/onboarding.ts`: the WhatsApp sign-up messages and the welcome email said "30-day trial … all features", and the Pro upsell said "500 bookings". They now say a 14-day trial of Pro and Premium features, and 1,000 bookings.
 - `app/get-started/steps/StepPlan.tsx`: the sign-up plan picker said Starter's fee applies "after trial" and labelled Starter a "free trial". It now says "no monthly fee", that the fee applies "from day one, plus payment gateway fees", and that every Pro and Premium feature can be tried free for 14 days.
 - Smaller copy:
-  - `app/(marketing)/blog/posts.ts`: the trial line now names Pro and Premium features.
-  - `lib/constants.ts`: unused Starter feature strings no longer say "no fees" or "after trial".
+  - `app/(marketing)/blog/posts.ts`: both trial lines now name Pro and Premium features.
+  - `lib/constants.ts`: unused Starter feature strings no longer say "no fees" or "after trial", and the Pro and Premium "Direct bank transfer" strings now say "(zero gateway fees)", matching `TIER_FEATURES`.
+  - The WhatsApp upsell keeps "Upgrade anytime to get:". The trial never changes the fee.
+  - The trial emails now say "keep the features you use" and "your per-transaction fee stays the same", so they hold for custom or category rates too.
   - `app/dashboard/page.tsx`: the bookings usage-meter fallback is now the Starter limit.
 - `app/dashboard/capabilities/page.tsx`: the in-trial note now says the 14-day trial includes every Pro and Premium feature.
 - Test: `lib/__tests__/pricing-trial-fee-wording.test.tsx` checks:

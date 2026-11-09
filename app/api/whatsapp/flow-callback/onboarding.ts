@@ -316,7 +316,7 @@ export async function handleOnboardingComplete(
               body: [
                 `💡 *Unlock more with a paid plan*`,
                 '',
-                `You're on the free plan with a 14-day trial of Pro and Premium features. Upgrade anytime to keep:`,
+                `You're on the free plan with a 14-day trial of Pro and Premium features. Upgrade anytime to get:`,
                 '',
                 `*Pro* — ${growthPrice}/mo`,
                 '• Up to 1,000 bookings/month',

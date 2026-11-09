@@ -467,7 +467,7 @@ export function trialExpiringEmail(businessName: string, daysLeft: number) {
     html: wrap(`
       ${h('Your Trial Is Ending Soon')}
       ${p(`The free trial for <strong>${esc(businessName)}</strong> ends in <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong>.`)}
-      ${p('After the trial, Pro and Premium features switch off unless you upgrade. Upgrade to Pro or Premium to keep them and lower your per-transaction fee.')}
+      ${p('After the trial, Pro and Premium features switch off unless you upgrade. Upgrade to keep the features you use and lower your per-transaction fee.')}
       ${table(
         kv('Free Plan', '3% per transaction') +
         kv('Pro Plan', '1.5% per transaction — lower fees, more features') +
@@ -485,7 +485,7 @@ export function trialEndedEmail(businessName: string) {
     html: wrap(`
       ${h('Free Trial Ended')}
       ${p(`The free trial for <strong>${esc(businessName)}</strong> has ended.`)}
-      ${p('Your bot is still active on the <strong>Free plan</strong>. Pro and Premium features are now switched off. Your fee stays at 3% per paid transaction.')}
+      ${p('Your bot is still active on the <strong>Free plan</strong>. Pro and Premium features are now switched off. Your per-transaction fee stays the same.')}
       ${p('Upgrade to reduce your fees and unlock premium features like loyalty programs, broadcasts, e-signatures, and more.')}
       ${btn('Upgrade Plan', `${appUrl}/dashboard/settings`)}
     `),
