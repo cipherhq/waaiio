@@ -30,6 +30,41 @@
       "privilege": "EXECUTE"
      }
     ],
+    "arguments": "",
+    "body_sha256": "121111e9861d0517dd1a95859d7dc6f1629d4dbeeebfe9f0428da672af273e3d",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "120557d401ce2a22d801ec4423ec2783062542e518569067b009cbf42239c1b8",
+   "identity": "function:public.end_feature_trial_on_upgrade()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
     "arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text DEFAULT 'NGN'::text, p_provider_transaction_id text DEFAULT NULL::text, p_provider_invoice_code text DEFAULT NULL::text",
     "body_sha256": "a7826a51a7e1035182bc728a43e1cbdb4ae6ca567c4759b4aa27527dc6c17445",
     "config": [
@@ -191,6 +226,15 @@
   },
   {
    "after": {
+    "definition": "CREATE TRIGGER trg_end_feature_trial_on_upgrade BEFORE UPDATE OF subscription_tier ON businesses FOR EACH ROW EXECUTE FUNCTION end_feature_trial_on_upgrade()",
+    "enabled": "O"
+   },
+   "after_sha256": "3c9f0735639aaabef5116b3ee13afcb479d3e507ec039621600df94f6b9f8c2a",
+   "identity": "trigger:public.businesses.trg_end_feature_trial_on_upgrade",
+   "operation": "add"
+  },
+  {
+   "after": {
     "definition": "CREATE TRIGGER trg_guard_feature_trial_clock BEFORE UPDATE OF feature_trial_ends_at ON businesses FOR EACH ROW EXECUTE FUNCTION guard_feature_trial_clock()",
     "enabled": "O"
    },
@@ -209,7 +253,7 @@
   }
  ],
  "migration": "525_feature_trial_clock_and_no_trial_fee_waiver.sql",
- "migration_sha256": "abac93de617396b38dea11a0c43956ee124853cc762d2cefc2dd1f029d349c80",
+ "migration_sha256": "aca42cc98e8ad9f1c4855eacc205fcac2c0e8f8a0b4ef3eb7ff03a0caf76a0ef",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
