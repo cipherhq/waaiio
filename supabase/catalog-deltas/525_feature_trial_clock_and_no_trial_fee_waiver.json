@@ -1,0 +1,216 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.businesses.feature_trial_ends_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text DEFAULT 'NGN'::text, p_provider_transaction_id text DEFAULT NULL::text, p_provider_invoice_code text DEFAULT NULL::text",
+    "body_sha256": "a7826a51a7e1035182bc728a43e1cbdb4ae6ca567c4759b4aa27527dc6c17445",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f612c6c820f43c758aee718255c7d40c18d30ead87171ef1e4329281e55c093a",
+   "identity": "function:public.finalize_paystack_recurring_charge(p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text, p_provider_transaction_id text, p_provider_invoice_code text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text DEFAULT 'USD'::text, p_payment_intent_id text DEFAULT NULL::text",
+    "body_sha256": "c5b8298bee4972b9ef1a0d0c9b10453d6f6de9f807a5ec14102e3a241b8abdec",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "be2bc161f2413f2687140da8d96dced7f2d964186954c411ec941ca50cd0b8d6",
+   "identity": "function:public.finalize_stripe_recurring_charge(p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text, p_payment_intent_id text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text DEFAULT 'NGN'::text, p_gateway text DEFAULT 'flutterwave'::text, p_provider_attempt_ref text DEFAULT NULL::text",
+    "body_sha256": "3788985703bafc2405089b2799eb4531bcdf6eb3f43aadec603766958f126ada",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b4a50ca87e334e503f46bd6001a8f4bfb3ac481edbfdbac2c4c1bd2efcda190b",
+   "identity": "function:public.finalize_token_recurring_charge(p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text, p_gateway text, p_provider_attempt_ref text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "5a9b8aa0ad5d4eee5b709adf6c7efb171024e792e654ed82aed45a6bc1669c15",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "8d305f8609e1ab677130f4db3e4e0a029cc3ef4b5b96e993eefe0db007c51fe1",
+   "identity": "function:public.guard_feature_trial_clock()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "89423310cde3260d750e863e192d50d184ae76e49318c82f87a7119cf13667a1",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "096325e7727aa8f810a377475ac0e8fde5ade4fdcc77a13bf40c14a9516b6fa3",
+   "identity": "function:public.set_feature_trial_clock()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER trg_guard_feature_trial_clock BEFORE UPDATE OF feature_trial_ends_at ON businesses FOR EACH ROW EXECUTE FUNCTION guard_feature_trial_clock()",
+    "enabled": "O"
+   },
+   "after_sha256": "0d5590baa3339b65b3b292bbc1881679921d4995e8edfc1c7bb8f67bde13233f",
+   "identity": "trigger:public.businesses.trg_guard_feature_trial_clock",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER trg_set_feature_trial_clock BEFORE INSERT ON businesses FOR EACH ROW EXECUTE FUNCTION set_feature_trial_clock()",
+    "enabled": "O"
+   },
+   "after_sha256": "c153d4e9f1980482165b8ffff6f41228f7c74a2d33d4338b3f0f0c183b802b4b",
+   "identity": "trigger:public.businesses.trg_set_feature_trial_clock",
+   "operation": "add"
+  }
+ ],
+ "migration": "525_feature_trial_clock_and_no_trial_fee_waiver.sql",
+ "migration_sha256": "abac93de617396b38dea11a0c43956ee124853cc762d2cefc2dd1f029d349c80",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
