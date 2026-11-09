@@ -569,9 +569,9 @@ describe('V1 finalization + calculator', () => {
     expect(calculateFee(10000, { payment_routing: 'platform', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null }, 'scheduling', { pricing_tiers: { free: { feePercentage: 2.5, feeFlat: 0 } }, category_fee_rates: { scheduling: { feePercentage: 3.0 } } }).feeTotal).toBe(300);
   });
 
-  it('BYO → 0%', async () => {
+  it('BYO → same tier rate as every route (Owner decision 2026-11-08)', async () => {
     const { calculateFee } = await import('@/lib/payments/calculateFee');
-    expect(calculateFee(10000, { payment_routing: 'byo', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null }, 'scheduling', { pricing_tiers: { free: { feePercentage: 10, feeFlat: 0 } } }).feeTotal).toBe(0);
+    expect(calculateFee(10000, { payment_routing: 'byo', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null }, 'scheduling', { pricing_tiers: { free: { feePercentage: 10, feeFlat: 0 } } }).feeTotal).toBe(1000);
   });
 });
 

@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
 import { normalizeError, safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
+import { paystackByoSplit, paystackMerchantSplit } from './paystack-split';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -65,17 +66,16 @@ export class PaystackGateway implements PaymentGateway {
       } else if (opts.isByo && opts.byoPlatformSubaccount && opts.platformFeeAmount != null) {
         // BYO reversed split: platform subaccount on business's account receives platform fee
         // transaction_charge = amount business keeps (total minus platform fee) in kobo
+        // The business (main account) bears Paystack's fee — see paystack-split.ts.
         const businessKeeps = Math.round((opts.amount - opts.platformFeeAmount) * 100);
-        splitParams = {
-          subaccount: opts.byoPlatformSubaccount,
-          transaction_charge: businessKeeps,
-        };
+        splitParams = paystackByoSplit(opts.byoPlatformSubaccount, businessKeeps);
       } else if (opts.subaccountCode) {
-        // Normal platform split: business subaccount on platform account
-        splitParams = {
-          subaccount: opts.subaccountCode,
-          transaction_charge: opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : undefined,
-        };
+        // Normal platform split: business subaccount on platform account.
+        // The business (subaccount) bears Paystack's fee — see paystack-split.ts.
+        splitParams = paystackMerchantSplit(
+          opts.subaccountCode,
+          opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : undefined,
+        );
       }
 
       // Build headers — add X-Connect-Account for Connect mode

@@ -43,13 +43,16 @@ export interface FeeResult {
  *     Used by the getPlatformFees() wrapper for v0 payments.
  *
  * Precedence (pinned mode):
- *   1. BYO routing → 0% (invariant, highest precedence)
- *   2. Trial waiver → 0%
- *   3. Per-business custom override (custom_fee_percentage / custom_fee_flat)
- *   4. Category rate from snapshot (percentage-only)
- *   5. Tier rate from snapshot (percentage fallback)
- *   6. Missing category-specific rate → tier fallback (NOT zero, NOT fail closed)
- *   7. feeFlat: custom_fee_flat is the only v1 flat source (tier flat must be 0)
+ *   1. Trial waiver → 0%
+ *   2. Per-business custom override (custom_fee_percentage / custom_fee_flat)
+ *   3. Category rate from snapshot (percentage-only)
+ *   4. Tier rate from snapshot (percentage fallback)
+ *   5. Missing category-specific rate → tier fallback (NOT zero, NOT fail closed)
+ *   6. feeFlat: custom_fee_flat is the only v1 flat source (tier flat must be 0)
+ *
+ * Payment routing does NOT change the fee (Owner decision 2026-11-08): a
+ * business that connects its own Stripe/Paystack (BYO) pays the same Waaiio
+ * fee as every other route. The former "BYO → 0%" rule is removed.
  *
  * Amount and feeFlat are in major currency units (naira/dollars/pounds).
  * Two-decimal precision for v1; legacy rounding preserved for v0 callers.
@@ -60,17 +63,12 @@ export function calculateFee(
   category: string | null,
   configSnapshot: FeeConfigSnapshot | null,
 ): FeeResult {
-  // 1. BYO routing → zero fee (invariant)
-  if (basis.payment_routing === 'byo') {
-    return { feePercentage: 0, feeFlat: 0, feeTotal: 0 };
-  }
-
-  // 2. Trial waiver → zero fee
+  // 1. Trial waiver → zero fee
   if (basis.is_in_trial) {
     return { feePercentage: 0, feeFlat: 0, feeTotal: 0 };
   }
 
-  // 3. Resolve percentage: custom override > category rate > tier default
+  // 2. Resolve percentage: custom override > category rate > tier default
   let feePercentage: number;
 
   if (typeof basis.custom_fee_percentage === 'number') {
@@ -101,14 +99,14 @@ export function calculateFee(
     throw new Error('calculateFee requires configSnapshot for fee-policy-active payments');
   }
 
-  // 4. Resolve flat fee: custom_fee_flat is the only v1 flat source
+  // 3. Resolve flat fee: custom_fee_flat is the only v1 flat source
   // (v1 global tier feeFlat must be 0 — enforced at config activation)
   const feeFlat = typeof basis.custom_fee_flat === 'number' ? basis.custom_fee_flat : 0;
 
   // Waive flat fee on micro-transactions (> 10% of amount)
   const effectiveFeeFlat = (feeFlat > 0 && amount > 0 && feeFlat / amount > 0.10) ? 0 : feeFlat;
 
-  // 5. Calculate total with two-decimal precision
+  // 4. Calculate total with two-decimal precision
   const pctComponent = Math.round(amount * feePercentage * 100) / 10000;
   const rawTotal = pctComponent + effectiveFeeFlat;
   const feeTotal = Math.round(rawTotal * 100) / 100;

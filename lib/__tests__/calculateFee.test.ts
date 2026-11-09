@@ -26,22 +26,29 @@ function basis(overrides: Partial<FeeBasis> = {}): FeeBasis {
 }
 
 // ══════════════════════════════════════════════════════════
-// BYO routing → 0% invariant
+// BYO routing → same Waaiio fee as every route (Owner decision 2026-11-08)
 // ══════════════════════════════════════════════════════════
 
 describe('calculateFee: BYO routing', () => {
-  it('BYO routing produces zero fee regardless of tier/amount', () => {
-    const result = calculateFee(10000, basis({ payment_routing: 'byo', tier: 'free' }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+  it('BYO routing pays the same category/tier rate as the platform route', () => {
+    const byo = calculateFee(10000, basis({ payment_routing: 'byo', tier: 'free' }), 'scheduling', BASE_SNAPSHOT);
+    const platform = calculateFee(10000, basis({ tier: 'free' }), 'scheduling', BASE_SNAPSHOT);
+    expect(byo).toEqual({ feePercentage: 3.0, feeFlat: 0, feeTotal: 300 });
+    expect(byo).toEqual(platform);
   });
 
-  it('BYO overrides custom fee percentage', () => {
+  it('BYO respects a per-business custom fee percentage', () => {
     const result = calculateFee(10000, basis({ payment_routing: 'byo', custom_fee_percentage: 5 }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+    expect(result).toEqual({ feePercentage: 5, feeFlat: 0, feeTotal: 500 });
   });
 
-  it('BYO overrides trial=false + category rate', () => {
+  it('BYO uses the category rate when present', () => {
     const result = calculateFee(50000, basis({ payment_routing: 'byo' }), 'ticketing', BASE_SNAPSHOT);
+    expect(result).toEqual({ feePercentage: 5.0, feeFlat: 0, feeTotal: 2500 });
+  });
+
+  it('BYO in trial follows the trial waiver like every other route', () => {
+    const result = calculateFee(10000, basis({ payment_routing: 'byo', is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
     expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
   });
 });

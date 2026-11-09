@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
       annualDiscountPercentage,
       tierFees,
       categoryFees,
-      byoFeePolicy: '0% Waaiio fee when you bring your own payment gateway',
+      byoFeePolicy: 'The same Waaiio fee applies when you connect your own payment gateway, and payment gateway fees are paid by your business',
       country: {
         code: countryRow.code,
         name: countryRow.name,
