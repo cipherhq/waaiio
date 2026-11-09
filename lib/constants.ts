@@ -509,11 +509,11 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
     maxBookings: 100,
     whitelabel: false,
     features: [
-      'Free trial (no fees)',
+      '14-day trial of Pro & Premium features',
       'Up to 100 activities/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '3% per transaction after trial',
+      '3% per paid transaction',
     ],
   },
   growth: {
@@ -529,7 +529,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
-      'Direct bank transfer (zero fees)',
+      'Direct bank transfer (zero gateway fees)',
       '1.5% per transaction',
     ],
   },
@@ -546,7 +546,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
-      'Direct bank transfer (zero fees)',
+      'Direct bank transfer (zero gateway fees)',
       '1% per transaction',
     ],
   },
@@ -555,14 +555,14 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
 // ── Transaction Limits per Tier (monthly, except tickets which are per-event) ──
 export const TIER_TRANSACTION_LIMITS: Record<string, Record<string, number>> = {
   free: {
-    bookings: 50,
+    bookings: 100,
     orders: 50,
     tickets_per_event: 50,
     giving: 50,
     invoices: 20,
   },
   growth: {
-    bookings: 300,
+    bookings: 1000,
     orders: 500,
     tickets_per_event: 500,
     giving: 300,
@@ -616,7 +616,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
     highlights: [
-      'Free trial (no fees)',
+      '14-day trial of Pro & Premium features',
       'Up to 100 activities/month',
       'WhatsApp automation',
       'Dashboard & analytics',
@@ -1262,7 +1262,7 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       feeFlat: cp.free.feeFlat,
       features: [
         ...TIER_FEATURES.free.highlights,
-        `${TIER_FEATURES.free.feePercentage}% per transaction after trial`,
+        `${TIER_FEATURES.free.feePercentage}% per paid transaction`,
       ],
     },
     growth: {

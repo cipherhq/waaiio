@@ -124,7 +124,7 @@ export default function CapabilitiesPage() {
     setDragOverIndex(null);
   }, []);
 
-  // Check if business is still in 30-day trial
+  // Check if business is still in its free trial
   const isInTrial = useMemo(() => {
     // Paid plans are never in trial — they have their tier's capabilities
     // Feature-trial clock from sign-up (M525), not the messaging-credit clock.
@@ -277,7 +277,7 @@ export default function CapabilitiesPage() {
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Choose the features you want, then click Save Changes to update your account and WhatsApp bot.
-            {isInTrial && ' Your 30-day trial includes everything — try them all.'}
+            {isInTrial && ' Your 14-day trial includes every Pro and Premium feature — try them all.'}
           </p>
         </div>
         <div className="flex items-center gap-3">

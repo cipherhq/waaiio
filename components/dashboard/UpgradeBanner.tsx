@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { TIER_TRANSACTION_LIMITS } from '@/lib/constants';
 
 interface UpgradeBannerProps {
   currentBookings: number;
@@ -11,7 +12,7 @@ interface UpgradeBannerProps {
 
 export function UpgradeBanner({
   currentBookings,
-  maxBookings = 50,
+  maxBookings = TIER_TRANSACTION_LIMITS.free.bookings,
   tier,
 }: UpgradeBannerProps) {
   const [dismissed, setDismissed] = useState(false);
@@ -69,7 +70,7 @@ export function UpgradeBanner({
     descColor = 'text-yellow-700';
     buttonBg = 'bg-yellow-600';
     buttonHover = 'hover:bg-yellow-700';
-    message = `You've used ${currentBookings} of ${maxBookings} bookings this month. Upgrade to Pro for 500 bookings.`;
+    message = `You've used ${currentBookings} of ${maxBookings} bookings this month. Upgrade to Pro for ${TIER_TRANSACTION_LIMITS.growth.bookings.toLocaleString('en-US')} bookings.`;
   }
 
   return (

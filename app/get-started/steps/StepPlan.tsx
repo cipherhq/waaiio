@@ -43,14 +43,14 @@ export function StepPlan({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.free?.name || 'Starter')}</h3>
-              <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">free trial</span></p>
+              <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">no monthly fee</span></p>
             </div>
             <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'free' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
               {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
             </div>
           </div>
-          <p className="mt-2 text-sm text-gray-600">Start with free features. Upgrade from your dashboard whenever you are ready.</p>
-          <p className="mt-3 text-sm font-semibold text-gray-900">{feeLabel('free')} after trial — no monthly fee</p>
+          <p className="mt-2 text-sm text-gray-600">Start with free features and try every Pro and Premium feature free for 14 days. Upgrade from your dashboard whenever you are ready.</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900">{feeLabel('free')} from day one, plus payment gateway fees</p>
         </button>
 
         {/* Growth / Pro */}
