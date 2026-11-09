@@ -48,6 +48,7 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
 **Status:** Standing Owner financial decision.
 - Rules 1–5, 7 and 8 are recorded in issue #958.
 - Rule 6 (upgrade ends the trial) and the Stripe decision under "Known limits" were made on 2026-11-09. They are recorded in PRs #960, #961 (M525 §3b) and #959.
+- The direct-bank-transfer exception under rule 3 was decided by the Owner on 2026-11-10, in the orchestrating chat.
 - These rules are implemented by PRs #959, #960 and #961. It is binding on all code, configuration, migrations, pricing copy, provider integrations, admin tools and PRs. **Nothing changes these rules without a new, explicit Owner decision.** Technical approval, passing CI, a reviewer's or agent's preference, or an old PR description never overrides them.
 
 ## Rules
@@ -55,6 +56,7 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
 1. **Waaiio fee per paid transaction.** Starter 3%, Pro 1.5%, Premium 1%. The live rates are in `platform_settings.pricing_tiers` and the config snapshot. `calculateFee` also applies a business's `custom_fee_percentage` / `custom_fee_flat` and any `category_fee_rates` ahead of the plan rate. Changing a plan rate, or setting a custom or category rate, is itself an Owner decision.
 2. **From sign-up.** The fee applies from the day a business signs up. The free trial never waives it.
 3. **The same fee on every route.** This includes Waaiio-collected payments, merchant-connected split payments, and businesses that connect their own Stripe or Paystack. Waaiio collects its fee on every route.
+   - **One named exception: direct bank transfer** (Owner decision, 2026-11-10). It is available only on Pro and Premium. When a customer pays straight into the business's bank account, Waaiio's fee is 0% by design (`lib/payments/process-success.ts` records `fee_total` 0 with `is_direct_transfer`), and there is no gateway fee. Waaiio earns from those plans' monthly subscription instead. Charging a fee on direct bank transfers, or opening them to Starter, needs a new Owner decision.
 4. **The merchant pays every payment-gateway fee, on every route. Waaiio must not absorb any fee at all.**
    - On a split, the provider fee must be borne by the merchant's side. On Paystack (`lib/payments/paystack-split.ts`):
      - splits on Waaiio's account send `bearer: 'subaccount'`;

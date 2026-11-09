@@ -39,7 +39,7 @@ Read [`docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`](./docs/MERCHANT_PAYMENT_CUSTODY
 - These two routes must keep working independently. Removing `manual_cash` does **not** remove the manual settlement workflow. Disabling Stripe *automatic platform-managed payouts* must **not** disable Stripe Connect splits or admin settlement of Stripe-held funds.
 - For all payment-related work, show regression evidence for both routes and duplicate-payment, fee, refund and cross-business safety. Do not change these business rules, silently reroute money, or remove a route without a **new explicit Owner decision**. CI green is not a substitute.
 - **Fee and trial model (Owner standing order, 2026-11-08/09; issue #958, plus PRs #959, #960 and #961 for the 2026-11-09 decisions; full text in the same policy doc).**
-  - Waaiio fee per paid transaction is Starter 3%, Pro 1.5%, Premium 1%, from sign-up, on every route, including own-gateway and split payments. Waaiio collects it.
+  - Waaiio fee per paid transaction is Starter 3%, Pro 1.5%, Premium 1%, from sign-up, on every route, including own-gateway and split payments. Waaiio collects it. The one named exception is direct bank transfer, which is Pro/Premium only: Waaiio's fee is 0% there by design, because Waaiio earns from the subscription.
   - The merchant pays every payment-gateway fee, and Waaiio absorbs none.
   - The 14-day trial is for Pro and Premium features, starts at sign-up, uses Premium limits and never waives the fee. Upgrading ends it, and a downgrade does not restore it.
   - The free messaging credit is separate. Bookings are 100 / 1,000 / unlimited.
