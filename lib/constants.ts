@@ -1111,11 +1111,9 @@ export function generateBotCode(name: string): string {
 export function calculatePlatformFee(
   amount: number,
   tier: SubscriptionTier,
-  isInTrial: boolean,
+  // Kept for call-site compatibility; the trial never waives the fee (Owner 2026-11-08).
+  _isInTrial: boolean,
 ): { feePercentage: number; feeFlat: number; feeTotal: number } {
-  if (isInTrial) {
-    return { feePercentage: 0, feeFlat: 0, feeTotal: 0 };
-  }
   const tierConfig = PRICING_TIERS[tier];
   const percentageFee = Math.round(amount * tierConfig.feePercentage / 100);
   const feeTotal = percentageFee + tierConfig.feeFlat;

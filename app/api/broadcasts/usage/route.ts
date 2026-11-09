@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { resolveLimitTier } from '@/lib/trial-status';
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +35,8 @@ export async function GET(request: NextRequest) {
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const limits = settings.broadcast_limits[tier];
+    // During the feature trial a Starter business sees Premium limits.
+    const limits = settings.broadcast_limits[await resolveLimitTier(service, business.id, tier)];
     const monthKey = new Date().toISOString().slice(0, 7);
 
     const { data: usage } = await service

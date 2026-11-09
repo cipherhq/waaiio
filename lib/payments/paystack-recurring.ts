@@ -5,6 +5,7 @@
 
 import { logger } from '@/lib/logger';
 import { safeProviderError } from '@/lib/redact';
+import { paystackMerchantSplit } from './paystack-split';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -337,7 +338,8 @@ export async function chargeAuthorization(
         amount: amountKobo,
         email,
         reference,
-        ...(splitParams || {}),
+        // Merchant subaccount always bears Paystack's fee (Owner decision 2026-11-08).
+        ...(splitParams ? paystackMerchantSplit(splitParams.subaccount, splitParams.transaction_charge) : {}),
       }),
       signal: AbortSignal.timeout(30000),
     });

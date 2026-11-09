@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
+import { getLimitTier } from '@/lib/capabilities/policy';
 import { createClient } from '@/lib/supabase/client';
 import {
   formatCurrency,
@@ -61,6 +62,8 @@ interface RecentOrder {
 
 export default function DashboardOverview() {
   const business = useBusiness();
+  // During the feature trial a Starter business uses Premium (unlimited) limits.
+  const limitTier = getLimitTier(business.subscription_tier, business.feature_trial_ends_at);
   const { hasCapability } = useCapabilities();
   const [stats, setStats] = useState<Stats>({
     totalBookings: 0, todayBookings: 0, pendingBookings: 0, completedBookings: 0,
@@ -404,9 +407,10 @@ export default function DashboardOverview() {
       )}
 
       {/* Upgrade nudge banner */}
+      {/* Limit tier: no Starter booking-limit warning during the feature trial (Premium limits apply). */}
       <UpgradeBanner
         currentBookings={monthlyBookings}
-        tier={business.subscription_tier}
+        tier={limitTier}
       />
 
       {/* Stats */}
@@ -491,18 +495,18 @@ export default function DashboardOverview() {
       </div>
 
       {/* Tier Usage Indicators — show for free/growth tiers */}
-      {(business.subscription_tier === 'free' || business.subscription_tier === 'growth') && (
+      {(limitTier === 'free' || limitTier === 'growth') && (
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <UsageBar
             label={`${bookingsLabel} this month`}
             current={monthlyBookings}
-            limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.bookings ?? TIER_TRANSACTION_LIMITS.free.bookings}
+            limit={TIER_TRANSACTION_LIMITS[limitTier]?.bookings ?? TIER_TRANSACTION_LIMITS.free.bookings}
           />
           {hasCapability('ordering') && (
             <UsageBar
               label="Orders this month"
               current={monthlyOrders}
-              limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.orders ?? 50}
+              limit={TIER_TRANSACTION_LIMITS[limitTier]?.orders ?? 50}
             />
           )}
         </div>

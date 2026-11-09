@@ -332,7 +332,7 @@ export async function initializePayment(
 
           const { resolveTrialStatus } = await import('@/lib/trial-status');
           const tier = (bizForFee.subscription_tier || 'free') as import('@/lib/constants').SubscriptionTier;
-          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, bizForFee.trial_ends_at);
+          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier);
 
           // Validate v1 snapshot (non-zero tier feeFlat fails closed)
           const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
@@ -351,14 +351,11 @@ export async function initializePayment(
             custom_fee_flat: bizForFee.custom_fee_flat != null ? Number(bizForFee.custom_fee_flat) : null,
           };
 
-          // Calculate v1 fee for provider split
+          // Calculate v1 fee for provider split. Same fee on every route,
+          // including BYO, where the reversed split collects it (Owner decision 2026-11-08).
           const { calculateFee } = await import('@/lib/payments/calculateFee');
           const v1Fee = calculateFee(opts.amount, feeBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
-          if (paymentRouting === 'byo') {
-            platformFeeAmount = 0;
-          } else {
-            platformFeeAmount = v1Fee.feeTotal;
-          }
+          platformFeeAmount = v1Fee.feeTotal;
 
           feePolicyVersion = 1;
 
@@ -640,6 +637,7 @@ export async function recordPlatformFee(
     fee_flat: fee.feeFlat,
     fee_total: fee.feeTotal,
     tier: opts.tier,
-    waived: opts.isInTrial,
+    // The trial never waives the Waaiio fee (Owner 2026-11-08).
+    waived: false,
   });
 }

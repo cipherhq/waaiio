@@ -20,7 +20,7 @@ import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, typ
 import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabilities/policy';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 import { trackInboundMessage } from '@/lib/bot/conversation-guard';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -1095,13 +1095,13 @@ export class BotService {
             }));
           }
 
-          const hasTrialCredit = await resolveTrialCredit(this.supabase, currentBiz.id as string);
+          // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+          const featureTrialEndsAt = await resolveFeatureTrialEndsAt(this.supabase, currentBiz.id as string);
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: configuredRows,
             overrides,
             tier: (currentBiz.subscription_tier as string) || 'free',
-            trialEndsAt: currentBiz.trial_ends_at as string,
-            hasTrialCredit,
+            trialEndsAt: featureTrialEndsAt,
           });
 
           // Refresh the session's capabilities array with CURRENT effective set
@@ -1861,14 +1861,14 @@ export class BotService {
           ? [] // fail closed on override read error
           : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
 
-        const hasTrialCredit = await resolveTrialCredit(this.supabase, business.id);
+        // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+        const featureTrialEndsAt = await resolveFeatureTrialEndsAt(this.supabase, business.id);
         if (capResult.rows.length > 0) {
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: capResult.rows,
             overrides,
             tier: business.subscription_tier,
-            trialEndsAt: business.trial_ends_at,
-            hasTrialCredit,
+            trialEndsAt: featureTrialEndsAt,
           });
           capabilities = policyResult.effective;
         } else {
@@ -1882,8 +1882,7 @@ export class BotService {
             configuredCapabilities: legacyRows,
             overrides,
             tier: business.subscription_tier,
-            trialEndsAt: business.trial_ends_at,
-            hasTrialCredit,
+            trialEndsAt: featureTrialEndsAt,
           });
           capabilities = policyResult.effective;
         }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
+import { formatCurrency, type CountryCode, getLocale, PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -63,8 +63,11 @@ export default function FinancialsPage() {
   const perPage = 20;
 
   const [totalRefunds, setTotalRefunds] = useState(0);
-  const [platformPct, setPlatformPct] = useState<number | null>(null);
   const isDirectSplit = business.payout_mode === 'direct_split';
+  // Direct-split checkouts charge the plan rate (Owner decision #958 rule 1),
+  // the same figure the billing page shows.
+  const planTier = (business.subscription_tier || 'free') as SubscriptionTier;
+  const platformPct = (PRICING_TIERS[planTier] ?? PRICING_TIERS.free).feePercentage;
 
   // Server-side revenue totals (same inclusion semantics as rows, no row-cap)
   const [bookingRevenue, setBookingRevenue] = useState(0);
@@ -76,7 +79,7 @@ export default function FinancialsPage() {
     async function load() {
       const supabase = createClient();
 
-      const [txnRes, totalsRes, feesRes, payoutsRes, payoutAccountRes, refundsRes] = await Promise.all([
+      const [txnRes, totalsRes, feesRes, payoutsRes, refundsRes] = await Promise.all([
         // Unified transaction projection via RPC (#226)
         supabase.rpc('get_business_transactions', {
           p_business_id: business.id,
@@ -98,14 +101,6 @@ export default function FinancialsPage() {
           .select('net_amount')
           .eq('business_id', business.id)
           .in('status', ['pending', 'approved']),
-        isDirectSplit
-          ? supabase
-              .from('payout_accounts')
-              .select('platform_percentage')
-              .eq('business_id', business.id)
-              .eq('is_active', true)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
         supabase
           .from('refunds')
           .select('amount, status')
@@ -124,9 +119,7 @@ export default function FinancialsPage() {
         setTotalRevenue(Number(totals[0].total_revenue || 0));
       }
 
-      if (isDirectSplit) {
-        setPlatformPct(payoutAccountRes.data?.platform_percentage ?? 2.5);
-      } else {
+      if (!isDirectSplit) {
         // Exclude direct-transfer fees: platform never held those funds (fail-closed: null excluded)
         setPlatformFees((feesRes.data || []).filter(f => f.is_direct_transfer === false).reduce((s, f) => s + Number(f.fee_total || 0), 0));
       }
@@ -137,7 +130,7 @@ export default function FinancialsPage() {
     load();
   }, [business.id, isDirectSplit]);
 
-  const effectiveFees = isDirectSplit && platformPct !== null
+  const effectiveFees = isDirectSplit
     ? Math.round(totalRevenue * (platformPct / 100))
     : platformFees;
   const netEarnings = totalRevenue - effectiveFees - totalRefunds;

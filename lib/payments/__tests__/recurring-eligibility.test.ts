@@ -23,7 +23,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'growth',
         trialEndsAt: null,
         overrides: [],
-        hasTrialCredit: false,
       });
       expect(result.effective).toContain('recurring');
     });
@@ -36,7 +35,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'free',
         trialEndsAt: null,
         overrides: [],
-        hasTrialCredit: false,
       });
       expect(result.effective).not.toContain('recurring');
       expect(result.blocked.map(b => b.capability)).toContain('recurring');
@@ -51,7 +49,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'free',
         trialEndsAt: futureDate,
         overrides: [],
-        hasTrialCredit: true,
       });
       expect(result.effective).toContain('recurring');
     });
@@ -65,7 +62,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'free',
         trialEndsAt: pastDate,
         overrides: [],
-        hasTrialCredit: false,
       });
       expect(result.effective).not.toContain('recurring');
     });
@@ -78,7 +74,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'free',
         trialEndsAt: null,
         overrides: ['recurring'],
-        hasTrialCredit: false,
       });
       expect(result.effective).toContain('recurring');
     });
@@ -91,7 +86,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'growth',
         trialEndsAt: null,
         overrides: [],
-        hasTrialCredit: false,
       });
       expect(result.effective).not.toContain('recurring');
       expect(result.disabled).toContain('recurring');
@@ -105,7 +99,6 @@ describe('#224: recurring eligibility gates', () => {
         tier: 'growth',
         trialEndsAt: null,
         overrides: [],
-        hasTrialCredit: false,
       });
       expect(result.effective).not.toContain('recurring');
     });

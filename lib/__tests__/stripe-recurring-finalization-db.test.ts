@@ -887,8 +887,9 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
   });
 
-  // s. Active trial → zero-fee semantics (trial_ends_at in the future)
-  it('s. active trial → finalization succeeds with zero platform_fees', () => {
+  // s. Active trial → the plan fee is still charged (Owner 2026-11-08, M525:
+  //    the trial never waives the Waaiio fee; trial_ends_at in the future).
+  it('s. active trial → finalization records the plan fee, not zero (M525)', () => {
     cleanFinData();
     psql(`UPDATE businesses SET trial_ends_at = NOW() + INTERVAL '30 days', payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
@@ -902,13 +903,13 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
 
     expect(result.success).toBe(true);
 
-    // Fee row exists but with zero amounts (active trial = no fees charged)
+    // Same fee as a business outside its trial (case r above: 2.5% of 50 → 1)
     const feeRow = psql(`SELECT fee_percentage, fee_flat, fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
     expect(feeRow).not.toBe('');
     const [feePct, feeFlat, feeTotal] = feeRow.split('|');
-    expect(parseFloat(feePct)).toBe(0);
+    expect(parseFloat(feePct)).toBe(2.5);
     expect(parseFloat(feeFlat)).toBe(0);
-    expect(parseFloat(feeTotal)).toBe(0);
+    expect(parseInt(feeTotal)).toBe(1);
 
     // Restore
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);

@@ -60,7 +60,9 @@ vi.mock('@/lib/bot/translations', () => ({
 vi.mock('@/lib/bot/conversation-guard', () => ({ trackInboundMessage: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/capabilities/service', () => ({ getConfiguredCapabilities: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/lib/capabilities/policy', () => ({ getEffectiveCapabilities: vi.fn().mockReturnValue([]) }));
-vi.mock('@/lib/trial-status', () => ({ resolveTrialCredit: vi.fn().mockResolvedValue({ isInTrial: false, trialDaysRemaining: 0 }) }));
+vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')), resolveTrialCredit: vi.fn().mockResolvedValue({ isInTrial: false, trialDaysRemaining: 0 }) }));
 vi.mock('@/lib/whitelabel', () => ({ getPoweredByFooter: vi.fn().mockReturnValue('Powered by Waaiio'), getPoweredByHtml: vi.fn().mockReturnValue('') }));
 vi.mock('@/lib/marketplace/search', () => ({ searchMarketplace: vi.fn().mockResolvedValue([]), formatMarketplaceResults: vi.fn().mockReturnValue(''), loadDirectoryHiddenIds: vi.fn().mockResolvedValue(new Set()) }));
 vi.mock('@/lib/bot/automation/rules-engine', () => ({ evaluateRules: vi.fn().mockResolvedValue([]) }));

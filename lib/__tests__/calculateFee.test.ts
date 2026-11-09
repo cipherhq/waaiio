@@ -26,39 +26,49 @@ function basis(overrides: Partial<FeeBasis> = {}): FeeBasis {
 }
 
 // ══════════════════════════════════════════════════════════
-// BYO routing → 0% invariant
+// BYO routing → same Waaiio fee as every route (Owner decision 2026-11-08)
 // ══════════════════════════════════════════════════════════
 
 describe('calculateFee: BYO routing', () => {
-  it('BYO routing produces zero fee regardless of tier/amount', () => {
-    const result = calculateFee(10000, basis({ payment_routing: 'byo', tier: 'free' }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+  it('BYO routing pays the same category/tier rate as the platform route', () => {
+    const byo = calculateFee(10000, basis({ payment_routing: 'byo', tier: 'free' }), 'scheduling', BASE_SNAPSHOT);
+    const platform = calculateFee(10000, basis({ tier: 'free' }), 'scheduling', BASE_SNAPSHOT);
+    expect(byo).toEqual({ feePercentage: 3.0, feeFlat: 0, feeTotal: 300 });
+    expect(byo).toEqual(platform);
   });
 
-  it('BYO overrides custom fee percentage', () => {
+  it('BYO respects a per-business custom fee percentage', () => {
     const result = calculateFee(10000, basis({ payment_routing: 'byo', custom_fee_percentage: 5 }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+    expect(result).toEqual({ feePercentage: 5, feeFlat: 0, feeTotal: 500 });
   });
 
-  it('BYO overrides trial=false + category rate', () => {
+  it('BYO uses the category rate when present', () => {
     const result = calculateFee(50000, basis({ payment_routing: 'byo' }), 'ticketing', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+    expect(result).toEqual({ feePercentage: 5.0, feeFlat: 0, feeTotal: 2500 });
+  });
+
+  it('BYO in trial pays the same fee as every other route (trial never waives, Owner 2026-11-08)', () => {
+    const inTrial = calculateFee(10000, basis({ payment_routing: 'byo', is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
+    expect(inTrial).toEqual(calculateFee(10000, basis({ payment_routing: 'byo', is_in_trial: false }), 'scheduling', BASE_SNAPSHOT));
+    expect(inTrial.feeTotal).toBeGreaterThan(0);
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// Trial waiver
+// No trial waiver (Owner decision 2026-11-08): the fee applies from sign-up
 // ══════════════════════════════════════════════════════════
 
-describe('calculateFee: trial waiver', () => {
-  it('trial=true produces zero fee', () => {
-    const result = calculateFee(10000, basis({ is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+describe('calculateFee: the trial never waives the fee', () => {
+  it('trial=true charges the same fee as trial=false', () => {
+    const inTrial = calculateFee(10000, basis({ is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
+    const notInTrial = calculateFee(10000, basis({ is_in_trial: false }), 'scheduling', BASE_SNAPSHOT);
+    expect(inTrial).toEqual(notInTrial);
+    expect(inTrial.feeTotal).toBeGreaterThan(0);
   });
 
-  it('trial=true overrides custom override', () => {
+  it('trial=true keeps the custom override rate', () => {
     const result = calculateFee(10000, basis({ is_in_trial: true, custom_fee_percentage: 10 }), null, BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+    expect(result).toEqual({ feePercentage: 10, feeFlat: 0, feeTotal: 1000 });
   });
 });
 
