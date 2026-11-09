@@ -207,7 +207,8 @@ describe('provider separation — no cross-contamination', () => {
     const flwGateway = readFileSync('lib/payments/flutterwave.ts', 'utf-8');
     expect(flwGateway).toContain('subaccounts: [{');
     expect(flwGateway).toContain('transaction_charge_type');
-    const psGateway = readFileSync('lib/payments/paystack.ts', 'utf-8');
+    // Paystack split fields are built in paystack-split.ts and spread in paystack.ts
+    const psGateway = readFileSync('lib/payments/paystack.ts', 'utf-8') + readFileSync('lib/payments/paystack-split.ts', 'utf-8');
     expect(psGateway).toContain('subaccount:');
     expect(psGateway).not.toContain('subaccounts:');
   });

@@ -3,9 +3,10 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { logger } from '@/lib/logger';
-import { loadPlatformSettings } from '@/lib/platformSettings';
+import { getPlatformFees } from '@/lib/getPlatformFees';
+import { resolveTrialStatus } from '@/lib/trial-status';
 import { computePlatformHeldTotals, getEligibleCurrencies, getUnknownCurrencyFeeRows, hasUnreconciledCurrencyRecords } from '@/lib/payments/payable-fees';
-import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { getCurrencyCode, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 
 export async function GET(request: NextRequest) {
@@ -111,17 +112,25 @@ export async function GET(request: NextRequest) {
 
     if (biz.payout_mode === 'direct_split') {
       // For direct_split, Paystack deducts the fee at gateway level.
-      // Use total_revenue as gross and compute the platform percentage as the fee estimate.
+      // Use total_revenue as gross and the business's plan rate (the rate checkout
+      // charges, Owner decision #958 rule 1) as the fee estimate. Ownership is
+      // already established above; fee columns are read with the service client.
       gross = total_revenue;
-      const { data: payoutAccount } = await supabase
-        .from('payout_accounts')
-        .select('platform_percentage')
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .maybeSingle();
-
-      const settings = await loadPlatformSettings({ useServiceClient: true });
-      const pct = payoutAccount?.platform_percentage ?? settings.default_platform_fee_percent;
+      const feeService = createServiceClient();
+      const { data: feeBiz, error: feeBizError } = await feeService
+        .from('businesses')
+        .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+        .eq('id', businessId)
+        .single();
+      if (feeBizError || !feeBiz) {
+        return NextResponse.json({ error: 'Unable to verify fee rate' }, { status: 503 });
+      }
+      const feeTier = (feeBiz.subscription_tier || 'free') as SubscriptionTier;
+      const inTrial = await resolveTrialStatus(feeService, businessId, feeTier, feeBiz.trial_ends_at);
+      const { feePercentage: pct } = await getPlatformFees(gross, feeTier, inTrial, {
+        feePercentage: feeBiz.custom_fee_percentage != null ? Number(feeBiz.custom_fee_percentage) : null,
+        feeFlat: feeBiz.custom_fee_flat != null ? Number(feeBiz.custom_fee_flat) : null,
+      });
       totalFees = Math.round(gross * (pct / 100));
       netAvailable = Math.max(0, gross - totalFees - paidOut - pending + allAdjustmentSum);
     } else {

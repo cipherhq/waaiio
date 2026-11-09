@@ -172,7 +172,7 @@ export async function resolvePaymentRoutingAuthority(
       if (biz?.payout_mode === 'direct_split') {
         const { data: payout, error: payoutError } = await supabase
           .from('payout_accounts')
-          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, gateway')
           .eq('business_id', businessId)
           .eq('is_active', true)
           .maybeSingle();
@@ -203,7 +203,15 @@ export async function resolvePaymentRoutingAuthority(
             } else {
               result.squareAccessToken = null;
             }
-            result.platformFeeAmount = Math.round(amount * (payout.platform_percentage / 100));
+            // Plan rate, same as every other route (Owner decision #958 rule 1).
+            // The legacy payout_accounts.platform_percentage no longer sets the fee.
+            try {
+              result.platformFeeAmount = await resolveFee();
+            } catch (e) {
+              logger.withContext({ op: 'routing.direct-split-fee', ...safeLogErrorContext(e) })
+                .error('[ROUTING] Business tier lookup failed for direct split — fail closed');
+              return null;
+            }
             result.payoutAccountId = payout.id;
           }
         }

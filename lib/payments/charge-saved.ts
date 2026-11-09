@@ -6,6 +6,7 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
 import { normalizeError } from '@/lib/errors';
 import { resolveTrialStatus } from '@/lib/trial-status';
+import { paystackMerchantSplit } from './paystack-split';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -498,10 +499,8 @@ async function chargePaystackAuthorization(
         const { calculateFee } = await import('@/lib/payments/calculateFee');
         const v1Fee = calculateFee(opts.amount, scBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
         if (splitSubaccount) {
-          splitParams = {
-            subaccount: splitSubaccount,
-            transaction_charge: Math.round(v1Fee.feeTotal * 100),
-          };
+          // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
+          splitParams = paystackMerchantSplit(splitSubaccount, Math.round(v1Fee.feeTotal * 100));
         }
       }
       // gateVal === false → v0 (resolved below via resolvePaystackSplit)
@@ -515,10 +514,8 @@ async function chargePaystackAuthorization(
   if (v1Fields.fee_policy_version !== 1) {
     const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
     if (splitResult.mode === 'split') {
-      splitParams = {
-        subaccount: splitResult.subaccount,
-        transaction_charge: splitResult.transactionChargeKobo,
-      };
+      // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
+      splitParams = paystackMerchantSplit(splitResult.subaccount, splitResult.transactionChargeKobo);
     } else if (splitResult.mode === 'split_required_but_missing') {
       logger.error('[SAVED-CARD] Direct split config missing, blocking charge', { businessId: opts.businessId, reason: splitResult.reason });
       return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
