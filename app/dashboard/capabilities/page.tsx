@@ -123,7 +123,7 @@ export default function CapabilitiesPage() {
     setDragOverIndex(null);
   }, []);
 
-  // Check if business is still in 30-day trial
+  // Check if business is still in its free trial
   const isInTrial = useMemo(() => {
     // Paid plans are never in trial — they have their tier's capabilities
     if (tier !== 'free') return false;

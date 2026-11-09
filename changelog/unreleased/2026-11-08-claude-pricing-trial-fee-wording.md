@@ -51,6 +51,7 @@
   - the four plan emails
   - that the booking limits agree everywhere
   - Also: `lib/__tests__/signup-plan-choice.test.tsx` now checks the plan picker's fee line.
+  - Also: `lib/__tests__/onboarding-wizard-pricing-lifecycle.test.ts` now picks the Premium card by its name (`/^Premium/`), because the Starter card's new trial line mentions Premium. `signup-plan-choice` gets a 15-second timeout, because the page is slow to render.
 
 **Unchanged:**
 - Fee rates and how fees are calculated. `calculateFee` still waives the fee during an active trial until the code lane lands; no business is in a trial today.

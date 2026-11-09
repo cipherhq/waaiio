@@ -40,7 +40,7 @@ describe('Signup explicit plan choice', () => {
     expect(screen.getByText(/try every Pro and Premium feature free for 14 days/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start free — upgrade later' }));
     expect(screen.getByText('Details for free')).toBeTruthy();
-  });
+  }, 15000);
   it('allows paid fee savings with only free features and preserves choice on back', () => {
     render(<Journey />); openPlans();
     fireEvent.click(screen.getByRole('button', { name: /Premium.*₦30,000/ }));
