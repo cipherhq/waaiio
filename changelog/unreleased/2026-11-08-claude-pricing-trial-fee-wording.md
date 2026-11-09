@@ -8,7 +8,12 @@
 - **Booking limits.** Starter and Pro allow 100 and 1,000 bookings a month.
 - **The problem this fixes.** The pricing page read as "no fees". Several pages and emails quoted old rates (2.5%, 1.5% + ₦75) or wrong limits (50, 300, 500) and a 30-day or 7-day trial.
 
-**Ship together with both code lanes.** This PR changes wording only, except for the booking limits. Today's code still waives the fee during a trial, and the trial only starts together with the messaging-credit grant, so nobody gets the 14-day trial yet. That code changes in a separate lane, which removes the trial fee waiver and starts the feature trial at sign-up. Gateway-fee bearing on split payments and the fee on businesses using their own gateway are a third lane. Until it ships, "gateway fees are paid by your business" is not true for split payments, and the 3% does not apply to businesses using their own gateway; the pricing page's category-fee section, hidden while `category_fee_rates` is empty, still says "0% Waaiio fee" for them. Merge and release this PR in the same release as both lanes, so every statement is true when it goes live.
+**Ships in the same release as the code lanes.** This PR changes wording plus the booking limits. The code behind the wording is already on main:
+- #961 (M525) starts the 14-day feature-trial clock at sign-up, ends it on upgrade, and removes the SQL trial fee waiver.
+- #960 removes the app trial fee waiver and applies Premium limits during the trial.
+- #959 makes the merchant bear the Paystack fee on splits and charges the plan fee to own-gateway businesses.
+
+The Stripe split, Stripe own-gateway, Flutterwave own-gateway and Paystack Connect routes are known limits that are not in use (standing order, PR #962).
 
 **What changed**
 - `app/(marketing)/pricing/page.tsx`
@@ -24,7 +29,7 @@
     - the pricing page's "Monthly bookings" row
     - the dashboard usage meter
     - the dashboard upgrade banner
-    - `checkTierLimit` in the scheduling bot flow, which now blocks only above 120 (Starter) or 1,200 (Pro) instead of above 60 or 360. The earlier WhatsApp greeting gate (`StandaloneService.checkTierLimitsFromBusiness`, `PRICING_TIERS.maxBookings`) already stopped at 100 / 1,000 WhatsApp bookings and is unchanged. In practice a Starter business is stopped at 100 WhatsApp bookings, or above 120 bookings across all channels.
+    - `checkTierLimit` in the scheduling bot flow, which now blocks only above 120 (Starter) or 1,200 (Pro) instead of above 60 or 360. The earlier WhatsApp greeting gate (`StandaloneService.checkTierLimitsFromBusiness`, `PRICING_TIERS.maxBookings`) already stopped at 100 / 1,000 WhatsApp bookings and is unchanged. In practice, once its trial has ended, a Starter business is stopped at 100 WhatsApp bookings, or above 120 bookings across all channels. During the trial, Premium limits apply (#960).
   - Orders, tickets, giving and invoice limits are unchanged.
 - `components/dashboard/UpgradeBanner.tsx`: the banner assumed a 50-booking Starter limit and said Pro gives "500 bookings". It now reads both limits from `TIER_TRANSACTION_LIMITS`: it warns from 70 bookings, says "limit reached" at 100, and names Pro's 1,000.
 - `lib/email/templates.ts`
@@ -54,9 +59,10 @@
   - Also: `lib/__tests__/onboarding-wizard-pricing-lifecycle.test.ts` now picks the Premium card by its name (`/^Premium/`), because the Starter card's new trial line mentions Premium. `signup-plan-choice` gets a 15-second timeout, because the page is slow to render.
 
 **Unchanged:**
-- Fee rates and how fees are calculated. `calculateFee` still waives the fee during an active trial until the code lane lands; no business is in a trial today.
+- Fee rates, and how fees are calculated. `calculateFee` has had no trial or own-gateway shortcut since #959 and #960.
 - Trial length (`trial_days` = 14), payment routing, and all other limits.
 
 **Could break:**
 - A Starter or Pro business near 50 or 300 bookings can now take bookings up to the new limits, and the upgrade banner no longer shows at 35–69 Starter bookings.
+- `public/llms.txt`, the summary page for AI search tools, said "30-day free trial with all features, then 2.5% per transaction". It now gives the current model.
 - Several pages and emails now state the fee rates and the 14-day trial as fixed text. If the rates or `trial_days` change in settings, update them too.
