@@ -194,6 +194,35 @@ describe.skipIf(!canRun)('activate_trial_if_eligible', () => {
     }
   });
 
+  it('M525: the sign-up feature clock neither blocks nor doubles the credit, and the claim leaves it unchanged', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      // Set at sign-up by the M525 insert trigger; the credit clock is still empty.
+      const featureBefore = psql(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
+      expect(featureBefore).not.toBe('');
+      expect(psql(`SELECT trial_ends_at IS NULL FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+
+      const first = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(first).toMatchObject({ activated: true, amount_minor: 50000, currency_code: 'NGN' });
+      const second = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(second).toMatchObject({ activated: true, idempotent: true });
+
+      // Exactly one grant; the credit clock matches the grant; the feature clock is untouched.
+      expect(parseInt(psql(`
+        SELECT count(*) FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `))).toBe(1);
+      expect(psql(`
+        SELECT b.trial_ends_at = ma.expires_at FROM public.businesses b
+        JOIN public.messaging_allowances ma ON ma.business_id = b.id AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2'
+        WHERE b.id = '${bizId}'
+      `)).toBe('t');
+      expect(psql(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = '${bizId}'`)).toBe(featureBefore);
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
   it('2. replay (same business) is idempotent', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
