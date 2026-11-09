@@ -378,3 +378,72 @@ describe('Paystack refund (real PaystackGateway.refundPayment) is unchanged by t
     expect(calls[0].body).toEqual({ transaction: 'ref-x', amount: 250000 });
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Direct-split one-off checkout uses the plan rate (Owner decision #958 rule 1)
+// ─────────────────────────────────────────────────────────────
+describe('direct_split one-off checkout fee (real resolvePaymentRoutingAuthority)', () => {
+  beforeEach(() => {
+    // Earlier blocks mock these modules; this block drives the real ones.
+    vi.doUnmock('@/lib/payments/resolve-stripe-routing');
+    vi.doUnmock('@/lib/payments/factory');
+    vi.doUnmock('@/lib/payments/gateway-resolver');
+    vi.doUnmock('@/lib/getPlatformFees');
+    vi.doMock('@/lib/platformSettings', () => ({ loadPlatformSettings: async () => ({
+      pricing_tiers: { free: { feePercentage: 3, feeFlat: 0 }, growth: { feePercentage: 1.5, feeFlat: 0 }, business: { feePercentage: 1, feeFlat: 0 } },
+    }) }));
+    vi.doMock('@/lib/trial-status', () => ({ resolveTrialStatus: vi.fn().mockResolvedValue(false) }));
+  });
+
+  function routingDb(biz: Row, opts: { tierError?: boolean } = {}) {
+    let businessReads = 0;
+    return makeSupabase((table) => {
+      if (table === 'business_payment_credentials') return { data: null, error: null }; // platform route
+      if (table === 'businesses') {
+        businessReads++;
+        // 1st read: payout_mode; 2nd read: plan tier for the fee
+        if (opts.tierError && businessReads > 1) return { data: null, error: { message: 'db down' } };
+        return { data: { payout_mode: 'direct_split', trial_ends_at: null, custom_fee_percentage: null, custom_fee_flat: null, ...biz }, error: null };
+      }
+      if (table === 'payout_accounts') return { data: { id: 'pa-1', subaccount_code: 'ACCT_merchant', gateway: 'paystack', platform_percentage: 2.5, stripe_account_id: null, square_merchant_id: null, square_access_token: null }, error: null };
+      return { data: null, error: null };
+    });
+  }
+
+  it.each([['free', 300], ['growth', 150], ['business', 100]])(
+    '%s merchant on 10,000 → fee %d (plan rate; legacy 2.5 percent setting ignored)', async (tier, fee) => {
+      const { client } = routingDb({ subscription_tier: tier });
+      const { resolvePaymentRoutingAuthority } = await import('@/lib/payments/resolve-stripe-routing');
+      const r = await resolvePaymentRoutingAuthority(client as never, 'biz-1', 'paystack', 10000);
+      expect(r?.subaccountCode).toBe('ACCT_merchant');
+      expect(r?.payoutAccountId).toBe('pa-1');
+      expect(r?.platformFeeAmount).toBe(fee);
+    });
+
+  it('per-business custom fee still applies on the split route', async () => {
+    const { client } = routingDb({ subscription_tier: 'free', custom_fee_percentage: 2 });
+    const { resolvePaymentRoutingAuthority } = await import('@/lib/payments/resolve-stripe-routing');
+    expect((await resolvePaymentRoutingAuthority(client as never, 'biz-1', 'paystack', 10000))?.platformFeeAmount).toBe(200);
+  });
+
+  it('fails closed (no checkout) when the plan tier cannot be read', async () => {
+    const { client } = routingDb({ subscription_tier: 'free' }, { tierError: true });
+    const { resolvePaymentRoutingAuthority } = await import('@/lib/payments/resolve-stripe-routing');
+    expect(await resolvePaymentRoutingAuthority(client as never, 'biz-1', 'paystack', 10000)).toBeNull();
+  });
+
+  it('end to end: the live Starter split merchant sends transaction_charge = 3% with bearer=subaccount', async () => {
+    const { client } = routingDb({ subscription_tier: 'free' });
+    const { resolvePaymentRoutingAuthority } = await import('@/lib/payments/resolve-stripe-routing');
+    const r = await resolvePaymentRoutingAuthority(client as never, 'biz-1', 'paystack', 10000);
+    const calls = stubPaystackFetch();
+    const { PaystackGateway } = await import('@/lib/payments/paystack');
+    await new PaystackGateway().initializePayment({
+      supabase: makeSupabase(() => ({ data: null, error: null })).client as never,
+      userId: 'u1', amount: 10000, currency: 'NGN', referenceCode: 'REF-DS', businessName: 'Biz',
+      phone: '+2348012345678', businessId: 'biz-1', existingPaymentId: 'pay-ds',
+      subaccountCode: r!.subaccountCode!, platformFeeAmount: r!.platformFeeAmount,
+    });
+    expect(calls[0].body).toMatchObject({ subaccount: 'ACCT_merchant', transaction_charge: 30000, bearer: 'subaccount' });
+  });
+});

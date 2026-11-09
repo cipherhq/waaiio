@@ -3,16 +3,21 @@ import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/payouts/balance/route';
 import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 
-const f = vi.hoisted(() => ({ user: true, owns: true, active: true as boolean | null, holdError: false, mode: 'platform_managed', currency: 'NGN' as string | null, calls: [] as unknown[][], service: vi.fn() }));
+const f = vi.hoisted(() => ({ user: true, owns: true, active: true as boolean | null, holdError: false, mode: 'platform_managed', currency: 'NGN' as string | null, tier: 'free', customPct: null as number | null, calls: [] as unknown[][], service: vi.fn() }));
 vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn() } }));
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
 vi.mock('@/lib/constants', () => ({ getCurrencyCode: () => 'NGN' }));
-vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: async () => ({ default_platform_fee_percent: 10 }) }));
+vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: async () => ({ default_platform_fee_percent: 10, pricing_tiers: { free: { feePercentage: 3, feeFlat: 0 }, growth: { feePercentage: 1.5, feeFlat: 0 }, business: { feePercentage: 1, feeFlat: 0 } } }) }));
+vi.mock('@/lib/trial-status', () => ({ resolveTrialStatus: async () => false }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => { f.service(); return service; } }));
 const service = { from(table: string) {
   f.calls.push(['table', table]);
   return { select(columns: string) { f.calls.push(['select', columns]); return { eq(key: string, value: string) {
-    f.calls.push(['eq', key, value]); return { maybeSingle: async () => ({ data: f.active === null ? null : { active: f.active }, error: f.holdError ? { message: 'private error' } : null }) };
+    f.calls.push(['eq', key, value]); return {
+      maybeSingle: async () => ({ data: f.active === null ? null : { active: f.active }, error: f.holdError ? { message: 'private error' } : null }),
+      // Fee basis read (direct_split only): plan tier and per-business override.
+      single: async () => (table === 'businesses' ? { data: { subscription_tier: f.tier, trial_ends_at: null, custom_fee_percentage: f.customPct, custom_fee_flat: null }, error: null } : { data: null, error: { message: 'unexpected' } }),
+    };
   } }; } };
 } };
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({
@@ -33,7 +38,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({
   },
 }) }));
 const request = (query = '?business_id=b1') => new NextRequest('https://example.invalid/api/payouts/balance' + query);
-beforeEach(() => { Object.assign(f, { user: true, owns: true, active: true, holdError: false, mode: 'platform_managed', currency: 'NGN', calls: [] }); vi.clearAllMocks(); });
+beforeEach(() => { Object.assign(f, { user: true, owns: true, active: true, holdError: false, mode: 'platform_managed', currency: 'NGN', tier: 'free', customPct: null, calls: [] }); vi.clearAllMocks(); });
 describe('service-only accounting hold read', () => {
   it.each([[true, true], [false, false], [null, false]])('reads active %s as %s with exact business scope', async (active, expected) => {
     f.active = active;
@@ -64,8 +69,17 @@ describe('actual balance handler', () => {
   it('preserves direct split totals while reporting business hold independently', async () => {
     f.mode = 'direct_split'; const a = await (await GET(request())).json();
     f.active = false; const b = await (await GET(request())).json();
-    expect(a.net_available).toBe(900); expect({ ...a, settlement_held: false }).toEqual(b);
+    // Starter plan rate 3% of 1000 (not the legacy payout_accounts.platform_percentage 10)
+    expect(a.net_available).toBe(970); expect({ ...a, settlement_held: false }).toEqual(b);
   });
+  it.each([['free', null, 30], ['growth', null, 15], ['business', null, 10], ['free', 2, 20]])(
+    'direct split fee estimate uses the plan rate: tier %s, custom %s → fees %d (Owner decision #958 rule 1)',
+    async (tier, customPct, fees) => {
+      f.mode = 'direct_split'; f.active = false; f.tier = tier as string; f.customPct = customPct as number | null;
+      const body = await (await GET(request())).json();
+      expect(body.fees).toBe(fees); expect(body.net_available).toBe(1000 - (fees as number));
+      expect(f.calls).toContainEqual(['eq', 'id', 'b1']);
+    });
   it('exposes held state on currency reconciliation denial without inventing amounts', async () => {
     f.currency = null; const res = await GET(request()); const body = await res.json();
     expect(res.status).toBe(409); expect(body.settlement_held).toBe(true); expect(body).not.toHaveProperty('net_available');
