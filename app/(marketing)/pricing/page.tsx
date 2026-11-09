@@ -103,7 +103,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            {trialDays}-day free trial with no Waaiio platform fee, then a {tierFees.free.feePercentage}% standard platform fee on each paid transaction. Category rates and custom agreements may differ. No monthly fees on Starter. Free reservations don&apos;t count.
+            Try every Pro and Premium feature free for {trialDays} days. Starter has no monthly fee: a {tierFees.free.feePercentage}% Waaiio fee applies to each paid transaction from day one, and payment gateway fees are paid by your business. Category rates and custom agreements may differ. Free reservations don&apos;t count.
           </p>
 
           {/* Country picker */}
@@ -154,7 +154,7 @@ export default function PricingPage() {
                   country={country}
                 />
                 <p className="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-center text-xs text-gray-500">
-                  After trial: {tierFees.free.feePercentage}% standard platform fee; category rates and custom agreements may differ. Free bookings (no deposit) are always free.
+                  {tierFees.free.feePercentage}% Waaiio fee per paid transaction from day one, plus payment gateway fees; category rates and custom agreements may differ. Free bookings (no deposit) are always free.
                 </p>
               </div>
               <TierCard
@@ -362,11 +362,11 @@ export default function PricingPage() {
               />
               <PricingFaqItem
                 question={`What happens after my ${trialDays}-day trial?`}
-                answer={`After ${trialDays} days, the Starter plan's per-transaction fees kick in (${tierFees.free.feePercentage}% standard platform fee; category rates and custom agreements may differ). Your bot keeps working — there's no interruption.`}
+                answer={`After ${trialDays} days, Pro and Premium features switch off unless you choose a paid plan. Your bot keeps working on Starter with no interruption. The per-transaction fee is the same before and after the trial (Starter: ${tierFees.free.feePercentage}%; category rates and custom agreements may differ).`}
               />
               <PricingFaqItem
                 question="Are there any hidden fees?"
-                answer="No. You pay your plan subscription (if any) plus the per-transaction fees shown. Payment gateway fees (Paystack/Stripe/Square) are separate and go directly to the gateway."
+                answer="No. You pay your plan subscription (if any) plus the per-transaction fees shown. Payment gateway fees (Paystack/Stripe/Square) are separate and are paid by your business."
               />
               <PricingFaqItem
                 question="Do I need a separate payment gateway account?"

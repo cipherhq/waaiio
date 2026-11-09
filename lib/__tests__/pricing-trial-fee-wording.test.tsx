@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Pricing wording (Owner 2026-11-08): Starter is 3% per paid transaction after
- * the trial, and Starter / Pro allow 100 / 1,000 bookings a month. The trial
- * waives only the Waaiio platform fee, so the page must not read as "no fees".
+ * Pricing wording (Owner decisions 2026-11-08): Waaiio's fee (Starter 3%) applies
+ * from day one, plus payment gateway fees paid by the business; the 14-day
+ * free trial is for Pro and Premium features. Starter / Pro allow 100 / 1,000
+ * bookings a month. The page must not read as "no fees".
  */
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,14 +19,16 @@ const projection = { trialDays: 14, annualDiscountPercentage: 0, tierFees: { fre
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('pricing page fee wording', () => {
-  it('says the trial waives only the platform fee, then 3% per paid transaction', async () => {
+  it('says 3% from day one plus gateway fees, and that the trial is for Pro and Premium features', async () => {
     vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => projection })));
     render(<PricingPage />);
-    expect(await screen.findByText(/14-day free trial with no Waaiio platform fee, then a 3% standard platform fee on each paid transaction\./)).toBeTruthy();
+    expect(await screen.findByText(/Try every Pro and Premium feature free for 14 days\. Starter has no monthly fee: a 3% Waaiio fee applies to each paid transaction from day one, and payment gateway fees are paid by your business\./)).toBeTruthy();
     expect(screen.queryByText(/zero fees/i)).toBeNull();
     expect(screen.queryByText(/\(no fees\)/i)).toBeNull();
-    expect(screen.getByText('Free trial (no platform fee)')).toBeTruthy();
+    expect(screen.getByText('14-day trial of Pro & Premium features')).toBeTruthy();
+    expect(screen.queryByText(/no (waaiio )?platform fee/i)).toBeNull();
+    expect(screen.getByText(/are separate and are paid by your business/)).toBeTruthy();
   });
 
   it('shows the booking limits the bot and settings use: 100 and 1,000 a month', async () => {
@@ -77,7 +80,8 @@ describe('plan emails quote the current rates', () => {
     ].join('\n');
     expect(html).not.toMatch(/2\.5%|₦75|7-day/);
     expect(t.trialExpiringEmail('Biz', 3).html).toMatch(/3% per transaction[\s\S]*1\.5% per transaction[\s\S]*1% per transaction/);
-    expect(t.trialEndedEmail('Biz').html).toContain('A 3% platform fee now applies to each paid transaction.');
+    expect(t.trialEndedEmail('Biz').html).toContain('Pro and Premium features are now switched off. Your fee stays at 3% per paid transaction.');
+    expect(t.trialExpiringEmail('Biz', 3).html).not.toMatch(/start paying per-transaction fees/);
     expect(t.subscriptionExpiredEmail('Biz', 'https://x').html).toContain('3%');
   });
 });

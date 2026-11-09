@@ -616,7 +616,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
     highlights: [
-      'Free trial (no platform fee)',
+      '14-day trial of Pro & Premium features',
       'Up to 100 activities/month',
       'WhatsApp automation',
       'Dashboard & analytics',
