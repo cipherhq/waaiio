@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { resolveLimitTier } from '@/lib/trial-status';
 
 /**
  * Conversation Guard
@@ -52,7 +53,9 @@ export async function checkConversationLimit(
 
     // Get limits from platform_settings (admin-editable)
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const tierLimit = settings.conversation_limits[tier] ?? 200;
+    // During the Pro/Premium feature trial a Starter business uses Premium limits.
+    const limitTier = await resolveLimitTier(supabase, businessId, tier);
+    const tierLimit = settings.conversation_limits[limitTier] ?? 200;
 
     // Get current month usage
     const monthKey = new Date().toISOString().slice(0, 7);

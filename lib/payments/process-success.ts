@@ -748,7 +748,7 @@ export async function recordPlatformFee(
   if (business.payout_mode === 'direct_split') return;
 
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-  const isInTrial = await resolveTrialStatus(supabase, businessId, tier, business.trial_ends_at);
+  const isInTrial = await resolveTrialStatus(supabase, businessId, tier);
 
   const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial, {
     feePercentage: business.custom_fee_percentage != null ? Number(business.custom_fee_percentage) : null,

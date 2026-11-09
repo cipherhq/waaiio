@@ -3,7 +3,7 @@
  *
  * Real PostgreSQL tests for:
  * - activate_trial_if_eligible RPC
- * - isTrialActive dual-condition
+ * - isTrialActive (feature trial clock only, M525)
  * - Legacy grandfather
  * - Alert dedupe
  *
@@ -359,32 +359,30 @@ describe.skipIf(!canRun)('activate_trial_if_eligible', () => {
 // Test: isTrialActive dual-condition (pure unit — no DB needed)
 // ══════════════════════════════════════════════════════════
 
-describe('isTrialActive dual-condition', () => {
+// Owner decision 2026-11-08 (M525): the Pro/Premium feature trial is the
+// feature_trial_ends_at clock alone. The messaging credit no longer gates it.
+describe('isTrialActive (feature trial, independent of the messaging credit)', () => {
   const futureDate = new Date(Date.now() + 86400000).toISOString();
   const pastDate = new Date(Date.now() - 86400000).toISOString();
 
   it('12. time expired returns false', () => {
-    expect(isTrialActive('free', pastDate, true)).toBe(false);
+    expect(isTrialActive('free', pastDate)).toBe(false);
   });
 
-  it('13. credit depleted returns false', () => {
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  it('13. future feature clock returns true without any credit', () => {
+    expect(isTrialActive('free', futureDate)).toBe(true);
   });
 
-  it('14. both valid returns true', () => {
-    expect(isTrialActive('free', futureDate, true)).toBe(true);
+  it('null clock returns false', () => {
+    expect(isTrialActive('free', null)).toBe(false);
   });
 
-  it('null trial_ends_at returns false even with credit', () => {
-    expect(isTrialActive('free', null, true)).toBe(false);
+  it('non-free tier returns false', () => {
+    expect(isTrialActive('growth', futureDate)).toBe(false);
   });
 
-  it('non-free tier returns false even with both conditions', () => {
-    expect(isTrialActive('growth', futureDate, true)).toBe(false);
-  });
-
-  it('fail closed: hasTrialCredit=false with valid time returns false', () => {
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  it('fail closed: unparseable clock returns false', () => {
+    expect(isTrialActive('free', 'not-a-date')).toBe(false);
   });
 });
 
@@ -1014,7 +1012,7 @@ describe.skipIf(!canRun)('upgrade/downgrade preservation', () => {
 });
 
 describe.skipIf(!canRun)('depletion proof', () => {
-  it('depleted grant (remaining_minor=0) means no trial credit', () => {
+  it('a depleted credit leaves no credit but does not end the feature trial (M525)', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
@@ -1033,9 +1031,11 @@ describe.skipIf(!canRun)('depletion proof', () => {
       `);
       expect(parseInt(remaining)).toBe(0);
 
-      // isTrialActive with hasTrialCredit=false should return false
-      // This is the authoritative check — credit depleted = trial inactive
-      expect(isTrialActive('free', new Date(Date.now() + 86400000).toISOString(), false)).toBe(false);
+      // The feature trial clock was set at sign-up by the M525 trigger and is
+      // unaffected by the credit.
+      const featureClock = psql(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
+      expect(featureClock).not.toBe('');
+      expect(isTrialActive('free', new Date(featureClock).toISOString())).toBe(true);
     } finally {
       cleanup(bizId);
     }
@@ -1043,21 +1043,18 @@ describe.skipIf(!canRun)('depletion proof', () => {
 });
 
 describe.skipIf(!canRun)('entitlement fail-closed proof', () => {
-  it('isTrialActive with hasTrialCredit=false returns false even with valid time', () => {
-    // Pure unit test but included here for completeness with DB context
-    const futureDate = new Date(Date.now() + 86400000).toISOString();
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  it('isTrialActive fails closed without a feature clock', () => {
+    expect(isTrialActive('free', null)).toBe(false);
+    expect(isTrialActive('free', undefined)).toBe(false);
   });
 
-  it('isTrialActive requires all three conditions', () => {
+  it('isTrialActive requires a Starter tier and a future feature clock', () => {
     const futureDate = new Date(Date.now() + 86400000).toISOString();
-    // Missing credit
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
     // Missing time
-    expect(isTrialActive('free', null, true)).toBe(false);
+    expect(isTrialActive('free', null)).toBe(false);
     // Wrong tier
-    expect(isTrialActive('growth', futureDate, true)).toBe(false);
+    expect(isTrialActive('growth', futureDate)).toBe(false);
     // All valid
-    expect(isTrialActive('free', futureDate, true)).toBe(true);
+    expect(isTrialActive('free', futureDate)).toBe(true);
   });
 });

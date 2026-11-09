@@ -253,9 +253,11 @@ describe('BYO pays the same Waaiio fee (calculateFee)', () => {
     expect(connect.feeTotal).toBe(fee);
   });
 
-  it('trial waiver logic is unchanged for BYO (owned by another lane)', async () => {
+  it('the trial never waives the fee on any route (lane B, Owner 2026-11-08)', async () => {
     const { calculateFee } = await import('@/lib/payments/calculateFee');
-    expect(calculateFee(10000, basis({ is_in_trial: true }), null, snapshot).feeTotal).toBe(0);
+    expect(calculateFee(10000, basis({ is_in_trial: true }), null, snapshot).feeTotal)
+      .toBe(calculateFee(10000, basis({ is_in_trial: false }), null, snapshot).feeTotal);
+    expect(calculateFee(10000, basis({ is_in_trial: true }), null, snapshot).feeTotal).toBeGreaterThan(0);
   });
 });
 

@@ -84,6 +84,8 @@ vi.mock('@/lib/bot/handlers/promo-verification', () => ({
 }));
 
 vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialCredit: vi.fn().mockResolvedValue(false),
 }));
 

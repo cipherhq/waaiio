@@ -5,6 +5,7 @@ import { requireCapability } from '@/lib/capabilities/api-guard';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { resolveLimitTier } from '@/lib/trial-status';
 import { logger } from '@/lib/logger';
 import { hasRecipientPermission, RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 
@@ -71,8 +72,10 @@ export async function POST(request: NextRequest) {
     }
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-    // Guard already authorized. For free-tier with trial/override, use growth limits.
-    const effectiveLimitTier: SubscriptionTier = tier === 'free' ? 'growth' : tier;
+    // Guard already authorized. A Starter business in its feature trial uses
+    // Premium limits; a Starter business with an admin override uses Pro limits.
+    const limitTier = await resolveLimitTier(service, business.id, tier);
+    const effectiveLimitTier: SubscriptionTier = limitTier === 'free' ? 'growth' : limitTier;
 
     // Check monthly limits
     const settings = await loadPlatformSettings({ useServiceClient: true });

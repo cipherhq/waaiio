@@ -126,7 +126,9 @@ vi.mock('@/lib/observability', () => ({
   logSplitResolved: vi.fn(),
   logSplitMissing: vi.fn(),
 }));
-vi.mock('@/lib/trial-status', () => ({ resolveTrialStatus: vi.fn().mockResolvedValue(false) }));
+vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')), resolveTrialStatus: vi.fn().mockResolvedValue(false) }));
 vi.mock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn().mockResolvedValue({ feeTotal: 0 }) }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 vi.mock('@/lib/bot/flows/shared/capability-guard', () => ({

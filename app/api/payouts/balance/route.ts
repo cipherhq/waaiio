@@ -119,14 +119,14 @@ export async function GET(request: NextRequest) {
       const feeService = createServiceClient();
       const { data: feeBiz, error: feeBizError } = await feeService
         .from('businesses')
-        .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+        .select('subscription_tier, custom_fee_percentage, custom_fee_flat')
         .eq('id', businessId)
         .single();
       if (feeBizError || !feeBiz) {
         return NextResponse.json({ error: 'Unable to verify fee rate' }, { status: 503 });
       }
       const feeTier = (feeBiz.subscription_tier || 'free') as SubscriptionTier;
-      const inTrial = await resolveTrialStatus(feeService, businessId, feeTier, feeBiz.trial_ends_at);
+      const inTrial = await resolveTrialStatus(feeService, businessId, feeTier);
       const { feePercentage: pct } = await getPlatformFees(gross, feeTier, inTrial, {
         feePercentage: feeBiz.custom_fee_percentage != null ? Number(feeBiz.custom_fee_percentage) : null,
         feeFlat: feeBiz.custom_fee_flat != null ? Number(feeBiz.custom_fee_flat) : null,

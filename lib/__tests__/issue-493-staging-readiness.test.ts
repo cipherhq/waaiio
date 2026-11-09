@@ -26,7 +26,9 @@ vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: () => Promise.resolve
 vi.mock('@/lib/admin-cors', () => ({ adminCorsHeaders: () => ({}) }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: vi.fn(() => Promise.resolve(null)), getRateLimitKey: () => 'test' }));
 vi.mock('@/lib/cron-auth', () => ({ verifyCronAuth: vi.fn(() => null) }));
-vi.mock('@/lib/trial-status', () => ({ resolveTrialStatus: vi.fn().mockResolvedValue(false), resolveTrialCredit: vi.fn().mockResolvedValue(false) }));
+vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')), resolveTrialStatus: vi.fn().mockResolvedValue(false), resolveTrialCredit: vi.fn().mockResolvedValue(false) }));
 
 const mockResolveBusinessGateway = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
 

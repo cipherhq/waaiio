@@ -165,7 +165,8 @@ describe('Batch 2 — broadcast trial/override + DELETE', () => {
     const src = readRoute('app/api/broadcasts/send/route.ts');
     expect(src).not.toContain("if (tier === 'free')");
     expect(src).toContain('effectiveLimitTier');
-    expect(src).toContain("tier === 'free' ? 'growth' : tier");
+    // M525: Starter in its feature trial gets Premium limits; with an override, Pro limits.
+    expect(src).toContain("limitTier === 'free' ? 'growth' : limitTier");
   });
 
   it('broadcasts/schedule POST: no legacy free-tier 403 after guard', () => {
@@ -173,7 +174,7 @@ describe('Batch 2 — broadcast trial/override + DELETE', () => {
     const postSection = src.slice(0, src.indexOf('export async function GET'));
     expect(postSection).not.toContain("if (tier === 'free')");
     expect(postSection).toContain('effectiveLimitTier');
-    expect(postSection).toContain("tier === 'free' ? 'growth' : tier");
+    expect(postSection).toContain("limitTier === 'free' ? 'growth' : limitTier");
   });
 
   it('broadcasts/schedule DELETE: uses broadcast/manage_existing guard', () => {
@@ -185,15 +186,17 @@ describe('Batch 2 — broadcast trial/override + DELETE', () => {
     expect(deleteSection).toContain('guard.denial');
   });
 
-  it('broadcasts/send uses growth limits when free-tier trial/override passes', () => {
+  it('broadcasts/send uses Premium limits in trial and Pro limits with an override', () => {
     const src = readRoute('app/api/broadcasts/send/route.ts');
-    expect(src).toContain("const effectiveLimitTier: SubscriptionTier = tier === 'free' ? 'growth' : tier");
+    expect(src).toContain("const limitTier = await resolveLimitTier(service, business.id, tier);");
+    expect(src).toContain("const effectiveLimitTier: SubscriptionTier = limitTier === 'free' ? 'growth' : limitTier;");
     expect(src).toContain("settings.broadcast_limits[effectiveLimitTier]");
   });
 
-  it('broadcasts/schedule uses growth limits when free-tier trial/override passes', () => {
+  it('broadcasts/schedule uses Premium limits in trial and Pro limits with an override', () => {
     const src = readRoute('app/api/broadcasts/schedule/route.ts');
-    expect(src).toContain("const effectiveLimitTier: SubscriptionTier = tier === 'free' ? 'growth' : tier");
+    expect(src).toContain("const limitTier = await resolveLimitTier(service, business.id, tier);");
+    expect(src).toContain("const effectiveLimitTier: SubscriptionTier = limitTier === 'free' ? 'growth' : limitTier;");
     expect(src).toContain("settings.broadcast_limits[effectiveLimitTier]");
   });
 });

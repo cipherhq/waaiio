@@ -12,8 +12,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ── Module-level mocks (installed BEFORE BotService is imported) ──
 
 vi.mock('@/lib/trial-status', () => ({
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialCredit: vi.fn().mockResolvedValue(false),
   resolveTrialStatus: vi.fn().mockResolvedValue(false),
+  // M525: feature trial clock (businesses.feature_trial_ends_at). Default: none.
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }),
@@ -57,7 +60,7 @@ import { BotService } from '../bot.service';
 import { createCaptureSender } from './bot-harness';
 import type { StandaloneService } from '../standalone.service';
 import type { BotIntelligenceService } from '../bot-intelligence';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveTrialCredit, resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 
 // ── Helpers ──
 
@@ -203,6 +206,7 @@ const TEST_BIZ_ID = 'biz-test-001';
 // Individual tests that exercise active-trial paths must override to true.
 beforeEach(() => {
   vi.mocked(resolveTrialCredit).mockResolvedValue(false);
+  vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(null);
 });
 
 // ═══════════════════════════════════════════════════════
@@ -369,7 +373,8 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
   });
 
   it('preserves reservation with active trial', async () => {
-    vi.mocked(resolveTrialCredit).mockResolvedValue(true);
+    // M525: an active feature clock (not the messaging credit) unlocks the trial.
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(new Date(Date.now() + 86400000).toISOString());
     const sender = createCaptureSender();
     const updateTracker: Array<{ table: string; data: unknown }> = [];
 

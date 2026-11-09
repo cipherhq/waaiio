@@ -36,6 +36,8 @@ export interface Business {
   verification_level: string | null;
   timezone: string;
   trial_ends_at: string;
+  /** Pro/Premium feature-trial end, set at sign-up (M525). */
+  feature_trial_ends_at: string | null;
   country_code: string | null;
   payment_gateway: string | null;
   whatsapp_catalog_id: string | null;

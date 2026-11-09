@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
 import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 import { buildGivingServicePayload, type GivingServiceInput } from '@/lib/services/payload-builders';
 import { logger } from '@/lib/logger';
 
@@ -119,13 +119,13 @@ export async function POST(request: NextRequest) {
       configuredRows = defaultCaps.map((cap, i) => ({ capability: cap, is_enabled: true, sort_order: i }));
     }
 
-    const hasTrialCredit = await resolveTrialCredit(service, businessId);
+    // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+    const featureTrialEndsAt = await resolveFeatureTrialEndsAt(service, businessId);
     const effectiveCaps = getEffectiveCapabilities({
       configuredCapabilities: configuredRows,
       tier: business.subscription_tier || 'free',
-      trialEndsAt: business.trial_ends_at || null,
+      trialEndsAt: featureTrialEndsAt,
       overrides,
-      hasTrialCredit,
     });
 
     if (!effectiveCaps.effective.includes('recurring')) {

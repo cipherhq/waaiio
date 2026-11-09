@@ -12,7 +12,7 @@ import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import { getEffectiveCapabilities, type ConfiguredCapability } from '@/lib/capabilities/policy';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -196,8 +196,8 @@ export default async function DashboardLayout({
   let pausedCapabilities: Array<{ capability: CapabilityId; reason: string }> = [];
   let disabledCapabilities: CapabilityId[] = [];
 
-  // Resolve canonical trial credit state (fail closed on error)
-  const hasTrialCredit = await resolveTrialCredit(supabase, business.id);
+  // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+  const featureTrialEndsAt = await resolveFeatureTrialEndsAt(supabase, business.id);
 
   if (capError) {
     // DB read error — fail closed with empty capabilities rather than exposing defaults
@@ -209,8 +209,7 @@ export default async function DashboardLayout({
       configuredCapabilities: capRows as ConfiguredCapability[],
       overrides: overrideError ? [] : capabilityOverrides,
       tier: business.subscription_tier,
-      trialEndsAt: business.trial_ends_at,
-      hasTrialCredit,
+      trialEndsAt: featureTrialEndsAt,
     });
     capabilities = policyResult.effective;
     selectedCapabilities = policyResult.selected;
@@ -228,8 +227,7 @@ export default async function DashboardLayout({
       configuredCapabilities: legacyRows,
       overrides: overrideError ? [] : capabilityOverrides,
       tier: business.subscription_tier,
-      trialEndsAt: business.trial_ends_at,
-      hasTrialCredit,
+      trialEndsAt: featureTrialEndsAt,
     });
     capabilities = policyResult.effective;
     selectedCapabilities = policyResult.selected;

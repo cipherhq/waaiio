@@ -78,6 +78,8 @@ vi.mock('@/lib/capabilities/policy', () => ({
   getEffectiveCapabilities: vi.fn().mockReturnValue([]),
 }));
 vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialCredit: vi.fn().mockResolvedValue({ isInTrial: false, trialDaysRemaining: 0 }),
 }));
 vi.mock('@/lib/whitelabel', () => ({

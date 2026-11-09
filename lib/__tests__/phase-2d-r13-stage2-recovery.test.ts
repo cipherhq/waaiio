@@ -17,7 +17,9 @@ vi.mock('@/lib/waitlist/auto-notify', () => ({ markWaitlistConverted: vi.fn() })
 vi.mock('@/lib/getPlatformFees', () => ({
   getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2, feeFlat: 0, feeTotal: 100 }),
 }));
-vi.mock('@/lib/trial-status', () => ({ resolveTrialStatus: vi.fn().mockResolvedValue(false) }));
+vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')), resolveTrialStatus: vi.fn().mockResolvedValue(false) }));
 vi.mock('@/lib/bot/automation/rules-engine', () => ({ evaluateRules: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/payments/session-terminalization', () => ({
   terminalizeOriginatingSession: vi.fn().mockResolvedValue({ status: 'no_origin' }),

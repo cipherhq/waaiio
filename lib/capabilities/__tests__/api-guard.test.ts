@@ -21,15 +21,18 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock resolveTrialCredit before importing api-guard (which imports it at load time)
+// Mock the trial resolvers before importing api-guard (which imports them at load time).
+// M525: the feature trial is businesses.feature_trial_ends_at, read by resolveFeatureTrialEndsAt.
 vi.mock('@/lib/trial-status', () => ({
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialCredit: vi.fn().mockResolvedValue(false),
   resolveTrialStatus: vi.fn().mockResolvedValue(false),
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
 }));
 
 import { requireCapability, requireAnyCapability } from '../api-guard';
 import type { CapabilityId } from '../types';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveTrialCredit, resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 
 // ── Mock factories ──
 
@@ -106,8 +109,9 @@ const PENDING_BIZ = { id: 'biz-1', status: 'pending', subscription_tier: 'free',
 
 describe('requireCapability — create_new', () => {
   beforeEach(() => {
-    // Default: no trial credit (fail closed). Override per-test for active trial scenarios.
+    // Default: no feature trial clock (fail closed). Override per-test for trial scenarios.
     vi.mocked(resolveTrialCredit).mockResolvedValue(false);
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(null);
   });
 
   it('effective capability → allowed', async () => {
@@ -120,6 +124,7 @@ describe('requireCapability — create_new', () => {
   });
 
   it('paused by expired trial → denied with trial_expired detail', async () => {
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(FREE_BIZ_EXPIRED_TRIAL.trial_ends_at);
     const result = await requireCapability(
       mockSupabase({ business: FREE_BIZ_EXPIRED_TRIAL }),
       mockService({ capabilities: [{ capability: 'broadcast', is_enabled: true, sort_order: 0 }] }),
@@ -264,13 +269,26 @@ describe('requireCapability — create_new', () => {
   });
 
   it('active trial on free tier → allowed', async () => {
-    vi.mocked(resolveTrialCredit).mockResolvedValue(true);
+    // M525: the feature clock alone unlocks the trial; no messaging credit needed.
+    vi.mocked(resolveTrialCredit).mockResolvedValue(false);
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(FREE_BIZ_ACTIVE_TRIAL.trial_ends_at);
     const result = await requireCapability(
       mockSupabase({ business: FREE_BIZ_ACTIVE_TRIAL }),
       mockService({ capabilities: [{ capability: 'broadcast', is_enabled: true, sort_order: 0 }] }),
       { businessId: 'biz-1', userId: 'user-1', capability: 'broadcast', action: 'create_new' },
     );
     expect(result.allowed).toBe(true);
+  });
+
+  it('messaging credit and its clock alone do not unlock Pro features (M525)', async () => {
+    vi.mocked(resolveTrialCredit).mockResolvedValue(true);
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(null);
+    const result = await requireCapability(
+      mockSupabase({ business: FREE_BIZ_ACTIVE_TRIAL }),
+      mockService({ capabilities: [{ capability: 'broadcast', is_enabled: true, sort_order: 0 }] }),
+      { businessId: 'biz-1', userId: 'user-1', capability: 'broadcast', action: 'create_new' },
+    );
+    expect(result.allowed).toBe(false);
   });
 });
 
