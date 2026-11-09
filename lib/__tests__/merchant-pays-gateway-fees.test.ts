@@ -86,9 +86,9 @@ describe('paystack-split helpers', () => {
     });
   });
 
-  it('merchant split with no Waaiio fee (trial) omits transaction_charge but still names the merchant as bearer', async () => {
+  it('merchant split with a 0 Waaiio fee sends transaction_charge 0 (never omitted) and names the merchant as bearer', async () => {
     const { paystackMerchantSplit } = await import('@/lib/payments/paystack-split');
-    expect(paystackMerchantSplit('ACCT_merchant', undefined)).toEqual({ subaccount: 'ACCT_merchant', bearer: 'subaccount' });
+    expect(paystackMerchantSplit('ACCT_merchant', 0)).toEqual({ subaccount: 'ACCT_merchant', transaction_charge: 0, bearer: 'subaccount' });
   });
 
   it('BYO reversed split: merchant (main account) keeps the rest and bears Paystack fee', async () => {
@@ -129,10 +129,12 @@ describe('Paystack one-off checkout (real PaystackGateway)', () => {
     expect(calls[0].body.bearer).toBe('subaccount');
   });
 
-  it('merchant split in trial (fee 0): no transaction_charge, merchant still bears Paystack fee', async () => {
-    const { calls } = await init({ subaccountCode: 'ACCT_merchant', platformFeeAmount: 0 });
+  it.each([
+    ['fee 0', 0], ['fee not passed (bot checkout maps 0 to undefined)', undefined],
+  ])('merchant split with %s: sends transaction_charge 0 so Paystack does not apply the subaccount default percentage', async (_label, fee) => {
+    const { calls } = await init({ subaccountCode: 'ACCT_merchant', platformFeeAmount: fee });
     expect(calls[0].body.subaccount).toBe('ACCT_merchant');
-    expect('transaction_charge' in calls[0].body).toBe(false);
+    expect(calls[0].body.transaction_charge).toBe(0);
     expect(calls[0].body.bearer).toBe('subaccount');
   });
 

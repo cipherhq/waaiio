@@ -71,10 +71,11 @@ export class PaystackGateway implements PaymentGateway {
         splitParams = paystackByoSplit(opts.byoPlatformSubaccount, businessKeeps);
       } else if (opts.subaccountCode) {
         // Normal platform split: business subaccount on platform account.
-        // The business (subaccount) bears Paystack's fee — see paystack-split.ts.
+        // The business (subaccount) bears Paystack's fee, and a 0 fee is sent as 0
+        // (never omitted, which would apply the subaccount's default percentage).
         splitParams = paystackMerchantSplit(
           opts.subaccountCode,
-          opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : undefined,
+          Math.round((opts.platformFeeAmount ?? 0) * 100),
         );
       }
 

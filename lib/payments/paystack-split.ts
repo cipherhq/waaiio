@@ -23,18 +23,22 @@
 
 export type PaystackSplitParams = {
   subaccount: string;
-  transaction_charge?: number;
+  transaction_charge: number;
   bearer: 'subaccount' | 'account';
 };
 
-/** Merchant subaccount on Waaiio's account; Waaiio keeps exactly its fee. */
+/**
+ * Merchant subaccount on Waaiio's account; Waaiio keeps exactly its fee.
+ * `transaction_charge` is always sent, including 0: if it is omitted, Paystack
+ * falls back to the subaccount's `percentage_charge` (set at subaccount creation).
+ */
 export function paystackMerchantSplit(
   merchantSubaccount: string,
-  waaiioFeeKobo: number | undefined,
+  waaiioFeeKobo: number,
 ): PaystackSplitParams {
   return {
     subaccount: merchantSubaccount,
-    ...(waaiioFeeKobo !== undefined && { transaction_charge: waaiioFeeKobo }),
+    transaction_charge: waaiioFeeKobo,
     bearer: 'subaccount',
   };
 }
