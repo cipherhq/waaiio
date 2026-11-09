@@ -319,7 +319,7 @@ export async function handleOnboardingComplete(
                 `You're on the free plan (30-day trial). Upgrade anytime to get:`,
                 '',
                 `*Pro* — ${growthPrice}/mo`,
-                '• Up to 500 bookings/month',
+                '• Up to 1,000 bookings/month',
                 '• Broadcast messages',
                 '• Reminders & recurring payments',
                 '• Lower transaction fees (1.5%)',

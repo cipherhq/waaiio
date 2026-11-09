@@ -555,14 +555,14 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
 // ── Transaction Limits per Tier (monthly, except tickets which are per-event) ──
 export const TIER_TRANSACTION_LIMITS: Record<string, Record<string, number>> = {
   free: {
-    bookings: 50,
+    bookings: 100,
     orders: 50,
     tickets_per_event: 50,
     giving: 50,
     invoices: 20,
   },
   growth: {
-    bookings: 300,
+    bookings: 1000,
     orders: 500,
     tickets_per_event: 500,
     giving: 300,
@@ -616,7 +616,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
     highlights: [
-      'Free trial (no fees)',
+      'Free trial (no platform fee)',
       'Up to 100 activities/month',
       'WhatsApp automation',
       'Dashboard & analytics',

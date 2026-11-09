@@ -103,7 +103,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            {trialDays}-day free trial with zero fees, then {tierFees.free.feePercentage}% standard platform fee. Category rates and custom agreements may differ. No monthly fees on Starter. Free reservations don&apos;t count.
+            {trialDays}-day free trial with no Waaiio platform fee, then a {tierFees.free.feePercentage}% standard platform fee on each paid transaction. Category rates and custom agreements may differ. No monthly fees on Starter. Free reservations don&apos;t count.
           </p>
 
           {/* Country picker */}
