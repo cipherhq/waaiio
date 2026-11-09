@@ -20,6 +20,12 @@
 -- 3. A BEFORE UPDATE trigger keeps the clock server-managed: only
 --    service_role and the function owner may change it (same allow rule
 --    as guard_server_managed_columns, M508).
+-- 3b. Owner decision 2026-11-09 ("End trial at upgrade"): when a business
+--    moves from Starter ('free') to a paid tier while its trial is running,
+--    the trial ends at that moment. Pro starts on the upgrade date and a
+--    later downgrade does not bring back the remaining trial days. A BEFORE
+--    UPDATE OF subscription_tier trigger covers every upgrade path
+--    (subscription_tier is server-managed, M442/M508).
 -- 4. The recurring-charge SQL fee path waived the fee while
 --    trial_ends_at > now(). Every live public function that assigns
 --    v_is_in_trial is rewritten in place so the assignment is `false`.
@@ -137,6 +143,34 @@ CREATE TRIGGER trg_guard_feature_trial_clock
   BEFORE UPDATE OF feature_trial_ends_at ON public.businesses
   FOR EACH ROW EXECUTE FUNCTION public.guard_feature_trial_clock();
 
+-- ── 3b. End the trial at upgrade (Owner 2026-11-09) ──
+CREATE OR REPLACE FUNCTION public.end_feature_trial_on_upgrade()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+BEGIN
+  IF OLD.subscription_tier::TEXT = 'free'
+     AND NEW.subscription_tier::TEXT IS DISTINCT FROM 'free'
+     AND NEW.feature_trial_ends_at IS NOT NULL
+     AND NEW.feature_trial_ends_at > now() THEN
+    NEW.feature_trial_ends_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.end_feature_trial_on_upgrade() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.end_feature_trial_on_upgrade() FROM anon;
+REVOKE ALL ON FUNCTION public.end_feature_trial_on_upgrade() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.end_feature_trial_on_upgrade() TO service_role;
+
+DROP TRIGGER IF EXISTS trg_end_feature_trial_on_upgrade ON public.businesses;
+CREATE TRIGGER trg_end_feature_trial_on_upgrade
+  BEFORE UPDATE OF subscription_tier ON public.businesses
+  FOR EACH ROW EXECUTE FUNCTION public.end_feature_trial_on_upgrade();
+
 -- ── 4. Remove the trial fee waiver from the recurring SQL fee path ──
 DO $waiver$
 DECLARE
@@ -214,6 +248,11 @@ BEGIN
     RAISE EXCEPTION 'M525: feature trial guard trigger missing';
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_end_feature_trial_on_upgrade'
+                  AND tgrelid = 'public.businesses'::regclass AND NOT tgisinternal) THEN
+    RAISE EXCEPTION 'M525: end-trial-at-upgrade trigger missing';
+  END IF;
+
   -- No public function may still compute a live trial waiver: every
   -- v_is_in_trial assignment must be the neutral M525 one.
   IF EXISTS (
@@ -242,8 +281,10 @@ BEGIN
   END IF;
 
   IF has_function_privilege('anon', 'public.set_feature_trial_clock()', 'EXECUTE')
-     OR has_function_privilege('authenticated', 'public.set_feature_trial_clock()', 'EXECUTE') THEN
-    RAISE EXCEPTION 'M525: set_feature_trial_clock must not be executable by anon/authenticated';
+     OR has_function_privilege('authenticated', 'public.set_feature_trial_clock()', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.end_feature_trial_on_upgrade()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.end_feature_trial_on_upgrade()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'M525: trial clock trigger functions must not be executable by anon/authenticated';
   END IF;
 
   RAISE NOTICE 'M525: feature trial clock and fee waiver removal verified';

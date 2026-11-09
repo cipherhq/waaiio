@@ -221,13 +221,44 @@ suite('M525 feature trial clock and no trial fee waiver (real PostgreSQL)', () =
     });
   });
 
+  it('upgrading from Starter ends a running trial at that moment (Owner 2026-11-09)', async () => {
+    const { rows } = await q(`INSERT INTO public.businesses (name) VALUES ('Upgrader') RETURNING id`);
+    const id = rows[0].id;
+    await q(`UPDATE public.businesses SET subscription_tier = 'growth' WHERE id = $1`, [id]);
+    const after = (await q(`SELECT EXTRACT(EPOCH FROM (now() - feature_trial_ends_at)) AS ago FROM public.businesses WHERE id = $1`, [id])).rows[0];
+    expect(Math.abs(Number(after.ago))).toBeLessThan(5);
+    // A later downgrade does not bring the remaining trial days back.
+    await q(`UPDATE public.businesses SET subscription_tier = 'free' WHERE id = $1`, [id]);
+    const back = (await q(`SELECT feature_trial_ends_at > now() + interval '1 second' AS active FROM public.businesses WHERE id = $1`, [id])).rows[0];
+    expect(back.active).toBe(false);
+  });
+
+  it('other updates and other tier moves leave the trial clock alone', async () => {
+    const { rows } = await q(`INSERT INTO public.businesses (name) VALUES ('Untouched') RETURNING id, feature_trial_ends_at`);
+    const { id, feature_trial_ends_at: start } = rows[0];
+    await q(`UPDATE public.businesses SET name = 'Renamed' WHERE id = $1`, [id]);
+    await q(`UPDATE public.businesses SET subscription_tier = 'free' WHERE id = $1`, [id]);
+    expect((await q(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = $1`, [id])).rows[0].feature_trial_ends_at).toEqual(start);
+    // Growth → Business (already paid) and an expired clock are not touched.
+    const paid = (await q(`INSERT INTO public.businesses (name, subscription_tier) VALUES ('Paid', 'growth') RETURNING id, feature_trial_ends_at`)).rows[0];
+    await q(`UPDATE public.businesses SET subscription_tier = 'business' WHERE id = $1`, [paid.id]);
+    expect((await q(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = $1`, [paid.id])).rows[0].feature_trial_ends_at).toEqual(paid.feature_trial_ends_at);
+    const expired = (await q(`INSERT INTO public.businesses (name) VALUES ('Expired') RETURNING id`)).rows[0];
+    await q(`UPDATE public.businesses SET feature_trial_ends_at = now() - interval '2 days' WHERE id = $1`, [expired.id]);
+    const before = (await q(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = $1`, [expired.id])).rows[0].feature_trial_ends_at;
+    await q(`UPDATE public.businesses SET subscription_tier = 'growth' WHERE id = $1`, [expired.id]);
+    expect((await q(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = $1`, [expired.id])).rows[0].feature_trial_ends_at).toEqual(before);
+  });
+
   it('the trigger functions are not callable by anon or authenticated', async () => {
     const { rows } = await q(`SELECT
       has_function_privilege('anon', 'public.set_feature_trial_clock()', 'EXECUTE') AS anon,
       has_function_privilege('authenticated', 'public.set_feature_trial_clock()', 'EXECUTE') AS auth,
       has_function_privilege('anon', 'public.guard_feature_trial_clock()', 'EXECUTE') AS guard_anon,
-      has_function_privilege('authenticated', 'public.guard_feature_trial_clock()', 'EXECUTE') AS guard_auth`);
-    expect(rows[0]).toEqual({ anon: false, auth: false, guard_anon: false, guard_auth: false });
+      has_function_privilege('authenticated', 'public.guard_feature_trial_clock()', 'EXECUTE') AS guard_auth,
+      has_function_privilege('anon', 'public.end_feature_trial_on_upgrade()', 'EXECUTE') AS end_anon,
+      has_function_privilege('authenticated', 'public.end_feature_trial_on_upgrade()', 'EXECUTE') AS end_auth`);
+    expect(rows[0]).toEqual({ anon: false, auth: false, guard_anon: false, guard_auth: false, end_anon: false, end_auth: false });
   });
 
   it('re-applying M525 is idempotent', async () => {

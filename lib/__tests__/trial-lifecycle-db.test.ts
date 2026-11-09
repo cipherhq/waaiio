@@ -223,6 +223,21 @@ describe.skipIf(!canRun)('activate_trial_if_eligible', () => {
     }
   });
 
+  it('M525: upgrading to a paid plan ends the feature trial; a later downgrade does not restore it (Owner 2026-11-09)', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      expect(psql(`SELECT feature_trial_ends_at > now() + interval '1 day' FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+      psql(`UPDATE public.businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'`);
+      expect(psql(`SELECT abs(extract(epoch FROM (now() - feature_trial_ends_at))) < 60 FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+      psql(`UPDATE public.businesses SET subscription_tier = 'free' WHERE id = '${bizId}'`);
+      expect(psql(`SELECT feature_trial_ends_at > now() FROM public.businesses WHERE id = '${bizId}'`)).toBe('f');
+      // The messaging-credit clock is not touched by the upgrade trigger.
+      expect(psql(`SELECT trial_ends_at IS NULL FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
   it('2. replay (same business) is idempotent', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
