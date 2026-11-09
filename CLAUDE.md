@@ -38,6 +38,12 @@ Read [`docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`](./docs/MERCHANT_PAYMENT_CUSTODY
 - **Waaiio-owned Stripe/Paystack:** Customer pays Waaiio, Waaiio owes the merchant their net balance, and an authorized admin must be able to pay the merchant externally and then mark the payout paid with transfer reference and auditable confirmation. Approval alone never means paid.
 - These two routes must keep working independently. Removing `manual_cash` does **not** remove the manual settlement workflow. Disabling Stripe *automatic platform-managed payouts* must **not** disable Stripe Connect splits or admin settlement of Stripe-held funds.
 - For all payment-related work, show regression evidence for both routes and duplicate-payment, fee, refund and cross-business safety. Do not change these business rules, silently reroute money, or remove a route without a **new explicit Owner decision**. CI green is not a substitute.
+- **Fee and trial model (Owner standing order, 2026-11-08/09; issue #958; full text in the same policy doc).**
+  - Waaiio fee per paid transaction is Starter 3%, Pro 1.5%, Premium 1%, from sign-up, on every route, including own-gateway and split payments. Waaiio collects it.
+  - The merchant pays every payment-gateway fee, and Waaiio absorbs none.
+  - The 14-day trial is for Pro and Premium features, starts at sign-up, uses Premium limits and never waives the fee. Upgrading ends it, and a downgrade does not restore it.
+  - The free messaging credit is separate. Bookings are 100 / 1,000 / unlimited.
+  - **Nothing changes these rules without a new explicit Owner decision.**
 
 ## Complete authorized work before reporting back
 
