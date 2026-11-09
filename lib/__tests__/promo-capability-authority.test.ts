@@ -19,7 +19,6 @@ describe('promo_verification capability authority', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).not.toContain('promo_verification');
     expect(result.blocked.some(b => b.capability === 'promo_verification')).toBe(true);
@@ -31,7 +30,6 @@ describe('promo_verification capability authority', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).toContain('promo_verification');
   });
@@ -42,7 +40,6 @@ describe('promo_verification capability authority', () => {
       overrides: ['promo_verification'],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).toContain('promo_verification');
   });
@@ -54,7 +51,6 @@ describe('promo_verification capability authority', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: future,
-      hasTrialCredit: true,
     });
     expect(result.effective).toContain('promo_verification');
   });
@@ -65,7 +61,6 @@ describe('promo_verification capability authority', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).not.toContain('promo_verification');
     expect(result.disabled).toContain('promo_verification');
@@ -77,7 +72,6 @@ describe('promo_verification capability authority', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).not.toContain('promo_verification');
   });

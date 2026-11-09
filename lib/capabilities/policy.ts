@@ -37,22 +37,19 @@ function isTierSufficient(
 // ── 1. isTrialActive ────────────────────────────────────
 
 /**
- * Returns true only when the business is on the free tier AND their trial
- * end date is strictly in the future AND they still have trial credit.
- * No grace period.
+ * Returns true only when the business is on the free (Starter) tier AND its
+ * feature-trial end date (businesses.feature_trial_ends_at) is strictly in the
+ * future. No grace period.
  *
- * @param hasTrialCredit - Whether the business still has remaining trial credit.
- *   Required. Must be resolved from the messaging_allowances table via
- *   `resolveTrialStatus()` or equivalent DB query. No default — callers must
- *   explicitly provide the canonical credit state.
+ * Owner decision 2026-11-08: the trial unlocks Pro and Premium features from
+ * sign-up. It does not depend on the free messaging credit and never waives
+ * the Waaiio fee.
  */
 export function isTrialActive(
   tier: string,
-  trialEndsAt: string | Date | null,
-  hasTrialCredit: boolean,
+  trialEndsAt: string | Date | null | undefined,
 ): boolean {
   if (tier !== 'free') return false;
-  if (!hasTrialCredit) return false;
   if (trialEndsAt === null || trialEndsAt === undefined) return false;
 
   const expiresAt =
@@ -63,6 +60,20 @@ export function isTrialActive(
   if (Number.isNaN(expiresAt)) return false;
 
   return expiresAt > Date.now();
+}
+
+/**
+ * The tier whose usage limits apply (bookings, orders, tickets, giving,
+ * invoices, broadcasts, conversations). During the feature trial a Starter
+ * business uses Premium ('business') limits; otherwise its own tier. The fee
+ * always stays at the business's own plan rate.
+ */
+export function getLimitTier(
+  tier: string | null | undefined,
+  trialEndsAt: string | Date | null | undefined,
+): SubscriptionTier {
+  const own: SubscriptionTier = tier === 'growth' || tier === 'business' ? tier : 'free';
+  return own === 'free' && isTrialActive(own, trialEndsAt) ? 'business' : own;
 }
 
 // ── 2. getEffectiveCapabilities ─────────────────────────
@@ -77,9 +88,8 @@ export interface GetEffectiveCapabilitiesParams {
   configuredCapabilities: ConfiguredCapability[];
   overrides: string[];
   tier: string;
+  /** businesses.feature_trial_ends_at */
   trialEndsAt: string | Date | null;
-  /** Whether the business still has remaining trial credit. Required — resolve from DB. */
-  hasTrialCredit: boolean;
 }
 
 export interface BlockedCapability {
@@ -114,7 +124,7 @@ export interface GetEffectiveCapabilitiesResult {
 export function getEffectiveCapabilities(
   params: GetEffectiveCapabilitiesParams,
 ): GetEffectiveCapabilitiesResult {
-  const { configuredCapabilities, overrides, tier, trialEndsAt, hasTrialCredit } = params;
+  const { configuredCapabilities, overrides, tier, trialEndsAt } = params;
 
   const safeTier = (
     tier === 'free' || tier === 'growth' || tier === 'business'
@@ -122,7 +132,7 @@ export function getEffectiveCapabilities(
       : 'free'
   ) as SubscriptionTier;
 
-  const trialActive = isTrialActive(tier, trialEndsAt, hasTrialCredit);
+  const trialActive = isTrialActive(tier, trialEndsAt);
   const overrideSet = new Set(overrides);
 
   const effective: CapabilityId[] = [];
@@ -170,10 +180,9 @@ export interface CanModifyCapabilityParams {
   capabilityId: string;
   requestedState: boolean;
   tier: string;
+  /** businesses.feature_trial_ends_at */
   trialEndsAt: string | Date | null;
   overrides: string[];
-  /** Whether the business still has remaining trial credit. Required — resolve from DB. */
-  hasTrialCredit: boolean;
 }
 
 export interface CanModifyCapabilityResult {
@@ -187,7 +196,7 @@ export interface CanModifyCapabilityResult {
 export function canModifyCapability(
   params: CanModifyCapabilityParams,
 ): CanModifyCapabilityResult {
-  const { capabilityId, requestedState, tier, trialEndsAt, overrides, hasTrialCredit } = params;
+  const { capabilityId, requestedState, tier, trialEndsAt, overrides } = params;
 
   if (!isValidCapabilityId(capabilityId)) {
     return { allowed: false, reason: 'unknown_capability' };
@@ -212,7 +221,7 @@ export function canModifyCapability(
 
   if (isTierSufficient(safeTier, required)) return { allowed: true };
   if (overrides.includes(capId)) return { allowed: true };
-  if (isTrialActive(tier, trialEndsAt, hasTrialCredit)) return { allowed: true };
+  if (isTrialActive(tier, trialEndsAt)) return { allowed: true };
 
   return { allowed: false, reason: `requires_${required}_tier` };
 }

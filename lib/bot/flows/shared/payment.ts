@@ -332,7 +332,7 @@ export async function initializePayment(
 
           const { resolveTrialStatus } = await import('@/lib/trial-status');
           const tier = (bizForFee.subscription_tier || 'free') as import('@/lib/constants').SubscriptionTier;
-          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, bizForFee.trial_ends_at);
+          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier);
 
           // Validate v1 snapshot (non-zero tier feeFlat fails closed)
           const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
@@ -637,6 +637,7 @@ export async function recordPlatformFee(
     fee_flat: fee.feeFlat,
     fee_total: fee.feeTotal,
     tier: opts.tier,
-    waived: opts.isInTrial,
+    // The trial never waives the Waaiio fee (Owner 2026-11-08).
+    waived: false,
   });
 }

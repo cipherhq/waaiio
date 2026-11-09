@@ -47,25 +47,28 @@ describe('calculateFee: BYO routing', () => {
     expect(result).toEqual({ feePercentage: 5.0, feeFlat: 0, feeTotal: 2500 });
   });
 
-  it('BYO in trial follows the trial waiver like every other route', () => {
-    const result = calculateFee(10000, basis({ payment_routing: 'byo', is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+  it('BYO in trial pays the same fee as every other route (trial never waives, Owner 2026-11-08)', () => {
+    const inTrial = calculateFee(10000, basis({ payment_routing: 'byo', is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
+    expect(inTrial).toEqual(calculateFee(10000, basis({ payment_routing: 'byo', is_in_trial: false }), 'scheduling', BASE_SNAPSHOT));
+    expect(inTrial.feeTotal).toBeGreaterThan(0);
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// Trial waiver
+// No trial waiver (Owner decision 2026-11-08): the fee applies from sign-up
 // ══════════════════════════════════════════════════════════
 
-describe('calculateFee: trial waiver', () => {
-  it('trial=true produces zero fee', () => {
-    const result = calculateFee(10000, basis({ is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+describe('calculateFee: the trial never waives the fee', () => {
+  it('trial=true charges the same fee as trial=false', () => {
+    const inTrial = calculateFee(10000, basis({ is_in_trial: true }), 'scheduling', BASE_SNAPSHOT);
+    const notInTrial = calculateFee(10000, basis({ is_in_trial: false }), 'scheduling', BASE_SNAPSHOT);
+    expect(inTrial).toEqual(notInTrial);
+    expect(inTrial.feeTotal).toBeGreaterThan(0);
   });
 
-  it('trial=true overrides custom override', () => {
+  it('trial=true keeps the custom override rate', () => {
     const result = calculateFee(10000, basis({ is_in_trial: true, custom_fee_percentage: 10 }), null, BASE_SNAPSHOT);
-    expect(result).toEqual({ feePercentage: 0, feeFlat: 0, feeTotal: 0 });
+    expect(result).toEqual({ feePercentage: 10, feeFlat: 0, feeTotal: 1000 });
   });
 });
 

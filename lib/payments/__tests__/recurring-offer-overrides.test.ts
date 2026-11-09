@@ -153,6 +153,7 @@ describe('recurring-offer capability_overrides fix', () => {
 
     vi.doMock('@/lib/trial-status', () => ({
       resolveTrialCredit: vi.fn().mockResolvedValue(false),
+      resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
     }));
 
     vi.doMock('@/lib/logger', () => ({

@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
   let emailsSent = 0;
 
   try {
+  // Feature trial (Pro/Premium, from sign-up — M525). Paid plans are not in a
+  // trial, so only Starter businesses get these emails.
   // ── 1. Businesses whose trial ends in 2 days (warning email) ──
   const twoDaysFromNow = new Date(now);
   twoDaysFromNow.setDate(twoDaysFromNow.getDate() + 2);
@@ -26,9 +28,10 @@ export async function GET(request: NextRequest) {
 
   const { data: expiringSoon } = await supabase
     .from('businesses')
-    .select('id, name, owner_id, trial_ends_at')
-    .gte('trial_ends_at', twoDaysStart)
-    .lte('trial_ends_at', twoDaysEnd)
+    .select('id, name, owner_id, feature_trial_ends_at')
+    .gte('feature_trial_ends_at', twoDaysStart)
+    .lte('feature_trial_ends_at', twoDaysEnd)
+    .eq('subscription_tier', 'free')
     .eq('status', 'active');
 
   for (const biz of expiringSoon || []) {
@@ -40,7 +43,7 @@ export async function GET(request: NextRequest) {
 
     if (profile?.email) {
       const daysLeft = Math.ceil(
-        (new Date(biz.trial_ends_at).getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+        (new Date(biz.feature_trial_ends_at).getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
       );
       const { subject, html } = trialExpiringEmail(biz.name, Math.max(1, daysLeft));
       await sendEmail({ to: profile.email, subject, html });
@@ -56,9 +59,10 @@ export async function GET(request: NextRequest) {
 
   const { data: justExpired } = await supabase
     .from('businesses')
-    .select('id, name, owner_id, trial_ends_at')
-    .gte('trial_ends_at', yStart)
-    .lte('trial_ends_at', yEnd)
+    .select('id, name, owner_id, feature_trial_ends_at')
+    .gte('feature_trial_ends_at', yStart)
+    .lte('feature_trial_ends_at', yEnd)
+    .eq('subscription_tier', 'free')
     .eq('status', 'active');
 
   for (const biz of justExpired || []) {

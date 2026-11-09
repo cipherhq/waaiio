@@ -73,7 +73,7 @@ export async function resolveGatewaySplit(
   }
 
   const tier = (biz.subscription_tier || 'free') as SubscriptionTier;
-  const isInTrial = await resolveTrialStatus(supabase, businessId, tier, biz.trial_ends_at);
+  const isInTrial = await resolveTrialStatus(supabase, businessId, tier);
   const feeResult = await getPlatformFees(amount, tier, isInTrial, {
     feePercentage: biz.custom_fee_percentage ?? undefined,
     feeFlat: biz.custom_fee_flat ?? undefined,
@@ -468,7 +468,7 @@ async function chargePaystackAuthorization(
         }
 
         const scTier = (bizForFee.subscription_tier || 'free') as SubscriptionTier;
-        const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier, bizForFee.trial_ends_at);
+        const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier);
         const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
         const snapErr = validateV1Snapshot(
           snapshot as Parameters<typeof validateV1Snapshot>[0],

@@ -97,7 +97,7 @@ export async function resolvePaymentRoutingAuthority(
       if (business) {
         const tier = (business.subscription_tier || 'free') as SubscriptionTier;
         const { resolveTrialStatus } = await import('@/lib/trial-status');
-        const isInTrial = await resolveTrialStatus(supabase, businessId, tier, business.trial_ends_at);
+        const isInTrial = await resolveTrialStatus(supabase, businessId, tier);
         const { getPlatformFees } = await import('@/lib/getPlatformFees');
         const feeResult = await getPlatformFees(amount, tier, isInTrial, {
           feePercentage: business.custom_fee_percentage ?? undefined,

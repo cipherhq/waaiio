@@ -53,6 +53,8 @@ vi.mock('@/lib/getPlatformFees', () => ({
   getPlatformFees: vi.fn(async () => ({ feePercentage: 5, feeFlat: 0, feeTotal: 250 })),
 }));
 vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialStatus: vi.fn(async () => false),
   resolveTrialCredit: vi.fn(async () => false),
 }));

@@ -52,18 +52,15 @@ describe('getPlatformFees', () => {
     expect(result.feeTotal).toBe(225); // 1.5% of 10000 = 150 + 75 flat = 225
   });
 
-  it('returns 0% fee during trial period for all tiers', async () => {
+  it('charges the plan fee during the trial for all tiers (Owner 2026-11-08)', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
     for (const tier of ['free', 'growth', 'business'] as const) {
-      const result = await getPlatformFees(10_000, tier, true);
-      expect(result.feePercentage).toBe(0);
-      expect(result.feeFlat).toBe(0);
-      expect(result.feeTotal).toBe(0);
+      const inTrial = await getPlatformFees(10_000, tier, true);
+      const notInTrial = await getPlatformFees(10_000, tier, false);
+      expect(inTrial).toEqual(notInTrial);
+      expect(inTrial.feeTotal).toBeGreaterThan(0);
     }
-
-    // loadPlatformSettings should NOT be called during trial
-    expect(mockLoadSettings).not.toHaveBeenCalled();
   });
 
   it('returns 0 fee for zero amount', async () => {

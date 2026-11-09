@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { canModifyCapability } from '@/lib/capabilities/policy';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 import { CAPABILITIES } from '@/lib/capabilities/types';
 import { getMissingDependencies } from '@/lib/capabilities/dependencies';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -99,16 +99,16 @@ export async function POST(request: NextRequest) {
   // Existing paused-but-selected capabilities are allowed to remain selected
   const newlyEnabled = requestedCaps.filter(cap => !currentSelected.has(cap));
 
-  const hasTrialCredit = await resolveTrialCredit(service, business.id);
+  // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+  const featureTrialEndsAt = await resolveFeatureTrialEndsAt(service, business.id);
   const denied: Array<{ capability: string; reason: string }> = [];
   for (const cap of newlyEnabled) {
     const check = canModifyCapability({
       capabilityId: cap,
       requestedState: true,
       tier: business.subscription_tier,
-      trialEndsAt: business.trial_ends_at,
+      trialEndsAt: featureTrialEndsAt,
       overrides,
-      hasTrialCredit,
     });
     if (!check.allowed) {
       denied.push({ capability: cap, reason: check.reason || 'tier_required' });

@@ -253,7 +253,7 @@ describe('verified fee actual reconciliation and insertion',()=>{
   it.each([
     ['custom-zero',{custom_fee_percentage:0},0,false],
     ['null-fallback',{custom_fee_percentage:null},150,false],
-    ['trial',{is_in_trial:true},0,false],
+    ['trial (fee not waived, Owner 2026-11-08)',{is_in_trial:true},150,false],
     // Owner decision 2026-11-08 (#958): BYO pays the same Waaiio fee as every route.
     ['byo',{payment_routing:'byo'},150,true],
     ['connect',{payment_routing:'connect'},150,true],

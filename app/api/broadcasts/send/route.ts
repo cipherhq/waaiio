@@ -7,6 +7,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { resolveLimitTier } from '@/lib/trial-status';
 import { logger } from '@/lib/logger';
 import { ensurePlus } from '@/lib/utils/phone';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
@@ -77,8 +78,10 @@ export async function POST(request: NextRequest) {
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    // Guard already authorized broadcast. For free-tier with trial/override, use growth limits.
-    const effectiveLimitTier: SubscriptionTier = tier === 'free' ? 'growth' : tier;
+    // Guard already authorized broadcast. A Starter business in its feature trial
+    // uses Premium limits; a Starter business with an admin override uses Pro limits.
+    const limitTier = await resolveLimitTier(service, business.id, tier);
+    const effectiveLimitTier: SubscriptionTier = limitTier === 'free' ? 'growth' : limitTier;
     const limits = settings.broadcast_limits[effectiveLimitTier];
 
     // Check conversation limit

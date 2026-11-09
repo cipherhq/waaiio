@@ -133,6 +133,12 @@ const mockServiceRpc = vi.fn().mockImplementation((name: string) => {
   return Promise.resolve(mockRpcResult);
 });
 
+// M525: the capability guard reads the feature-trial clock with its own
+// businesses query; keep it out of this file's ordered businesses mock.
+vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveTrialCredit: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn().mockResolvedValue({
     auth: { getUser: () => Promise.resolve({ data: { user: mockUser } }) },
