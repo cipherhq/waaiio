@@ -47,7 +47,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Getting Started',
     question: 'Can I try Waaiio before paying?',
-    answer: 'Yes! Every plan starts with a free trial. During the trial, Waaiio charges no platform fee on transactions. After the trial, the platform fee for your chosen plan applies (Starter: 3% per paid transaction). No credit card needed to start.',
+    answer: 'Yes! New businesses start on the Starter plan with a free trial. During the trial, Waaiio charges no platform fee on transactions. After the trial, the platform fee for your chosen plan applies (Starter: 3% per paid transaction). No credit card needed to start.',
   },
 
   // ── Bookings & Appointments ──
@@ -86,7 +86,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Payments & Payouts',
     question: 'How much does Waaiio cost?',
-    answer: 'Waaiio has 3 plans: Starter (free, per-transaction fee after trial), Pro (monthly subscription + lower per-transaction fee), and Premium (monthly subscription + lowest fees + whitelabel). All plans include a free trial with no Waaiio platform fee. Check our Pricing page for exact prices in your currency.',
+    answer: 'Waaiio has 3 plans: Starter (free, per-transaction fee after trial), Pro (monthly subscription + lower per-transaction fee), and Premium (monthly subscription + lowest fees + whitelabel). Starter includes a free trial with no Waaiio platform fee. Check our Pricing page for exact prices in your currency.',
   },
   {
     category: 'Payments & Payouts',

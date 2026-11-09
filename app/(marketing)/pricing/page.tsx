@@ -215,7 +215,7 @@ export default function PricingPage() {
                   </tr>
                   <CompareRow
                     label="Monthly bookings"
-                    values={(['free', 'growth', 'business'] as const).map(tier => TIER_TRANSACTION_LIMITS[tier].bookings < 0 ? 'Unlimited' : `Up to ${TIER_TRANSACTION_LIMITS[tier].bookings}`)}
+                    values={(['free', 'growth', 'business'] as const).map(tier => TIER_TRANSACTION_LIMITS[tier].bookings < 0 ? 'Unlimited' : `Up to ${TIER_TRANSACTION_LIMITS[tier].bookings.toLocaleString('en-US')}`)}
                   />
                   <CompareRow
                     label="Standard platform fee"

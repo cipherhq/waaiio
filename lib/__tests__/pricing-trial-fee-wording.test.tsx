@@ -28,12 +28,12 @@ describe('pricing page fee wording', () => {
     expect(screen.getByText('Free trial (no platform fee)')).toBeTruthy();
   });
 
-  it('shows the booking limits the bot and settings use: 100 and 1000 a month', async () => {
+  it('shows the booking limits the bot and settings use: 100 and 1,000 a month', async () => {
     vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => projection })));
     render(<PricingPage />);
     expect(await screen.findByText('Up to 100')).toBeTruthy();
-    expect(screen.getByText('Up to 1000')).toBeTruthy();
+    expect(screen.getByText('Up to 1,000')).toBeTruthy();
   });
 });
 
@@ -45,5 +45,39 @@ describe('booking limits agree everywhere', () => {
     expect(PRICING_TIERS.free.maxBookings).toBe(TIER_TRANSACTION_LIMITS.free.bookings);
     expect(PRICING_TIERS.growth.maxBookings).toBe(TIER_TRANSACTION_LIMITS.growth.bookings);
     expect(TIER_FEATURES.free.maxBookings).toBe(100);
+  });
+});
+
+describe('upgrade banner uses the same limits', () => {
+  it('stays hidden at 60 Starter bookings (60 of 100), where it used to say the limit was reached', async () => {
+    const { UpgradeBanner } = await import('@/components/dashboard/UpgradeBanner');
+    render(<UpgradeBanner currentBookings={60} tier="free" />);
+    expect(screen.queryByText(/limit/i)).toBeNull();
+  });
+
+  it('warns at 75 of 100 and names the Pro limit of 1,000', async () => {
+    const { UpgradeBanner } = await import('@/components/dashboard/UpgradeBanner');
+    render(<UpgradeBanner currentBookings={75} tier="free" />);
+    expect(screen.getByText("You've used 75 of 100 bookings this month. Upgrade to Pro for 1,000 bookings.")).toBeTruthy();
+  });
+
+  it('says the limit is reached only at 100', async () => {
+    const { UpgradeBanner } = await import('@/components/dashboard/UpgradeBanner');
+    render(<UpgradeBanner currentBookings={100} tier="free" />);
+    expect(screen.getByText('Booking limit reached')).toBeTruthy();
+  });
+});
+
+describe('plan emails quote the current rates', () => {
+  it('trial and subscription emails say 3% / 1.5% / 1% and no 2.5%, ₦75 or 7-day trial', async () => {
+    const t = await import('@/lib/email/templates');
+    const html = [
+      t.trialExpiringEmail('Biz', 3).html, t.trialEndedEmail('Biz').html,
+      t.subscriptionExpiringEmail('Biz', 3, 'https://x').html, t.subscriptionExpiredEmail('Biz', 'https://x').html,
+    ].join('\n');
+    expect(html).not.toMatch(/2\.5%|₦75|7-day/);
+    expect(t.trialExpiringEmail('Biz', 3).html).toMatch(/3% per transaction[\s\S]*1\.5% per transaction[\s\S]*1% per transaction/);
+    expect(t.trialEndedEmail('Biz').html).toContain('A 3% platform fee now applies to each paid transaction.');
+    expect(t.subscriptionExpiredEmail('Biz', 'https://x').html).toContain('3%');
   });
 });
