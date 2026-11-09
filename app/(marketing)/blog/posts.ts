@@ -55,7 +55,7 @@ Salons using WhatsApp automation typically see:
 
 ## Get Started Free
 
-Waaiio offers a free trial with all features included. No credit card required.
+Waaiio offers a 14-day free trial of all Pro and Premium features. No credit card required.
 
 [Start your free trial →](https://waaiio.com/get-started)
     `,

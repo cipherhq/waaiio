@@ -8,7 +8,7 @@
 - **Booking limits.** Starter and Pro allow 100 and 1,000 bookings a month.
 - **The problem this fixes.** The pricing page read as "no fees". Several pages and emails quoted old rates (2.5%, 1.5% + ₦75) or wrong limits (50, 300, 500) and a 30-day or 7-day trial.
 
-**Ship together with the trial-and-fee code lane.** This PR changes wording only, except for the booking limits. Today's code still waives the fee during a trial, and the trial only starts together with the messaging-credit grant, so nobody gets the 14-day trial yet. That code changes in a separate lane, which removes the trial fee waiver and starts the feature trial at sign-up. Merge and release this PR together with that lane, or after it, so the page never promises a trial that isn't given. Gateway-fee bearing on split payments and the fee on businesses using their own gateway are a third lane. Until it ships, the "gateway fees are paid by your business" line is not yet true for split payments.
+**Ship together with both code lanes.** This PR changes wording only, except for the booking limits. Today's code still waives the fee during a trial, and the trial only starts together with the messaging-credit grant, so nobody gets the 14-day trial yet. That code changes in a separate lane, which removes the trial fee waiver and starts the feature trial at sign-up. Gateway-fee bearing on split payments and the fee on businesses using their own gateway are a third lane. Until it ships, "gateway fees are paid by your business" is not true for split payments, and the 3% does not apply to businesses using their own gateway; the pricing page's category-fee section, hidden while `category_fee_rates` is empty, still says "0% Waaiio fee" for them. Merge and release this PR in the same release as both lanes, so every statement is true when it goes live.
 
 **What changed**
 - `app/(marketing)/pricing/page.tsx`
@@ -24,7 +24,7 @@
     - the pricing page's "Monthly bookings" row
     - the dashboard usage meter
     - the dashboard upgrade banner
-    - `checkTierLimit` in the scheduling bot flow, which now blocks only above 120 (Starter) or 1,200 (Pro) instead of above 60 or 360.
+    - `checkTierLimit` in the scheduling bot flow, which now blocks only above 120 (Starter) or 1,200 (Pro) instead of above 60 or 360. The earlier WhatsApp greeting gate (`StandaloneService.checkTierLimitsFromBusiness`, `PRICING_TIERS.maxBookings`) already stopped at 100 / 1,000 WhatsApp bookings and is unchanged. In practice a Starter business is stopped at 100 WhatsApp bookings, or above 120 bookings across all channels.
   - Orders, tickets, giving and invoice limits are unchanged.
 - `components/dashboard/UpgradeBanner.tsx`: the banner assumed a 50-booking Starter limit and said Pro gives "500 bookings". It now reads both limits from `TIER_TRANSACTION_LIMITS`: it warns from 70 bookings, says "limit reached" at 100, and names Pro's 1,000.
 - `lib/email/templates.ts`
@@ -36,13 +36,19 @@
   - **Before:** "What are the fees?" gave the wrong rates and a 30-day trial.
   - **Now:** Starter 3%, Pro 1.5%, Premium 1%; category rates or a custom agreement may apply; the 14-day feature trial; the fee from day one; gateway fees paid by the business.
 - `app/dashboard/payouts/page.tsx`: the fee sentence in the Payout Terms of Use had the same wrong rates. It now points to the Pricing page and lists the current rates. The terms version ("1.0") is not changed.
-- `app/api/whatsapp/flow-callback/onboarding.ts`: WhatsApp sign-up messages said "30-day trial … all features", and the Pro upsell said "500 bookings". They now say a 14-day trial of Pro and Premium features, and 1,000 bookings.
+- `app/api/whatsapp/flow-callback/onboarding.ts`: the WhatsApp sign-up messages and the welcome email said "30-day trial … all features", and the Pro upsell said "500 bookings". They now say a 14-day trial of Pro and Premium features, and 1,000 bookings.
+- `app/get-started/steps/StepPlan.tsx`: the sign-up plan picker said Starter's fee applies "after trial" and labelled Starter a "free trial". It now says "no monthly fee", that the fee applies "from day one, plus payment gateway fees", and that every Pro and Premium feature can be tried free for 14 days.
+- Smaller copy:
+  - `app/(marketing)/blog/posts.ts`: the trial line now names Pro and Premium features.
+  - `lib/constants.ts`: unused Starter feature strings no longer say "no fees" or "after trial".
+  - `app/dashboard/page.tsx`: the bookings usage-meter fallback is now the Starter limit.
 - `app/dashboard/capabilities/page.tsx`: the in-trial note now says the 14-day trial includes every Pro and Premium feature.
 - Test: `lib/__tests__/pricing-trial-fee-wording.test.tsx` checks:
   - the rendered pricing page (wording, the absence of "no fees", the booking row)
   - the rendered upgrade banner at 60, 75 and 100 bookings
   - the four plan emails
   - that the booking limits agree everywhere
+  - Also: `lib/__tests__/signup-plan-choice.test.tsx` now checks the plan picker's fee line.
 
 **Unchanged:**
 - Fee rates and how fees are calculated. `calculateFee` still waives the fee during an active trial until the code lane lands; no business is in a trial today.

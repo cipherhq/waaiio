@@ -22,7 +22,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Getting Started',
     question: 'How do I get started?',
-    answer: 'Sign up at waaiio.com/get-started, pick your industry, add your business details, and you are live. It takes about 5 minutes. Your free trial includes all features — your WhatsApp bot will be ready immediately.',
+    answer: 'Sign up at waaiio.com/get-started, pick your industry, add your business details, and you are live. It takes about 5 minutes. Your 14-day free trial includes all Pro and Premium features — your WhatsApp bot will be ready immediately.',
   },
   {
     category: 'Getting Started',
@@ -86,7 +86,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Payments & Payouts',
     question: 'How much does Waaiio cost?',
-    answer: 'Waaiio has 3 plans: Starter (no monthly fee, 3% per paid transaction), Pro (monthly subscription + 1.5% per transaction), and Premium (monthly subscription + 1% per transaction). Payment gateway fees are paid by your business on every plan. Every new business gets a 14-day free trial of Pro and Premium features. Check our Pricing page for exact prices in your currency.',
+    answer: 'Waaiio has 3 plans: Starter (no monthly fee, 3% per paid transaction), Pro (monthly subscription + 1.5% per transaction), and Premium (monthly subscription + 1% per transaction). Payment gateway fees are paid by your business on every plan. Category rates or a custom agreement may apply. Every new business gets a 14-day free trial of Pro and Premium features. Check our Pricing page for exact prices in your currency.',
   },
   {
     category: 'Payments & Payouts',

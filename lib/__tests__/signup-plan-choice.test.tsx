@@ -29,11 +29,15 @@ const openPlans = () => fireEvent.click(screen.getByRole('button', { name: 'Cont
 describe('Signup explicit plan choice', () => {
   it('defaults Free, shows projected fees including flat charges and allows upgrading later', () => {
     render(<Journey />); openPlans();
-    expect(screen.getByRole('button', { name: /Starter.*free trial/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: /Starter.*no monthly fee/ }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText(/3.2% \+ ₦20 Waaiio fee/)).toBeTruthy();
     expect(screen.getByText(/1.7% Waaiio fee/)).toBeTruthy();
     expect(screen.getByText(/0.8% \+ ₦10 Waaiio fee/)).toBeTruthy();
     expect(screen.getByText(/Payment-provider processing charges are separate/)).toBeTruthy();
+    // Owner 2026-11-08: Starter's fee applies from day one; the trial is for Pro & Premium features.
+    expect(screen.getByText(/3.2% \+ ₦20 Waaiio fee per transaction from day one, plus payment gateway fees/)).toBeTruthy();
+    expect(screen.queryByText(/after trial/)).toBeNull();
+    expect(screen.getByText(/try every Pro and Premium feature free for 14 days/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start free — upgrade later' }));
     expect(screen.getByText('Details for free')).toBeTruthy();
   });

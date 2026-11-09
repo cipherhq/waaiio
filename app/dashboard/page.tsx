@@ -496,7 +496,7 @@ export default function DashboardOverview() {
           <UsageBar
             label={`${bookingsLabel} this month`}
             current={monthlyBookings}
-            limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.bookings ?? 50}
+            limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.bookings ?? TIER_TRANSACTION_LIMITS.free.bookings}
           />
           {hasCapability('ordering') && (
             <UsageBar
