@@ -45,11 +45,14 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
 
 # Waaiio fee and trial model — Owner standing order (2026-11-08 / 2026-11-09)
 
-**Status:** Standing Owner financial decision, recorded in issue #958 and implemented by PRs #959, #960 and #961 (M525). It is binding on all code, configuration, migrations, pricing copy, provider integrations, admin tools and PRs. **Nothing changes these rules without a new, explicit Owner decision.** Technical approval, passing CI, a reviewer's or agent's preference, or an old PR description never overrides them.
+**Status:** Standing Owner financial decision.
+- Rules 1–5, 7 and 8 are recorded in issue #958.
+- Rule 6 (upgrade ends the trial) and the Stripe decision under "Known limits" were made on 2026-11-09. They are recorded in PRs #960, #961 (M525 §3b) and #959.
+- These rules are implemented by PRs #959, #960 and #961. It is binding on all code, configuration, migrations, pricing copy, provider integrations, admin tools and PRs. **Nothing changes these rules without a new, explicit Owner decision.** Technical approval, passing CI, a reviewer's or agent's preference, or an old PR description never overrides them.
 
 ## Rules
 
-1. **Waaiio fee per paid transaction.** Starter 3%, Pro 1.5%, Premium 1%. The live rates are in `platform_settings.pricing_tiers` and the config snapshot. Changing a rate is itself an Owner decision.
+1. **Waaiio fee per paid transaction.** Starter 3%, Pro 1.5%, Premium 1%. The live rates are in `platform_settings.pricing_tiers` and the config snapshot. `calculateFee` also applies a business's `custom_fee_percentage` / `custom_fee_flat` and any `category_fee_rates` ahead of the plan rate. Changing a plan rate, or setting a custom or category rate, is itself an Owner decision.
 2. **From sign-up.** The fee applies from the day a business signs up. The free trial never waives it.
 3. **The same fee on every route.** This includes Waaiio-collected payments, merchant-connected split payments, and businesses that connect their own Stripe or Paystack. Waaiio collects its fee on every route.
 4. **The merchant pays every payment-gateway fee, on every route. Waaiio must not absorb any fee at all.**
@@ -57,9 +60,11 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
      - splits on Waaiio's account send `bearer: 'subaccount'`;
      - own-gateway splits send `bearer: 'account'`, where the merchant is the main account;
      - an explicit `transaction_charge` is always sent.
+     - Paystack Connect requests (`X-Connect-Account`) send neither `bearer` nor `transaction_charge`. See "Known limits".
    - Estimating or grossing up a provider fee in a way that can leave Waaiio absorbing a difference is not acceptable.
 5. **The 14-day free trial is for Pro and Premium features.**
    - It starts at sign-up for every new business. The length comes from `platform_settings.trial_days`.
+   - Businesses that existed before M525 get no trial. There is no backfill.
    - It does not depend on the free messaging credit or on `messaging_financial_gate`.
    - Premium limits apply during the trial. The fee stays at the business's plan rate.
    - After the trial, the business pays for Pro or Premium, or continues on Starter.
@@ -71,7 +76,9 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
 
 - **Stripe split payments (Connect destination charges).** On this charge type Stripe bills its fee to Waaiio. No business uses it, and per the Owner (2026-11-09) nothing is switched off. It must not be offered to merchants until it is redesigned so that the merchant bears Stripe's fee, for example with direct charges where the connected account is the fee payer.
 - **"Connect your own Stripe" setup.** Today this lands funds in Waaiio's Stripe account. No business uses it. It must be fixed before use.
-- **Monthly platform-fee invoice.** It must not bill own-gateway or Connect merchants for fees that a split has already collected. Fix this before onboarding any such business.
+- **Flutterwave own-gateway reversed split.** Waaiio pays Flutterwave's fee. `lib/payments/flutterwave.ts` sets `transaction_charge` to what the merchant keeps, with no fee-bearer control. Flutterwave setup is disabled, and there are 0 production rows. Fix this before enabling it.
+- **Paystack Connect (`X-Connect-Account`).** `lib/payments/paystack.ts` sends no split parameters, so the code does not show who pays the fee. There are 0 production rows. Prove that the merchant bears the fee before using it.
+- **Monthly platform-fee invoice.** It must not bill own-gateway or Paystack Connect (`connect` routing) merchants for fees that a split has already collected. Stripe destination charges are recorded as `platform` routing and are not invoiced. Fix this before onboarding any such business.
 
 ## Required evidence for fee-related changes
 

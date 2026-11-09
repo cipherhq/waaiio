@@ -9,7 +9,7 @@
     - upgrade ending the trial;
     - the separate free credit;
     - the booking limits;
-    - the known limits that must be fixed before use: Stripe split payments, the own-Stripe setup, and monthly-invoice double billing;
+    - the known limits that must be fixed before use: Stripe split payments, the own-Stripe setup, the Flutterwave own-gateway split, Paystack Connect, and monthly-invoice double billing;
     - the evidence required for any fee-related change.
   - `CLAUDE.md` has a short summary under the payment custody section that points to it.
   - Source: issue #958; PRs #959, #960, #961.
