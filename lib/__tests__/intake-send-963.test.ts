@@ -42,7 +42,11 @@ function world(over: { service?: Row; booking?: Row; business?: Row; form?: Row;
     businesses: [{ id: BIZ, name: 'Healing Labs', subscription_tier: 'growth', timezone: 'Africa/Lagos', ...over.business }],
     services: [{ id: 's1', business_id: BIZ, name: 'Assessment', intake_form_id: 'f1', intake_timing: 'after_booking', intake_frequency: 'every_booking', ...over.service }],
     forms: [{ id: 'f1', business_id: BIZ, title: 'Intake', is_active: true, fields: [{ id: 'q', type: 'text', required: true }], ...over.form }],
-    bookings: [{ id: 'k1', business_id: BIZ, service_id: 's1', guest_phone: '+2348012345678', date: '2026-11-20', time: '10:00:00', status: 'confirmed', ...over.booking }],
+    bookings: [
+      { id: 'k1', business_id: BIZ, service_id: 's1', guest_phone: '+2348012345678', date: '2026-11-20', time: '10:00:00', status: 'confirmed', ...over.booking },
+      // An earlier WhatsApp booking of the same client (no booking-page marker).
+      { id: 'k-prev', business_id: BIZ, service_id: 's1', guest_phone: '+2348012345678', status: 'completed', metadata: {} },
+    ],
     booking_intakes: over.intakes || [],
     messaging_opt_outs: over.optOuts || [],
   });
@@ -166,7 +170,7 @@ describe('deliverAfterBookingIntake', () => {
   it('first booking only: skips a client who already answered this form', async () => {
     const db = world({
       service: { intake_frequency: 'first_booking' },
-      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k0' }],
+      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k-prev' }],
     });
     expect(await deliverAfterBookingIntake(db as never, 'k1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'answered_before' });
   });
@@ -295,7 +299,7 @@ describe('before-booking intake (bot)', () => {
   });
 
   it('hasAnsweredBefore leaves out the intake of the booking in progress', async () => {
-    const db = world({ intakes: [{ id: 'mine', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }] });
+    const db = world({ intakes: [{ id: 'mine', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k-prev' }] });
     expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678', 'mine')).toBe(false);
     expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(true);
   });
@@ -305,8 +309,18 @@ describe('before-booking intake (bot)', () => {
     expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(true);
   });
 
+  it('hasAnsweredBefore never counts answers from the booking page (typed phone) or not tied to a booking', async () => {
+    const WEB_META = { scheduling_authority_604: { request: { expected_terms: { source: 'public' } } } };
+    const db = world({ intakes: [
+      { id: 'web', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k-web' },
+      { id: 'loose', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: null },
+    ] });
+    db.tables.bookings.push({ id: 'k-web', business_id: BIZ, metadata: WEB_META });
+    expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(false);
+  });
+
   it('hasAnsweredBefore matches the client by phone and form within the business', async () => {
-    const db = world({ intakes: [{ id: 'i', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }] });
+    const db = world({ intakes: [{ id: 'i', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k-prev' }] });
     expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(true);
     expect(await hasAnsweredBefore(db as never, BIZ, 'f2', '2348012345678')).toBe(false);
     expect(await hasAnsweredBefore(db as never, 'b2', 'f1', '2348012345678')).toBe(false);
@@ -459,9 +473,18 @@ describe('web bookings (public booking page)', () => {
     const byEmail = web({
       service: { intake_frequency: 'first_booking' },
       intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2340000000000', status: 'submitted', booking_id: 'k0' }],
-      extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com' }],
+      extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com', metadata: WEB }],
     });
     expect(await deliverAfterBookingIntake(byEmail as never, 'k1', { now: NOW })).toEqual({ status: 'skipped', reason: 'answered_before' });
+  });
+
+  it('first booking only on the web: an email typed on a WhatsApp booking does not count', async () => {
+    const db = web({
+      service: { intake_frequency: 'first_booking' },
+      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2340000000000', status: 'submitted', booking_id: 'k0' }],
+      extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com', metadata: {} }],
+    });
+    expect((await deliverAfterBookingIntake(db as never, 'k1', { now: NOW })).status).toBe('sent');
   });
 
   it('the bot (prepareOnly) is never routed to email', async () => {
@@ -497,7 +520,7 @@ describe('web bookings (public booking page)', () => {
       ['first booking only, answered before with this email', {
         service: { intake_frequency: 'first_booking' },
         intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2340000000000', status: 'submitted', booking_id: 'k0' }],
-        extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com' }],
+        extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com', metadata: WEB }],
       }],
     ])('not needed: %s', async (_n, over) => {
       expect(await ask(over as never)).toBeNull();

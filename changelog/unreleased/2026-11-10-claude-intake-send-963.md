@@ -52,7 +52,9 @@ Later the same day the Owner also decided:
   - **`lib/intake/send.ts`:**
     - a booking-page booking is recognised by its `source: 'public'` marker (M518);
     - its after-booking link goes by email, never WhatsApp, and it gets no WhatsApp reminder;
-    - "answered before" is checked by the verified email, never the typed phone;
+    - "answered before" is kept apart by channel:
+      - on the web it counts only answers on booking-page bookings, by verified email, never by the typed phone;
+      - on WhatsApp it counts only answers linked to a non-web booking, by phone;
     - new `webBeforeBookingForm` and `findWebIntake`.
 - **`app/api/bookings/[id]/reschedule/route.ts`:** a dashboard reschedule moves a pending after-booking link's expiry to the new start (`syncIntakeExpiry`). A new start that has already passed ends the link at once.
 - **`app/api/cron/intake-reminders/route.ts`** (new, hourly in `vercel.json`): one reminder for unanswered after-booking forms whose session is 22–25 hours away. It works through due intakes page by page, within a 45-second time budget.

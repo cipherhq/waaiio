@@ -88,13 +88,19 @@ export async function isIntakeEntitled(db: Db, businessId: string, tier: string 
  */
 export async function hasAnsweredBefore(db: Db, businessId: string, formId: string, phone: string, excludeIntakeId?: string | null): Promise<boolean> {
   const digits = phone.replace(/\D/g, '');
-  let query = db.from('booking_intakes').select('id', { count: 'exact', head: true })
+  let query = db.from('booking_intakes').select('booking_id')
     .eq('business_id', businessId).eq('form_id', formId).eq('status', 'submitted')
-    .in('customer_phone', [`+${digits}`, digits]);
+    .in('customer_phone', [`+${digits}`, digits]).not('booking_id', 'is', null);
   if (excludeIntakeId) query = query.neq('id', excludeIntakeId);
-  const { count, error } = await query;
-  if (error || count === null) return true;
-  return count > 0;
+  const { data: answered, error } = await query.limit(100);
+  if (error) return true;
+  const bookingIds = (answered || []).map(r => r.booking_id as string);
+  if (bookingIds.length === 0) return false;
+  // Only answers on WhatsApp/dashboard bookings count: a booking-page phone is typed, not verified.
+  const { data: bookings, error: bookingError } = await db.from('bookings').select('metadata')
+    .eq('business_id', businessId).in('id', bookingIds);
+  if (bookingError) return true;
+  return (bookings || []).some(b => !isWebBooking(b.metadata));
 }
 
 /** STOP opt-out (this business or platform-wide). Fails closed: an unreadable answer counts as opted out. */
@@ -218,15 +224,17 @@ export function isWebBooking(metadata: unknown): boolean {
 }
 
 /**
- * Has this verified email already answered this form at this business? On the web
- * only the email is verified, so the typed phone is never used for this check.
- * An unreadable answer counts as answered.
+ * Has this verified email already answered this form at this business, on a booking-page
+ * booking (where the email was verified)? On the web the typed phone is never used for
+ * this check. Looks at the 100 most recent bookings; an unreadable answer counts as answered.
  */
 export async function hasAnsweredBeforeByEmail(db: Db, businessId: string, formId: string, email: string): Promise<boolean> {
-  const { data: bookings, error } = await db.from('bookings').select('id')
-    .eq('business_id', businessId).eq('guest_email', email.trim().toLowerCase()).limit(500);
+  const { data: bookings, error } = await db.from('bookings').select('id, metadata')
+    .eq('business_id', businessId).eq('guest_email', email.trim().toLowerCase())
+    .order('created_at', { ascending: false }).limit(100);
   if (error) return true;
-  const ids = (bookings || []).map(b => b.id as string);
+  // Only booking-page bookings count: there the email was verified.
+  const ids = (bookings || []).filter(b => isWebBooking(b.metadata)).map(b => b.id as string);
   if (ids.length === 0) return false;
   const { count, error: countError } = await db.from('booking_intakes').select('id', { count: 'exact', head: true })
     .eq('business_id', businessId).eq('form_id', formId).eq('status', 'submitted').in('booking_id', ids);

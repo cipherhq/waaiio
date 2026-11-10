@@ -23,6 +23,8 @@ function setup(over: { service?: Row; form?: Row; intakes?: Row[]; data?: Row } 
     services: [{ id: 's1', business_id: BIZ, intake_form_id: 'f1', intake_timing: 'before_booking', intake_frequency: 'every_booking', ...over.service }],
     forms: [{ id: 'f1', business_id: BIZ, title: 'Intake', is_active: true, fields: [{ id: 'q', type: 'text', required: true }], ...over.form }],
     booking_intakes: over.intakes || [],
+    // An earlier WhatsApp booking of this client.
+    bookings: [{ id: 'k-prev', business_id: BIZ, metadata: {} }],
   });
   const ctx = {
     supabase: db,
@@ -64,7 +66,7 @@ describe('when the step applies (skipIf)', () => {
     ['rescheduling an existing booking', { data: { _reschedule_booking_id: 'k0' } }],
     ['first booking only and answered before', {
       service: { intake_frequency: 'first_booking' },
-      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }],
+      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k-prev' }],
     }],
   ])('is skipped: %s', async (_n, over) => {
     expect(await intake.skipIf!(setup(over as never).ctx)).toBe(true);
@@ -93,7 +95,7 @@ describe('in the executor\'s order (skipIf runs before validate)', () => {
   it('a later booking of a first-booking-only form is skipped because of the earlier answer', async () => {
     const { ctx } = setup({
       service: { intake_frequency: 'first_booking' },
-      intakes: [{ id: 'earlier', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }],
+      intakes: [{ id: 'earlier', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k-prev' }],
     });
     expect(await intake.skipIf!(ctx)).toBe(true);
   });
