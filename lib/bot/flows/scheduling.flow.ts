@@ -34,7 +34,7 @@ import { openTimesOnDate, tableTimeInsideBusinessHours, type OpenTime, type Slot
 import { seatingGalleryMessages } from './table-reservation.flow';
 import {
   beforeBookingMessage, deliverAfterBookingIntake, hasAnsweredBefore, intakeState, isIntakeEntitled,
-  linkIntakeToBooking, loadUsableForm, openBeforeBookingIntake, toE164,
+  linkIntakeToBooking, loadUsableForm, openBeforeBookingIntake, syncIntakeExpiry, toE164,
 } from '@/lib/intake/send';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
@@ -2474,17 +2474,22 @@ export const schedulingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cfg = await beforeBookingIntakeConfig(ctx);
-        if (!cfg || !ctx.business) {
-          // Reached by "back" after the form is done: nothing to ask; the next message moves on.
-          return [{ type: 'text', text: '✅ We already have your answers. Send any message to continue.' }];
-        }
         const d = ctx.session.session_data;
+        if (!cfg || !ctx.business) {
+          // Nothing to ask (e.g. "back" after the form is done); the next message moves on.
+          return [{ type: 'text', text: d._intake_done_key ? '✅ We already have your answers. Send any message to continue.' : '✅ All set. Send any message to continue.' }];
+        }
         const existing = d._intake_key === cfg.key ? (d._intake_id as string | undefined) : undefined;
         const buttons = [
           { id: 'intake_done', title: "I've filled it" },
           { id: 'intake_new_link', title: 'Send a new link' },
         ];
         const state = existing && !d._intake_force_new ? await intakeState(ctx.supabase, ctx.business.id, existing) : 'missing';
+        // Answers already in (a re-prompt before "I've filled it"): record them, never open a second intake.
+        if (state === 'submitted') {
+          d._intake_done_key = cfg.key;
+          return [{ type: 'text', text: '✅ We already have your answers. Send any message to continue.' }];
+        }
         // Pending, or unreadable right now: keep the link the client may have open.
         if (state === 'pending' || state === 'unknown') {
           return [{ type: 'buttons', body: 'Your form link is in the message above. When you have sent the form, tap "I\'ve filled it".', buttons }];
@@ -2509,6 +2514,9 @@ export const schedulingFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const d = ctx.session.session_data;
+        // The step no longer applies (answers recorded, plan lapsed, form switched off,
+        // or a read error): move on. A glitch never blocks the booking (Owner decision 2026-11-10).
+        if (!(await beforeBookingIntakeConfig(ctx))) return { valid: true, data: {} };
         const answer = input.trim().toLowerCase();
         const id = d._intake_id as string | undefined;
         if (!id || !ctx.business) return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
@@ -3050,6 +3058,9 @@ export const schedulingFlow: FlowDefinition = {
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
+          // #963: a pending after-booking form link now lasts until the new start.
+          await syncIntakeExpiry(ctx.supabase, ctx.business!.id, rescheduleId);
+
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
             weekday: 'long', day: 'numeric', month: 'long',
@@ -3580,8 +3591,11 @@ export const schedulingFlow: FlowDefinition = {
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
         // Before-booking intake (#963): attach the answered form to this booking.
-        if (d._intake_id && d._intake_done_key && d._intake_done_key === d._intake_key && ctx.business) {
-          await linkIntakeToBooking(ctx.supabase, ctx.business.id, d._intake_id as string, booking.id);
+        // The key must belong to the service being booked: a client may answer service A's
+        // form, go back and book service B.
+        if (d._intake_id && d._intake_done_key && d._intake_done_key === d._intake_key
+            && String(d._intake_key).startsWith(`${d.service_id}:`) && ctx.business) {
+          await linkIntakeToBooking(ctx.supabase, ctx.business.id, d._intake_id as string, booking.id, d.service_id as string);
         }
         // Store canonical transaction total (not merely the upfront deposit).
         d.total_amount = bookingTotalAmount;
@@ -4021,7 +4035,11 @@ export const schedulingFlow: FlowDefinition = {
           type: 'text',
           text: message + calendarLinks + helpText + intakeBlock + '\n\n' + navigation,
           ...(intake.status === 'prepared'
-            ? { _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) } }
+            ? {
+                _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) },
+                // The intake is saved only once this reply reaches WhatsApp.
+                _afterSend: intake.finalize,
+              }
             : {}),
         }];
       },

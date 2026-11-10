@@ -13,11 +13,13 @@ vi.mock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi
 const intake = vi.hoisted(() => ({
   link: vi.fn(async () => undefined),
   deliver: vi.fn(async () => ({ status: 'skipped', reason: 'no_after_intake' }) as Record<string, unknown>),
+  sync: vi.fn(async () => undefined),
 }));
 vi.mock('@/lib/intake/send', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/intake/send')>()),
   linkIntakeToBooking: intake.link,
   deliverAfterBookingIntake: intake.deliver,
+  syncIntakeExpiry: intake.sync,
 }));
 
 const SAT = '2026-11-07';
@@ -38,6 +40,7 @@ function mockDb() {
     return chain;
   });
   const rpc = vi.fn((name: string) => {
+    if (name === 'reschedule_booking_atomic') return Promise.resolve({ data: { rescheduled: true }, error: null });
     if (name === 'book_slot_authoritative_604') {
       return { single: async () => ({ data: { booking_id: 'bk-new', reference_code: 'REF12', slot_available: true }, error: null }) };
     }
@@ -88,6 +91,7 @@ beforeEach(async () => {
   vi.setSystemTime(new Date('2026-11-05T12:00:00Z'));
   intake.link.mockClear();
   intake.deliver.mockClear();
+  intake.sync.mockClear();
   intake.deliver.mockResolvedValue({ status: 'skipped', reason: 'no_after_intake' });
   vi.spyOn(await import('@/lib/capabilities/service'), 'getEnabledCapabilities').mockResolvedValue([]);
   vi.spyOn(await import('@/lib/tier-limits'), 'checkTierLimit').mockResolvedValue({ allowed: true } as never);
@@ -108,12 +112,13 @@ describe('before-booking intake: linking the answers to the booking', () => {
     const create = await createStep();
     await create.prompt(ctxFor({ _intake_id: 'in-1', _intake_key: 'svc-cut:f1', _intake_done_key: 'svc-cut:f1' }));
     expect(intake.link).toHaveBeenCalledTimes(1);
-    expect(intake.link).toHaveBeenCalledWith(expect.anything(), 'biz-963', 'in-1', 'bk-new');
+    expect(intake.link).toHaveBeenCalledWith(expect.anything(), 'biz-963', 'in-1', 'bk-new', 'svc-cut');
   });
 
   it.each([
     ['not submitted in this session', { _intake_id: 'in-1', _intake_key: 'svc-cut:f1' }],
     ['submitted for another service or form', { _intake_id: 'in-1', _intake_key: 'svc-cut:f2', _intake_done_key: 'svc-cut:f1' }],
+    ['answered for service A, then service B booked', { _intake_id: 'in-1', _intake_key: 'svc-other:f1', _intake_done_key: 'svc-other:f1' }],
     ['no intake at all', {}],
   ])('does not link: %s', async (_n, data) => {
     const create = await createStep();
@@ -125,7 +130,8 @@ describe('before-booking intake: linking the answers to the booking', () => {
 describe('after-booking intake: the bot reply', () => {
   it('puts the intake message before the next-steps menu and protects the link from translation', async () => {
     const url = 'https://www.waaiio.com/intake/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd';
-    intake.deliver.mockResolvedValue({ status: 'prepared', intakeId: 'in-2', text: `📋 Healing Labs needs a few answers: ${url}`, url });
+    const finalize = vi.fn(async () => true);
+    intake.deliver.mockResolvedValue({ status: 'prepared', text: `📋 Healing Labs needs a few answers: ${url}`, url, finalize });
     const create = await createStep();
     const messages = await create.prompt(ctxFor());
     expect(intake.deliver).toHaveBeenCalledWith(expect.anything(), 'bk-new', { prepareOnly: true });
@@ -136,6 +142,9 @@ describe('after-booking intake: the bot reply', () => {
     expect(blocks[blocks.length - 1]).toContain('Type *menu*');
     expect(blocks[blocks.length - 2]).toContain(url);
     expect(last._localization?.protectedValues).toEqual(expect.arrayContaining([url, 'Healing Labs']));
+    // Saved only after delivery: the executor runs _afterSend once the reply reaches WhatsApp.
+    expect((last as { _afterSend?: unknown })._afterSend).toBe(finalize);
+    expect(finalize).not.toHaveBeenCalled();
   });
 
   it('adds nothing when no intake was prepared', async () => {
@@ -144,5 +153,15 @@ describe('after-booking intake: the bot reply', () => {
     const last = messages[messages.length - 1] as PromptText & { _localization?: unknown };
     expect(last.text).not.toContain('/intake/');
     expect(last._localization).toBeUndefined();
+  });
+});
+
+describe('bot reschedule', () => {
+  it('moves the pending after-booking link to the new start, and opens no new intake', async () => {
+    const create = await createStep();
+    await create.prompt(ctxFor({ _reschedule_booking_id: 'bk-old' }));
+    expect(intake.sync).toHaveBeenCalledWith(expect.anything(), 'biz-963', 'bk-old');
+    expect(intake.deliver).not.toHaveBeenCalled();
+    expect(intake.link).not.toHaveBeenCalled();
   });
 });

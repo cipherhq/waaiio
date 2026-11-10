@@ -1052,6 +1052,8 @@ export class FlowExecutor {
       try {
         const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!, tCtx) : messages[i];
         await this.sendSingleMessage(to, msg, sender);
+        const afterSend = messages[i]._afterSend;
+        if (afterSend) await afterSend().catch(err => logger.warn('[EXECUTOR] After-send step failed:', (err as Error).message));
         // Sequential sends preserve ordering — no artificial delay needed
       } catch (err) {
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);

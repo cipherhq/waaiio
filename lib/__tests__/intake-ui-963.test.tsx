@@ -216,6 +216,28 @@ describe('IntakeFormView', () => {
     expect((screen.getByLabelText(/Main concern/) as HTMLTextAreaElement).value).toBe('Sleep');
   });
 
+  it('a link from a booking-page booking says to close the page, not to go back to WhatsApp', async () => {
+    mockFetch({ ...PENDING, status: 'submitted', fields: undefined, from_web: true });
+    render(<IntakeFormView token="t" />);
+    await waitFor(() => expect(screen.getByText(/You can close this page now/)).toBeTruthy());
+    expect(screen.queryByText(/WhatsApp/)).toBeNull();
+    cleanup();
+    mockFetch({ ...PENDING, status: 'submitted', fields: undefined });
+    render(<IntakeFormView token="t" />);
+    await waitFor(() => expect(screen.getByText(/You can go back to WhatsApp now/)).toBeTruthy());
+  });
+
+  it('inside the booking page: hands back once the answers are sent, without the thank-you screen', async () => {
+    mockFetch({ ...PENDING, fields: [PENDING.fields[0]] });
+    const onDone = vi.fn();
+    render(<IntakeFormView token="t" onDone={onDone} />);
+    await waitFor(() => expect(screen.getByText('Health intake')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Main concern/), { target: { value: 'Sleep' } });
+    fireEvent.click(screen.getByText('Send my answers'));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Thank you')).toBeNull();
+  });
+
   it('shows done, expired and invalid links without the form', async () => {
     mockFetch({ ...PENDING, status: 'submitted', fields: undefined });
     render(<IntakeFormView token="t" />);

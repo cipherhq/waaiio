@@ -190,6 +190,26 @@ describe('asking and waiting', () => {
     expect(msg).toEqual({ type: 'text', text: '✅ We already have your answers. Send any message to continue.' });
   });
 
+  it('a re-prompt after the answers are in records them and opens no second intake', async () => {
+    const { db, ctx } = setup();
+    await intake.prompt(ctx);
+    db.tables.booking_intakes[0].status = 'submitted';
+    const [msg] = await intake.prompt(ctx);
+    expect(msg).toEqual({ type: 'text', text: '✅ We already have your answers. Send any message to continue.' });
+    expect(db.tables.booking_intakes).toHaveLength(1);
+    expect(ctx.session.session_data._intake_done_key).toBe('s1:f1');
+    expect(await intake.skipIf!(ctx)).toBe(true);
+  });
+
+  it('when the step stops applying mid-way, any reply moves on and the text claims no answers', async () => {
+    const { db, ctx } = setup();
+    await intake.prompt(ctx);
+    db.tables.forms[0].is_active = false;
+    expect(await intake.validate('hello', ctx)).toEqual({ valid: true, data: {} });
+    const [msg] = await intake.prompt(ctx);
+    expect(msg).toEqual({ type: 'text', text: '✅ All set. Send any message to continue.' });
+  });
+
   it('an expired link is replaced automatically', async () => {
     const { db, ctx } = setup();
     await intake.prompt(ctx);
@@ -225,5 +245,24 @@ describe('saved bot transcript', () => {
     expect(JSON.stringify(session.conversation_log)).not.toContain(token);
     expect(session.conversation_log[0].content).toContain('/intake/[token]');
     expect(messages[0].body).toContain(token);
+  });
+});
+
+describe('executor: after-send step', () => {
+  async function send(fail: boolean) {
+    const { FlowExecutor } = await import('@/lib/bot/flows/executor');
+    const afterSend = vi.fn(async () => true);
+    const sender = { sendText: vi.fn(async () => { if (fail) throw new Error('rejected'); return { success: true }; }) };
+    const self = { sendSingleMessage: (FlowExecutor.prototype as unknown as { sendSingleMessage: unknown }).sendSingleMessage, sender };
+    await (FlowExecutor.prototype as unknown as { sendMessages(...a: unknown[]): Promise<void> }).sendMessages.call(
+      self, '2348012345678', [{ type: 'text', text: 'Booked!', _afterSend: afterSend }], undefined, {}, sender,
+    );
+    return afterSend;
+  }
+  it('runs once after WhatsApp accepted the message', async () => {
+    expect(await send(false)).toHaveBeenCalledTimes(1);
+  });
+  it('never runs when the message was not delivered', async () => {
+    expect(await send(true)).not.toHaveBeenCalled();
   });
 });

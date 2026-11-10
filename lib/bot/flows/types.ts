@@ -65,6 +65,12 @@ export interface LocalizationMeta {
 export type PromptMessage = (PromptText | PromptList | PromptButtons | PromptImage | PromptDocument) & {
   /** Optional localization metadata for the outbound translation boundary */
   _localization?: LocalizationMeta;
+  /**
+   * Runs once, right after this message was handed to WhatsApp. Never runs when the
+   * message is not sent (stale session, send failure), so work tied to delivery
+   * (e.g. saving a client intake link, #963) happens only for a delivered message.
+   */
+  _afterSend?: () => Promise<unknown>;
 };
 
 // ── Validation result ──

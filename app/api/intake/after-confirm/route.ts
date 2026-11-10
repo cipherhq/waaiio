@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { deliverAfterBookingIntake } from '@/lib/intake/send';
+import { resolveBusinessRole } from '@/lib/capabilities/resolve-role';
 import { logger } from '@/lib/logger';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -10,8 +11,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * #963: the business approved a booking in the dashboard. If the booking's
  * service links an after-booking intake form, send it now (once, inside the
- * client's 24-hour window). Owner-only; the booking must belong to a business
- * the signed-in user owns. Never changes the booking.
+ * client's 24-hour window). The owner or an active team member may call it
+ * (Owner decision 2026-11-10); the booking must belong to that business and be
+ * confirmed (checked in deliverAfterBookingIntake). Never changes the booking.
  */
 export async function POST(request: NextRequest) {
   const limited = await rateLimitResponseAsync(getRateLimitKey(request, 'intake-after-confirm'), 60, 60_000);
@@ -28,11 +30,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'bookingId and businessId required' }, { status: 400 });
     }
 
-    const { data: biz } = await supabase.from('businesses').select('id')
-      .eq('id', businessId).eq('owner_id', user.id).maybeSingle();
-    if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
     const service = createServiceClient();
+    const role = await resolveBusinessRole(service, businessId, user.id);
+    if (!role.ok) {
+      return role.error === 'db_error'
+        ? NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+        : NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { data: booking } = await service.from('bookings').select('id')
       .eq('id', bookingId).eq('business_id', businessId).maybeSingle();
     if (!booking) return NextResponse.json({ error: 'Not found' }, { status: 404 });

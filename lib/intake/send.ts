@@ -7,6 +7,8 @@ import { resolveLimitTier } from '@/lib/trial-status';
 import { canonicalPublicOrigin } from '@/lib/url';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { sendEmail } from '@/lib/email/client';
+import { btn, businessFrom, esc, h, p, wrap } from '@/lib/email/templates';
 
 /**
  * Creating and sending client intake links (#963 lane 3).
@@ -16,6 +18,9 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
  *   - a link is sent only inside the client's WhatsApp 24-hour window, never by template;
  *   - an after-booking form goes out only once the booking is confirmed;
  *   - services only (appointments are not covered).
+ * Public booking page (Owner decisions 2026-11-10): a before-booking form is answered
+ * inside the page before booking; an after-booking link goes by email to the verified
+ * address (never WhatsApp, whose number is unverified there).
  *
  * The raw token is returned to the caller only to build the link; it is never
  * logged or stored (booking_intakes keeps its sha256, M526).
@@ -131,9 +136,24 @@ export function reminderMessage(businessName: string, serviceName: string | null
     + `Please fill in this form (only ${businessName} can see your answers):\n${url}`;
 }
 
+/** After-booking email for a booking made on the public booking page. */
+export function afterBookingEmail(businessName: string, serviceName: string | null, url: string) {
+  const what = serviceName ? `your ${serviceName}` : 'your booking';
+  return {
+    subject: `${businessName} needs a few answers before ${what}`,
+    from: businessFrom(businessName),
+    html: wrap(`
+      ${h(esc(`A few answers before ${what}`))}
+      ${p(esc(`${businessName} would like a few answers from you before ${what}. Only ${businessName} can see your answers.`))}
+      ${btn('Fill in the form', url)}
+      ${p(esc('The link works until your booking starts.'))}
+    `, { businessName }),
+  };
+}
+
 // ── Before booking (bot) ──
 
-export interface BeforeBookingIntake { intakeId: string; url: string }
+export interface BeforeBookingIntake { intakeId: string; url: string; token: string }
 
 /**
  * Opens (or re-opens) the before-booking intake for a bot session. Re-opening a
@@ -155,7 +175,7 @@ export async function openBeforeBookingIntake(db: Db, input: {
       .eq('id', input.existingIntakeId).eq('business_id', input.businessId)
       .eq('form_id', input.formId).eq('status', 'pending').is('booking_id', null)
       .select('id').maybeSingle();
-    if (!error && data) return { intakeId: data.id as string, url: intakeUrl(token) };
+    if (!error && data) return { intakeId: data.id as string, url: intakeUrl(token), token };
   }
 
   const { data, error } = await db.from('booking_intakes').insert({
@@ -167,7 +187,7 @@ export async function openBeforeBookingIntake(db: Db, input: {
     logger.warn('[INTAKE] Could not open before-booking intake:', error?.code || 'unknown');
     return null;
   }
-  return { intakeId: data.id as string, url: intakeUrl(token) };
+  return { intakeId: data.id as string, url: intakeUrl(token), token };
 }
 
 export type IntakeState = 'submitted' | 'pending' | 'expired' | 'missing' | 'unknown';
@@ -182,26 +202,83 @@ export async function intakeState(db: Db, businessId: string, intakeId: string, 
   return 'pending';
 }
 
-/** Attaches a submitted before-booking intake to the booking created for it. */
-export async function linkIntakeToBooking(db: Db, businessId: string, intakeId: string, bookingId: string): Promise<void> {
+/** Attaches a submitted before-booking intake to the booking created for it (same service only). */
+export async function linkIntakeToBooking(db: Db, businessId: string, intakeId: string, bookingId: string, serviceId: string): Promise<void> {
   const { error } = await db.from('booking_intakes').update({ booking_id: bookingId })
-    .eq('id', intakeId).eq('business_id', businessId).is('booking_id', null);
+    .eq('id', intakeId).eq('business_id', businessId).eq('service_id', serviceId).is('booking_id', null);
   if (error) logger.warn('[INTAKE] Could not link intake to booking:', error.code || 'unknown');
+}
+
+// ── Public booking page (web) ──
+
+/** A booking made on the public booking page (scheduling 604 records source 'public', M518). */
+export function isWebBooking(metadata: unknown): boolean {
+  const m = metadata as { scheduling_authority_604?: { request?: { expected_terms?: { source?: unknown } } } } | null;
+  return m?.scheduling_authority_604?.request?.expected_terms?.source === 'public';
+}
+
+/**
+ * Has this verified email already answered this form at this business? On the web
+ * only the email is verified, so the typed phone is never used for this check.
+ * An unreadable answer counts as answered.
+ */
+export async function hasAnsweredBeforeByEmail(db: Db, businessId: string, formId: string, email: string): Promise<boolean> {
+  const { data: bookings, error } = await db.from('bookings').select('id')
+    .eq('business_id', businessId).eq('guest_email', email.trim().toLowerCase()).limit(500);
+  if (error) return true;
+  const ids = (bookings || []).map(b => b.id as string);
+  if (ids.length === 0) return false;
+  const { count, error: countError } = await db.from('booking_intakes').select('id', { count: 'exact', head: true })
+    .eq('business_id', businessId).eq('form_id', formId).eq('status', 'submitted').in('booking_id', ids);
+  if (countError || count === null) return true;
+  return count > 0;
+}
+
+/**
+ * The before-booking form a web client must answer before booking this service, or
+ * null. Any read error also gives null: a glitch never blocks a booking (Owner decision 2026-11-10).
+ */
+export async function webBeforeBookingForm(db: Db, input: {
+  businessId: string; tier: string | null | undefined; serviceId: string; email: string;
+}): Promise<{ formId: string } | null> {
+  const { data: svc, error } = await db.from('services').select('intake_form_id, intake_timing, intake_frequency, is_class')
+    .eq('id', input.serviceId).eq('business_id', input.businessId).maybeSingle();
+  if (error || !svc?.intake_form_id || svc.intake_timing !== 'before_booking' || svc.is_class === true) return null;
+  const formId = svc.intake_form_id as string;
+  if (!(await isIntakeEntitled(db, input.businessId, input.tier))) return null;
+  if (svc.intake_frequency === 'first_booking' && await hasAnsweredBeforeByEmail(db, input.businessId, formId, input.email)) return null;
+  if (!(await loadUsableForm(db, input.businessId, formId))) return null;
+  return { formId };
+}
+
+/** A web before-booking intake that belongs to this booking request and is not yet linked. */
+export async function findWebIntake(db: Db, input: {
+  businessId: string; serviceId: string; formId: string; phone: string; intakeId: string;
+}): Promise<{ id: string; status: string } | null> {
+  const { data, error } = await db.from('booking_intakes')
+    .select('id, status, service_id, form_id, customer_phone, booking_id, timing')
+    .eq('id', input.intakeId).eq('business_id', input.businessId).maybeSingle();
+  if (error || !data) return null;
+  if (data.service_id !== input.serviceId || data.form_id !== input.formId || data.customer_phone !== input.phone
+      || data.booking_id || data.timing !== 'before_booking') return null;
+  return { id: data.id as string, status: data.status as string };
 }
 
 // ── After booking ──
 
 export type AfterBookingResult =
-  | { status: 'sent'; intakeId: string }
-  | { status: 'prepared'; intakeId: string; text: string; url: string }
+  | { status: 'sent'; intakeId: string; url?: string }
+  /** Bot reply: `finalize` saves the intake; call it only once the reply was delivered. */
+  | { status: 'prepared'; text: string; url: string; finalize: () => Promise<boolean> }
   | { status: 'skipped'; reason: string };
 
 /**
  * Sends the after-booking intake link for a confirmed booking, once.
  *
  * `prepareOnly` creates the intake and returns the message instead of sending it
- * (the bot appends it to its own confirmation reply). Every skip leaves no row, so
- * the booking shows "Not sent". Never throws.
+ * (the bot appends it to its own confirmation reply). A booking made on the public
+ * booking page gets the link by email instead of WhatsApp. Every skip leaves no row,
+ * so the booking shows "Not sent". Never throws.
  */
 export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts: {
   resolver?: { resolveByBusinessId(id: string): Promise<ResolvedChannel | null> };
@@ -213,12 +290,14 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
   prepareOnly?: boolean;
   /** A booking the business made by hand: a before-booking form is sent as in after mode (#963). */
   includeBeforeBooking?: boolean;
+  /** Web booking: keep the intake if the email fails (the page also shows the link). */
+  keepIfEmailFails?: boolean;
   now?: number;
 } = {}): Promise<AfterBookingResult> {
   const now = opts.now ?? Date.now();
   try {
     const { data: booking, error: bookingError } = await db.from('bookings')
-      .select('id, business_id, service_id, guest_phone, date, time, status')
+      .select('id, business_id, service_id, guest_phone, guest_email, date, time, status, metadata')
       .eq('id', bookingId).maybeSingle();
     if (bookingError || !booking) return { status: 'skipped', reason: 'booking_unreadable' };
     if (booking.status !== 'confirmed') return { status: 'skipped', reason: 'not_confirmed' };
@@ -236,6 +315,9 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
 
     const phone = toE164(booking.guest_phone as string | null);
     if (!phone) return { status: 'skipped', reason: 'no_phone' };
+    const viaEmail = !opts.prepareOnly && isWebBooking(booking.metadata);
+    const email = typeof booking.guest_email === 'string' ? booking.guest_email.trim().toLowerCase() : '';
+    if (viaEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { status: 'skipped', reason: 'no_email' };
 
     const { data: existing, error: existingError } = await db.from('booking_intakes').select('id')
       .eq('business_id', businessId).eq('booking_id', bookingId).eq('form_id', formId).maybeSingle();
@@ -247,7 +329,9 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
     if (businessError || !business) return { status: 'skipped', reason: 'business_unreadable' };
     if (!(await isIntakeEntitled(db, businessId, business.subscription_tier as string))) return { status: 'skipped', reason: 'not_entitled' };
 
-    if (service.intake_frequency === 'first_booking' && await hasAnsweredBefore(db, businessId, formId, phone)) {
+    if (service.intake_frequency === 'first_booking' && await (viaEmail
+      ? hasAnsweredBeforeByEmail(db, businessId, formId, email)
+      : hasAnsweredBefore(db, businessId, formId, phone))) {
       return { status: 'skipped', reason: 'answered_before' };
     }
 
@@ -258,7 +342,7 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
     if (!form) return { status: 'skipped', reason: 'form_unusable' };
 
     let resolved: ResolvedChannel | null = null;
-    if (!opts.prepareOnly) {
+    if (!opts.prepareOnly && !viaEmail) {
       const resolver = opts.resolver ?? new ChannelResolver(db);
       resolved = await resolver.resolveByBusinessId(businessId);
       if (!resolved) return { status: 'skipped', reason: 'no_channel' };
@@ -266,22 +350,44 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
         return { status: 'skipped', reason: 'window_closed' };
       }
     }
-    if (await hasOptedOut(db, businessId, phone)) return { status: 'skipped', reason: 'opted_out' };
+    if (!viaEmail && await hasOptedOut(db, businessId, phone)) return { status: 'skipped', reason: 'opted_out' };
 
     const { token, hash } = newIntakeToken();
-    const { data: created, error: insertError } = await db.from('booking_intakes').insert({
+    const url = intakeUrl(token);
+    const row = {
       business_id: businessId, service_id: booking.service_id, form_id: formId, booking_id: bookingId,
       customer_phone: phone, timing: 'after_booking', token_hash: hash,
       expires_at: startsAt.toISOString(), sent_at: new Date(now).toISOString(),
-    }).select('id').single();
+    };
+    if (opts.prepareOnly) {
+      // Nothing is saved until the bot's reply is delivered: an undelivered reply leaves "Not sent".
+      const text = afterBookingMessage(business.name as string, service.name as string | null, url);
+      return {
+        status: 'prepared', text, url,
+        finalize: async () => {
+          const { error } = await db.from('booking_intakes').insert(row).select('id').single();
+          if (error) logger.warn('[INTAKE] Could not save the delivered intake:', error.code || 'unknown');
+          return !error;
+        },
+      };
+    }
+    const { data: created, error: insertError } = await db.from('booking_intakes').insert(row).select('id').single();
     if (insertError || !created) {
       // 23505: another path created it first (e.g. a repeated payment webhook).
       return { status: 'skipped', reason: insertError?.code === '23505' ? 'already_exists' : 'insert_failed' };
     }
     const intakeId = created.id as string;
-    const url = intakeUrl(token);
     const text = afterBookingMessage(business.name as string, service.name as string | null, url);
-    if (opts.prepareOnly) return { status: 'prepared', intakeId, text, url };
+
+    if (viaEmail) {
+      const mail = afterBookingEmail(business.name as string, service.name as string | null, url);
+      const sent = await sendEmail({ to: email, ...mail, noRetry: true }).catch(() => ({ success: false }));
+      if (!sent.success && !opts.keepIfEmailFails) {
+        await db.from('booking_intakes').delete().eq('id', intakeId).eq('business_id', businessId);
+        return { status: 'skipped', reason: 'send_failed' };
+      }
+      return { status: 'sent', intakeId, url };
+    }
 
     try {
       await resolved!.sender.sendText({ to: phone.slice(1), text, messageCategory: 'service', noRetry: true });
@@ -294,6 +400,27 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
   } catch (err) {
     logger.warn('[INTAKE] After-booking intake not sent:', (err as Error).message);
     return { status: 'skipped', reason: 'error' };
+  }
+}
+
+/**
+ * After a reschedule, a pending after-booking link lasts until the new session start
+ * (Owner decision: until the session starts). Called by every reschedule path. Never throws.
+ */
+export async function syncIntakeExpiry(db: Db, businessId: string, bookingId: string, now = Date.now()): Promise<void> {
+  try {
+    const [{ data: booking }, { data: business }] = await Promise.all([
+      db.from('bookings').select('date, time').eq('id', bookingId).eq('business_id', businessId).maybeSingle(),
+      db.from('businesses').select('timezone').eq('id', businessId).maybeSingle(),
+    ]);
+    if (!booking) return;
+    const startsAt = zonedTimeToUtc(booking.date as string, booking.time as string | null, business?.timezone as string | null);
+    if (!startsAt || startsAt.getTime() - now < MIN_AFTER_BOOKING_LIFETIME_MS) return;
+    const { error } = await db.from('booking_intakes').update({ expires_at: startsAt.toISOString() })
+      .eq('business_id', businessId).eq('booking_id', bookingId).eq('status', 'pending').eq('timing', 'after_booking');
+    if (error) logger.warn('[INTAKE] Could not move the link expiry after a reschedule:', error.code || 'unknown');
+  } catch (err) {
+    logger.warn('[INTAKE] Could not move the link expiry after a reschedule:', (err as Error).message);
   }
 }
 
@@ -326,11 +453,13 @@ export async function sendIntakeReminder(db: Db, intakeId: string, opts: {
     const [{ data: business }, { data: service }, { data: booking }] = await Promise.all([
       db.from('businesses').select('name, subscription_tier, timezone').eq('id', businessId).maybeSingle(),
       db.from('services').select('name').eq('id', intake.service_id).eq('business_id', businessId).maybeSingle(),
-      db.from('bookings').select('status, date, time').eq('id', intake.booking_id).eq('business_id', businessId).maybeSingle(),
+      db.from('bookings').select('status, date, time, metadata').eq('id', intake.booking_id).eq('business_id', businessId).maybeSingle(),
     ]);
     if (!business) return { status: 'skipped', reason: 'business_unreadable' };
     // Never remind for a cancelled, finished or deleted booking.
     if (!booking || booking.status !== 'confirmed') return { status: 'skipped', reason: 'booking_inactive' };
+    // Web bookings got their link by email; their typed phone is unverified, so no WhatsApp reminder.
+    if (isWebBooking(booking.metadata)) return { status: 'skipped', reason: 'web_booking' };
     // A rescheduled booking: move the link's expiry to the new session start and
     // let a later run remind at the right time.
     const startsAt = zonedTimeToUtc(booking.date as string, booking.time as string | null, business.timezone as string | null);

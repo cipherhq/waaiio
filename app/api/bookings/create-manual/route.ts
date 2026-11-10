@@ -361,8 +361,9 @@ export async function POST(request: NextRequest) {
 
     // #963: after-booking client intake form. Manual bookings are confirmed at once;
     // the link goes out only inside the client's 24-hour window (else "Not sent").
-    // Never affects the booking result.
-    if (serviceId) {
+    // Owner decision 2026-11-10: nothing is sent when the business unticked
+    // "send confirmation". Never affects the booking result.
+    if (serviceId && sendConfirmation) {
       try {
         const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
         await deliverAfterBookingIntake(serviceClient, booking.id, { includeBeforeBooking: true });

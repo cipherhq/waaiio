@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const env = vi.hoisted(() => ({
   cronOk: true,
   user: { id: 'owner' } as { id: string } | null,
-  ownedBusiness: true,
+  role: { ok: true, role: 'owner', isOwner: true } as { ok: boolean; role?: string; isOwner?: boolean; error?: string },
   bookingExists: true,
   due: [{ id: 'i1' }, { id: 'i2' }] as Array<{ id: string }>,
   dueFilters: [] as Array<[string, string, unknown]>,
@@ -19,6 +19,7 @@ const env = vi.hoisted(() => ({
 vi.mock('@/lib/cron-auth', () => ({
   verifyCronAuth: () => (env.cronOk ? null : new Response('no', { status: 401 })),
 }));
+vi.mock('@/lib/capabilities/resolve-role', () => ({ resolveBusinessRole: async () => env.role }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: async () => null, getRateLimitKey: () => 'k' }));
 vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class {} }));
@@ -46,7 +47,7 @@ vi.mock('@/lib/supabase/server', () => ({
     auth: { getUser: async () => ({ data: { user: env.user } }) },
     from() {
       const q: Record<string, unknown> = {};
-      Object.assign(q, { select: () => q, eq: () => q, maybeSingle: async () => ({ data: env.ownedBusiness ? { id: 'b' } : null }) });
+      Object.assign(q, { select: () => q, eq: () => q, maybeSingle: async () => ({ data: null }) });
       return q;
     },
   }),
@@ -60,7 +61,7 @@ const BUSINESS = '22222222-2222-4222-8222-222222222222';
 const post = (body: unknown) => afterConfirm(new NextRequest('http://x/api/intake/after-confirm', { method: 'POST', body: JSON.stringify(body) }));
 
 beforeEach(() => {
-  Object.assign(env, { cronOk: true, user: { id: 'owner' }, ownedBusiness: true, bookingExists: true, due: [{ id: 'i1' }, { id: 'i2' }], dueFilters: [], reminders: [], deliveries: [] });
+  Object.assign(env, { cronOk: true, user: { id: 'owner' }, role: { ok: true, role: 'owner', isOwner: true }, bookingExists: true, due: [{ id: 'i1' }, { id: 'i2' }], dueFilters: [], reminders: [], deliveries: [] });
 });
 
 describe('GET /api/cron/intake-reminders', () => {
@@ -96,13 +97,22 @@ describe('POST /api/intake/after-confirm', () => {
     expect(env.deliveries).toEqual([BOOKING]);
   });
 
-  it('rejects a signed-out user, a non-owner, an unknown booking and bad input, sending nothing', async () => {
+  it('sends for an active team member of the business (Owner decision 2026-11-10)', async () => {
+    env.role = { ok: true, role: 'staff', isOwner: false };
+    const res = await post({ bookingId: BOOKING, businessId: BUSINESS });
+    expect(res.status).toBe(200);
+    expect(env.deliveries).toEqual([BOOKING]);
+  });
+
+  it('rejects a signed-out user, an outsider, a failed role lookup, an unknown booking and bad input, sending nothing', async () => {
     env.user = null;
     expect((await post({ bookingId: BOOKING, businessId: BUSINESS })).status).toBe(401);
     env.user = { id: 'owner' };
-    env.ownedBusiness = false;
+    env.role = { ok: false, error: 'not_found' };
     expect((await post({ bookingId: BOOKING, businessId: BUSINESS })).status).toBe(403);
-    env.ownedBusiness = true;
+    env.role = { ok: false, error: 'db_error' };
+    expect((await post({ bookingId: BOOKING, businessId: BUSINESS })).status).toBe(500);
+    env.role = { ok: true, role: 'owner', isOwner: true };
     env.bookingExists = false;
     expect((await post({ bookingId: BOOKING, businessId: BUSINESS })).status).toBe(404);
     expect((await post({ bookingId: 'nope', businessId: BUSINESS })).status).toBe(400);

@@ -12,6 +12,14 @@ const env = vi.hoisted(() => ({
   window: 'open' as 'open' | 'closed' | 'unknown',
   tier: 'growth' as string,
   failInsert: null as null | { code: string },
+  emails: [] as Array<{ to: string; subject: string; html: string }>,
+  emailFail: false,
+}));
+vi.mock('@/lib/email/client', () => ({
+  sendEmail: async (m: { to: string; subject: string; html: string }) => {
+    env.emails.push(m);
+    return env.emailFail ? { success: false } : { success: true };
+  },
 }));
 vi.mock('@/lib/forms/form-send', () => ({ businessChatWindowState: async () => env.window }));
 vi.mock('@/lib/trial-status', () => ({ resolveLimitTier: async () => env.tier }));
@@ -19,8 +27,8 @@ vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: 
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class { async resolveByBusinessId() { return null; } } }));
 
 import {
-  deliverAfterBookingIntake, hasAnsweredBefore, intakeState, intakeUrl, linkIntakeToBooking, newIntakeToken,
-  openBeforeBookingIntake, sendIntakeReminder, toE164, zonedTimeToUtc, BEFORE_BOOKING_TTL_MS,
+  deliverAfterBookingIntake, findWebIntake, hasAnsweredBefore, intakeState, isWebBooking, webBeforeBookingForm, intakeUrl, linkIntakeToBooking, newIntakeToken,
+  openBeforeBookingIntake, sendIntakeReminder, syncIntakeExpiry, toE164, zonedTimeToUtc, BEFORE_BOOKING_TTL_MS,
 } from '@/lib/intake/send';
 
 const BIZ = 'b1';
@@ -62,7 +70,7 @@ const sender = () => {
   };
 };
 
-beforeEach(() => { env.window = 'open'; env.tier = 'growth'; env.failInsert = null; });
+beforeEach(() => { env.window = 'open'; env.tier = 'growth'; env.failInsert = null; env.emails = []; env.emailFail = false; });
 
 describe('helpers', () => {
   it('makes a 43-character base64url token and stores only its sha256', () => {
@@ -199,7 +207,46 @@ describe('deliverAfterBookingIntake', () => {
     expect(r.text).toContain(r.url);
     expect(r.text).toContain('Healing Labs');
     expect(s.sent).toEqual([]);
+    // Nothing is saved until the bot's reply was delivered.
+    expect(db.tables.booking_intakes).toEqual([]);
+    expect(await r.finalize()).toBe(true);
+    const token = /\/intake\/([A-Za-z0-9_-]+)/.exec(r.url)![1];
     expect(db.tables.booking_intakes).toHaveLength(1);
+    expect(db.tables.booking_intakes[0]).toMatchObject({ booking_id: 'k1', timing: 'after_booking', token_hash: sha(token) });
+  });
+
+  it('an undelivered bot reply leaves no intake, so the booking shows "Not sent" and a later send still works', async () => {
+    const db = world();
+    const r = await deliverAfterBookingIntake(db as never, 'k1', { prepareOnly: true, now: NOW });
+    expect(r.status).toBe('prepared');
+    expect(db.tables.booking_intakes).toEqual([]);
+    expect((await deliverAfterBookingIntake(db as never, 'k1', { resolver: sender().resolver, now: NOW })).status).toBe('sent');
+  });
+});
+
+describe('syncIntakeExpiry (reschedule)', () => {
+  const linked = (over: Row = {}) => ({ id: 'i1', business_id: BIZ, booking_id: 'k1', status: 'pending', timing: 'after_booking', expires_at: '2026-11-20T09:00:00.000Z', ...over });
+
+  it('moves a pending after-booking link to the new session start, even after its reminder', async () => {
+    const db = world({ intakes: [linked({ reminder_sent_at: new Date(NOW).toISOString() })], booking: { date: '2026-11-25', time: '15:30:00' } });
+    await syncIntakeExpiry(db as never, BIZ, 'k1', NOW);
+    expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-25T14:30:00.000Z');
+  });
+
+  it.each([
+    ['submitted', linked({ status: 'submitted' })],
+    ['before-booking', linked({ timing: 'before_booking' })],
+    ['another booking', linked({ booking_id: 'k2' })],
+  ])('leaves a %s intake alone', async (_n, row) => {
+    const db = world({ intakes: [row], booking: { date: '2026-11-25', time: '15:30:00' } });
+    await syncIntakeExpiry(db as never, BIZ, 'k1', NOW);
+    expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-20T09:00:00.000Z');
+  });
+
+  it('does nothing when the new start has already passed', async () => {
+    const db = world({ intakes: [linked()], booking: { date: '2026-11-09', time: '10:00:00' } });
+    await syncIntakeExpiry(db as never, BIZ, 'k1', NOW);
+    expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-20T09:00:00.000Z');
   });
 });
 
@@ -225,15 +272,18 @@ describe('before-booking intake (bot)', () => {
   });
 
   it('reports state, and links the answered intake to the booking only once', async () => {
-    const db = world({ intakes: [{ id: 'i1', business_id: BIZ, status: 'pending', expires_at: new Date(NOW + 1000).toISOString(), booking_id: null }] });
+    const db = world({ intakes: [{ id: 'i1', business_id: BIZ, service_id: 's1', status: 'pending', expires_at: new Date(NOW + 1000).toISOString(), booking_id: null }] });
     expect(await intakeState(db as never, BIZ, 'i1', NOW)).toBe('pending');
     expect(await intakeState(db as never, BIZ, 'i1', NOW + 2000)).toBe('expired');
     expect(await intakeState(db as never, BIZ, 'nope', NOW)).toBe('missing');
     expect(await intakeState(db as never, 'other-business', 'i1', NOW)).toBe('missing');
     db.tables.booking_intakes[0].status = 'submitted';
     expect(await intakeState(db as never, BIZ, 'i1', NOW + 2000)).toBe('submitted');
-    await linkIntakeToBooking(db as never, BIZ, 'i1', 'k1');
-    await linkIntakeToBooking(db as never, BIZ, 'i1', 'k2');
+    // Another service's booking never takes these answers.
+    await linkIntakeToBooking(db as never, BIZ, 'i1', 'k9', 's2');
+    expect(db.tables.booking_intakes[0].booking_id).toBeNull();
+    await linkIntakeToBooking(db as never, BIZ, 'i1', 'k1', 's1');
+    await linkIntakeToBooking(db as never, BIZ, 'i1', 'k2', 's1');
     expect(db.tables.booking_intakes[0].booking_id).toBe('k1');
   });
 
@@ -349,5 +399,124 @@ describe('sendIntakeReminder', () => {
     expect(await sendIntakeReminder(stopped as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'opted_out' });
     env.tier = 'free';
     expect(await sendIntakeReminder(due() as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'not_entitled' });
+  });
+});
+
+// ── Public booking page (Owner decisions 2026-11-10) ──
+
+const WEB = { scheduling_authority_604: { request: { expected_terms: { source: 'public' } } } };
+
+describe('web bookings (public booking page)', () => {
+  const web = (over: { service?: Row; booking?: Row; intakes?: Row[]; extraBookings?: Row[] } = {}) => {
+    const db = world({ service: over.service, booking: { guest_email: 'ada@example.com', metadata: WEB, ...over.booking }, intakes: over.intakes });
+    db.tables.bookings.push(...(over.extraBookings || []));
+    return db;
+  };
+
+  it('recognises a booking made on the booking page', () => {
+    expect(isWebBooking(WEB)).toBe(true);
+    expect(isWebBooking({ scheduling_authority_604: { request: { expected_terms: { source: 'bot' } } } })).toBe(false);
+    expect(isWebBooking(null)).toBe(false);
+  });
+
+  it('emails the after-booking link to the verified address, never WhatsApp, even with the chat window closed', async () => {
+    env.window = 'closed';
+    const db = web(); const s = sender();
+    const r = await deliverAfterBookingIntake(db as never, 'k1', { resolver: s.resolver, now: NOW });
+    expect(r.status).toBe('sent');
+    expect(s.sent).toEqual([]);
+    expect(env.emails).toHaveLength(1);
+    expect(env.emails[0].to).toBe('ada@example.com');
+    const token = /\/intake\/([A-Za-z0-9_-]+)/.exec(env.emails[0].html)![1];
+    expect(db.tables.booking_intakes[0].token_hash).toBe(sha(token));
+    if (r.status === 'sent') expect(r.url).toContain(`/intake/${token}`);
+  });
+
+  it('a failed email removes the intake, unless the page also shows the link', async () => {
+    env.emailFail = true;
+    const db = web();
+    expect(await deliverAfterBookingIntake(db as never, 'k1', { now: NOW })).toEqual({ status: 'skipped', reason: 'send_failed' });
+    expect(db.tables.booking_intakes).toEqual([]);
+    const kept = web();
+    expect((await deliverAfterBookingIntake(kept as never, 'k1', { keepIfEmailFails: true, now: NOW })).status).toBe('sent');
+    expect(kept.tables.booking_intakes).toHaveLength(1);
+  });
+
+  it('first booking only: checks earlier answers by the verified email, never by the typed phone', async () => {
+    const byPhoneOnly = web({
+      service: { intake_frequency: 'first_booking' },
+      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted', booking_id: 'k0' }],
+      extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'someone.else@example.com' }],
+    });
+    expect((await deliverAfterBookingIntake(byPhoneOnly as never, 'k1', { now: NOW })).status).toBe('sent');
+    const byEmail = web({
+      service: { intake_frequency: 'first_booking' },
+      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2340000000000', status: 'submitted', booking_id: 'k0' }],
+      extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com' }],
+    });
+    expect(await deliverAfterBookingIntake(byEmail as never, 'k1', { now: NOW })).toEqual({ status: 'skipped', reason: 'answered_before' });
+  });
+
+  it('the bot (prepareOnly) is never routed to email', async () => {
+    const r = await deliverAfterBookingIntake(web() as never, 'k1', { prepareOnly: true, now: NOW });
+    expect(r.status).toBe('prepared');
+    expect(env.emails).toEqual([]);
+  });
+
+  it('no WhatsApp reminder for a web booking', async () => {
+    const db = world({
+      intakes: [{ id: 'i1', business_id: BIZ, service_id: 's1', form_id: 'f1', booking_id: 'k1', customer_phone: '+2348012345678',
+        status: 'pending', timing: 'after_booking', sent_at: new Date(NOW - 48 * 3_600_000).toISOString(),
+        reminder_sent_at: null, expires_at: new Date(NOW + 24 * 3_600_000).toISOString(), token_hash: 'a'.repeat(64) }],
+      booking: { date: '2026-11-11', time: '11:00:00', metadata: WEB },
+    });
+    const s = sender();
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'web_booking' });
+    expect(s.sent).toEqual([]);
+  });
+
+  describe('webBeforeBookingForm', () => {
+    const ask = (over: { service?: Row; intakes?: Row[]; extraBookings?: Row[] } = {}) => {
+      const db = web({ service: { intake_timing: 'before_booking', ...over.service }, intakes: over.intakes, extraBookings: over.extraBookings });
+      return webBeforeBookingForm(db as never, { businessId: BIZ, tier: 'growth', serviceId: 's1', email: 'ADA@example.com ' });
+    };
+    it('needs the form for an entitled business', async () => {
+      expect(await ask()).toEqual({ formId: 'f1' });
+    });
+    it.each([
+      ['after-booking form', { service: { intake_timing: 'after_booking' } }],
+      ['class service', { service: { is_class: true } }],
+      ['no form', { service: { intake_form_id: null } }],
+      ['first booking only, answered before with this email', {
+        service: { intake_frequency: 'first_booking' },
+        intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2340000000000', status: 'submitted', booking_id: 'k0' }],
+        extraBookings: [{ id: 'k0', business_id: BIZ, guest_email: 'ada@example.com' }],
+      }],
+    ])('not needed: %s', async (_n, over) => {
+      expect(await ask(over as never)).toBeNull();
+    });
+    it('not needed for a Starter business after its trial', async () => {
+      env.tier = 'free';
+      expect(await ask()).toBeNull();
+    });
+  });
+
+  describe('findWebIntake', () => {
+    const intakeRow = (over: Row = {}) => ({ id: 'w1', business_id: BIZ, service_id: 's1', form_id: 'f1', customer_phone: '+2348012345678',
+      booking_id: null, timing: 'before_booking', status: 'submitted', ...over });
+    const find = (row: Row, over: Partial<{ phone: string; serviceId: string }> = {}) =>
+      findWebIntake(world({ intakes: [row] }) as never, { businessId: BIZ, serviceId: over.serviceId ?? 's1', formId: 'f1', phone: over.phone ?? '+2348012345678', intakeId: 'w1' });
+    it('finds the matching, unlinked intake', async () => {
+      expect(await find(intakeRow())).toEqual({ id: 'w1', status: 'submitted' });
+    });
+    it.each([
+      ['another phone', intakeRow(), { phone: '+2340000000000' }],
+      ['another service', intakeRow(), { serviceId: 's2' }],
+      ['already linked', intakeRow({ booking_id: 'k9' }), {}],
+      ['an after-booking intake', intakeRow({ timing: 'after_booking' }), {}],
+      ['another business', intakeRow({ business_id: 'b2' }), {}],
+    ])('refuses %s', async (_n, row, over) => {
+      expect(await find(row, over)).toBeNull();
+    });
   });
 });
