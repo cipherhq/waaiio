@@ -117,7 +117,7 @@ BEGIN
     FROM public.businesses b
    WHERE b.id = NEW.business_id;
 
-  IF NOT FOUND OR NOT (v_tier IN ('growth', 'business') OR coalesce(v_trial_ends > now(), false)) THEN
+  IF NOT FOUND OR NOT (coalesce(v_tier IN ('growth', 'business'), false) OR coalesce(v_trial_ends > now(), false)) THEN
     RAISE EXCEPTION 'Client intake forms need the Pro or Premium plan' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;
@@ -239,9 +239,12 @@ BEGIN
       IF v_field->>'id' IS NOT NULL THEN
         v_ids := v_ids || (v_field->>'id');
       END IF;
-      IF v_field->'required' = 'true'::jsonb THEN
+      -- Same "missing" rule as the web form (app/form/[token]/page.tsx), plus an
+      -- empty list. A field without an id cannot be answered, so it is skipped.
+      IF v_field->'required' = 'true'::jsonb AND v_field->>'id' IS NOT NULL THEN
         v_value := p_answers -> (v_field->>'id');
-        IF v_value IS NULL OR v_value IN ('null'::jsonb, '""'::jsonb, '[]'::jsonb) THEN
+        IF v_value IS NULL OR v_value IN ('null'::jsonb, '""'::jsonb, '[]'::jsonb)
+           OR (v_field->>'type' = 'checkbox' AND v_value = 'false'::jsonb) THEN
           RAISE EXCEPTION 'A required answer is missing' USING ERRCODE = '22023';
         END IF;
       END IF;

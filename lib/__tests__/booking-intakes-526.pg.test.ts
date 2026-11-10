@@ -249,6 +249,24 @@ suite('M526 booking intake forms (real PostgreSQL)', () => {
       }
     });
 
+    it('rejects Starter with no trial clock, and moving a linked service to a Starter business', async () => {
+      await q(`UPDATE public.businesses SET feature_trial_ends_at = NULL WHERE id = $1`, [BIZ_STARTER]);
+      try {
+        expect((await errorOf(() => as('service_role', null, () => link(SVC_STARTER, FORM_STARTER)))).code).toBe('42501');
+      } finally {
+        await q(`UPDATE public.businesses SET feature_trial_ends_at = now() - interval '1 day' WHERE id = $1`, [BIZ_STARTER]);
+      }
+      // A Starter-owned copy of the Pro form id makes the composite FK pass, so only the guard can stop the move.
+      await as('service_role', null, async () => {
+        await link(SVC_PRO, FORM_PRO, 'after_booking', 'every_booking');
+        await q(`INSERT INTO public.forms (id, business_id, title) SELECT gen_random_uuid(), $1, 'x'`, [BIZ_STARTER]);
+        const moved = await errorOf(() => q(
+          `UPDATE public.services SET business_id = $2, intake_form_id = (SELECT id FROM public.forms WHERE business_id = $2 AND title = 'x') WHERE id = $1`,
+          [SVC_PRO, BIZ_STARTER]));
+        expect(moved.code).toBe('42501');
+      });
+    });
+
     it('a service with no link is unaffected for Starter', async () => {
       const r = await as('authenticated', OWNER_A, () => q(`UPDATE public.services SET price = 900 WHERE id = $1`, [SVC_STARTER]));
       expect(r.rowCount).toBe(1);
@@ -277,6 +295,23 @@ suite('M526 booking intake forms (real PostgreSQL)', () => {
         await insertIntake({ booking: BOOKING_PRO });
         const err = await errorOf(() => insertIntake({ booking: BOOKING_PRO }));
         expect(err.code).toBe('23505');
+      });
+    });
+
+    it('deleting a booking clears only booking_id; deleting a service removes its intakes', async () => {
+      await as('service_role', null, async () => {
+        const booking = randomUUID();
+        await q(`INSERT INTO public.bookings (id, business_id, service_id, guest_phone) VALUES ($1, $2, $3, '+2348012345678')`, [booking, BIZ_PRO, SVC_PRO]);
+        const kept = await insertIntake({ booking });
+        await q(`DELETE FROM public.bookings WHERE id = $1`, [booking]);
+        const row = (await q(`SELECT booking_id, business_id FROM public.booking_intakes WHERE id = $1`, [kept.id])).rows[0];
+        expect(row).toEqual({ booking_id: null, business_id: BIZ_PRO });
+
+        const svc = randomUUID();
+        await q(`INSERT INTO public.services (id, business_id, name) VALUES ($1, $2, 'Temp')`, [svc, BIZ_PRO]);
+        const gone = await insertIntake({ service: svc });
+        await q(`DELETE FROM public.services WHERE id = $1`, [svc]);
+        expect((await q(`SELECT 1 FROM public.booking_intakes WHERE id = $1`, [gone.id])).rows).toHaveLength(0);
       });
     });
 
@@ -332,6 +367,17 @@ suite('M526 booking intake forms (real PostgreSQL)', () => {
       }
       const svc = await errorOf(() => as('service_role', null, () => q(`SELECT public.submit_booking_intake_526($1, '{}'::jsonb)`, [newToken()])));
       expect(svc.message).toBe('Intake unavailable'); // reached the function: unknown token
+
+      // The errors above can come from schema USAGE; check EXECUTE itself too.
+      const privs = (await q(`
+        SELECT r.role, f.fn, has_function_privilege(r.role, f.fn, 'EXECUTE') AS ok
+          FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) AS r(role),
+               unnest(ARRAY['public.submit_booking_intake_526(text,jsonb)', 'private.submit_booking_intake_526(text,jsonb)',
+                            'private.guard_service_intake_526()']) AS f(fn)`)).rows;
+      for (const p of privs) {
+        const expected = p.role === 'service_role' && p.fn.includes('submit');
+        expect(p.ok, `${p.role} ${p.fn}`).toBe(expected);
+      }
     });
   });
 
@@ -343,6 +389,21 @@ suite('M526 booking intake forms (real PostgreSQL)', () => {
     it('rejects a wrong or short token', async () => {
       expect((await errorOf(() => submit(newToken(), valid))).code).toBe('42501');
       expect((await errorOf(() => submit('short', valid))).code).toBe('42501');
+      expect((await errorOf(() => submit('x'.repeat(257), valid))).code).toBe('42501');
+    });
+
+    it('treats a required checkbox sent as false as missing, and skips a required field with no id', async () => {
+      const form = randomUUID();
+      await q(`INSERT INTO public.forms (id, business_id, title, fields) VALUES ($1, $2, 'Consent', $3)`, [form, BIZ_PRO, JSON.stringify([
+        { id: 'consent', label: 'I agree', type: 'checkbox', required: true },
+        { label: 'Broken field without id', type: 'text', required: true },
+      ])]);
+      const { token } = await insertIntake({ form });
+      const err = await errorOf(() => submit(token, { consent: false }));
+      expect(err.code).toBe('22023');
+      expect(err.message).toBe('A required answer is missing');
+      const ok = await submit(token, { consent: true });
+      expect(ok.rows[0].r.already_submitted).toBe(false);
     });
 
     it('rejects an expired link', async () => {
