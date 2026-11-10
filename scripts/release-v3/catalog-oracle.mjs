@@ -72,7 +72,7 @@ export async function installAccountingFinalizers(client, m501Text, locks = ['pr
   }
 }
 
-const MIGRATION =/^([0-9]{3})[a-z]?_[a-z0-9_]+\.sql$/;
+const MIGRATION = /^([0-9]{3})[a-z]?_[a-z0-9_]+\.sql$/;
 const IDENTITY = /^(schema|table|column|constraint|index|trigger|policy|function|type|publication):\S/;
 
 export function migrationFiles(repoRoot) {
