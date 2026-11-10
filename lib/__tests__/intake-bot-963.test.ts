@@ -1,0 +1,158 @@
+/**
+ * #963 lane 3: the bot's before-booking intake step (scheduling flow
+ * `intake_form`), run step by step against an in-memory database.
+ */
+import { createHash } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { makeDb } from './helpers/intake-fake-db';
+
+const env = vi.hoisted(() => ({ tier: 'growth' as string }));
+vi.mock('@/lib/trial-status', () => ({ resolveLimitTier: async () => env.tier }));
+
+import { schedulingFlow } from '@/lib/bot/flows/scheduling.flow';
+import type { FlowContext, PromptButtons } from '@/lib/bot/flows/types';
+
+type Row = Record<string, unknown>;
+const step = (id: string) => schedulingFlow.steps.find(s => s.id === id)!;
+const intake = step('intake_form');
+const BIZ = 'b1';
+const sha = (t: string) => createHash('sha256').update(t, 'utf8').digest('hex');
+
+function setup(over: { service?: Row; form?: Row; intakes?: Row[]; data?: Row } = {}) {
+  const db = makeDb({
+    services: [{ id: 's1', business_id: BIZ, intake_form_id: 'f1', intake_timing: 'before_booking', intake_frequency: 'every_booking', ...over.service }],
+    forms: [{ id: 'f1', business_id: BIZ, title: 'Intake', is_active: true, fields: [{ id: 'q', type: 'text', required: true }], ...over.form }],
+    booking_intakes: over.intakes || [],
+  });
+  const ctx = {
+    supabase: db,
+    from: '2348012345678',
+    session: { id: 'sess', business_id: BIZ, current_step: 'intake_form', session_data: { service_id: 's1', ...over.data }, version: 1 },
+    business: { id: BIZ, name: 'Healing Labs', subscription_tier: 'growth', metadata: {} },
+    copyLang: 'en',
+    t: async (s: string) => s,
+  } as unknown as FlowContext;
+  return { db, ctx };
+}
+const linkOf = (body: string) => /\/intake\/([A-Za-z0-9_-]+)/.exec(body)?.[1];
+
+beforeEach(() => { env.tier = 'growth'; });
+
+describe('flow wiring', () => {
+  it('runs after the pre-booking questions and continues to select_delivery', async () => {
+    const { ctx } = setup();
+    expect(await step('pre_booking_questions').next(ctx)).toBe('intake_form');
+    expect(await intake.next(ctx)).toBe('select_delivery');
+  });
+});
+
+describe('when the step applies (skipIf)', () => {
+  it('applies to a before-booking form for an entitled business', async () => {
+    expect(await intake.skipIf!(setup().ctx)).toBe(false);
+  });
+
+  it.each([
+    ['no form linked', { service: { intake_form_id: null } }],
+    ['after-booking form', { service: { intake_timing: 'after_booking' } }],
+    ['appointment booking', { data: { _is_appointment: true } }],
+    ['table booking', { data: { _is_table_reservation: true } }],
+    ['no service chosen', { data: { service_id: undefined } }],
+    ['inactive form', { form: { is_active: false } }],
+    ['form with a required file question', { form: { fields: [{ id: 'x', type: 'file', required: true }] } }],
+    ['already answered in this session', { data: { _intake_done_key: 's1:f1' } }],
+    ['first booking only and answered before', {
+      service: { intake_frequency: 'first_booking' },
+      intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }],
+    }],
+  ])('is skipped: %s', async (_n, over) => {
+    expect(await intake.skipIf!(setup(over as never).ctx)).toBe(true);
+  });
+
+  it('is skipped for a Starter business after its trial', async () => {
+    env.tier = 'free';
+    expect(await intake.skipIf!(setup().ctx)).toBe(true);
+  });
+});
+
+describe('asking and waiting', () => {
+  it('sends the private link with the two buttons, protected from translation', async () => {
+    const { db, ctx } = setup();
+    const [msg] = await intake.prompt(ctx);
+    const buttons = msg as PromptButtons & { _localization?: { protectedValues?: string[] } };
+    expect(buttons.type).toBe('buttons');
+    expect(buttons.buttons.map(b => b.id)).toEqual(['intake_done', 'intake_new_link']);
+    const token = linkOf(buttons.body)!;
+    expect(token).toBeTruthy();
+    expect(buttons._localization?.protectedValues?.some(v => v.endsWith(`/intake/${token}`))).toBe(true);
+    const [row] = db.tables.booking_intakes;
+    expect(row).toMatchObject({ timing: 'before_booking', customer_phone: '+2348012345678', token_hash: sha(token) });
+    expect(ctx.session.session_data).toMatchObject({ _intake_id: row.id, _intake_key: 's1:f1' });
+    expect(JSON.stringify(ctx.session.session_data)).not.toContain(token);
+  });
+
+  it('keeps the same link while it is pending (a client may still have it open)', async () => {
+    const { db, ctx } = setup();
+    const [first] = await intake.prompt(ctx);
+    const hash = db.tables.booking_intakes[0].token_hash;
+    const [again] = await intake.prompt(ctx);
+    expect(linkOf((again as PromptButtons).body)).toBeUndefined();
+    expect((again as PromptButtons).body).toContain('message above');
+    expect(db.tables.booking_intakes).toHaveLength(1);
+    expect(db.tables.booking_intakes[0].token_hash).toBe(hash);
+    expect(linkOf((first as PromptButtons).body)).toBeTruthy();
+  });
+
+  it('"I\'ve filled it" before submitting waits, without moving on', async () => {
+    const { ctx } = setup();
+    await intake.prompt(ctx);
+    const r = await intake.validate('intake_done', ctx);
+    expect(r.valid).toBe(false);
+    expect(r.errorMessage).toContain('not received your answers');
+  });
+
+  it('moves on once the answers are in, and the step is then skipped', async () => {
+    const { db, ctx } = setup();
+    await intake.prompt(ctx);
+    db.tables.booking_intakes[0].status = 'submitted';
+    const r = await intake.validate('intake_done', ctx);
+    expect(r).toEqual({ valid: true, data: { _intake_done_key: 's1:f1' } });
+    Object.assign(ctx.session.session_data, r.data);
+    expect(await intake.skipIf!(ctx)).toBe(true);
+  });
+
+  it('"Send a new link" rotates the link on the same row', async () => {
+    const { db, ctx } = setup();
+    const [first] = await intake.prompt(ctx);
+    const r = await intake.validate('intake_new_link', ctx);
+    expect(r).toMatchObject({ valid: false, persistSessionDataOnFailure: true });
+    const [second] = await intake.prompt(ctx);
+    const t1 = linkOf((first as PromptButtons).body)!;
+    const t2 = linkOf((second as PromptButtons).body)!;
+    expect(t2).toBeTruthy();
+    expect(t2).not.toBe(t1);
+    expect(db.tables.booking_intakes).toHaveLength(1);
+    expect(db.tables.booking_intakes[0].token_hash).toBe(sha(t2));
+    expect(ctx.session.session_data._intake_force_new).toBeUndefined();
+  });
+
+  it('an expired link is replaced automatically', async () => {
+    const { db, ctx } = setup();
+    await intake.prompt(ctx);
+    db.tables.booking_intakes[0].expires_at = new Date(Date.now() - 1000).toISOString();
+    const r = await intake.validate('intake_done', ctx);
+    expect(r.valid).toBe(false);
+    expect(r.errorMessage).toContain('expired');
+    const [next] = await intake.prompt(ctx);
+    expect(linkOf((next as PromptButtons).body)).toBeTruthy();
+    expect(db.tables.booking_intakes).toHaveLength(1);
+  });
+
+  it('a form switched for another service gets a fresh intake, not the old one', async () => {
+    const { db, ctx } = setup({ data: { _intake_id: 'other', _intake_key: 's9:f9' } });
+    db.tables.booking_intakes.push({ id: 'other', business_id: BIZ, form_id: 'f9', status: 'pending', expires_at: new Date(Date.now() + 1e6).toISOString(), booking_id: null });
+    const [msg] = await intake.prompt(ctx);
+    expect(linkOf((msg as PromptButtons).body)).toBeTruthy();
+    expect(ctx.session.session_data._intake_key).toBe('s1:f1');
+    expect(ctx.session.session_data._intake_id).not.toBe('other');
+  });
+});

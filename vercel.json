@@ -82,6 +82,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/intake-reminders",
+      "schedule": "15 * * * *"
+    },
+    {
       "path": "/api/cron/data-retention",
       "schedule": "0 1 * * 0"
     },

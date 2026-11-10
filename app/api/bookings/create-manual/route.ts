@@ -359,6 +359,18 @@ export async function POST(request: NextRequest) {
       // Non-critical
     }
 
+    // #963: after-booking client intake form. Manual bookings are confirmed at once;
+    // the link goes out only inside the client's 24-hour window (else "Not sent").
+    // Never affects the booking result.
+    if (serviceId) {
+      try {
+        const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
+        await deliverAfterBookingIntake(serviceClient, booking.id);
+      } catch (intakeErr) {
+        logger.warn('[MANUAL BOOKING] Intake form not sent (non-critical):', (intakeErr as Error).message);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       booking_id: booking.id,

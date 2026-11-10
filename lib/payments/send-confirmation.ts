@@ -1730,6 +1730,22 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // #963: after-booking client intake form (separate lifecycle, non-blocking).
+    // Sent once, only for a confirmed booking whose service links an after-booking
+    // form, and only inside the client's 24-hour window, on the channel the
+    // confirmation just used. Never affects the confirmation result.
+    if (payment.booking_id) {
+      try {
+        const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
+        const sameChannel = resolved;
+        await deliverAfterBookingIntake(supabase, payment.booking_id, sameChannel
+          ? { resolver: { resolveByBusinessId: async () => sameChannel } }
+          : {});
+      } catch (intakeErr) {
+        logSafeError(logPrefix, 'booking-intake', intakeErr);
+      }
+    }
+
     return { status: 'completed' };
 
   } catch (err) {

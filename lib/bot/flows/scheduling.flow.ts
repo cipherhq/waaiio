@@ -32,6 +32,10 @@ import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filte
 import { parseTypedDate, isCalendarDate } from './shared/typed-date';
 import { openTimesOnDate, tableTimeInsideBusinessHours, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
 import { seatingGalleryMessages } from './table-reservation.flow';
+import {
+  beforeBookingMessage, deliverAfterBookingIntake, hasAnsweredBefore, intakeState, isIntakeEntitled,
+  linkIntakeToBooking, loadUsableForm, openBeforeBookingIntake, toE164,
+} from '@/lib/intake/send';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
 function clearTablePromoState(ctx: FlowContext): boolean {
@@ -338,6 +342,32 @@ const MAX_SLOT_TAKEN_RETRIES = 2;
  * or after "Change date". Never claim then: show the time list again (or the
  * date list when the date was cleared); nextAfterPrompt waits there.
  */
+/**
+ * Before-booking client intake (#963): the service's linked form, when this
+ * booking must answer it first. Null means no intake step: no form, an
+ * after-booking form, an appointment or table booking, a business without
+ * Pro/Premium/trial, a client who already answered (first booking only), or a
+ * form that cannot be answered on the intake page. Read failures also mean no
+ * step, so a database hiccup never blocks booking.
+ */
+async function beforeBookingIntakeConfig(ctx: FlowContext): Promise<{ formId: string; key: string } | null> {
+  const d = ctx.session.session_data;
+  if (!ctx.business || !d.service_id || d._is_appointment || d._is_table_reservation) return null;
+  const { data: svc, error } = await ctx.supabase.from('services')
+    .select('intake_form_id, intake_timing, intake_frequency')
+    .eq('id', d.service_id as string).eq('business_id', ctx.business.id).maybeSingle();
+  if (error || !svc?.intake_form_id || svc.intake_timing !== 'before_booking') return null;
+  const formId = svc.intake_form_id as string;
+  const key = `${d.service_id}:${formId}`;
+  if (d._intake_done_key === key) return null;
+  const phone = toE164(ctx.from);
+  if (!phone) return null;
+  if (!(await isIntakeEntitled(ctx.supabase, ctx.business.id, ctx.business.subscription_tier))) return null;
+  if (svc.intake_frequency === 'first_booking' && await hasAnsweredBefore(ctx.supabase, ctx.business.id, formId, phone)) return null;
+  if (!(await loadUsableForm(ctx.supabase, ctx.business.id, formId))) return null;
+  return { formId, key };
+}
+
 async function reshowPickerAfterTakenTime(ctx: FlowContext): Promise<PromptMessage[]> {
   const stepId = ctx.session.session_data.date ? 'select_time' : 'select_date';
   const step = schedulingFlow.steps.find(s => s.id === stepId);
@@ -2424,8 +2454,72 @@ export const schedulingFlow: FlowDefinition = {
         const idx = (ctx.session.session_data._pbq_index as number) || 0;
         // More questions? Loop back to same step
         if (questions && idx < questions.length) return 'pre_booking_questions';
-        return 'select_delivery';
+        return 'intake_form';
       },
+    },
+
+    // ── Client intake form, required before the booking is confirmed (#963) ──
+    // The client answers on a private link; the booking (and any payment) only
+    // starts once the answers are in. Re-showing the step keeps the same link
+    // (a client may still have it open); a new link is issued only on request or
+    // when the old one expired.
+    {
+      id: 'intake_form',
+      async skipIf(ctx: FlowContext) {
+        return !(await beforeBookingIntakeConfig(ctx));
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const cfg = await beforeBookingIntakeConfig(ctx);
+        if (!cfg || !ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
+        const d = ctx.session.session_data;
+        const existing = d._intake_key === cfg.key ? (d._intake_id as string | undefined) : undefined;
+        const buttons = [
+          { id: 'intake_done', title: "I've filled it" },
+          { id: 'intake_new_link', title: 'Send a new link' },
+        ];
+        const state = existing && !d._intake_force_new ? await intakeState(ctx.supabase, ctx.business.id, existing) : 'missing';
+        if (state === 'pending') {
+          return [{ type: 'buttons', body: 'Your form link is in the message above. When you have sent the form, tap "I\'ve filled it".', buttons }];
+        }
+        const opened = await openBeforeBookingIntake(ctx.supabase, {
+          businessId: ctx.business.id, serviceId: d.service_id as string, formId: cfg.formId,
+          phone: ctx.from, existingIntakeId: existing ?? null,
+        });
+        delete d._intake_force_new;
+        if (!opened) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
+        d._intake_id = opened.intakeId;
+        d._intake_key = cfg.key;
+        return [{
+          type: 'buttons',
+          body: beforeBookingMessage(ctx.business.name, opened.url),
+          buttons,
+          // The link is a private secret: never send it to the translation model.
+          _localization: { protectedValues: [opened.url, ctx.business.name] },
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
+        const answer = input.trim().toLowerCase();
+        if (answer === 'intake_new_link' || answer === 'send a new link' || answer === 'new link') {
+          d._intake_force_new = true;
+          return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
+        }
+        const id = d._intake_id as string | undefined;
+        if (!id || !ctx.business) return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
+        const state = await intakeState(ctx.supabase, ctx.business.id, id);
+        if (state === 'submitted') {
+          return { valid: true, data: { _intake_done_key: d._intake_key } };
+        }
+        if (state === 'expired' || state === 'missing') {
+          d._intake_force_new = true;
+          return { valid: false, errorMessage: 'That link has expired, so here is a new one.', persistSessionDataOnFailure: true };
+        }
+        if (state === 'unknown') {
+          return { valid: false, errorMessage: 'We could not check your form just now. Please tap "I\'ve filled it" again in a moment.' };
+        }
+        return { valid: false, errorMessage: 'We have not received your answers yet. Please open the link, send the form, then tap "I\'ve filled it".' };
+      },
+      async next() { return 'select_delivery'; },
     },
 
     // ── Select Delivery/Pickup for drop-off services ──
@@ -3474,6 +3568,10 @@ export const schedulingFlow: FlowDefinition = {
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
+        // Before-booking intake (#963): attach the answered form to this booking.
+        if (d._intake_id && d._intake_done_key && d._intake_done_key === d._intake_key && ctx.business) {
+          await linkIntakeToBooking(ctx.supabase, ctx.business.id, d._intake_id as string, booking.id);
+        }
         // Store canonical transaction total (not merely the upfront deposit).
         d.total_amount = bookingTotalAmount;
 
@@ -3904,7 +4002,13 @@ export const schedulingFlow: FlowDefinition = {
         }) : '';
 
         const navigation = transactionNextSteps('appointment', await isSharedConversation(ctx.supabase, d));
-        return [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
+        const confirmed: PromptMessage[] = [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
+        // After-booking intake (#963): only for a confirmed booking (pending ones wait for approval).
+        const intake = await deliverAfterBookingIntake(ctx.supabase, booking.id, { prepareOnly: true });
+        if (intake.status === 'prepared') {
+          confirmed.push({ type: 'text', text: intake.text, _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) } });
+        }
+        return confirmed;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (ctx.session.session_data._slot_taken_return) {
