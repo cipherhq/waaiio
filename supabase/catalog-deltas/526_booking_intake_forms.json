@@ -1,0 +1,749 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.booking_intakes.booking_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.booking_intakes.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.booking_intakes.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.booking_intakes.customer_phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "802a37c53cc07fe448a9c9e6b3bc47b6e15da4242d7db169dbe19c00e7f771a0",
+   "identity": "column:public.booking_intakes.expires_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.booking_intakes.form_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.booking_intakes.form_response_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.booking_intakes.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.booking_intakes.reminder_sent_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.booking_intakes.sent_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.booking_intakes.service_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'pending'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "d34430a5b5f954d8cee5240ef573d872c3f5df0efcaa9d1b51e9543b2fdf0f55",
+   "identity": "column:public.booking_intakes.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.booking_intakes.submitted_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.booking_intakes.timing",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.booking_intakes.token_hash",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.services.intake_form_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.services.intake_frequency",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.services.intake_timing",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (booking_id, business_id) REFERENCES bookings(id, business_id) ON DELETE SET NULL (booking_id)",
+    "validated": true
+   },
+   "after_sha256": "ea3f3c62adf827a72dbf17bf90ee212c3af5bd937c277bb455632802e0c1a6f0",
+   "identity": "constraint:public.booking_intakes.booking_intakes_booking_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (booking_id, form_id)",
+    "validated": true
+   },
+   "after_sha256": "c1548e77829c3d4abd6a030af09b634b4673a7a065715a3b12260a29290e475d",
+   "identity": "constraint:public.booking_intakes.booking_intakes_booking_form_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.booking_intakes.booking_intakes_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (expires_at > created_at)",
+    "validated": true
+   },
+   "after_sha256": "0374eaa4542ce6b997420bbf2ab8605f9a7fb9cdcc0e5c200464d601c22954a5",
+   "identity": "constraint:public.booking_intakes.booking_intakes_expiry_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (form_id, business_id) REFERENCES forms(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "deec9072463b76f87810f79fdf4983a9b6df6282fb7d7c3974a4b52221dd5c83",
+   "identity": "constraint:public.booking_intakes.booking_intakes_form_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (form_response_id) REFERENCES form_responses(id) ON DELETE SET NULL",
+    "validated": true
+   },
+   "after_sha256": "0490b7ea78196f4269a9ef37afb173a73172483fbe2ac8ecf1a7201211ea56e8",
+   "identity": "constraint:public.booking_intakes.booking_intakes_form_response_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (customer_phone ~ '^\\+?[0-9]{6,15}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "7960bb7144262840f7525ca259818d5d3c6fc9188974c120f0baa4c38b877701",
+   "identity": "constraint:public.booking_intakes.booking_intakes_phone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.booking_intakes.booking_intakes_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (service_id, business_id) REFERENCES services(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "9d978e16983cd61504fe562aaee46a3b5a383aa8ddaa90c5d145f37203405ca4",
+   "identity": "constraint:public.booking_intakes.booking_intakes_service_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'submitted'::text, 'expired'::text]))",
+    "validated": true
+   },
+   "after_sha256": "479d33f324a7575c72cc212e711fd61b2cc574f9785a1dca3b3e68ae8a66e897",
+   "identity": "constraint:public.booking_intakes.booking_intakes_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((status = 'submitted'::text) = (submitted_at IS NOT NULL))",
+    "validated": true
+   },
+   "after_sha256": "a645b44ae358f8d813b5f78eb70d325333bca17507376e1a833514b3881d9ca4",
+   "identity": "constraint:public.booking_intakes.booking_intakes_submitted_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (timing = ANY (ARRAY['before_booking'::text, 'after_booking'::text]))",
+    "validated": true
+   },
+   "after_sha256": "3390b89bb7d8ef6e4bbd1c9aa2144c89b439d98afcc82c6cefa62d313be262fd",
+   "identity": "constraint:public.booking_intakes.booking_intakes_timing_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (token_hash ~ '^[0-9a-f]{64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "04550850515644ae0650faf9fda0e7ec2e3e93e2ae6263b63f7663151eec1223",
+   "identity": "constraint:public.booking_intakes.booking_intakes_token_hash_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (token_hash)",
+    "validated": true
+   },
+   "after_sha256": "dd4795307de6b337fb1d626cbff0b96c9b1b71bcb26fb2bcbf7dbf0e1238e916",
+   "identity": "constraint:public.booking_intakes.booking_intakes_token_hash_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (intake_form_id, business_id) REFERENCES forms(id, business_id) ON DELETE SET NULL (intake_form_id)",
+    "validated": true
+   },
+   "after_sha256": "3b10e2c0443476d3b013945cb5ec13d06e6239a208f8ac79476a4b791fb4626b",
+   "identity": "constraint:public.services.services_intake_form_fkey_526",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((intake_timing IS NULL OR (intake_timing = ANY (ARRAY['before_booking'::text, 'after_booking'::text]))) AND (intake_frequency IS NULL OR (intake_frequency = ANY (ARRAY['first_booking'::text, 'every_booking'::text]))) AND (intake_form_id IS NULL OR intake_timing IS NOT NULL AND intake_frequency IS NOT NULL))",
+    "validated": true
+   },
+   "after_sha256": "5a9098a70fee73d55afe95dbcae754b902ddae5678ff27012c38cf43608441cc",
+   "identity": "constraint:public.services.services_intake_settings_check_526",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "02925e3772f5e451098cc45f1611e7c11a9ec8535d04ae5e9203a6befc8a95b9",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b810348462b6a0c9ab61840625df26668d028e656d5ec4fb92a4f308bdaab16f",
+   "identity": "function:private.guard_service_intake_526()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_token text, p_answers jsonb",
+    "body_sha256": "ff22255187dfa6267b22764d2adced80fff9d18206c67cc54d0d27d797aec268",
+    "config": [
+     "search_path=pg_catalog, public, pg_temp"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "4b2ed965b3af27db25c29b4c43cf9f2173e8ddddc685045fc55abe8139e83a8c",
+   "identity": "function:private.submit_booking_intake_526(p_token text, p_answers jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_token text, p_answers jsonb",
+    "body_sha256": "0118d51c03e20f66358baf60098dc5c50846c3b237f00d9612c341d97cc68426",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f5367a2c4b9b592394bd329adf402de5d8f99f40b75feb8dad55aa7510d0ca68",
+   "identity": "function:public.submit_booking_intake_526(p_token text, p_answers jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX booking_intakes_booking_form_key ON public.booking_intakes USING btree (booking_id, form_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "22fd1a641b5e9fa39c002bebf8577e4883a450e67934600b12980602397a079f",
+   "identity": "index:public.booking_intakes.booking_intakes_booking_form_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX booking_intakes_pkey ON public.booking_intakes USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "7d145642adcd5cc23c19ad3ac841296f8f0b460d6b3aff28320b7fa7bd651f1c",
+   "identity": "index:public.booking_intakes.booking_intakes_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX booking_intakes_reminder_526 ON public.booking_intakes USING btree (created_at) WHERE ((status = 'pending'::text) AND (timing = 'after_booking'::text) AND (reminder_sent_at IS NULL))",
+    "predicate": "((status = 'pending'::text) AND (timing = 'after_booking'::text) AND (reminder_sent_at IS NULL))",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "663b07731e11a6c3d0f66fbc16ddf131f9eb19e8de4068a3da944a24e0dfa8f5",
+   "identity": "index:public.booking_intakes.booking_intakes_reminder_526",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX booking_intakes_submitted_526 ON public.booking_intakes USING btree (business_id, form_id, customer_phone) WHERE (status = 'submitted'::text)",
+    "predicate": "(status = 'submitted'::text)",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "dae5afd5727530cb12afc7b150b711bddd50c86477fcd1da19aecd6454278ffc",
+   "identity": "index:public.booking_intakes.booking_intakes_submitted_526",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX booking_intakes_token_hash_key ON public.booking_intakes USING btree (token_hash)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "19ae0e2b2ac859756dbef0c7b857ce3ce5e86d03df84a688de9d53f50a836bb5",
+   "identity": "index:public.booking_intakes.booking_intakes_token_hash_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX bookings_id_business_id_526 ON public.bookings USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "01c5ea69b07efef09a884dc00960a0ddf5baf38c242b59c212143ee87b3e79df",
+   "identity": "index:public.bookings.bookings_id_business_id_526",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX services_id_business_id_526 ON public.services USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "6f804c39bb77aeacc92b9dfbb776153207d3cbe44fc9a6863a8792f95e00cea7",
+   "identity": "index:public.services.services_id_business_id_526",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT b.id\n   FROM businesses b\n  WHERE (b.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "445e80bf2d4db13450315254ffc8e8aa8f3df4490c75cf3b1dfb69cdbc50fa7b",
+   "identity": "policy:public.booking_intakes.booking_intakes_owner_select",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.booking_intakes",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_service_intake_526 BEFORE INSERT OR UPDATE OF intake_form_id, intake_timing, intake_frequency, business_id ON services FOR EACH ROW EXECUTE FUNCTION private.guard_service_intake_526()",
+    "enabled": "O"
+   },
+   "after_sha256": "f4575c525be4f1f696e66ab93e1a7fa9cc843de41876baa8df41426ce65418d9",
+   "identity": "trigger:public.services.guard_service_intake_526",
+   "operation": "add"
+  }
+ ],
+ "migration": "526_booking_intake_forms.sql",
+ "migration_sha256": "4f3dbedf2de9dbbca7b2710cea88ec55de567df2a35751c4d49fb229a2d1244e",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
