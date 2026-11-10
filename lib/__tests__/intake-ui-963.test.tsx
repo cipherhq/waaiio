@@ -126,6 +126,18 @@ describe('BookingIntakePanel', () => {
     }
   });
 
+  it('still shows Done and Intake not done on past and cancelled bookings (only "Not sent" is hidden)', async () => {
+    db.tables.booking_intakes = { data: [{ status: 'submitted', form_id: 'f1', form_response_id: 'r1', submitted_at: '2026-01-01T10:00:00Z', expires_at: '2026-01-05T00:00:00Z' }], error: null };
+    db.tables.form_responses = { data: { answers: { concern: 'Sleep' } }, error: null };
+    db.tables.forms = { data: { fields: [{ id: 'concern', label: 'Main concern' }] }, error: null };
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2000-01-01" bookingStatus="completed" />);
+    await waitFor(() => expect(screen.getByText('Done')).toBeTruthy());
+    cleanup();
+    db.tables.booking_intakes = { data: [{ status: 'pending', form_id: 'f1', form_response_id: null, submitted_at: null, expires_at: '2000-01-02T00:00:00Z' }], error: null };
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="cancelled" />);
+    await waitFor(() => expect(screen.getByText('Intake not done')).toBeTruthy());
+  });
+
   it('decides "Not sent" from the booking date and status (Owner 2026-11-10)', () => {
     const today = new Date(2026, 10, 10);
     expect(showsNotSent('2026-11-10', 'confirmed', today)).toBe(true);

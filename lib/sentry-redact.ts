@@ -51,10 +51,13 @@ export function scrubPrivateLinks<T>(item: T): T {
   return walk(item, 0) as T;
 }
 
-/** Spread into every Sentry.init (client, server, edge). */
+/**
+ * Spread into every Sentry.init (client, server, edge). Sentry 11 streams spans
+ * by default, so spans go through beforeSendSpan; beforeSendTransaction is not
+ * set because it is ignored there and makes Sentry log a warning on each start.
+ */
 export const privateLinkScrubbers = {
   beforeSend: scrubPrivateLinks,
-  beforeSendTransaction: scrubPrivateLinks,
   beforeSendSpan: scrubPrivateLinks,
   beforeBreadcrumb: scrubPrivateLinks,
 };

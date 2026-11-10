@@ -73,7 +73,7 @@ describe('scrubPrivateLinks', () => {
   });
 
   it('is wired into the client, server and edge Sentry configs', () => {
-    expect(Object.keys(privateLinkScrubbers).sort()).toEqual(['beforeBreadcrumb', 'beforeSend', 'beforeSendSpan', 'beforeSendTransaction']);
+    expect(Object.keys(privateLinkScrubbers).sort()).toEqual(['beforeBreadcrumb', 'beforeSend', 'beforeSendSpan']);
     for (const file of ['sentry.client.config.ts', 'sentry.server.config.ts', 'sentry.edge.config.ts']) {
       const src = readFileSync(file, 'utf8');
       expect(src, file).toContain("import { privateLinkScrubbers } from './lib/sentry-redact';");
