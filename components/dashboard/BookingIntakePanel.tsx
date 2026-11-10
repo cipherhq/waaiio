@@ -16,7 +16,7 @@ type State =
   | { kind: 'error' }
   | { kind: 'not_sent' }
   | { kind: 'not_done'; expired: boolean }
-  | { kind: 'done'; submittedAt: string | null; answers: Array<{ label: string; value: string }> | null };
+  | { kind: 'done'; submittedAt: string | null; answers: Array<{ id: string; label: string; value: string }> | null };
 
 function formatAnswer(value: unknown): string {
   if (Array.isArray(value)) return value.map(String).join(', ');
@@ -43,11 +43,12 @@ export function BookingIntakePanel({ businessId, bookingId, serviceId }: Props) 
         .eq('business_id', businessId)
         .eq('booking_id', bookingId)
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(10);
       if (cancelled) return;
       if (error) { setState({ kind: 'error' }); return; }
 
-      const intake = intakes?.[0];
+      // A submitted intake wins over a newer pending one (e.g. after the form changed).
+      const intake = intakes?.find(i => i.status === 'submitted') || intakes?.[0];
       if (!intake) {
         if (!serviceId) { setState({ kind: 'none' }); return; }
         const { data: service, error: serviceError } = await db
@@ -77,6 +78,7 @@ export function BookingIntakePanel({ businessId, bookingId, serviceId }: Props) 
       const fields: Field[] = Array.isArray(form?.fields) ? (form.fields as Field[]) : [];
       const saved = (response.answers || {}) as Record<string, unknown>;
       const answers = Object.keys(saved).map(id => ({
+        id,
         label: fields.find(f => f.id === id)?.label || id,
         value: formatAnswer(saved[id]),
       }));
@@ -106,7 +108,7 @@ export function BookingIntakePanel({ businessId, bookingId, serviceId }: Props) 
           : (
             <dl className="space-y-2">
               {state.answers.map(a => (
-                <div key={a.label}>
+                <div key={a.id}>
                   <dt className="text-xs text-gray-400">{a.label}</dt>
                   <dd className="whitespace-pre-wrap text-sm text-gray-900 dark:text-gray-100">{a.value}</dd>
                 </div>

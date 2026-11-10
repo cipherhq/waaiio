@@ -16,6 +16,7 @@
   - The response never includes the client's phone or their saved answers.
   - Answers are checked on the server first (`lib/intake/answers.ts`: field ids, types, options, lengths), then saved through `submit_booking_intake_526`.
 - **Bookings page** (`app/dashboard/reservations/page.tsx` and the new `components/dashboard/BookingIntakePanel.tsx`): the booking detail shows "Done" with the answers, "Intake not done" or "Not sent". It reads only through the owner's RLS.
+- **Analytics never runs on intake links** (`components/PostHogProvider.tsx`): PostHog doesn't start on `/intake/` pages, and a `before_send` hook drops any event that names an intake URL. The intake page also carries `ph-no-capture`, so no click, answer or link token can reach analytics (review finding P1).
 - **Tests:**
   - `lib/__tests__/intake-answers-963.test.ts`: answer checks and payload.
   - `lib/__tests__/intake-route-963.test.ts`: route handlers.

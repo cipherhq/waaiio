@@ -27,10 +27,12 @@ vi.mock('@/lib/supabase/service', () => ({
       const result = (): { data: Row | null; error: null } => {
         const f = Object.fromEntries(filters);
         if (table === 'booking_intakes') return { data: state.intake && f.token_hash === state.intake.token_hash ? state.intake : null, error: null };
-        if (table === 'forms') return { data: state.form, error: null };
-        if (table === 'businesses') return { data: { name: 'Healing Labs', logo_url: null }, error: null };
-        if (table === 'services') return { data: { name: 'Assessment' }, error: null };
-        if (table === 'bookings') return { data: { date: '2026-11-20', time: '10:00:00' }, error: null };
+        // Every follow-up read must be scoped to the intake's own business.
+        const ownBusiness = state.intake && (f.business_id === state.intake.business_id || (table === 'businesses' && f.id === state.intake.business_id));
+        if (table === 'forms') return { data: ownBusiness ? state.form : null, error: null };
+        if (table === 'businesses') return { data: ownBusiness ? { name: 'Healing Labs', logo_url: null } : null, error: null };
+        if (table === 'services') return { data: ownBusiness ? { name: 'Assessment' } : null, error: null };
+        if (table === 'bookings') return { data: ownBusiness ? { date: '2026-11-20', time: '10:00:00' } : null, error: null };
         return { data: null, error: null };
       };
       const q = {
@@ -89,6 +91,21 @@ describe('GET /api/intake/[token]', () => {
     expect(JSON.stringify(body)).not.toContain('2348012345678');
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  it('scopes the form, service and booking reads to the intake business', async () => {
+    await get();
+    for (const table of ['forms', 'services', 'bookings']) {
+      const q = state.queries.find(x => x.table === table);
+      expect(q?.filters, table).toContainEqual(['business_id', 'b1']);
+    }
+  });
+
+  it('reports a form with a required file question as unavailable before the client starts', async () => {
+    state.form!.fields = [...FIELDS, { id: 'id_scan', label: 'ID', type: 'file', required: true }];
+    const body = await (await get()).json();
+    expect(body.status).toBe('unavailable');
+    expect(body.fields).toBeUndefined();
   });
 
   it('404s a malformed or unknown token', async () => {

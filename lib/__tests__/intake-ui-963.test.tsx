@@ -28,6 +28,7 @@ vi.mock('next/image', () => ({ default: (p: { alt: string }) => <span>{p.alt}</s
 import { ServiceIntakeSettings, type ServiceIntakeValue } from '@/components/dashboard/ServiceIntakeSettings';
 import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
 import { IntakeFormView } from '@/components/intake/IntakeFormView';
+import { dropPrivateLinkEvents, isPrivateLinkPath } from '@/components/PostHogProvider';
 
 const EMPTY: ServiceIntakeValue = { form_id: null, timing: 'before_booking', frequency: 'first_booking' };
 
@@ -81,6 +82,18 @@ describe('BookingIntakePanel', () => {
     expect(screen.getByText('Trouble sleeping')).toBeTruthy();
     expect(screen.getByText('None, Other')).toBeTruthy();
     expect(screen.getByText('Yes')).toBeTruthy();
+  });
+
+  it('prefers a submitted intake over a newer pending one', async () => {
+    db.tables.booking_intakes = { data: [
+      { status: 'pending', form_id: 'f2', form_response_id: null, submitted_at: null, expires_at: '2099-01-01T00:00:00Z' },
+      { status: 'submitted', form_id: 'f1', form_response_id: 'r1', submitted_at: '2026-11-10T10:00:00Z', expires_at: '2026-11-20T00:00:00Z' },
+    ], error: null };
+    db.tables.form_responses = { data: { answers: { concern: 'Sleep' } }, error: null };
+    db.tables.forms = { data: { fields: [{ id: 'concern', label: 'Main concern' }] }, error: null };
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    await waitFor(() => expect(screen.getByText('Done')).toBeTruthy());
+    expect(screen.getByText('Sleep')).toBeTruthy();
   });
 
   it('shows Intake not done, noting an expired link', async () => {
@@ -148,6 +161,18 @@ describe('IntakeFormView', () => {
     expect(JSON.parse(String(sent?.init?.body))).toEqual({ answers: { concern: 'Sleep', agree: true } });
   });
 
+  it('marks every state of the page so analytics never records it', async () => {
+    mockFetch(PENDING);
+    render(<IntakeFormView token="t" />);
+    await waitFor(() => expect(screen.getByText('Health intake')).toBeTruthy());
+    expect(screen.getByTestId('intake-page').className).toContain('ph-no-capture');
+    cleanup();
+    mockFetch({ ...PENDING, status: 'expired', fields: undefined });
+    render(<IntakeFormView token="t" />);
+    await waitFor(() => expect(screen.getByText('This link has expired')).toBeTruthy());
+    expect(screen.getByTestId('intake-page').className).toContain('ph-no-capture');
+  });
+
   it('shows the server error and keeps the answers on a 400', async () => {
     mockFetch(PENDING, { status: 400, body: { error: 'Please check your answer to "Main concern"' } });
     render(<IntakeFormView token="t" />);
@@ -171,5 +196,29 @@ describe('IntakeFormView', () => {
     mockFetch({ error: 'This link is not valid.' }, undefined, 404);
     render(<IntakeFormView token="t" />);
     await waitFor(() => expect(screen.getByText('This link is not valid.')).toBeTruthy());
+  });
+});
+
+describe('analytics stays off private intake links', () => {
+  it('recognises intake paths only', () => {
+    expect(isPrivateLinkPath('/intake/abc')).toBe(true);
+    expect(isPrivateLinkPath('/intake')).toBe(true);
+    for (const p of ['/', '/intakes', '/form/abc', '/dashboard/services']) expect(isPrivateLinkPath(p), p).toBe(false);
+  });
+
+  it('drops any event that names an intake URL, and keeps others', () => {
+    window.history.pushState({}, '', '/pricing');
+    expect(dropPrivateLinkEvents({ properties: { $current_url: 'https://waaiio.com/pricing' } })).not.toBeNull();
+    for (const key of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$prev_pageview_pathname']) {
+      expect(dropPrivateLinkEvents({ properties: { [key]: 'https://waaiio.com/intake/SECRET' } }), key).toBeNull();
+    }
+    expect(dropPrivateLinkEvents({ properties: { $pathname: '/intake/SECRET?x=1' } })).toBeNull();
+    expect(dropPrivateLinkEvents(null)).toBeNull();
+  });
+
+  it('drops every event while the browser is on an intake page', () => {
+    window.history.pushState({}, '', '/intake/SECRET');
+    expect(dropPrivateLinkEvents({ properties: { $current_url: 'https://waaiio.com/elsewhere' } })).toBeNull();
+    window.history.pushState({}, '', '/');
   });
 });

@@ -27,6 +27,12 @@ describe('checkIntakeAnswers', () => {
     expect(ok).toEqual({ ok: true, answers: { concern: 'Sleep', agree: true, freq: 'Daily' } });
   });
 
+  it('accepts a valid answer of every supported type (guards against a check that rejects everything)', () => {
+    const all = { ...VALID, freq: 'Weekly', mood: 'Good', meds: ['None', 'Other'], age: 34, mail: 'client@example.com', tel: '+234 801 234 5678', dob: '1990-05-01' };
+    expect(checkIntakeAnswers(FIELDS, all)).toEqual({ ok: true, answers: all });
+    expect(checkIntakeAnswers(FIELDS, { ...VALID, age: '0', tel: '(020) 7946-0958', concern: 'x'.repeat(5000) }).ok).toBe(true);
+  });
+
   it('applies the database "missing" rule to required answers', () => {
     for (const bad of [{ agree: true }, { concern: '', agree: true }, { concern: 'x', agree: false }, { concern: 'x' }]) {
       const r = checkIntakeAnswers(FIELDS, bad);

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import { answerableFields, checkIntakeAnswers } from '@/lib/intake/answers';
+import { answerableFields, checkIntakeAnswers, hasRequiredFileQuestion } from '@/lib/intake/answers';
 
 /**
  * Client intake link (#963 lane 2). The token is a single-use secret sent to
@@ -74,7 +74,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
 
     if (intake.status === 'submitted') return json({ ...base, status: 'submitted' });
     if (isExpired(intake)) return json({ ...base, status: 'expired' });
-    if (!form.is_active) return json({ ...base, status: 'unavailable' });
+    // A required file question cannot be answered here (Owner decision 2026-11-10).
+    if (!form.is_active || hasRequiredFileQuestion(form.fields)) return json({ ...base, status: 'unavailable' });
 
     return json({
       ...base,

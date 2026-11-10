@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
-import type { IntakeField } from '@/lib/intake/answers';
+import { isMissing, MAX_ANSWER_LENGTH, type IntakeField } from '@/lib/intake/answers';
 
 interface IntakeData {
   status: 'pending' | 'submitted' | 'expired' | 'unavailable';
@@ -20,15 +20,10 @@ type View = 'loading' | 'ready' | 'submitting' | 'done' | 'message';
 
 const INPUT = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500';
 
-function isMissing(field: IntakeField, value: unknown) {
-  return value === undefined || value === null || value === ''
-    || (Array.isArray(value) && value.length === 0)
-    || (field.type === 'checkbox' && value === false);
-}
-
 function Message({ title, text }: { title: string; text: string }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
+    // ph-no-capture: analytics must never record anything on an intake page.
+    <div className="ph-no-capture flex min-h-screen items-center justify-center bg-gray-50 p-6" data-testid="intake-page">
       <div className="max-w-sm text-center">
         <h1 className="text-xl font-bold text-gray-900">{title}</h1>
         <p className="mt-2 text-sm text-gray-500">{text}</p>
@@ -110,7 +105,7 @@ export function IntakeFormView({ token }: { token: string }) {
 
   if (view === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="ph-no-capture flex min-h-screen items-center justify-center bg-gray-50">
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-violet-600" />
       </div>
     );
@@ -133,7 +128,8 @@ export function IntakeFormView({ token }: { token: string }) {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    // ph-no-capture: analytics must never record the client's answers or taps.
+    <div className="ph-no-capture min-h-screen bg-gray-50" data-testid="intake-page">
       <div className="mx-auto max-w-lg px-4 py-8">
         <div className="mb-6">
           {data.business_logo && (
@@ -155,16 +151,22 @@ export function IntakeFormView({ token }: { token: string }) {
               const options = field.options || [];
               return (
                 <div key={field.id}>
-                  <label className="mb-1 block text-sm font-medium text-gray-700" htmlFor={`f-${field.id}`}>
-                    {field.label} {field.required && <span className="text-red-400">*</span>}
-                  </label>
+                  {field.type === 'radio' || field.type === 'multi_select' ? (
+                    <p className="mb-1 block text-sm font-medium text-gray-700">
+                      {field.label} {field.required && <span className="text-red-400">*</span>}
+                    </p>
+                  ) : (
+                    <label className="mb-1 block text-sm font-medium text-gray-700" htmlFor={`f-${field.id}`}>
+                      {field.label} {field.required && <span className="text-red-400">*</span>}
+                    </label>
+                  )}
                   {(field.type === 'text' || field.type === 'email' || field.type === 'phone' || field.type === 'date' || field.type === 'number') && (
                     <input id={`f-${field.id}`}
-                      type={field.type === 'phone' ? 'tel' : field.type}
+                      type={field.type === 'phone' ? 'tel' : field.type} maxLength={MAX_ANSWER_LENGTH}
                       value={(value as string) || ''} onChange={e => update(field.id, e.target.value)} className={INPUT} />
                   )}
                   {field.type === 'textarea' && (
-                    <textarea id={`f-${field.id}`} rows={3} value={(value as string) || ''}
+                    <textarea id={`f-${field.id}`} rows={3} maxLength={MAX_ANSWER_LENGTH} value={(value as string) || ''}
                       onChange={e => update(field.id, e.target.value)} className={INPUT} />
                   )}
                   {field.type === 'select' && (

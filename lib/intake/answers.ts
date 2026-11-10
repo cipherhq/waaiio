@@ -33,17 +33,22 @@ export function answerableFields(fields: unknown): IntakeField[] {
     && typeof (f as IntakeField).type === 'string' && (f as IntakeField).type !== 'file');
 }
 
-function isMissing(field: IntakeField, value: unknown): boolean {
+export function isMissing(field: Pick<IntakeField, 'type'>, value: unknown): boolean {
   return value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0)
     || (field.type === 'checkbox' && value === false);
+}
+
+/** A required file question can never be answered on the intake page. */
+export function hasRequiredFileQuestion(fields: unknown): boolean {
+  return Array.isArray(fields) && fields.some(f => (f as IntakeField | null)?.type === 'file' && (f as IntakeField).required === true);
 }
 
 export function checkIntakeAnswers(fieldsRaw: unknown, answersRaw: unknown): AnswerCheck {
   if (!answersRaw || typeof answersRaw !== 'object' || Array.isArray(answersRaw)) {
     return { ok: false, error: 'Answers are missing' };
   }
-  if (Array.isArray(fieldsRaw) && fieldsRaw.some(f => (f as IntakeField | null)?.type === 'file' && (f as IntakeField).required)) {
+  if (hasRequiredFileQuestion(fieldsRaw)) {
     return { ok: false, error: 'This form needs a file, which this page cannot accept. Please contact the business.' };
   }
   const fields = answerableFields(fieldsRaw);
