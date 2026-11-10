@@ -92,6 +92,22 @@ describe('public booking page with an intake form', () => {
     expect(screen.queryByText('Fill in your form')).toBeNull();
   });
 
+  it('Back then Continue after answering keeps the same answered form', async () => {
+    const calls = stubNetwork({ intake: { required: true, intakeId: 'in-1', token: 'tok-abc' }, create: { success: true, bookingId: 'bk-1', referenceCode: 'REF1' } });
+    await reachDetails();
+    fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '+2348012345678' } });
+    fireEvent.click(screen.getByText('Continue'));
+    await waitFor(() => expect(screen.getByText('Health intake')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Main concern/), { target: { value: 'Sleep' } });
+    fireEvent.click(screen.getByText('Send my answers'));
+    await waitFor(() => expect(screen.getByText('Book Now')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Back'));
+    fireEvent.click(screen.getByText('Continue'));
+    await waitFor(() => expect(calls.filter(c => c.url === '/api/bookings/public/intake')).toHaveLength(2));
+    expect(calls.filter(c => c.url === '/api/bookings/public/intake')[1].body).toMatchObject({ intakeId: 'in-1' });
+  });
+
   it('with an after-booking form, the confirmation screen links to the form', async () => {
     stubNetwork({ intake: { required: false }, create: { success: true, bookingId: 'bk-1', referenceCode: 'REF1', intakeUrl: 'https://www.waaiio.com/intake/tok-xyz' } });
     await reachDetails();

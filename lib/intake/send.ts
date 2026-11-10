@@ -415,8 +415,10 @@ export async function syncIntakeExpiry(db: Db, businessId: string, bookingId: st
     ]);
     if (!booking) return;
     const startsAt = zonedTimeToUtc(booking.date as string, booking.time as string | null, business?.timezone as string | null);
-    if (!startsAt || startsAt.getTime() - now < MIN_AFTER_BOOKING_LIFETIME_MS) return;
-    const { error } = await db.from('booking_intakes').update({ expires_at: startsAt.toISOString() })
+    if (!startsAt) return;
+    // Moved to a start that has already passed: the link ends now (expires_at must stay after created_at).
+    const change = startsAt.getTime() > now ? { expires_at: startsAt.toISOString() } : { status: 'expired' };
+    const { error } = await db.from('booking_intakes').update(change)
       .eq('business_id', businessId).eq('booking_id', bookingId).eq('status', 'pending').eq('timing', 'after_booking');
     if (error) logger.warn('[INTAKE] Could not move the link expiry after a reschedule:', error.code || 'unknown');
   } catch (err) {

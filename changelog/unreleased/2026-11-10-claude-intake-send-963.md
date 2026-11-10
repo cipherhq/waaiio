@@ -46,7 +46,7 @@ Later the same day the Owner also decided:
     - a service with a form needs the phone number;
     - a before-booking form must be answered first (409 `intake_required`), then it is linked to the booking;
     - a free booking emails the after-booking link and returns it for the confirmation screen.
-  - **`app/b/[slug]/page.tsx`** and **`BookingForm.tsx`:** the phone is required for services with a form. The form is shown inside the page before "Book", and the free-booking confirmation shows "Fill in your form".
+  - **`app/b/[slug]/page.tsx`** and **`BookingForm.tsx`:** the phone is required for services with a form. The form is shown inside the page before "Book", and Back then Continue keeps the form already answered. The free-booking confirmation shows "Fill in your form".
   - **`components/intake/IntakeFormView.tsx`:** new `onDone` option to show the form inside the booking page. A link from a booking-page booking says "You can close this page now." instead of "go back to WhatsApp".
   - **`app/api/intake/[token]/route.ts`:** returns `from_web`.
   - **`lib/intake/send.ts`:**
@@ -54,7 +54,7 @@ Later the same day the Owner also decided:
     - its after-booking link goes by email, never WhatsApp, and it gets no WhatsApp reminder;
     - "answered before" is checked by the verified email, never the typed phone;
     - new `webBeforeBookingForm` and `findWebIntake`.
-- **`app/api/bookings/[id]/reschedule/route.ts`:** a dashboard reschedule moves a pending after-booking link's expiry to the new start (`syncIntakeExpiry`).
+- **`app/api/bookings/[id]/reschedule/route.ts`:** a dashboard reschedule moves a pending after-booking link's expiry to the new start (`syncIntakeExpiry`). A new start that has already passed ends the link at once.
 - **`app/api/cron/intake-reminders/route.ts`** (new, hourly in `vercel.json`): one reminder for unanswered after-booking forms whose session is 22–25 hours away. It works through due intakes page by page, within a 45-second time budget.
 - **Tests:**
   - `lib/__tests__/intake-send-963.test.ts`

@@ -243,10 +243,17 @@ describe('syncIntakeExpiry (reschedule)', () => {
     expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-20T09:00:00.000Z');
   });
 
-  it('does nothing when the new start has already passed', async () => {
+  it('moved to a start only minutes away: the link now ends at that start', async () => {
+    // NOW is 10:00Z = 11:00 Lagos; the new start 11:03 Lagos is 3 minutes away.
+    const db = world({ intakes: [linked()], booking: { date: '2026-11-10', time: '11:03:00' } });
+    await syncIntakeExpiry(db as never, BIZ, 'k1', NOW);
+    expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-10T10:03:00.000Z');
+  });
+
+  it('moved to a start that has already passed: the link ends now', async () => {
     const db = world({ intakes: [linked()], booking: { date: '2026-11-09', time: '10:00:00' } });
     await syncIntakeExpiry(db as never, BIZ, 'k1', NOW);
-    expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-20T09:00:00.000Z');
+    expect(db.tables.booking_intakes[0]).toMatchObject({ status: 'expired', expires_at: '2026-11-20T09:00:00.000Z' });
   });
 });
 

@@ -195,6 +195,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
 
   function selectService(svc: ServiceInfo) {
     setSelectedService(svc);
+    setIntake(null); // another service never reuses a form answered for this one
     setSelectedDate('');
     setSelectedTime('');
     setStep(2);
@@ -289,9 +290,10 @@ export default function BookingForm({ business, services }: BookingFormProps) {
       return;
     }
     setError('');
-    setIntake(null);
     setStep(5);
-    await loadIntake();
+    // Back then Continue reuses the same intake (kept if already answered); the server
+    // opens a new one only if the service or phone no longer match it.
+    await loadIntake(intake?.id);
   }
 
   async function handleBooking() {
