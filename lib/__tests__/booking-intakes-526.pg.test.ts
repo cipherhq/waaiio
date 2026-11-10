@@ -318,7 +318,7 @@ suite('M526 booking intake forms (real PostgreSQL)', () => {
     it('refuses a malformed token hash, phone, status or timing', async () => {
       const base = `INSERT INTO public.booking_intakes (business_id, service_id, form_id, customer_phone, timing, token_hash, status, expires_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '1 day')`;
-      const good = [BIZ_PRO, SVC_PRO, FORM_PRO, '+2348012345678', 'after_booking', sha('x'), 'pending'];
+      const good: unknown[] = [BIZ_PRO, SVC_PRO, FORM_PRO, '+2348012345678', 'after_booking', sha('x'), 'pending'];
       const bad: Array<[number, unknown]> = [[5, 'not-a-hash'], [3, '+23480 1234'], [6, 'done'], [4, 'later']];
       for (const [i, value] of bad) {
         const params = [...good]; params[i] = value;
