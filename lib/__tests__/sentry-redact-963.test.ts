@@ -16,14 +16,15 @@ describe('redactPrivateLinkPath', () => {
   });
 
   it('leaves other paths alone', () => {
-    for (const s of ['/intakes/abc', '/form/abc', '/dashboard/forms', 'https://waaiio.com/']) {
+    for (const s of ['/intakes/abc', '/form/abc', '/dashboard/forms', 'https://waaiio.com/', './lib/intake/answers.ts',
+      'components/intake/IntakeFormView.tsx', '/intake/short', '/intake/[token]']) {
       expect(redactPrivateLinkPath(s)).toBe(s);
     }
   });
 });
 
 describe('scrubPrivateLinks', () => {
-  it('scrubs every string in an event, transaction, span and breadcrumb, in place', () => {
+  it('scrubs every string in an event, transaction, span and breadcrumb', () => {
     const event = {
       request: { url: `https://waaiio.com/intake/${TOKEN}` },
       transaction: `/intake/${TOKEN}`,
@@ -34,19 +35,34 @@ describe('scrubPrivateLinks', () => {
       flag: true,
     };
     const out = scrubPrivateLinks(event);
-    expect(out).toBe(event);
     expect(JSON.stringify(out)).not.toContain(TOKEN);
     expect(out.request.url).toBe('https://waaiio.com/intake/[token]');
     expect(out.count).toBe(3);
     expect(out.flag).toBe(true);
   });
 
-  it('handles null, cycles and deep nesting without throwing', () => {
+  it("never changes the caller's objects (console breadcrumbs carry the app's own logged values)", () => {
+    const logged = { url: `https://waaiio.com/intake/${TOKEN}`, nested: [{ to: `/intake/${TOKEN}` }] };
+    const breadcrumb = { category: 'console', message: 'sending intake', data: { arguments: [logged] } };
+    const out = scrubPrivateLinks(breadcrumb);
+    expect(logged.url).toBe(`https://waaiio.com/intake/${TOKEN}`);
+    expect(logged.nested[0].to).toBe(`/intake/${TOKEN}`);
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
+  });
+
+  it('handles null, frozen objects, class instances and cycles without throwing', () => {
     expect(scrubPrivateLinks(null)).toBeNull();
+    const frozen = Object.freeze({ url: `/intake/${TOKEN}` });
+    expect(scrubPrivateLinks(frozen).url).toBe('/intake/[token]');
+    expect(frozen.url).toBe(`/intake/${TOKEN}`);
+    const err = new Error('x');
+    expect(scrubPrivateLinks({ err }).err).toBe(err);
     const a: Record<string, unknown> = { url: `/intake/${TOKEN}` };
     a.self = a;
-    expect(() => scrubPrivateLinks(a)).not.toThrow();
-    expect(a.url).toBe('/intake/[token]');
+    const out = scrubPrivateLinks(a) as Record<string, unknown>;
+    expect(out.url).toBe('/intake/[token]');
+    expect(out.self).toBe(out);
+    expect(a.url).toBe(`/intake/${TOKEN}`);
   });
 
   it('is wired into the client, server and edge Sentry configs', () => {
