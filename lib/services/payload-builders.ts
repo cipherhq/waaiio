@@ -73,6 +73,16 @@ export interface ServiceFormInput {
   class_schedule?: unknown[];
   max_capacity?: number | null;
   metadata?: Record<string, unknown>;
+  /**
+   * Client intake form link (M526, #963). Omitted = the columns are not sent,
+   * so callers that never show the setting leave an existing link untouched.
+   * A null form clears the link; the database guard checks the plan.
+   */
+  intake?: {
+    form_id: string | null;
+    timing: 'before_booking' | 'after_booking';
+    frequency: 'first_booking' | 'every_booking';
+  };
 }
 
 export function buildServicePayload(input: ServiceFormInput) {
@@ -117,6 +127,13 @@ export function buildServicePayload(input: ServiceFormInput) {
       collect_venue: (input.metadata || {}).collect_venue || false,
       multi_day: (input.metadata || {}).multi_day || false,
     },
+    ...(input.intake
+      ? {
+          intake_form_id: input.intake.form_id,
+          intake_timing: input.intake.form_id ? input.intake.timing : null,
+          intake_frequency: input.intake.form_id ? input.intake.frequency : null,
+        }
+      : {}),
   };
 }
 

@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
+import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -1278,6 +1279,12 @@ export default function BookingsPage() {
                 {selected.guest_phone && <p className="text-sm text-gray-600">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-600">{selected.guest_email}</p>}
               </div>
+
+              {/* Client intake (#963): service bookings only */}
+              {!selected._isReservation && (
+                <BookingIntakePanel businessId={business.id} bookingId={selected.id} serviceId={selected.service_id || null}
+                  bookingDate={selected.date || null} bookingStatus={selected.status} />
+              )}
 
               {/* Guest List (group bookings) */}
               {selected.guest_list && selected.guest_list.length > 0 && (
