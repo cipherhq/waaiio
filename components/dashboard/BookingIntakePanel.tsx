@@ -7,6 +7,16 @@ interface Props {
   businessId: string;
   bookingId: string;
   serviceId: string | null;
+  /** Booking date (YYYY-MM-DD) and status: "Not sent" is shown only for upcoming, non-cancelled bookings. */
+  bookingDate: string | null;
+  bookingStatus: string;
+}
+
+/** Owner decision 2026-11-10 (#963): "Not sent" only on upcoming bookings that are not cancelled. */
+export function showsNotSent(bookingDate: string | null, bookingStatus: string, today = new Date()): boolean {
+  if (!bookingDate || bookingStatus === 'cancelled') return false;
+  const local = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return bookingDate >= local;
 }
 
 type Field = { id: string; label: string };
@@ -29,7 +39,7 @@ function formatAnswer(value: unknown): string {
  * Client intake status on a booking (#963 lane 2). Reads only through the
  * owner's own RLS (booking_intakes, form_responses, forms, services).
  */
-export function BookingIntakePanel({ businessId, bookingId, serviceId }: Props) {
+export function BookingIntakePanel({ businessId, bookingId, serviceId, bookingDate, bookingStatus }: Props) {
   const [state, setState] = useState<State>({ kind: 'loading' });
 
   useEffect(() => {
@@ -50,7 +60,7 @@ export function BookingIntakePanel({ businessId, bookingId, serviceId }: Props) 
       // A submitted intake wins over a newer pending one (e.g. after the form changed).
       const intake = intakes?.find(i => i.status === 'submitted') || intakes?.[0];
       if (!intake) {
-        if (!serviceId) { setState({ kind: 'none' }); return; }
+        if (!serviceId || !showsNotSent(bookingDate, bookingStatus)) { setState({ kind: 'none' }); return; }
         const { data: service, error: serviceError } = await db
           .from('services').select('intake_form_id').eq('id', serviceId).eq('business_id', businessId).maybeSingle();
         if (cancelled) return;
@@ -85,7 +95,7 @@ export function BookingIntakePanel({ businessId, bookingId, serviceId }: Props) 
       setState({ kind: 'done', submittedAt: intake.submitted_at, answers });
     })();
     return () => { cancelled = true; };
-  }, [businessId, bookingId, serviceId]);
+  }, [businessId, bookingId, serviceId, bookingDate, bookingStatus]);
 
   if (state.kind === 'loading' || state.kind === 'none') return null;
 

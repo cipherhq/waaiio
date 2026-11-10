@@ -1282,7 +1282,8 @@ export default function BookingsPage() {
 
               {/* Client intake (#963): service bookings only */}
               {!selected._isReservation && (
-                <BookingIntakePanel businessId={business.id} bookingId={selected.id} serviceId={selected.service_id || null} />
+                <BookingIntakePanel businessId={business.id} bookingId={selected.id} serviceId={selected.service_id || null}
+                  bookingDate={selected.date || null} bookingStatus={selected.status} />
               )}
 
               {/* Guest List (group bookings) */}

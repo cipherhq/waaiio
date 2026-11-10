@@ -15,7 +15,7 @@
   - `GET` and `POST`, rate limited. The record is looked up by the sha256 of the link token.
   - The response never includes the client's phone or their saved answers.
   - Answers are checked on the server first (`lib/intake/answers.ts`: field ids, types, options, lengths), then saved through `submit_booking_intake_526`.
-- **Bookings page** (`app/dashboard/reservations/page.tsx` and the new `components/dashboard/BookingIntakePanel.tsx`): the booking detail shows "Done" with the answers, "Intake not done" or "Not sent". It reads only through the owner's RLS.
+- **Bookings page** (`app/dashboard/reservations/page.tsx` and the new `components/dashboard/BookingIntakePanel.tsx`): the booking detail shows "Done" with the answers, "Intake not done" or "Not sent". "Not sent" appears only on upcoming bookings that are not cancelled (Owner decision 2026-11-10). It reads only through the owner's RLS.
 - **Analytics never runs on intake links** (`components/PostHogProvider.tsx`): PostHog doesn't start on `/intake/` pages, and a `before_send` hook drops any event that names an intake URL. The intake page also carries `ph-no-capture`, so no click, answer or link token can reach analytics (review finding P1).
 - **Tests:**
   - `lib/__tests__/intake-answers-963.test.ts`: answer checks and payload.

@@ -26,7 +26,7 @@ vi.mock('@/lib/supabase/client', () => ({
 vi.mock('next/image', () => ({ default: (p: { alt: string }) => <span>{p.alt}</span> }));
 
 import { ServiceIntakeSettings, type ServiceIntakeValue } from '@/components/dashboard/ServiceIntakeSettings';
-import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
+import { BookingIntakePanel, showsNotSent } from '@/components/dashboard/BookingIntakePanel';
 import { IntakeFormView } from '@/components/intake/IntakeFormView';
 import { dropPrivateLinkEvents, isPrivateLinkPath } from '@/components/PostHogProvider';
 
@@ -76,7 +76,7 @@ describe('BookingIntakePanel', () => {
     db.tables.booking_intakes = { data: [{ status: 'submitted', form_id: 'f1', form_response_id: 'r1', submitted_at: '2026-11-10T10:00:00Z', expires_at: '2026-11-20T00:00:00Z' }], error: null };
     db.tables.form_responses = { data: { answers: { concern: 'Trouble sleeping', meds: ['None', 'Other'], agree: true } }, error: null };
     db.tables.forms = { data: { fields: [{ id: 'concern', label: 'Main concern' }, { id: 'meds', label: 'Medication' }, { id: 'agree', label: 'I agree' }] }, error: null };
-    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="confirmed" />);
     await waitFor(() => expect(screen.getByText('Done')).toBeTruthy());
     expect(screen.getByText('Main concern')).toBeTruthy();
     expect(screen.getByText('Trouble sleeping')).toBeTruthy();
@@ -91,14 +91,14 @@ describe('BookingIntakePanel', () => {
     ], error: null };
     db.tables.form_responses = { data: { answers: { concern: 'Sleep' } }, error: null };
     db.tables.forms = { data: { fields: [{ id: 'concern', label: 'Main concern' }] }, error: null };
-    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="confirmed" />);
     await waitFor(() => expect(screen.getByText('Done')).toBeTruthy());
     expect(screen.getByText('Sleep')).toBeTruthy();
   });
 
   it('shows Intake not done, noting an expired link', async () => {
     db.tables.booking_intakes = { data: [{ status: 'pending', form_id: 'f1', form_response_id: null, submitted_at: null, expires_at: '2000-01-01T00:00:00Z' }], error: null };
-    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="confirmed" />);
     await waitFor(() => expect(screen.getByText('Intake not done')).toBeTruthy());
     expect(screen.getByText(/link has expired/)).toBeTruthy();
   });
@@ -106,18 +106,38 @@ describe('BookingIntakePanel', () => {
   it('shows Not sent when the service has a form but no intake exists, and nothing when no form is linked', async () => {
     db.tables.booking_intakes = { data: [], error: null };
     db.tables.services = { data: { intake_form_id: 'f1' }, error: null };
-    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="confirmed" />);
     await waitFor(() => expect(screen.getByText('Not sent')).toBeTruthy());
     cleanup();
     db.tables.services = { data: { intake_form_id: null }, error: null };
-    const { container } = render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    const { container } = render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="confirmed" />);
     await new Promise(r => setTimeout(r, 20));
     expect(container.innerHTML).toBe('');
   });
 
+  it('shows nothing (not "Not sent") for past or cancelled bookings', async () => {
+    db.tables.booking_intakes = { data: [], error: null };
+    db.tables.services = { data: { intake_form_id: 'f1' }, error: null };
+    for (const [date, status] of [['2000-01-01', 'completed'], ['2099-01-01', 'cancelled']]) {
+      const { container } = render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate={date} bookingStatus={status} />);
+      await new Promise(r => setTimeout(r, 20));
+      expect(container.innerHTML, `${date} ${status}`).toBe('');
+      cleanup();
+    }
+  });
+
+  it('decides "Not sent" from the booking date and status (Owner 2026-11-10)', () => {
+    const today = new Date(2026, 10, 10);
+    expect(showsNotSent('2026-11-10', 'confirmed', today)).toBe(true);
+    expect(showsNotSent('2026-12-01', 'pending', today)).toBe(true);
+    expect(showsNotSent('2026-11-09', 'confirmed', today)).toBe(false);
+    expect(showsNotSent('2026-12-01', 'cancelled', today)).toBe(false);
+    expect(showsNotSent(null, 'confirmed', today)).toBe(false);
+  });
+
   it('says so when the intake cannot be loaded', async () => {
     db.tables.booking_intakes = { data: null, error: { message: 'denied' } };
-    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" />);
+    render(<BookingIntakePanel businessId="b" bookingId="k" serviceId="s" bookingDate="2099-01-01" bookingStatus="confirmed" />);
     await waitFor(() => expect(screen.getByText(/could not be loaded/)).toBeTruthy());
   });
 });
