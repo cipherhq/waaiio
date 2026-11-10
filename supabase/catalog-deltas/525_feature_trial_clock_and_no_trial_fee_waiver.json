@@ -101,7 +101,7 @@
      }
     ],
     "arguments": "p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text DEFAULT 'USD'::text, p_payment_intent_id text DEFAULT NULL::text",
-    "body_sha256": "c5b8298bee4972b9ef1a0d0c9b10453d6f6de9f807a5ec14102e3a241b8abdec",
+    "body_sha256": "cc649c285dd1ec10000eb84a01e0f4b44790f232d700f2a843e30f929027514d",
     "config": [
      "search_path=public"
     ],
@@ -115,7 +115,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "be2bc161f2413f2687140da8d96dced7f2d964186954c411ec941ca50cd0b8d6",
+   "after_sha256": "3cee42eabb97e879add0c70436da203dab36d856470902c5a1a482653eaf7abe",
    "identity": "function:public.finalize_stripe_recurring_charge(p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text, p_payment_intent_id text)",
    "operation": "modify"
   },
@@ -136,7 +136,7 @@
      }
     ],
     "arguments": "p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text DEFAULT 'NGN'::text, p_gateway text DEFAULT 'flutterwave'::text, p_provider_attempt_ref text DEFAULT NULL::text",
-    "body_sha256": "3788985703bafc2405089b2799eb4531bcdf6eb3f43aadec603766958f126ada",
+    "body_sha256": "9fb932799ae0830cef5063738f5c56e32e0d7974e2cad3a684e421c8dc900c3f",
     "config": [
      "search_path=public"
     ],
@@ -150,7 +150,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "b4a50ca87e334e503f46bd6001a8f4bfb3ac481edbfdbac2c4c1bd2efcda190b",
+   "after_sha256": "80f69b52d9eb43c2370a7d8be2c99513413495a559c97fc76c229409e47d5390",
    "identity": "function:public.finalize_token_recurring_charge(p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text, p_gateway text, p_provider_attempt_ref text)",
    "operation": "modify"
   },
