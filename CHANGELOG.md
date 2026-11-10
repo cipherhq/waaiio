@@ -1,3 +1,145 @@
+## 2026-11-09 — Fee and trial model written down as an Owner standing order
+
+- **Why:** the Owner asked on 2026-11-09 that every financial decision live in the engineering documentation as a standing order that nothing may change.
+- **What changed:**
+  - `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md` has a new section, "Waaiio fee and trial model — Owner standing order". It records:
+    - the fee per plan from sign-up, the same on every route, with one named exception: direct bank transfer (Pro/Premium only) carries no Waaiio fee (Owner, 2026-11-10);
+    - the merchant paying all gateway fees, with Waaiio absorbing none;
+    - the 14-day Pro/Premium trial at sign-up with Premium limits;
+    - upgrade ending the trial;
+    - the separate free credit;
+    - the booking limits;
+    - the known limits that must be fixed before use: Stripe split payments, the own-Stripe setup, the Flutterwave own-gateway split, Paystack Connect, and monthly-invoice double billing;
+    - the evidence required for any fee-related change.
+  - `CLAUDE.md` has a short summary under the payment custody section that points to it.
+  - Source: issue #958; PRs #959, #960, #961.
+- **Affects:** documentation only. No code, configuration or database change.
+- **Could break:** nothing at runtime. From now on, any PR that contradicts these rules must be stopped for an Owner decision.
+
+## 2026-11-08 — Pricing wording: fee from day one plus gateway fees; 14-day Pro/Premium trial; correct rates and booking limits
+
+**Why: Owner decisions, 2026-11-08**
+- **Fee.** Waaiio's fee is Starter 3%, Pro 1.5%, Premium 1% per paid transaction, matching production `pricing_tiers`. It applies **from sign-up**, and the trial never waives it. It is the same on every route, and Waaiio collects it.
+- **Gateway fees.** The business pays every payment-gateway fee; Waaiio absorbs none.
+- **Trial.** The 14-day free trial is for Pro and Premium features. It starts at sign-up, Premium limits apply during it, and the fee stays at the business's plan rate.
+- **Messaging credit.** The free credit (verify your phone, #955) is separate.
+- **Booking limits.** Starter and Pro allow 100 and 1,000 bookings a month.
+- **The problem this fixes.** The pricing page read as "no fees". Several pages and emails quoted old rates (2.5%, 1.5% + ₦75) or wrong limits (50, 300, 500) and a 30-day or 7-day trial.
+
+**Ships in the same release as the code lanes.** This PR changes wording plus the booking limits. The code behind the wording is already on main:
+- #961 (M525) starts the 14-day feature-trial clock at sign-up, ends it on upgrade, and removes the SQL trial fee waiver.
+- #960 removes the app trial fee waiver and applies Premium limits during the trial.
+- #959 makes the merchant bear the Paystack fee on splits and charges the plan fee to own-gateway businesses.
+
+The Stripe split, Stripe own-gateway, Flutterwave own-gateway and Paystack Connect routes are known limits that are not in use (standing order, PR #962).
+
+**What changed**
+- `app/(marketing)/pricing/page.tsx`
+  - **Hero:** "Try every Pro and Premium feature free for 14 days. Starter has no monthly fee: a 3% Waaiio fee applies to each paid transaction from day one, and payment gateway fees are paid by your business."
+  - **Starter card note:** the same fee statement.
+  - **FAQ "What happens after my trial?":** Pro and Premium features switch off, and the fee is the same before and after the trial.
+  - **FAQ "hidden fees":** gateway fees "are paid by your business".
+  - **Compare row:** shows "Up to 1,000".
+- `lib/constants.ts`
+  - The Starter card highlight `TIER_FEATURES.free` is now "14-day trial of Pro & Premium features".
+  - `TIER_TRANSACTION_LIMITS` monthly bookings: 50 becomes **100** (Starter) and 300 becomes **1,000** (Pro).
+  - This table feeds:
+    - the pricing page's "Monthly bookings" row
+    - the dashboard usage meter
+    - the dashboard upgrade banner
+    - `checkTierLimit` in the scheduling bot flow, which now blocks only above 120 (Starter) or 1,200 (Pro) instead of above 60 or 360. The earlier WhatsApp greeting gate (`StandaloneService.checkTierLimitsFromBusiness`, `PRICING_TIERS.maxBookings`) already stopped at 100 / 1,000 WhatsApp bookings and is unchanged. In practice, once its trial has ended, a Starter business is stopped at 100 WhatsApp bookings, or above 120 bookings across all channels. During the trial, Premium limits apply (#960).
+  - Orders, tickets, giving and invoice limits are unchanged.
+- `components/dashboard/UpgradeBanner.tsx`: the banner assumed a 50-booking Starter limit and said Pro gives "500 bookings". It now reads both limits from `TIER_TRANSACTION_LIMITS`: it warns from 70 bookings, says "limit reached" at 100, and names Pro's 1,000.
+- `lib/email/templates.ts`
+  - **Old rates removed:** the trial-ending, trial-ended, subscription-expiring and subscription-expired emails quoted 2.5% and 1.5% + ₦75. They now quote 3% / 1.5% / 1%, and the wrong "7-day" trial wording is gone.
+  - **Trial emails:** they now say Pro and Premium features switch off and the fee stays the same, instead of fees "starting" after the trial.
+  - **Welcome email:** it said "30-day … all features", and now says "14-day … all Pro and Premium features".
+- `app/(marketing)/help/page.tsx`: the two FAQ answers now say: 14-day trial of Pro and Premium features for every new business; fee from day one; gateway fees paid by the business.
+- `app/dashboard/help/page.tsx`
+  - **Before:** "What are the fees?" gave the wrong rates and a 30-day trial.
+  - **Now:** Starter 3%, Pro 1.5%, Premium 1%; category rates or a custom agreement may apply; the 14-day feature trial; the fee from day one; gateway fees paid by the business.
+- `app/dashboard/payouts/page.tsx`: the fee sentence in the Payout Terms of Use had the same wrong rates. It now points to the Pricing page and lists the current rates. The terms version ("1.0") is not changed.
+- `app/api/whatsapp/flow-callback/onboarding.ts`: the WhatsApp sign-up messages and the welcome email said "30-day trial … all features", and the Pro upsell said "500 bookings". They now say a 14-day trial of Pro and Premium features, and 1,000 bookings.
+- `app/get-started/steps/StepPlan.tsx`: the sign-up plan picker said Starter's fee applies "after trial" and labelled Starter a "free trial". It now says "no monthly fee", that the fee applies "from day one, plus payment gateway fees", and that every Pro and Premium feature can be tried free for 14 days.
+- Smaller copy:
+  - `app/(marketing)/blog/posts.ts`: both trial lines now name Pro and Premium features.
+  - `lib/constants.ts`: unused Starter feature strings no longer say "no fees" or "after trial", and the Pro and Premium "Direct bank transfer" strings now say "(zero gateway fees)", matching `TIER_FEATURES`.
+  - The WhatsApp upsell keeps "Upgrade anytime to get:". The trial never changes the fee.
+  - The trial emails now say "keep the features you use" and "your per-transaction fee stays the same", so they hold for custom or category rates too.
+  - `app/dashboard/page.tsx`: the bookings usage-meter fallback is now the Starter limit.
+- `app/dashboard/capabilities/page.tsx`: the in-trial note now says the 14-day trial includes every Pro and Premium feature.
+- Test: `lib/__tests__/pricing-trial-fee-wording.test.tsx` checks:
+  - the rendered pricing page (wording, the absence of "no fees", the booking row)
+  - the rendered upgrade banner at 60, 75 and 100 bookings
+  - the four plan emails
+  - that the booking limits agree everywhere
+  - Also: `lib/__tests__/signup-plan-choice.test.tsx` now checks the plan picker's fee line.
+  - Also: `lib/__tests__/onboarding-wizard-pricing-lifecycle.test.ts` now picks the Premium card by its name (`/^Premium/`), because the Starter card's new trial line mentions Premium. `signup-plan-choice` gets a 15-second timeout, because the page is slow to render.
+
+**Unchanged:**
+- Fee rates, and how fees are calculated. `calculateFee` has had no trial or own-gateway shortcut since #959 and #960.
+- Trial length (`trial_days` = 14), payment routing, and all other limits.
+
+**Could break:**
+- A Starter or Pro business near 50 or 300 bookings can now take bookings up to the new limits, and the upgrade banner no longer shows at 35–69 Starter bookings.
+- `public/llms.txt`, the summary page for AI search tools, said "30-day free trial with all features, then 2.5% per transaction". It now gives the current model.
+- Several pages and emails now state the fee rates and the 14-day trial as fixed text. If the rates or `trial_days` change in settings, update them too.
+
+## 2026-11-08 — Trial starts at sign-up; the Waaiio fee is never waived
+
+**Why:** Owner pricing decisions (2026-11-08, issue #958). The Waaiio fee (Starter 3%, Pro 1.5%, Premium 1%) applies from sign-up and the free trial never waives it. The 14-day free trial is for Pro and Premium features, starts at sign-up for every new business, uses Premium limits, and is separate from the free messaging credit and from `messaging_financial_gate`. Before this change the code waived the fee during a trial, and the trial only started with the messaging-credit grant, so nobody got the 14-day trial.
+
+**What changed**
+- Depends on migration M525 (PR #961, merged and applied first): `businesses.feature_trial_ends_at` is the Pro/Premium trial clock, set at sign-up; `trial_ends_at` stays the messaging-credit clock; the recurring SQL fee path no longer waives.
+- Fee code: `lib/payments/calculateFee.ts`, `lib/getPlatformFees.ts`, `lib/constants.ts` (`calculatePlatformFee`) no longer return 0 in a trial. `lib/bot/flows/shared/payment.ts` records `waived: false`. The payouts balance estimate (`app/api/payouts/balance/route.ts`, added by #959) uses the new trial check. `is_in_trial` is still recorded on the fee basis, for reporting only.
+- Trial status: `lib/trial-status.ts` (`resolveFeatureTrialEndsAt`, `resolveTrialStatus`, `resolveLimitTier`), `lib/capabilities/policy.ts` (`isTrialActive` no longer needs credit; new `getLimitTier`). Capability callers read the feature clock: dashboard layout, capabilities configure, giving save, recurring offer, API guard, bot capability guard, bot service.
+- Premium limits during the trial: `lib/tier-limits.ts`, `lib/bot/standalone.service.ts` (bot booking cap / greeting gate), `lib/bot/conversation-guard.ts`, broadcasts send/schedule/usage, dashboard home usage bars and upgrade banner (`app/dashboard/page.tsx` passes the limit tier), and the billing page.
+- Trial emails: `app/api/cron/trial-check` uses the feature clock and only Starter businesses.
+- Tests: `lib/__tests__/pricing-lane-b-trial-fee.test.ts` (new), `lib/__tests__/pricing-lane-b-upgrade-banner.test.tsx` (new), updated trial/fee/capability tests (the M525 pg test is in PR #961).
+
+**Unchanged:** fee rates, payment routing and custody (both routes), lane C's own-gateway fee and gateway-fee rules (#959), the messaging credit (`activate_trial_if_eligible`, `/dashboard/claim-credit`, the trial-activation cron), existing businesses (no backfill — they do not get a trial).
+
+**What could break**
+- Pro/Premium features now unlock for every new Starter business for 14 days, and switch off after.
+- Businesses in a trial now pay the Waaiio fee.
+- The admin "extend trial" button still writes `trial_ends_at` (the credit clock), not the feature clock (follow-up).
+
+## 2026-11-08 — Merchant pays the Paystack fee on split payments; same Waaiio fee for bring-your-own gateways
+
+- Owner pricing decision 2026-11-08, lane C (part 1): the merchant pays every payment-gateway fee and Waaiio's fee is the same on every route.
+- Paystack split payments now send `bearer: "subaccount"`, so Paystack takes its fee from the merchant's share and Waaiio keeps exactly its fee. Before, Paystack's default made Waaiio's main account pay it (test mode, ₦10,000 payment with a ₦300 Waaiio fee: Waaiio kept ₦50 before, ₦300 after). Covers one-off checkout (`lib/payments/paystack.ts`), saved-card charges (`lib/payments/charge-saved.ts`, both fee-policy paths) and recurring retries (`lib/payments/paystack-recurring.ts` `chargeAuthorization`, used by `app/api/cron/retry-failed-charges`). The split shape is built in one place: new `lib/payments/paystack-split.ts`.
+- A 0 Waaiio fee on a Paystack merchant split is now sent as `transaction_charge: 0`. Before, it was left out, and Paystack then applied the subaccount's default 2.5% (`percentage_charge`).
+- Split-payout (`direct_split`) merchants are now charged the plan rate on one-off checkout (Starter 3%, Pro 1.5%, Premium 1%, or a per-business custom fee), like every other route. Before, it came from the legacy `payout_accounts.platform_percentage` (2.5%). Owner approved moving the live merchant to 3% (2026-11-09). If the plan tier can't be read, checkout is blocked (fail closed). `lib/payments/resolve-stripe-routing.ts`.
+- The merchant financials page (`app/dashboard/financials/page.tsx`, same figure as the billing page) and the payout balance (`app/api/payouts/balance/route.ts`) now estimate split-payout fees at that plan rate instead of `platform_percentage`, so merchants see what they are charged. `platform_percentage` no longer sets or shows any fee. The 2.5% Paystack subaccount default set at payout setup is left as is, because every split request now sends `transaction_charge`.
+- Bring-your-own Paystack reversed split now states `bearer: "account"` explicitly (the merchant's own account pays the fee). This was already the provider default; the amounts are unchanged.
+- Bring-your-own fee: `calculateFee` no longer returns 0% for `payment_routing = 'byo'`, and the bot checkout no longer forces the BYO split fee to 0 on the pinned fee-policy path (`lib/bot/flows/shared/payment.ts`). The older fee path (live today, `fee_policy_enabled = false`) already charged the plan rate. Trial waiver logic is unchanged (separate lane).
+- Public pricing wording (`app/api/public/pricing/route.ts` `byoFeePolicy`) no longer says "0% Waaiio fee"; it now reads "The same Waaiio fee applies when you connect your own payment gateway, and payment gateway fees are paid by your business" (matches PR #957 wording).
+- Not changed here (need CTO/Owner sign-off, see the PR): Stripe Connect split payments (Stripe always bills the platform on destination charges), Flutterwave bring-your-own split, Stripe bring-your-own, Paystack Connect.
+- Tests: new `lib/__tests__/merchant-pays-gateway-fees.test.ts` (28 behavioral tests), new `app/dashboard/financials/__tests__/direct-split-plan-rate.test.tsx`; updated `payout-accounting-hold-balance`, `calculateFee`, `fee-policy-runtime`, `settlement-lifecycle`, `public-pricing-projection`, `paystack-split-recurring`, `flutterwave-split-recurring`, `verified-fee-persistence-762` tests.
+- Could break: a Paystack split whose merchant share is too small to cover Paystack's fee is now rejected by Paystack with a 400 at checkout creation (only possible if the Waaiio fee were close to 100% of the amount). Refunds, the Waaiio-collected route and payout deductions (`payable-fees.ts`) are unchanged.
+
+## 2026-11-08 — M525: feature-trial clock from sign-up; recurring SQL fee path never waives
+
+**Why:** Owner pricing decisions (2026-11-08, issue #958): the Waaiio fee applies from sign-up and the trial never waives it; the 14-day Pro/Premium trial starts at sign-up, separate from the free messaging credit. Release Gate V2 §9.2: the migration ships ahead of the app change (PR #960) in its own PR.
+
+**What changed**
+- `supabase/migrations/525_feature_trial_clock_and_no_trial_fee_waiver.sql` (new):
+  - `businesses.feature_trial_ends_at`, the Pro/Premium trial clock. `trial_ends_at` stays the messaging-credit clock.
+  - BEFORE INSERT trigger: every new business gets `now() + platform_settings.trial_days` (supplied values ignored; missing or invalid `trial_days` gives no trial and does not block sign-up).
+  - BEFORE UPDATE trigger: only the server (service role / function owner) may change the clock.
+  - Owner decision 2026-11-09 ("End trial at upgrade"): a BEFORE UPDATE OF subscription_tier trigger ends a running trial when a Starter business moves to a paid plan, so Pro starts on the upgrade date and a later downgrade does not bring trial days back.
+  - The recurring fee functions (`finalize_token/stripe/paystack_recurring_charge`, `process_recurring_charge` where present) no longer waive the fee: only the `v_is_in_trial := …` statement becomes `false`, in place, keeping each live body, SECURITY DEFINER, search path, owner and grants. The migration fails if a finalizer still reads `trial_ends_at` without that change.
+- `supabase/catalog-deltas/525_….json`: catalog effect.
+- Tests: `lib/__tests__/feature-trial-clock-525.pg.test.ts` (new, in CI's pg job); `stripe-recurring-finalization-db` case s now expects the plan fee in a trial; `trial-lifecycle-db` adds cases: the sign-up clock neither blocks nor doubles the credit grant; an upgrade ends the trial and a downgrade does not restore it.
+- `docs/MIGRATION_REGISTRY.md`: 525 reserved; next is 526.
+
+**Unchanged:** `activate_trial_if_eligible` and the messaging credit, fee rates, routing and custody, BYO rule, existing rows (no backfill).
+
+**What could break**
+- Recurring charges for a business whose credit clock is in the future are now charged the plan fee (none in production today).
+- The M501 accounting activation procedure fails closed (unknown recurring precursor) until its precursor table and stored bodies are updated in the accounting lane.
+- With only this migration live, the app still reads the old trial rule; PR #960 switches it to the new clock.
+
 ## 2026-11-07 — Schedule the trial-credit activation job (before message charging is switched on)
 
 **Why:** the Owner chose to make message charging safe before switching it on ("Make it safe first", 2026-11-07).
