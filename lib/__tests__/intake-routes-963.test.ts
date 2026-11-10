@@ -33,7 +33,7 @@ vi.mock('@/lib/supabase/service', () => ({
       const record = (op: string) => (c: string, v: unknown) => { if (table === 'booking_intakes') env.dueFilters.push([op, c, v]); return q; };
       Object.assign(q, {
         select: () => q, eq: record('eq'), is: record('is'), not: (c: string, _o: string, v: unknown) => record('not')(c, v),
-        gt: record('gt'), lte: record('lte'), order: () => q, limit: () => q,
+        gt: record('gt'), lte: record('lte'), order: () => q, limit: () => q, range: () => q,
         maybeSingle: async () => ({ data: table === 'bookings' && env.bookingExists ? { id: 'k1' } : null, error: null }),
         then: (r: (v: unknown) => unknown) => Promise.resolve({ data: env.due, error: null }).then(r),
       });

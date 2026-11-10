@@ -365,7 +365,7 @@ export async function POST(request: NextRequest) {
     if (serviceId) {
       try {
         const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
-        await deliverAfterBookingIntake(serviceClient, booking.id);
+        await deliverAfterBookingIntake(serviceClient, booking.id, { includeBeforeBooking: true });
       } catch (intakeErr) {
         logger.warn('[MANUAL BOOKING] Intake form not sent (non-critical):', (intakeErr as Error).message);
       }

@@ -352,18 +352,22 @@ const MAX_SLOT_TAKEN_RETRIES = 2;
  */
 async function beforeBookingIntakeConfig(ctx: FlowContext): Promise<{ formId: string; key: string } | null> {
   const d = ctx.session.session_data;
-  if (!ctx.business || !d.service_id || d._is_appointment || d._is_table_reservation) return null;
+  // A reschedule keeps the original booking and its intake: never ask again.
+  if (!ctx.business || !d.service_id || d._is_appointment || d._is_table_reservation || d._reschedule_booking_id) return null;
   const { data: svc, error } = await ctx.supabase.from('services')
-    .select('intake_form_id, intake_timing, intake_frequency')
+    .select('intake_form_id, intake_timing, intake_frequency, is_class')
     .eq('id', d.service_id as string).eq('business_id', ctx.business.id).maybeSingle();
-  if (error || !svc?.intake_form_id || svc.intake_timing !== 'before_booking') return null;
+  // Classes are skipped (#963 lane 3 contract).
+  if (error || !svc?.intake_form_id || svc.intake_timing !== 'before_booking' || svc.is_class === true) return null;
   const formId = svc.intake_form_id as string;
   const key = `${d.service_id}:${formId}`;
   if (d._intake_done_key === key) return null;
   const phone = toE164(ctx.from);
   if (!phone) return null;
   if (!(await isIntakeEntitled(ctx.supabase, ctx.business.id, ctx.business.subscription_tier))) return null;
-  if (svc.intake_frequency === 'first_booking' && await hasAnsweredBefore(ctx.supabase, ctx.business.id, formId, phone)) return null;
+  // The intake of this booking in progress is not an earlier answer.
+  const current = d._intake_key === key ? (d._intake_id as string | undefined) : undefined;
+  if (svc.intake_frequency === 'first_booking' && await hasAnsweredBefore(ctx.supabase, ctx.business.id, formId, phone, current)) return null;
   if (!(await loadUsableForm(ctx.supabase, ctx.business.id, formId))) return null;
   return { formId, key };
 }
@@ -2470,7 +2474,10 @@ export const schedulingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cfg = await beforeBookingIntakeConfig(ctx);
-        if (!cfg || !ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
+        if (!cfg || !ctx.business) {
+          // Reached by "back" after the form is done: nothing to ask; the next message moves on.
+          return [{ type: 'text', text: '✅ We already have your answers. Send any message to continue.' }];
+        }
         const d = ctx.session.session_data;
         const existing = d._intake_key === cfg.key ? (d._intake_id as string | undefined) : undefined;
         const buttons = [
@@ -2478,7 +2485,8 @@ export const schedulingFlow: FlowDefinition = {
           { id: 'intake_new_link', title: 'Send a new link' },
         ];
         const state = existing && !d._intake_force_new ? await intakeState(ctx.supabase, ctx.business.id, existing) : 'missing';
-        if (state === 'pending') {
+        // Pending, or unreadable right now: keep the link the client may have open.
+        if (state === 'pending' || state === 'unknown') {
           return [{ type: 'buttons', body: 'Your form link is in the message above. When you have sent the form, tap "I\'ve filled it".', buttons }];
         }
         const opened = await openBeforeBookingIntake(ctx.supabase, {
@@ -2486,7 +2494,9 @@ export const schedulingFlow: FlowDefinition = {
           phone: ctx.from, existingIntakeId: existing ?? null,
         });
         delete d._intake_force_new;
-        if (!opened) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
+        if (!opened) {
+          return [{ type: 'buttons', body: 'We could not create your form link just now. Tap "Send a new link" to try again.', buttons }];
+        }
         d._intake_id = opened.intakeId;
         d._intake_key = cfg.key;
         return [{
@@ -2500,15 +2510,16 @@ export const schedulingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const d = ctx.session.session_data;
         const answer = input.trim().toLowerCase();
-        if (answer === 'intake_new_link' || answer === 'send a new link' || answer === 'new link') {
-          d._intake_force_new = true;
-          return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
-        }
         const id = d._intake_id as string | undefined;
         if (!id || !ctx.business) return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
         const state = await intakeState(ctx.supabase, ctx.business.id, id);
         if (state === 'submitted') {
+          // Any reply once the answers are in moves on (also a late "Send a new link").
           return { valid: true, data: { _intake_done_key: d._intake_key } };
+        }
+        if (answer === 'intake_new_link' || answer === 'send a new link' || answer === 'new link') {
+          d._intake_force_new = true;
+          return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
         }
         if (state === 'expired' || state === 'missing') {
           d._intake_force_new = true;
@@ -4002,13 +4013,17 @@ export const schedulingFlow: FlowDefinition = {
         }) : '';
 
         const navigation = transactionNextSteps('appointment', await isSharedConversation(ctx.supabase, d));
-        const confirmed: PromptMessage[] = [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
-        // After-booking intake (#963): only for a confirmed booking (pending ones wait for approval).
+        // After-booking intake (#963): only for a confirmed booking (pending ones wait for
+        // approval). It goes before the next-steps menu, which must stay last.
         const intake = await deliverAfterBookingIntake(ctx.supabase, booking.id, { prepareOnly: true });
-        if (intake.status === 'prepared') {
-          confirmed.push({ type: 'text', text: intake.text, _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) } });
-        }
-        return confirmed;
+        const intakeBlock = intake.status === 'prepared' ? '\n\n' + intake.text : '';
+        return [{
+          type: 'text',
+          text: message + calendarLinks + helpText + intakeBlock + '\n\n' + navigation,
+          ...(intake.status === 'prepared'
+            ? { _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) } }
+            : {}),
+        }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (ctx.session.session_data._slot_taken_return) {

@@ -1,4 +1,5 @@
 import { isSharedConversation, DIRECTORY_ACTION, transactionNextSteps } from './shared/navigation';
+import { redactPrivateLinkPath } from '@/lib/sentry-redact';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
@@ -1166,7 +1167,9 @@ export class FlowExecutor {
         case 'document': text = msg.caption || msg.filename || '[Document]'; break;
       }
       if (text) {
-        session.conversation_log.push({ role: 'bot', content: text, timestamp: ts });
+        // #963: private intake links are single-use secrets; the saved transcript
+        // keeps "[token]" while the client still receives the full link.
+        session.conversation_log.push({ role: 'bot', content: redactPrivateLinkPath(text), timestamp: ts });
       }
     }
   }

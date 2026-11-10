@@ -56,10 +56,12 @@ describe('when the step applies (skipIf)', () => {
     ['after-booking form', { service: { intake_timing: 'after_booking' } }],
     ['appointment booking', { data: { _is_appointment: true } }],
     ['table booking', { data: { _is_table_reservation: true } }],
+    ['class booking', { service: { is_class: true } }],
     ['no service chosen', { data: { service_id: undefined } }],
     ['inactive form', { form: { is_active: false } }],
     ['form with a required file question', { form: { fields: [{ id: 'x', type: 'file', required: true }] } }],
     ['already answered in this session', { data: { _intake_done_key: 's1:f1' } }],
+    ['rescheduling an existing booking', { data: { _reschedule_booking_id: 'k0' } }],
     ['first booking only and answered before', {
       service: { intake_frequency: 'first_booking' },
       intakes: [{ id: 'old', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }],
@@ -71,6 +73,29 @@ describe('when the step applies (skipIf)', () => {
   it('is skipped for a Starter business after its trial', async () => {
     env.tier = 'free';
     expect(await intake.skipIf!(setup().ctx)).toBe(true);
+  });
+});
+
+describe('in the executor\'s order (skipIf runs before validate)', () => {
+  it('first booking only: the client\'s own fresh answers do not skip the step before they are recorded', async () => {
+    const { db, ctx } = setup({ service: { intake_frequency: 'first_booking' } });
+    expect(await intake.skipIf!(ctx)).toBe(false);
+    await intake.prompt(ctx);
+    db.tables.booking_intakes[0].status = 'submitted';
+    // Client taps "I've filled it": the executor asks skipIf first.
+    expect(await intake.skipIf!(ctx)).toBe(false);
+    const r = await intake.validate('intake_done', ctx);
+    expect(r).toEqual({ valid: true, data: { _intake_done_key: 's1:f1' } });
+    Object.assign(ctx.session.session_data, r.data);
+    expect(await intake.skipIf!(ctx)).toBe(true);
+  });
+
+  it('a later booking of a first-booking-only form is skipped because of the earlier answer', async () => {
+    const { ctx } = setup({
+      service: { intake_frequency: 'first_booking' },
+      intakes: [{ id: 'earlier', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }],
+    });
+    expect(await intake.skipIf!(ctx)).toBe(true);
   });
 });
 
@@ -135,6 +160,36 @@ describe('asking and waiting', () => {
     expect(ctx.session.session_data._intake_force_new).toBeUndefined();
   });
 
+  it('"Send a new link" after the answers are in just moves on (answers are kept)', async () => {
+    const { db, ctx } = setup();
+    await intake.prompt(ctx);
+    db.tables.booking_intakes[0].status = 'submitted';
+    expect(await intake.validate('intake_new_link', ctx)).toEqual({ valid: true, data: { _intake_done_key: 's1:f1' } });
+    expect(db.tables.booking_intakes).toHaveLength(1);
+  });
+
+  it('keeps the link when the intake cannot be read just now', async () => {
+    const { db, ctx } = setup();
+    await intake.prompt(ctx);
+    const hash = db.tables.booking_intakes[0].token_hash;
+    const original = db.from;
+    (db as { from: unknown }).from = (t: string) => {
+      const q = original(t) as Record<string, unknown>;
+      if (t === 'booking_intakes') q.maybeSingle = async () => ({ data: null, error: { code: 'XX' } });
+      return q;
+    };
+    const [msg] = await intake.prompt(ctx);
+    expect((msg as PromptButtons).body).toContain('message above');
+    (db as { from: unknown }).from = original;
+    expect(db.tables.booking_intakes[0].token_hash).toBe(hash);
+  });
+
+  it('going "back" to the step after it is done says so instead of an error', async () => {
+    const { ctx } = setup({ data: { _intake_done_key: 's1:f1' } });
+    const [msg] = await intake.prompt(ctx);
+    expect(msg).toEqual({ type: 'text', text: '✅ We already have your answers. Send any message to continue.' });
+  });
+
   it('an expired link is replaced automatically', async () => {
     const { db, ctx } = setup();
     await intake.prompt(ctx);
@@ -154,5 +209,21 @@ describe('asking and waiting', () => {
     expect(linkOf((msg as PromptButtons).body)).toBeTruthy();
     expect(ctx.session.session_data._intake_key).toBe('s1:f1');
     expect(ctx.session.session_data._intake_id).not.toBe('other');
+  });
+});
+
+describe('saved bot transcript', () => {
+  it('keeps "[token]" in conversation_log while the client still gets the full link', async () => {
+    const { FlowExecutor } = await import('@/lib/bot/flows/executor');
+    const token = 'Ab3dEf_ghIjKlMnOpQrStUvWxYz0123456789-xy';
+    const session: { conversation_log: Array<{ role: string; content: string }> } = { conversation_log: [] };
+    const messages = [
+      { type: 'buttons', body: `Please fill in https://www.waaiio.com/intake/${token}`, buttons: [{ id: 'intake_done', title: "I've filled it" }] },
+      { type: 'text', text: `Booked!\n\nPlease fill in https://www.waaiio.com/intake/${token}\n\nWhat next?` },
+    ];
+    (FlowExecutor.prototype as unknown as { logPromptMessages(s: unknown, m: unknown): void }).logPromptMessages.call({}, session, messages);
+    expect(JSON.stringify(session.conversation_log)).not.toContain(token);
+    expect(session.conversation_log[0].content).toContain('/intake/[token]');
+    expect(messages[0].body).toContain(token);
   });
 });

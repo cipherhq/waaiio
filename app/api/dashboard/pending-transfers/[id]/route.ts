@@ -425,6 +425,17 @@ export async function PATCH(
       }
     }
 
+    // #963: an approved service booking sends its after-booking intake form (if any).
+    // Non-blocking; only for a confirmed booking, inside the client's 24-hour window.
+    if (transfer.booking_id && nonOrderResult.approved) {
+      try {
+        const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
+        await deliverAfterBookingIntake(service, transfer.booking_id);
+      } catch (intakeErr) {
+        logger.warn('[PENDING_TRANSFERS] Intake form not sent (non-critical):', (intakeErr as Error).message);
+      }
+    }
+
     // In-app notification
     const notifBody = approve_fulfillment
       ? `Bank transfer of ${formatCurrency(transfer.expected_amount / 100, 'NG')} confirmed and approved. Ref: ${transfer.reference_code}`

@@ -23,6 +23,8 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export const BEFORE_BOOKING_TTL_MS = 24 * 60 * 60_000;
 const MIN_AFTER_BOOKING_LIFETIME_MS = 5 * 60_000;
+/** The cron reminds 22-25 hours before the session; a first send later than this is already a reminder. */
+const REMINDER_LEAD_MS = 25 * 3_600_000;
 
 type Db = SupabaseClient;
 
@@ -49,13 +51,20 @@ export function zonedTimeToUtc(date: string, time: string | null | undefined, ti
   const asUtc = Date.UTC(+m[1], +m[2] - 1, +m[3], +t[1], +t[2]);
   if (!Number.isFinite(asUtc)) return null;
   try {
-    const parts = new Intl.DateTimeFormat('en-US', {
+    const fmt = new Intl.DateTimeFormat('en-US', {
       timeZone: timeZone || 'UTC', hourCycle: 'h23',
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-    }).formatToParts(new Date(asUtc));
-    const get = (k: string) => Number(parts.find(p => p.type === k)?.value);
-    const shown = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'));
-    return new Date(asUtc - (shown - asUtc));
+    });
+    // Offset of the zone at a given instant (local wall clock minus UTC).
+    const offsetAt = (instant: number) => {
+      const parts = fmt.formatToParts(new Date(instant));
+      const get = (k: string) => Number(parts.find(p => p.type === k)?.value);
+      return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute')) - instant;
+    };
+    // Two passes: the offset is read again at the converted instant, so a
+    // daylight-saving change between the naive and the real instant is handled.
+    const firstGuess = asUtc - offsetAt(asUtc);
+    return new Date(asUtc - offsetAt(firstGuess));
   } catch {
     return new Date(asUtc);
   }
@@ -66,12 +75,19 @@ export async function isIntakeEntitled(db: Db, businessId: string, tier: string 
   return (await resolveLimitTier(db, businessId, tier)) !== 'free';
 }
 
-/** First-booking-only: has this client already answered this business's form? Unknown counts as yes (do not ask twice). */
-export async function hasAnsweredBefore(db: Db, businessId: string, formId: string, phone: string): Promise<boolean> {
+/**
+ * First-booking-only: has this client already answered this business's form?
+ * `excludeIntakeId` leaves out the intake of the booking in progress, so the
+ * client's own fresh answers are not mistaken for an earlier booking's.
+ * Unknown counts as yes (do not ask twice).
+ */
+export async function hasAnsweredBefore(db: Db, businessId: string, formId: string, phone: string, excludeIntakeId?: string | null): Promise<boolean> {
   const digits = phone.replace(/\D/g, '');
-  const { count, error } = await db.from('booking_intakes').select('id', { count: 'exact', head: true })
+  let query = db.from('booking_intakes').select('id', { count: 'exact', head: true })
     .eq('business_id', businessId).eq('form_id', formId).eq('status', 'submitted')
     .in('customer_phone', [`+${digits}`, digits]);
+  if (excludeIntakeId) query = query.neq('id', excludeIntakeId);
+  const { count, error } = await query;
   if (error || count === null) return true;
   return count > 0;
 }
@@ -195,6 +211,8 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
    * 24-hour window is open by definition, so the window check is not needed.
    */
   prepareOnly?: boolean;
+  /** A booking the business made by hand: a before-booking form is sent as in after mode (#963). */
+  includeBeforeBooking?: boolean;
   now?: number;
 } = {}): Promise<AfterBookingResult> {
   const now = opts.now ?? Date.now();
@@ -211,7 +229,9 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
       .select('name, intake_form_id, intake_timing, intake_frequency')
       .eq('id', booking.service_id).eq('business_id', businessId).maybeSingle();
     if (serviceError || !service) return { status: 'skipped', reason: 'service_unreadable' };
-    if (!service.intake_form_id || service.intake_timing !== 'after_booking') return { status: 'skipped', reason: 'no_after_intake' };
+    const sendsAfter = service.intake_timing === 'after_booking'
+      || (opts.includeBeforeBooking === true && service.intake_timing === 'before_booking');
+    if (!service.intake_form_id || !sendsAfter) return { status: 'skipped', reason: 'no_after_intake' };
     const formId = service.intake_form_id as string;
 
     const phone = toE164(booking.guest_phone as string | null);
@@ -293,21 +313,41 @@ export async function sendIntakeReminder(db: Db, intakeId: string, opts: {
   const now = opts.now ?? Date.now();
   try {
     const { data: intake, error } = await db.from('booking_intakes')
-      .select('id, business_id, service_id, form_id, customer_phone, status, timing, expires_at, reminder_sent_at, sent_at')
+      .select('id, business_id, service_id, form_id, booking_id, customer_phone, status, timing, expires_at, reminder_sent_at, sent_at, token_hash')
       .eq('id', intakeId).maybeSingle();
     if (error || !intake) return { status: 'skipped', reason: 'intake_unreadable' };
     if (intake.status !== 'pending' || intake.timing !== 'after_booking' || intake.reminder_sent_at || !intake.sent_at) {
       return { status: 'skipped', reason: 'not_due' };
     }
-    if (Date.parse(intake.expires_at as string) - now < MIN_AFTER_BOOKING_LIFETIME_MS) return { status: 'skipped', reason: 'session_started' };
     const businessId = intake.business_id as string;
     const phone = intake.customer_phone as string;
+    if (!intake.booking_id) return { status: 'skipped', reason: 'booking_inactive' };
 
-    const [{ data: business }, { data: service }] = await Promise.all([
-      db.from('businesses').select('name, subscription_tier').eq('id', businessId).maybeSingle(),
+    const [{ data: business }, { data: service }, { data: booking }] = await Promise.all([
+      db.from('businesses').select('name, subscription_tier, timezone').eq('id', businessId).maybeSingle(),
       db.from('services').select('name').eq('id', intake.service_id).eq('business_id', businessId).maybeSingle(),
+      db.from('bookings').select('status, date, time').eq('id', intake.booking_id).eq('business_id', businessId).maybeSingle(),
     ]);
     if (!business) return { status: 'skipped', reason: 'business_unreadable' };
+    // Never remind for a cancelled, finished or deleted booking.
+    if (!booking || booking.status !== 'confirmed') return { status: 'skipped', reason: 'booking_inactive' };
+    // A rescheduled booking: move the link's expiry to the new session start and
+    // let a later run remind at the right time.
+    const startsAt = zonedTimeToUtc(booking.date as string, booking.time as string | null, business.timezone as string | null);
+    if (!startsAt) return { status: 'skipped', reason: 'booking_inactive' };
+    if (startsAt.toISOString() !== new Date(intake.expires_at as string).toISOString()) {
+      if (startsAt.getTime() - now >= MIN_AFTER_BOOKING_LIFETIME_MS) {
+        await db.from('booking_intakes').update({ expires_at: startsAt.toISOString() })
+          .eq('id', intakeId).eq('business_id', businessId).eq('status', 'pending');
+      }
+      return { status: 'skipped', reason: 'rescheduled' };
+    }
+    if (startsAt.getTime() - now < MIN_AFTER_BOOKING_LIFETIME_MS) return { status: 'skipped', reason: 'session_started' };
+    // A link first sent inside the reminder band (booked less than a day ahead) is
+    // itself the reminder; a second one would only replace a link the client may have open.
+    if (new Date(intake.sent_at as string).getTime() > startsAt.getTime() - REMINDER_LEAD_MS) {
+      return { status: 'skipped', reason: 'sent_recently' };
+    }
     if (!(await isIntakeEntitled(db, businessId, business.subscription_tier as string))) return { status: 'skipped', reason: 'not_entitled' };
     if (!(await loadUsableForm(db, businessId, intake.form_id as string))) return { status: 'skipped', reason: 'form_unusable' };
 
@@ -332,7 +372,9 @@ export async function sendIntakeReminder(db: Db, intakeId: string, opts: {
         messageCategory: 'service', noRetry: true,
       });
     } catch {
-      await db.from('booking_intakes').update({ reminder_sent_at: null }).eq('id', intakeId).eq('business_id', businessId);
+      // Nothing reached the client: give back the link they already have, and release the claim.
+      await db.from('booking_intakes').update({ reminder_sent_at: null, token_hash: intake.token_hash })
+        .eq('id', intakeId).eq('business_id', businessId).eq('token_hash', hash);
       return { status: 'skipped', reason: 'send_failed' };
     }
     return { status: 'sent' };

@@ -27,25 +27,37 @@ export async function GET(request: NextRequest) {
 
   const started = Date.now();
   const db = createServiceClient();
-  const { data: due, error } = await db.from('booking_intakes').select('id')
-    .eq('status', 'pending').eq('timing', 'after_booking')
-    .is('reminder_sent_at', null).not('sent_at', 'is', null)
-    .gt('expires_at', new Date(started + REMINDER_FROM_HOURS * 3_600_000).toISOString())
-    .lte('expires_at', new Date(started + REMINDER_TO_HOURS * 3_600_000).toISOString())
-    .order('expires_at', { ascending: true })
-    .limit(BATCH);
-  if (error) {
-    logger.error('[CRON intake-reminders] Due query failed:', error.code || 'unknown');
-    return NextResponse.json({ error: 'query_failed' }, { status: 500 });
-  }
-
+  const from = new Date(started + REMINDER_FROM_HOURS * 3_600_000).toISOString();
+  const to = new Date(started + REMINDER_TO_HOURS * 3_600_000).toISOString();
   const resolver = new ChannelResolver(db);
   const counts: Record<string, number> = {};
-  for (const row of due || []) {
-    if (Date.now() - started > TIME_BUDGET_MS) { counts.deferred = (counts.deferred || 0) + 1; continue; }
-    const result = await sendIntakeReminder(db, row.id as string, { resolver });
-    const key = result.status === 'sent' ? 'sent' : result.reason;
-    counts[key] = (counts[key] || 0) + 1;
+  let due = 0;
+  // Page through every due row: skipped rows keep matching, so a fixed first
+  // batch could otherwise starve later clients for the whole reminder window.
+  // Rows that were sent drop out of the filter, so the offset only counts the rest.
+  for (let offset = 0; Date.now() - started <= TIME_BUDGET_MS;) {
+    const { data, error } = await db.from('booking_intakes').select('id')
+      .eq('status', 'pending').eq('timing', 'after_booking')
+      .is('reminder_sent_at', null).not('sent_at', 'is', null)
+      .gt('expires_at', from).lte('expires_at', to)
+      .order('expires_at', { ascending: true }).order('id', { ascending: true })
+      .range(offset, offset + BATCH - 1);
+    if (error) {
+      logger.error('[CRON intake-reminders] Due query failed:', error.code || 'unknown');
+      return NextResponse.json({ error: 'query_failed', due, ...counts }, { status: 500 });
+    }
+    const rows = data || [];
+    due += rows.length;
+    let stillDue = 0;
+    for (const row of rows) {
+      if (Date.now() - started > TIME_BUDGET_MS) { counts.deferred = (counts.deferred || 0) + 1; stillDue++; continue; }
+      const result = await sendIntakeReminder(db, row.id as string, { resolver });
+      const key = result.status === 'sent' ? 'sent' : result.reason;
+      counts[key] = (counts[key] || 0) + 1;
+      if (result.status !== 'sent') stillDue++;
+    }
+    if (rows.length < BATCH) break;
+    offset += stillDue;
   }
-  return NextResponse.json({ due: (due || []).length, ...counts });
+  return NextResponse.json({ due, ...counts });
 }

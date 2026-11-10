@@ -30,7 +30,8 @@ export function makeDb(tables: Record<string, Row[]>, opts: { failInsert?: () =>
       const hit = rows.filter(r => matches(r, filters)).slice(0, limitN);
       if (op === 'update') { hit.forEach(r => Object.assign(r, patch)); return { data: hit, error: null }; }
       if (op === 'delete') { tables[table] = rows.filter(r => !hit.includes(r)); return { data: hit, error: null }; }
-      return head ? { data: null, count: hit.length, error: null } : { data: hit, error: null };
+      // Like a real database, a read returns copies, never the stored rows.
+      return head ? { data: null, count: hit.length, error: null } : { data: hit.map(r => ({ ...r })), error: null };
     };
     const q: Record<string, unknown> = {
       select: (_c?: string, o?: { head?: boolean }) => { if (o?.head) head = true; return q; },
@@ -38,6 +39,7 @@ export function makeDb(tables: Record<string, Row[]>, opts: { failInsert?: () =>
       update: (p: Row) => { op = 'update'; patch = p; return q; },
       delete: () => { op = 'delete'; return q; },
       eq: (c: string, v: unknown) => { filters.push(r => r[c] === v); return q; },
+      neq: (c: string, v: unknown) => { filters.push(r => r[c] !== v); return q; },
       in: (c: string, v: unknown[]) => { filters.push(r => v.includes(r[c])); return q; },
       is: (c: string, v: unknown) => { filters.push(r => (r[c] ?? null) === v); return q; },
       not: (c: string, _o: string, v: unknown) => { filters.push(r => (r[c] ?? null) !== v); return q; },

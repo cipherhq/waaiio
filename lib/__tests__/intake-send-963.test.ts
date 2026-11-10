@@ -39,6 +39,20 @@ function world(over: { service?: Row; booking?: Row; business?: Row; form?: Row;
     messaging_opt_outs: over.optOuts || [],
   });
 }
+/** Every read of `table` fails, as if the database could not answer. */
+function failReads(db: ReturnType<typeof makeDb>, table: string) {
+  const original = db.from;
+  (db as { from: unknown }).from = (t: string) => {
+    const q = original(t) as Record<string, unknown>;
+    if (t === table) {
+      const err = { data: null, count: null, error: { code: 'XX' } };
+      q.then = (res: (v: unknown) => unknown) => Promise.resolve(err).then(res);
+      q.maybeSingle = async () => err;
+    }
+    return q;
+  };
+  return db;
+}
 const sender = () => {
   const sent: Array<{ to: string; text: string }> = [];
   let fail = false;
@@ -70,6 +84,15 @@ describe('helpers', () => {
     expect(zonedTimeToUtc('2026-07-01', '10:00', 'America/New_York')!.toISOString()).toBe('2026-07-01T14:00:00.000Z');
     expect(zonedTimeToUtc('2026-11-20', '10:00', 'Not/AZone')!.toISOString()).toBe('2026-11-20T10:00:00.000Z');
     expect(zonedTimeToUtc('bad', '10:00', 'UTC')).toBeNull();
+  });
+
+  it('handles times next to a daylight-saving change', () => {
+    // US spring forward 2026-03-08 02:00 -> 03:00 EDT (UTC-4).
+    expect(zonedTimeToUtc('2026-03-08', '03:30', 'America/New_York')!.toISOString()).toBe('2026-03-08T07:30:00.000Z');
+    expect(zonedTimeToUtc('2026-03-08', '01:30', 'America/New_York')!.toISOString()).toBe('2026-03-08T06:30:00.000Z');
+    // UK fall back 2026-10-25 02:00 BST -> 01:00 GMT.
+    expect(zonedTimeToUtc('2026-10-25', '03:00', 'Europe/London')!.toISOString()).toBe('2026-10-25T03:00:00.000Z');
+    expect(zonedTimeToUtc('2026-10-24', '12:00', 'Europe/London')!.toISOString()).toBe('2026-10-24T11:00:00.000Z');
   });
 });
 
@@ -151,6 +174,22 @@ describe('deliverAfterBookingIntake', () => {
     expect(db.tables.booking_intakes).toEqual([]);
   });
 
+  it('a booking made by hand sends a before-booking form as in after mode; other paths do not', async () => {
+    const db = world({ service: { intake_timing: 'before_booking' } }); const s = sender();
+    expect(await deliverAfterBookingIntake(db as never, 'k1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'no_after_intake' });
+    const r = await deliverAfterBookingIntake(db as never, 'k1', { resolver: s.resolver, includeBeforeBooking: true, now: NOW });
+    expect(r.status).toBe('sent');
+    expect(db.tables.booking_intakes[0]).toMatchObject({ timing: 'after_booking', booking_id: 'k1' });
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('sends nothing when the STOP list cannot be read (fails closed)', async () => {
+    const db = failReads(world(), 'messaging_opt_outs'); const s = sender();
+    expect(await deliverAfterBookingIntake(db as never, 'k1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'opted_out' });
+    expect(db.tables.booking_intakes).toEqual([]);
+    expect(s.sent).toEqual([]);
+  });
+
   it('prepareOnly (bot, live chat) returns the message and link without sending or checking the window', async () => {
     env.window = 'closed';
     const db = world(); const s = sender();
@@ -198,6 +237,17 @@ describe('before-booking intake (bot)', () => {
     expect(db.tables.booking_intakes[0].booking_id).toBe('k1');
   });
 
+  it('hasAnsweredBefore leaves out the intake of the booking in progress', async () => {
+    const db = world({ intakes: [{ id: 'mine', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }] });
+    expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678', 'mine')).toBe(false);
+    expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(true);
+  });
+
+  it('hasAnsweredBefore counts an unreadable answer as answered, so a first-booking form is never sent twice', async () => {
+    const db = failReads(world(), 'booking_intakes');
+    expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(true);
+  });
+
   it('hasAnsweredBefore matches the client by phone and form within the business', async () => {
     const db = world({ intakes: [{ id: 'i', business_id: BIZ, form_id: 'f1', customer_phone: '+2348012345678', status: 'submitted' }] });
     expect(await hasAnsweredBefore(db as never, BIZ, 'f1', '2348012345678')).toBe(true);
@@ -207,14 +257,17 @@ describe('before-booking intake (bot)', () => {
 });
 
 describe('sendIntakeReminder', () => {
+  // NOW + 24h = 2026-11-11T10:00Z = 11:00 in Africa/Lagos (the booking k1 below).
   const pending = (over: Row = {}) => ({
-    id: 'i1', business_id: BIZ, service_id: 's1', form_id: 'f1', customer_phone: '+2348012345678',
-    status: 'pending', timing: 'after_booking', sent_at: new Date(NOW - 3_600_000).toISOString(),
+    id: 'i1', business_id: BIZ, service_id: 's1', form_id: 'f1', booking_id: 'k1', customer_phone: '+2348012345678',
+    status: 'pending', timing: 'after_booking', sent_at: new Date(NOW - 48 * 3_600_000).toISOString(),
     reminder_sent_at: null, expires_at: new Date(NOW + 24 * 3_600_000).toISOString(), token_hash: 'a'.repeat(64), ...over,
   });
+  const due = (over: { intake?: Row; booking?: Row; optOuts?: Row[] } = {}) =>
+    world({ intakes: [pending(over.intake)], booking: { date: '2026-11-11', time: '11:00:00', ...over.booking }, optOuts: over.optOuts });
 
   it('sends one reminder with a fresh link, then never again', async () => {
-    const db = world({ intakes: [pending()] }); const s = sender();
+    const db = due(); const s = sender();
     expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'sent' });
     const row = db.tables.booking_intakes[0];
     expect(row.reminder_sent_at).toBe(new Date(NOW).toISOString());
@@ -225,30 +278,76 @@ describe('sendIntakeReminder', () => {
     expect(s.sent).toHaveLength(1);
   });
 
-  it('releases the claim when the send fails, so a later run can retry', async () => {
-    const db = world({ intakes: [pending()] }); const s = sender(); s.failNext();
+  it('does not remind when the first link was sent less than a day before the session (it is the reminder)', async () => {
+    const db = due({ intake: { sent_at: new Date(NOW - 15 * 60_000).toISOString() } }); const s = sender();
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'sent_recently' });
+    expect(db.tables.booking_intakes[0].token_hash).toBe('a'.repeat(64));
+    expect(s.sent).toEqual([]);
+  });
+
+  it('two runs racing: only the one that claims the row sends', async () => {
+    const db = due(); const s = sender();
+    const original = db.from;
+    (db as { from: unknown }).from = (t: string) => {
+      const q = original(t) as Record<string, unknown>;
+      if (t === 'booking_intakes') {
+        const update = q.update as (p: Row) => unknown;
+        // The other run claims the row between this run's read and its claim.
+        q.update = (p: Row) => { db.tables.booking_intakes[0].reminder_sent_at = new Date(NOW - 1000).toISOString(); return update(p); };
+      }
+      return q;
+    };
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'already_claimed' });
+    expect(db.tables.booking_intakes[0].token_hash).toBe('a'.repeat(64));
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a failed send releases the claim and gives back the link the client already has', async () => {
+    const db = due(); const s = sender(); s.failNext();
     expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'send_failed' });
     expect(db.tables.booking_intakes[0].reminder_sent_at).toBeNull();
+    expect(db.tables.booking_intakes[0].token_hash).toBe('a'.repeat(64));
+  });
+
+  it('never reminds for a cancelled, finished or deleted booking', async () => {
+    for (const status of ['cancelled', 'completed', 'no_show', 'pending']) {
+      const s = sender();
+      expect(await sendIntakeReminder(due({ booking: { status } }) as never, 'i1', { resolver: s.resolver, now: NOW }), status).toEqual({ status: 'skipped', reason: 'booking_inactive' });
+      expect(s.sent).toEqual([]);
+    }
+    expect(await sendIntakeReminder(due({ intake: { booking_id: null } }) as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'booking_inactive' });
+  });
+
+  it('a rescheduled booking moves the link expiry to the new start instead of reminding now', async () => {
+    const db = due({ booking: { date: '2026-11-13', time: '15:00:00' } }); const s = sender();
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'rescheduled' });
+    expect(db.tables.booking_intakes[0].expires_at).toBe('2026-11-13T14:00:00.000Z');
+    expect(s.sent).toEqual([]);
   });
 
   it.each([
     ['submitted', { status: 'submitted' }, 'not_due'],
     ['before-booking intake', { timing: 'before_booking' }, 'not_due'],
     ['never sent', { sent_at: null }, 'not_due'],
-    ['session already started', { expires_at: new Date(NOW + 60_000).toISOString() }, 'session_started'],
   ])('does not remind: %s', async (_n, over, reason) => {
-    const db = world({ intakes: [pending(over)] }); const s = sender();
+    const db = due({ intake: over }); const s = sender();
     expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason });
     expect(s.sent).toEqual([]);
   });
 
+  it('does not remind once the session has started', async () => {
+    // Session 1 minute away: booking 11:01 local today (NOW is 10:00Z = 11:00 Lagos).
+    const db = due({ intake: { expires_at: new Date(NOW + 60_000).toISOString() }, booking: { date: '2026-11-10', time: '11:01:00' } });
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'session_started' });
+  });
+
   it('does not remind outside the 24-hour window, after STOP, or after the plan lapsed', async () => {
     env.window = 'closed';
-    expect((await sendIntakeReminder(world({ intakes: [pending()] }) as never, 'i1', { resolver: sender().resolver, now: NOW }))).toEqual({ status: 'skipped', reason: 'window_closed' });
+    expect((await sendIntakeReminder(due() as never, 'i1', { resolver: sender().resolver, now: NOW }))).toEqual({ status: 'skipped', reason: 'window_closed' });
     env.window = 'open';
-    const stopped = world({ intakes: [pending()], optOuts: [{ phone: '2348012345678', channel: 'whatsapp', resubscribed_at: null }] });
+    const stopped = due({ optOuts: [{ phone: '2348012345678', channel: 'whatsapp', resubscribed_at: null }] });
     expect(await sendIntakeReminder(stopped as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'opted_out' });
     env.tier = 'free';
-    expect(await sendIntakeReminder(world({ intakes: [pending()] }) as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'not_entitled' });
+    expect(await sendIntakeReminder(due() as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'not_entitled' });
   });
 });
