@@ -12,8 +12,9 @@
  */
 
 // Tokens are 32+ base64url characters (the route accepts [A-Za-z0-9_-]{32,256}),
-// so code paths such as lib/intake/answers.ts are not touched.
-const PRIVATE_LINK = /(\/(?:api\/)?intake\/)[A-Za-z0-9_-]{32,}(?=[/?#\s"'<>]|$)/g;
+// so code paths such as lib/intake/answers.ts are not touched. The greedy match
+// ends at the token, whatever follows it (/, ?, ), ., comma, &, % ...).
+const PRIVATE_LINK = /(\/(?:api\/)?intake\/)[A-Za-z0-9_-]{32,}/g;
 
 export function redactPrivateLinkPath(value: string): string {
   return value.replace(PRIVATE_LINK, '$1[token]');

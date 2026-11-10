@@ -13,6 +13,13 @@ describe('redactPrivateLinkPath', () => {
     expect(redactPrivateLinkPath(`https://waaiio.com/intake/${TOKEN}`)).toBe('https://waaiio.com/intake/[token]');
     expect(redactPrivateLinkPath(`/api/intake/${TOKEN}?x=1#y`)).toBe('/api/intake/[token]?x=1#y');
     expect(redactPrivateLinkPath(`GET /intake/${TOKEN} 200`)).toBe('GET /intake/[token] 200');
+    for (const [input, out] of [
+      [`fetch failed (https://w.com/api/intake/${TOKEN})`, 'fetch failed (https://w.com/api/intake/[token])'],
+      [`see /intake/${TOKEN}.`, 'see /intake/[token].'],
+      [`a /intake/${TOKEN}, b`, 'a /intake/[token], b'],
+      [`url=/intake/${TOKEN}&x`, 'url=/intake/[token]&x'],
+      [`/intake/${TOKEN}%20`, '/intake/[token]%20'],
+    ]) expect(redactPrivateLinkPath(input)).toBe(out);
   });
 
   it('leaves other paths alone', () => {
