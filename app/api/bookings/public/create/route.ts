@@ -5,6 +5,7 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { deliverAfterBookingIntake, findWebIntake, linkIntakeToBooking, toE164, webBeforeBookingForm } from '@/lib/intake/send';
 
 /**
  * POST /api/bookings/public/create
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
       otpToken,
       classSessionId,
       expectedTerms,
+      intakeId,
     } = body as {
       businessSlug: string;
       serviceId?: string;
@@ -44,6 +46,7 @@ export async function POST(request: NextRequest) {
       otpToken?: string;
       classSessionId?: string;
       expectedTerms?: { price: number; deposit: number; country: string; quantity: number };
+      intakeId?: string;
     };
 
     // Basic validation — exactly one of serviceId or appointmentId required
@@ -122,6 +125,7 @@ export async function POST(request: NextRequest) {
     let itemMetadata: Record<string, unknown> | null;
     let itemRequiresStaff = false;
     let itemStaffIds: string[] = [];
+    let itemIntakeFormId: string | null = null;
     const isAppointmentBooking = !!appointmentId;
 
     if (appointmentId) {
@@ -150,7 +154,7 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: service, error: svcError } = await supabase
         .from('services')
-        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids')
+        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids, intake_form_id')
         .eq('id', serviceId!)
         .eq('business_id', business.id)
         .eq('is_active', true)
@@ -170,6 +174,7 @@ export async function POST(request: NextRequest) {
       itemMetadata = service.metadata as Record<string, unknown> | null;
       itemRequiresStaff = service.requires_staff ?? false;
       itemStaffIds = (service.staff_ids as string[]) || [];
+      itemIntakeFormId = (service.intake_form_id as string | null) || null;
     }
 
     const currentTerms = { price: itemPrice, deposit: configuredDeposit, country: business.country_code, quantity: partySize };
@@ -272,6 +277,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // #963 client intake forms (Owner decisions 2026-11-10): a service with a form needs
+    // the client's phone, and a before-booking form must be answered in the page first.
+    let intakeToLink: string | null = null;
+    if (!isAppointmentBooking && itemIntakeFormId) {
+      const intakePhone = toE164(guestPhone);
+      if (!intakePhone) {
+        return NextResponse.json({ code: 'phone_required', error: 'Please add your phone number.' }, { status: 400 });
+      }
+      const beforeForm = await webBeforeBookingForm(supabase, {
+        businessId: business.id, tier: business.subscription_tier, serviceId: itemId, email: guestEmail.toLowerCase().trim(),
+      });
+      if (beforeForm) {
+        const intake = typeof intakeId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(intakeId)
+          ? await findWebIntake(supabase, { businessId: business.id, serviceId: itemId, formId: beforeForm.formId, phone: intakePhone, intakeId })
+          : null;
+        if (intake?.status !== 'submitted') {
+          return NextResponse.json({ code: 'intake_required', error: 'Please fill in the form before booking.' }, { status: 409 });
+        }
+        intakeToLink = intake.id;
+      }
+    }
+
     // Find or create user by email (verified via OTP)
     let userId: string;
     const emailLower = guestEmail.toLowerCase();
@@ -368,6 +395,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Committed booking terms unavailable' }, { status: 503 });
     }
 
+    if (intakeToLink) await linkIntakeToBooking(supabase, business.id, intakeToLink, slotResult.booking_id, itemId);
+
     // If deposit > 0, initialize payment
     if (slotResult.committed_deposit > 0) {
       const paymentResult = await initializePayment(supabase, {
@@ -400,12 +429,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Free service — booking is confirmed
+    // Free service — booking is confirmed. #963: an after-booking form goes by email and
+    // is also shown on the confirmation screen. Never affects the booking result.
+    let intakeUrl: string | undefined;
+    if (!isAppointmentBooking && itemIntakeFormId) {
+      try {
+        const intake = await deliverAfterBookingIntake(supabase, slotResult.booking_id, { keepIfEmailFails: true });
+        if (intake.status === 'sent') intakeUrl = intake.url;
+      } catch (intakeErr) {
+        logger.warn('[PUBLIC_BOOKING] Intake form not sent (non-critical):', (intakeErr as Error).message);
+      }
+    }
     return NextResponse.json({
       success: true,
       bookingId: slotResult.booking_id,
       referenceCode: slotResult.reference_code,
-    });
+      ...(intakeUrl ? { intakeUrl } : {}),
+    }, intakeUrl ? { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } } : undefined);
   } catch {
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
   }

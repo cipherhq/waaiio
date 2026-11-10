@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { answerableFields, checkIntakeAnswers, hasRequiredFileQuestion } from '@/lib/intake/answers';
+import { isWebBooking } from '@/lib/intake/send';
 
 /**
  * Client intake link (#963 lane 2). The token is a single-use secret sent to
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
       db.from('businesses').select('name, logo_url').eq('id', intake.business_id).maybeSingle(),
       db.from('services').select('name').eq('id', intake.service_id).eq('business_id', intake.business_id).maybeSingle(),
       intake.booking_id
-        ? db.from('bookings').select('date, time').eq('id', intake.booking_id).eq('business_id', intake.business_id).maybeSingle()
+        ? db.from('bookings').select('date, time, metadata').eq('id', intake.booking_id).eq('business_id', intake.business_id).maybeSingle()
         : Promise.resolve({ data: null }),
     ]);
 
@@ -70,6 +71,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
       service_name: service?.name || null,
       booking_date: booking.data?.date || null,
       booking_time: booking.data?.time || null,
+      // Booked on the public booking page: the page says "close this page", not "go back to WhatsApp".
+      from_web: isWebBooking(booking.data?.metadata),
     };
 
     if (intake.status === 'submitted') return json({ ...base, status: 'submitted' });

@@ -11,6 +11,7 @@ interface IntakeData {
   service_name: string | null;
   booking_date: string | null;
   booking_time: string | null;
+  from_web?: boolean;
   title?: string;
   description?: string | null;
   fields?: IntakeField[];
@@ -20,10 +21,10 @@ type View = 'loading' | 'ready' | 'submitting' | 'done' | 'message';
 
 const INPUT = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500';
 
-function Message({ title, text }: { title: string; text: string }) {
+function Message({ title, text, inline }: { title: string; text: string; inline?: boolean }) {
   return (
     // ph-no-capture: analytics must never record anything on an intake page.
-    <div className="ph-no-capture flex min-h-screen items-center justify-center bg-gray-50 p-6" data-testid="intake-page">
+    <div className={`ph-no-capture flex items-center justify-center p-6 ${inline ? '' : 'min-h-screen bg-gray-50'}`} data-testid="intake-page">
       <div className="max-w-sm text-center">
         <h1 className="text-xl font-bold text-gray-900">{title}</h1>
         <p className="mt-2 text-sm text-gray-500">{text}</p>
@@ -33,8 +34,12 @@ function Message({ title, text }: { title: string; text: string }) {
   );
 }
 
-/** Client intake page (#963 lane 2). Answers go only to the business that owns the booking. */
-export function IntakeFormView({ token }: { token: string }) {
+/**
+ * Client intake page (#963 lane 2). Answers go only to the business that owns the booking.
+ * `onDone` (public booking page): shown inside the page; once the answers are in,
+ * the page carries on with the booking instead of showing the thank-you screen.
+ */
+export function IntakeFormView({ token, onDone }: { token: string; onDone?: () => void }) {
   const [data, setData] = useState<IntakeData | null>(null);
   const [view, setView] = useState<View>('loading');
   const [message, setMessage] = useState({ title: '', text: '' });
@@ -71,6 +76,10 @@ export function IntakeFormView({ token }: { token: string }) {
     return () => { cancelled = true; };
   }, [token]);
 
+  useEffect(() => {
+    if (view === 'done' && onDone) onDone();
+  }, [view, onDone]);
+
   function update(id: string, value: unknown) {
     setAnswers(prev => ({ ...prev, [id]: value }));
   }
@@ -103,19 +112,21 @@ export function IntakeFormView({ token }: { token: string }) {
     }
   }
 
+  const screen = onDone ? 'py-10' : 'min-h-screen bg-gray-50';
   if (view === 'loading') {
     return (
-      <div className="ph-no-capture flex min-h-screen items-center justify-center bg-gray-50">
+      <div className={`ph-no-capture flex items-center justify-center ${screen}`}>
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-violet-600" />
       </div>
     );
   }
-  if (view === 'message') return <Message title={message.title} text={message.text} />;
+  if (view === 'message') return <Message title={message.title} text={message.text} inline={!!onDone} />;
   if (view === 'done') {
+    if (onDone) return null;
     return (
       <Message
         title="Thank you"
-        text={`Your answers have been sent${data?.business_name ? ` to ${data.business_name}` : ''}. You can go back to WhatsApp now.`}
+        text={`Your answers have been sent${data?.business_name ? ` to ${data.business_name}` : ''}. ${data?.from_web ? 'You can close this page now.' : 'You can go back to WhatsApp now.'}`}
       />
     );
   }
@@ -129,8 +140,8 @@ export function IntakeFormView({ token }: { token: string }) {
 
   return (
     // ph-no-capture: analytics must never record the client's answers or taps.
-    <div className="ph-no-capture min-h-screen bg-gray-50" data-testid="intake-page">
-      <div className="mx-auto max-w-lg px-4 py-8">
+    <div className={`ph-no-capture ${onDone ? '' : 'min-h-screen bg-gray-50'}`} data-testid="intake-page">
+      <div className={onDone ? '' : 'mx-auto max-w-lg px-4 py-8'}>
         <div className="mb-6">
           {data.business_logo && (
             <Image src={data.business_logo} alt={data.business_name} width={120} height={40} className="mb-3 h-10 w-auto rounded" />
