@@ -7,6 +7,35 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ReceiptLineItem } from '@/lib/pdf/receipt-generator';
+import { validateTaxSnapshot, type TaxSnapshot } from '@/lib/tax/calculation';
+import { netPaymentTaxAllocations } from '@/lib/tax/payment-allocation';
+import { majorToTaxMinor } from '@/lib/tax/money';
+import type { ReceiptTaxSource } from '@/lib/tax/receipt';
+
+/** Historical entity tax, with collected tax only when the saved ledger proves the paid total. */
+export async function loadEntityReceiptTax(
+  supabase: SupabaseClient,
+  input: { snapshot: unknown; businessId: string; entityId: string; entityColumn: 'booking_id' | 'order_id' | 'invoice_id'; paidAmount: number },
+): Promise<ReceiptTaxSource | undefined> {
+  if (input.snapshot == null) return undefined;
+  const snapshot = input.snapshot as TaxSnapshot;
+  validateTaxSnapshot(snapshot);
+  const source: ReceiptTaxSource = { snapshot };
+  const { data: payments, error } = await supabase.from('payments').select('id, tax_allocation')
+    .eq('business_id', input.businessId).eq(input.entityColumn, input.entityId).eq('status', 'success');
+  if (error || !Array.isArray(payments) || !payments.length || payments.some(payment => payment.tax_allocation == null)) return source;
+  const { data: refunds, error: refundError } = await supabase.from('refunds').select('tax_allocation')
+    .eq('business_id', input.businessId).in('payment_id', payments.map(payment => payment.id)).eq('status', 'success');
+  if (refundError || !Array.isArray(refunds) || refunds.some(refund => refund.tax_allocation == null)) return source;
+  const net = netPaymentTaxAllocations(payments.map(payment => payment.tax_allocation), refunds.map(refund => refund.tax_allocation), snapshot);
+  // A concurrent refund or missing legacy allocation may make the balance read stale.
+  // Keep the original sale breakdown, but do not invent a collected-tax figure.
+  if (net.grossAmount === majorToTaxMinor(input.paidAmount, snapshot.currency)) {
+    source.allocations = [net];
+    source.refundsApplied = refunds.length > 0;
+  }
+  return source;
+}
 
 /** order_items embedded with their product name (orders have no product_name column). */
 export const ORDER_ITEMS_SELECT = 'order_items(variant_label, quantity, unit_price, products(name))';
