@@ -27,6 +27,13 @@ export interface AttemptParams {
   configVersionId?: string;
 }
 
+/**
+ * 'pending_authorization' is also the final state of an attempt that was blocked before
+ * sending: refused by the financial gate (e.g. insufficient_allowance_balance) or by the
+ * suspension guard. Such a row has no sent_at, no meta_message_id and
+ * financial_disposition 'pending_authorization' (never reserved, nothing charged).
+ * It is not 'failed_send', which means a send to Meta was tried and failed (Owner decision on #976).
+ */
 export type AttemptStatus = 'pending_authorization' | 'sending' | 'accepted' | 'failed_send' | 'ambiguous' | 'review_required';
 
 /** Sentinel error thrown when a transport outcome is ambiguous (may have emitted). */

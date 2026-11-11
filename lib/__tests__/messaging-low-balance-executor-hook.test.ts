@@ -37,7 +37,9 @@ describe('FlowExecutor.sendMessages → low-balance check', () => {
   it('runs when the send was refused for insufficient balance', async () => {
     checkLowBalanceAlerts.mockClear();
     const ex = await executorWith(async () => { throw new Error('Financial authorization denied: insufficient_allowance_balance'); });
-    await ex.sendMessages('+12404844862', [{ type: 'text', text: 'hi' }], undefined, {});
+    // #976: the refusal is passed up (BotService sends the #682 notice); the check has already run.
+    await expect(ex.sendMessages('+12404844862', [{ type: 'text', text: 'hi' }], undefined, {}))
+      .rejects.toThrow('Financial authorization denied: insufficient_allowance_balance');
     expect(checkLowBalanceAlerts).toHaveBeenCalledTimes(1);
   });
 
