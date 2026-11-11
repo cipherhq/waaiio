@@ -24,3 +24,7 @@
 - Updated only refund convergence and recurring finalization test fixtures to preserve immutable accounting provenance. All original assertions and runtime guards remain intact.
 - Restored the historical M356 projection signatures only within its existing migration replay fixture; current tax migrations are unchanged.
 - Disposable PG17 evidence: refund convergence 30 passed/zero skipped; recurring finalization 34 passed/zero skipped. Independent reviewer verified fixture boundaries. Existing dedicated CI teardown disposes retained rows; recurring suite requires a fresh database.
+
+### Payment identity test fixtures
+- Three existing database suites now seed payments with their owning business; entity ACL checks use exact current M531 signatures. Runtime code, accounting guards and assertion expectations remain unchanged.
+- Fresh disposable PG17: saved-card session 11, saved-card ACL 1, entity commit 70 passed, all zero skips. Historical replay tests require fresh databases; contaminated same-database reruns are excluded from evidence.
