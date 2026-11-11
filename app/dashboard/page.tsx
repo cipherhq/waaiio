@@ -82,8 +82,6 @@ export default function DashboardOverview() {
   const [loading, setLoading] = useState(true);
   const [linkCopied, setLinkCopied] = useState(false);
   const [bookingLinkCopied, setBookingLinkCopied] = useState(false);
-  const [deletionScheduled, setDeletionScheduled] = useState<string | null>(null);
-  const [cancellingDeletion, setCancellingDeletion] = useState(false);
 
   const { labels } = useCategoryConfig(business.category);
   // Shop-type categories call their entity an "order", but these cards count
@@ -96,25 +94,6 @@ export default function DashboardOverview() {
   const whatsappLink = buildShortMerchantLink(business.bot_code, business.id);
   // Printed QR codes stay on the permanent /m/{uuid} link (bot codes can still change).
   const qrLink = buildMerchantLink(business.id);
-
-  // Check if account deletion is scheduled (grace period)
-  useEffect(() => {
-    async function checkDeletion() {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('metadata')
-        .eq('id', user.id)
-        .maybeSingle();
-      const meta = (profile?.metadata || {}) as Record<string, unknown>;
-      if (meta.deletion_scheduled && meta.deletion_date) {
-        setDeletionScheduled(meta.deletion_date as string);
-      }
-    }
-    checkDeletion();
-  }, []);
 
   useEffect(() => {
     async function load() {
@@ -263,21 +242,6 @@ export default function DashboardOverview() {
     no_show: 'bg-red-100 text-red-700',
   };
 
-  async function cancelDeletion() {
-    setCancellingDeletion(true);
-    try {
-      const res = await fetch('/api/account', { method: 'PATCH' });
-      if (res.ok) {
-        setDeletionScheduled(null);
-        window.location.reload();
-      }
-    } catch {
-      // silently fail — user can retry
-    } finally {
-      setCancellingDeletion(false);
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -290,30 +254,6 @@ export default function DashboardOverview() {
 
   return (
     <div>
-      {/* Scheduled deletion banner */}
-      {deletionScheduled && (
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-red-200 bg-red-50 px-5 py-4 relative z-10">
-          <div className="flex items-center gap-3">
-            <svg aria-hidden="true" className="h-6 w-6 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <p className="text-sm font-semibold text-red-900">
-                Your account is scheduled for deletion on {new Date(deletionScheduled).toLocaleDateString()}.
-              </p>
-              <p className="text-xs text-red-700">Your businesses are currently deactivated. Use Cancel Deletion to withdraw this request.</p>
-            </div>
-          </div>
-          <button
-            onClick={cancelDeletion}
-            disabled={cancellingDeletion}
-            className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition disabled:opacity-50"
-          >
-            {cancellingDeletion ? 'Cancelling...' : 'Cancel Deletion'}
-          </button>
-        </div>
-      )}
-
       {/* Incomplete setup banner */}
       {business.status === 'pending' && (
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-orange-200 bg-orange-50 px-5 py-4 relative z-10">
