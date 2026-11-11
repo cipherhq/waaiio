@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
-import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
 
@@ -38,9 +37,10 @@ interface SurveyResponse {
 
 interface Contact {
   phone: string;
-  first_name: string | null;
-  last_name: string | null;
+  name: string | null;
 }
+
+const MAX_RECIPIENTS = 500;
 
 type View = 'list' | 'create' | 'results' | 'send';
 
@@ -65,22 +65,39 @@ export default function SurveysPage() {
   const [selectedPhones, setSelectedPhones] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ sent: number; failed: number } | null>(null);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsError, setContactsError] = useState('');
+  const [contactsTruncated, setContactsTruncated] = useState(false);
+  const contactsRequest = useRef(0);
+  const contactsAbort = useRef<AbortController | null>(null);
+  const businessEpoch = useRef(0);
+  const invalidateRequests = useCallback(() => {
+    businessEpoch.current++; contactsRequest.current++; contactsAbort.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    setContacts([]); setSelectedPhones([]); setSelectedSurvey(null); setSendResult(null);
+    setContactsError(''); setContactsTruncated(false); setContactsLoading(false);
+    setView('list'); setSending(false); setSurveys([]);
+    return invalidateRequests;
+  }, [business.id, invalidateRequests]);
 
   const tier = business.subscription_tier || 'free';
   const isGated = tier === 'free';
 
   const fetchSurveys = useCallback(async () => {
+    const epoch = businessEpoch.current;
     setLoading(true);
     try {
       const res = await fetch(`/api/surveys?business_id=${business.id}`);
       if (res.ok) {
         const data = await res.json();
-        setSurveys(data.surveys || []);
+        if (epoch === businessEpoch.current) setSurveys(data.surveys || []);
       }
     } catch {
       // Non-critical
     }
-    setLoading(false);
+    if (epoch === businessEpoch.current) setLoading(false);
   }, [business.id]);
 
   useEffect(() => {
@@ -108,35 +125,25 @@ export default function SurveysPage() {
     setSelectedSurvey(survey);
     setView('send');
     setSendResult(null);
-    const supabase = createClient();
-    const { data: sessions } = await supabase
-      .from('bot_sessions')
-      .select('whatsapp_number, user_id')
-      .eq('business_id', business.id);
-
-    const phoneMap = new Map<string, Contact>();
-    for (const s of sessions || []) {
-      if (s.whatsapp_number && !phoneMap.has(s.whatsapp_number)) {
-        phoneMap.set(s.whatsapp_number, { phone: s.whatsapp_number, first_name: null, last_name: null });
-      }
+    const request = ++contactsRequest.current;
+    contactsAbort.current?.abort();
+    const controller = new AbortController();
+    contactsAbort.current = controller;
+    setContacts([]); setSelectedPhones([]); setContactsError(''); setContactsTruncated(false); setContactsLoading(true);
+    try {
+      const res = await fetch(`/api/broadcasts/recipients?${new URLSearchParams({ businessId: business.id })}`, { signal: controller.signal, cache: 'no-store' });
+      if (!res.ok) throw new Error('Recipients unavailable');
+      const data = await res.json();
+      if (request !== contactsRequest.current) return;
+      if (!Array.isArray(data.recipients)) throw new Error('Recipients unavailable');
+      const recipients: Contact[] = data.recipients.slice(0, MAX_RECIPIENTS);
+      setContacts(recipients); setSelectedPhones(recipients.map(c => c.phone));
+      setContactsTruncated(data.truncated === true || data.recipients.length > MAX_RECIPIENTS);
+    } catch {
+      if (request === contactsRequest.current) setContactsError('Could not load opted-in contacts. Reopen Send to try again.');
+    } finally {
+      if (request === contactsRequest.current) setContactsLoading(false);
     }
-
-    // Enrich with profile names
-    const userIds = (sessions || []).filter(s => s.user_id).map(s => s.user_id);
-    if (userIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, phone, first_name, last_name')
-        .in('id', userIds);
-      for (const p of profiles || []) {
-        if (p.phone && phoneMap.has(p.phone)) {
-          phoneMap.set(p.phone, { phone: p.phone, first_name: p.first_name, last_name: p.last_name });
-        }
-      }
-    }
-
-    setContacts(Array.from(phoneMap.values()));
-    setSelectedPhones(Array.from(phoneMap.keys())); // Select all by default
   };
 
   const handleCreate = async () => {
@@ -195,23 +202,24 @@ export default function SurveysPage() {
   };
 
   const sendSurvey = async () => {
-    if (!selectedSurvey || selectedPhones.length === 0) return;
+    if (!selectedSurvey || contactsLoading || contactsError || selectedPhones.length === 0 || selectedPhones.length > MAX_RECIPIENTS) return;
+    const epoch = businessEpoch.current;
     setSending(true);
     try {
       const res = await fetch(`/api/surveys/${selectedSurvey.id}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phones: selectedPhones }),
+        // The send route stores these as bot session keys (DB-005).
+        body: JSON.stringify({ phones: selectedPhones.map(phone => phone.replace(/^\+/, '')) }),
       });
       if (res.ok) {
         const data = await res.json();
-        setSendResult(data);
-        fetchSurveys();
+        if (epoch === businessEpoch.current) { setSendResult(data); fetchSurveys(); }
       }
     } catch {
       // Error
     }
-    setSending(false);
+    if (epoch === businessEpoch.current) setSending(false);
   };
 
   const addQuestion = (type: SurveyQuestion['type']) => {
@@ -449,6 +457,9 @@ export default function SurveysPage() {
                 </button>
               </div>
               <div className="max-h-60 overflow-y-auto space-y-1">
+                {contactsLoading && <p role="status" className="text-sm text-gray-500">Loading opted-in contacts…</p>}
+                {contactsError && <p role="alert" className="text-sm text-red-600">{contactsError}</p>}
+                {contactsTruncated && <p className="text-sm text-amber-700">This list is incomplete. Showing up to 500 opted-in contacts; send only to the selected numbers.</p>}
                 {contacts.map(c => (
                   <label key={c.phone} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
                     <input
@@ -462,20 +473,20 @@ export default function SurveysPage() {
                       className="rounded"
                     />
                     <span className="text-sm text-gray-900 dark:text-gray-100">
-                      {c.first_name ? `${c.first_name} ${c.last_name || ''}`.trim() : c.phone}
+                      {c.name || c.phone}
                     </span>
-                    {c.first_name && <span className="text-xs text-gray-400">{c.phone}</span>}
+                    {c.name && <span className="text-xs text-gray-400">{c.phone}</span>}
                   </label>
                 ))}
-                {contacts.length === 0 && (
-                  <p className="text-sm text-gray-400 py-4 text-center">No contacts yet. Contacts appear after customers message your WhatsApp bot.</p>
+                {!contactsLoading && !contactsError && contacts.length === 0 && (
+                  <p className="text-sm text-gray-400 py-4 text-center">No opted-in contacts yet. Customers can confirm WhatsApp updates from your forms.</p>
                 )}
               </div>
             </div>
 
             <button
               onClick={sendSurvey}
-              disabled={sending || selectedPhones.length === 0}
+              disabled={sending || contactsLoading || !!contactsError || selectedPhones.length === 0}
               className="w-full py-3 bg-black text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {sending ? 'Sending...' : `Send to ${selectedPhones.length} contact${selectedPhones.length !== 1 ? 's' : ''}`}

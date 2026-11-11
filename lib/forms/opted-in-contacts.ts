@@ -31,10 +31,14 @@ export async function listOptedInContacts(
   // the list may be missing people; callers must not treat it as complete.
   let scanCapped = false;
   for (let from = 0; from < MAX_CONSENT_ROWS; from += PAGE) {
-    const { data, error } = await db.from('customer_consents').select('phone, status, expires_at')
+    let query = db.from('customer_consents').select('phone, status, expires_at')
       .eq('business_id', businessId).eq('channel', 'whatsapp').eq('purpose', purpose)
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .range(from, from + PAGE - 1);
+    // A request awaiting confirmation does not replace an effective marketing
+    // decision. Match hasRecipientPermission; revoked/unknown rows still win.
+    if (purpose === 'marketing') query = query.neq('status', 'pending');
+    const { data, error } = await query;
     if (error) throw new ContactsUnavailableError();
     for (const row of data || []) {
       const d = digitsOf(row.phone);

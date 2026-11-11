@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
-import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
 
@@ -26,8 +25,10 @@ interface PollResult {
 
 interface Contact {
   phone: string;
-  first_name: string | null;
+  name: string | null;
 }
+
+const MAX_RECIPIENTS = 500;
 
 type View = 'list' | 'create' | 'results' | 'send';
 
@@ -54,12 +55,30 @@ export default function PollsPage() {
   const [selectedPhones, setSelectedPhones] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ sent: number; failed: number } | null>(null);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsError, setContactsError] = useState('');
+  const [contactsTruncated, setContactsTruncated] = useState(false);
+  const contactsRequest = useRef(0);
+  const contactsAbort = useRef<AbortController | null>(null);
+  const businessEpoch = useRef(0);
+  const invalidateRequests = useCallback(() => {
+    businessEpoch.current++; contactsRequest.current++; contactsAbort.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    setContacts([]); setSelectedPhones([]); setSelected(null); setSendResult(null);
+    setContactsError(''); setContactsTruncated(false); setContactsLoading(false);
+    setView('list'); setSending(false); setPolls([]);
+    return invalidateRequests;
+  }, [business.id, invalidateRequests]);
 
   const fetchPolls = useCallback(async () => {
+    const epoch = businessEpoch.current;
     setLoading(true);
-    const res = await fetch(`/api/polls?business_id=${business.id}`);
-    if (res.ok) { const d = await res.json(); setPolls(d.polls || []); }
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/polls?business_id=${business.id}`);
+      if (res.ok) { const d = await res.json(); if (epoch === businessEpoch.current) setPolls(d.polls || []); }
+    } finally { if (epoch === businessEpoch.current) setLoading(false); }
   }, [business.id]);
 
   useEffect(() => { fetchPolls(); }, [fetchPolls]);
@@ -72,11 +91,25 @@ export default function PollsPage() {
 
   const loadContacts = async (poll: Poll) => {
     setSelected(poll); setView('send'); setSendResult(null);
-    const supabase = createClient();
-    const { data: sessions } = await supabase.from('bot_sessions').select('whatsapp_number').eq('business_id', business.id);
-    const phones = [...new Set((sessions || []).map(s => s.whatsapp_number).filter(Boolean))];
-    setContacts(phones.map(p => ({ phone: p, first_name: null })));
-    setSelectedPhones(phones);
+    const request = ++contactsRequest.current;
+    contactsAbort.current?.abort();
+    const controller = new AbortController();
+    contactsAbort.current = controller;
+    setContacts([]); setSelectedPhones([]); setContactsError(''); setContactsTruncated(false); setContactsLoading(true);
+    try {
+      const res = await fetch(`/api/broadcasts/recipients?${new URLSearchParams({ businessId: business.id })}`, { signal: controller.signal, cache: 'no-store' });
+      if (!res.ok) throw new Error('Recipients unavailable');
+      const data = await res.json();
+      if (request !== contactsRequest.current) return;
+      if (!Array.isArray(data.recipients)) throw new Error('Recipients unavailable');
+      const recipients: Contact[] = data.recipients.slice(0, MAX_RECIPIENTS);
+      setContacts(recipients); setSelectedPhones(recipients.map(c => c.phone));
+      setContactsTruncated(data.truncated === true || data.recipients.length > MAX_RECIPIENTS);
+    } catch {
+      if (request === contactsRequest.current) setContactsError('Could not load opted-in contacts. Reopen Send to try again.');
+    } finally {
+      if (request === contactsRequest.current) setContactsLoading(false);
+    }
   };
 
   const handleCreate = async () => {
@@ -113,14 +146,17 @@ export default function PollsPage() {
   };
 
   const sendPoll = async () => {
-    if (!selected || selectedPhones.length === 0) return;
+    if (!selected || contactsLoading || contactsError || selectedPhones.length === 0 || selectedPhones.length > MAX_RECIPIENTS) return;
+    const epoch = businessEpoch.current;
     setSending(true);
     const res = await fetch(`/api/polls/${selected.id}/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phones: selectedPhones }),
+      // The send route stores these as bot session keys: preserve Meta's raw
+      // transport format (DB-005), while the picker displays +E.164.
+      body: JSON.stringify({ phones: selectedPhones.map(phone => phone.replace(/^\+/, '')) }),
     });
-    if (res.ok) { setSendResult(await res.json()); fetchPolls(); }
-    setSending(false);
+    if (res.ok) { const result = await res.json(); if (epoch === businessEpoch.current) { setSendResult(result); fetchPolls(); } }
+    if (epoch === businessEpoch.current) setSending(false);
   };
 
   // Results view
@@ -171,15 +207,19 @@ export default function PollsPage() {
                 <button onClick={() => setSelectedPhones(selectedPhones.length === contacts.length ? [] : contacts.map(c => c.phone))} className="text-xs text-blue-600">{selectedPhones.length === contacts.length ? 'Deselect all' : 'Select all'}</button>
               </div>
               <div className="max-h-60 overflow-y-auto space-y-1">
+                {contactsLoading && <p role="status" className="text-sm text-gray-500">Loading opted-in contacts…</p>}
+                {contactsError && <p role="alert" className="text-sm text-red-600">{contactsError}</p>}
+                {contactsTruncated && <p className="text-sm text-amber-700">This list is incomplete. Showing up to 500 opted-in contacts; send only to the selected numbers.</p>}
+                {!contactsLoading && !contactsError && contacts.length === 0 && <p className="text-sm text-gray-500">No opted-in contacts yet. Customers can confirm WhatsApp updates from your forms.</p>}
                 {contacts.map(c => (
                   <label key={c.phone} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
                     <input type="checkbox" checked={selectedPhones.includes(c.phone)} onChange={e => setSelectedPhones(e.target.checked ? [...selectedPhones, c.phone] : selectedPhones.filter(p => p !== c.phone))} className="rounded" />
-                    <span className="text-sm text-gray-900">{c.phone}</span>
+                    <span className="text-sm text-gray-900">{c.name ? `${c.name} (${c.phone})` : c.phone}</span>
                   </label>
                 ))}
               </div>
             </div>
-            <button onClick={sendPoll} disabled={sending || selectedPhones.length === 0} className="w-full py-3 bg-black text-white rounded-lg font-medium disabled:opacity-50">
+            <button onClick={sendPoll} disabled={sending || contactsLoading || !!contactsError || selectedPhones.length === 0} className="w-full py-3 bg-black text-white rounded-lg font-medium disabled:opacity-50">
               {sending ? 'Sending...' : `Send to ${selectedPhones.length} contact${selectedPhones.length !== 1 ? 's' : ''}`}
             </button>
           </>

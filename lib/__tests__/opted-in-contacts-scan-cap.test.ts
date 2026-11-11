@@ -38,6 +38,31 @@ const list = (rows: Record<string, unknown>[]) => {
 };
 
 describe('listOptedInContacts — truncated flag', () => {
+  it.each([
+    ['granted', null, true], ['revoked', null, false], ['unknown', null, false],
+    ['granted', '2000-01-01', false],
+  ])('a newer pending marketing request preserves effective %s with expiry %s', async (status, expires_at, allowed) => {
+    const existing = consentRows(1, 1)[0];
+    const out = await list([{ ...existing, status, expires_at },
+      { ...existing, id: 'pending', status: 'pending', created_at: new Date(NOW).toISOString() }]);
+    expect(out.contacts).toEqual(allowed ? [{ phone: phone(0), name: null }] : []);
+  });
+
+  it('pending alone never grants access, and STOP still suppresses a grant followed by pending', async () => {
+    const existing = consentRows(1, 1)[0];
+    const pending = { ...existing, id: 'pending', status: 'pending', created_at: new Date(NOW).toISOString() };
+    expect((await list([pending])).contacts).toEqual([]);
+    const db = createMemoryDb({ customer_consents: [existing, pending], messaging_opt_outs: [{ phone: phone(0), business_id: null, channel: 'whatsapp' }] });
+    expect((await listOptedInContacts(db as unknown as SupabaseClient, BIZ, NOW)).contacts).toEqual([]);
+  });
+
+  it('does not change latest-record behavior for utility consent', async () => {
+    const existing = { ...consentRows(1, 1)[0], purpose: 'utility' };
+    const db = createMemoryDb({ customer_consents: [existing,
+      { ...existing, id: 'pending', status: 'pending', created_at: new Date(NOW).toISOString() }] });
+    expect((await listOptedInContacts(db as unknown as SupabaseClient, BIZ, NOW, 'utility')).contacts).toEqual([]);
+  });
+
   it('is false when every consent row was read and the list is under the contact cap', async () => {
     const rows = consentRows(100, 49); // 4,900 rows, under the scan cap
     expect(rows.length).toBeLessThan(MAX_CONSENT_ROWS);
