@@ -32,7 +32,14 @@ try:
  postgres_major=int(run(psql,input='SHOW server_version_num;').strip())//10000
  run(psql,input='DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$; DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$; DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$; CREATE TABLE businesses(id uuid primary key); CREATE TABLE whatsapp_channels(id uuid primary key); CREATE TABLE payments(id uuid primary key); CREATE TABLE bot_sessions(id uuid primary key, business_id uuid, whatsapp_number text, is_active boolean, current_step text, session_data jsonb, version integer, updated_at timestamptz); CREATE TABLE payment_saved_card_offers(id uuid primary key, payment_id uuid, business_id uuid, customer_phone text, state text, consent_source text, activation_prompt_sent_at timestamptz, claim_token uuid, claim_expires_at timestamptz, credential_committed_at timestamptz, confirmation_send_started_at timestamptz, confirmation_claim_token uuid, confirmation_claim_expires_at timestamptz, resolved_at timestamptz);')
  migration=(pathlib.Path(__file__).resolve().parents[2] / 'supabase/migrations/534_transaction_followups.sql').read_text()
+ # Supabase's production defaults grant ALL to service_role. The migration
+ # must narrow inherited ACLs, not merely add the three intended privileges.
+ run(psql,input='ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;')
  run(psql,input=migration)
+ service_privileges=run(psql,input="SELECT string_agg(a.privilege_type, ',' ORDER BY a.privilege_type) FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.oid='public.transaction_followups'::regclass AND a.grantee='service_role'::regrole;").strip()
+ assert service_privileges == 'INSERT,SELECT,UPDATE',service_privileges
+ delete_denied=subprocess.run(psql,input='SET ROLE service_role; DELETE FROM public.transaction_followups;',text=True,capture_output=True)
+ assert delete_denied.returncode != 0 and 'permission denied for table transaction_followups' in delete_denied.stderr,delete_denied.stderr
  for role,statement in [('anon','SELECT * FROM transaction_followups'),('authenticated',"INSERT INTO transaction_followups DEFAULT VALUES")]:
   denied=subprocess.run(psql,input=f'SET ROLE {role}; {statement};',text=True,capture_output=True)
   assert denied.returncode != 0 and 'permission denied for table transaction_followups' in denied.stderr,denied.stderr
@@ -82,7 +89,7 @@ DO $$ BEGIN
 END $$;
 """
  run(psql,input=cancellation_sql)
- print(json.dumps({'postgres_major':postgres_major,'checks_passed':24,'checks_failed':0,'checks_skipped':0,'migration_applied':True,'rls_enabled':True,'anon_select_denied':True,'authenticated_insert_denied':True,'service_role_select_insert_update_allowed':True,'concurrent_prompt_second_claim_rejected':True,'completed_prompt_releases_conversation':True,'card_conversation_checks_passed':4,'cancellation_checks_passed':13,'checks':checks,'state_results':result},indent=2))
+ print(json.dumps({'postgres_major':postgres_major,'checks_passed':26,'checks_failed':0,'checks_skipped':0,'migration_applied':True,'rls_enabled':True,'anon_select_denied':True,'authenticated_insert_denied':True,'service_role_select_insert_update_allowed':True,'service_role_privileges':service_privileges,'service_role_delete_denied':True,'concurrent_prompt_second_claim_rejected':True,'completed_prompt_releases_conversation':True,'card_conversation_checks_passed':4,'cancellation_checks_passed':13,'checks':checks,'state_results':result},indent=2))
 finally:
  if admin_psql and database_name:
   run(admin_psql,input=f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE);')

@@ -33,7 +33,8 @@ CREATE INDEX transaction_followups_recovery
   WHERE state IN ('waiting_card', 'card_active', 'card_resolved', 'ready', 'consent_pending', 'consent_recording', 'menu_ready');
 
 ALTER TABLE public.transaction_followups ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.transaction_followups FROM PUBLIC, anon, authenticated;
+-- Remove Supabase's inherited service-role ALL grant before narrowing access.
+REVOKE ALL ON TABLE public.transaction_followups FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.transaction_followups TO service_role;
 
 COMMENT ON TABLE public.transaction_followups IS

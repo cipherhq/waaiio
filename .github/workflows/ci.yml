@@ -4490,10 +4490,10 @@ jobs:
           import json
           with open('transaction-followups-db.json') as source:
               result = json.load(source)
-          expected = {'postgres_major': 17, 'checks_passed': 24, 'checks_failed': 0, 'checks_skipped': 0}
+          expected = {'postgres_major': 17, 'checks_passed': 26, 'checks_failed': 0, 'checks_skipped': 0}
           if any(result.get(key) != value for key, value in expected.items()):
-              raise SystemExit('Expected PostgreSQL 17 and exactly 24 passed, 0 failed, 0 skipped checks')
-          print('M534 transaction follow-up SQL proof: 24 passed, 0 failed, 0 skipped')
+              raise SystemExit('Expected PostgreSQL 17 and exactly 26 passed, 0 failed, 0 skipped checks')
+          print('M534 transaction follow-up SQL proof: 26 passed, 0 failed, 0 skipped')
           PY
       - name: Regenerate and compare catalog deltas
         env:

@@ -26,7 +26,7 @@ Paid services/appointments/tables/classes, orders, tickets, reservations, giving
 Final frozen-code local run: **383 tests passed across 20 files, zero failed, zero skipped**. Targeted production TypeScript check passed. No CI execution is claimed. The standalone PostgreSQL check executes the actual new migration against a disposable local database with minimal schema fixtures; this is SQL/ACL/concurrency evidence, not an HTTP or provider test.
 
 - Unit/integration command: `./node_modules/.bin/vitest run --maxWorkers=1` followed by the files below.
-- Database command: `python3 scripts/tests/transaction-followups-db.py` — 24 passed, 0 failed, 0 skipped.
+- Database command: `python3 scripts/tests/transaction-followups-db.py` — 26 passed, 0 failed, 0 skipped.
 - Targeted TypeScript command: `./node_modules/.bin/tsc -p docs/reviews/transaction-followups.tsconfig.json --pretty false`. The check includes all changed production TS files, new production modules, their transitive dependencies and the repository PDFKit declaration. Full-repository TypeScript attempts were cancelled without a result; do not report them as passing.
 - Independent reviewer read current dependencies and final deltas and reported no outstanding material finding in the reviewed changes. Production code was frozen after the stale offer-binding cleanup.
 
@@ -63,4 +63,8 @@ Test files:
 - WhatsApp handset rendering order is not proven by backend send acceptance. Staging UAT must verify ticket/QR, card PIN, opt-in and options on a real conversation.
 - Migration is drafted and locally tested only. No remote migration, deployment, merge or production transaction was performed. Apply the reviewed migration before deploying its dependent application code, with Owner authorization and normal release checks.
 
-Migration SHA-256: `ad83a016438d9ca8f01ee792735c35cd1072a39f9129a41dc16eb1ad5a29ab37`
+Migration SHA-256: `7c8cb04181ef7b9d18be27efa5965b6618121499ed6c9d0631766d7ba0dc1597`
+
+## Catalog ACL correction during PR packaging
+
+The first PostgreSQL 17 catalog artifact exposed Supabase default privileges granting service_role more than the intended SELECT/INSERT/UPDATE. A new default-privilege fixture reproduced the excess grants locally. M534 now revokes inherited service_role privileges before granting exactly those three operations. The harness additionally checks the complete ACL via `aclexplode` (including privileges introduced by newer PostgreSQL versions) and proves service_role DELETE is denied. The corrected local PostgreSQL 16 run passed 26 checks with zero failures/skips. The CI step requires the same 26 checks on PostgreSQL 17; its catalog delta must be regenerated from the corrected migration before final approval.
