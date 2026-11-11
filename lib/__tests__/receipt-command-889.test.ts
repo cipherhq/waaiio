@@ -103,6 +103,50 @@ describe('#889 "receipt" command', () => {
     expect(data).toMatchObject({ serviceName: 'Bridal Makeup', amount: 20000, totalDue: 50000, balanceDue: 30000 });
   });
 
+  it('the buyer name given on the booking comes first (review B P1)', async () => {
+    rows.bookings = bookingRow({ id: 'bk4', reference_code: 'WA-BK-4', status: 'confirmed', total_amount: 100, guest_name: 'Ada Obi', created_at: '2026-11-10T10:00:00Z', services: { name: 'Haircut' }, businesses: BIZ });
+    const { data } = await run();
+    expect(data.customerName).toBe('Ada Obi');
+    for (const q of queries.filter(x => x.table === 'bookings')) expect(q.cols).toContain('guest_name');
+  });
+
+  it('the donor name given on the donation comes first', async () => {
+    rows.campaign_donations = { id: 'd2', reference_code: 'DN-2', amount: 500, currency: 'NGN', donor_name: 'Chidi Okafor', status: 'success', created_at: '2026-11-10T10:00:00Z', campaigns: { title: 'Roof Fund', businesses: BIZ } };
+    const { data } = await run();
+    expect(data.customerName).toBe('Chidi Okafor');
+  });
+
+  it('a payment linked to a booking uses that booking guest name; otherwise the account name', async () => {
+    rows.payments = { id: 'p2', gateway_reference: 'GW-2', amount: 900, currency: 'NGN', status: 'success', created_at: '2026-11-10T10:00:00Z', booking_id: 'bk9', businesses: BIZ };
+    rows.bookings = (q: { cols: string; statusIn?: string[] }) => (q.statusIn ? null : { guest_name: 'Linked Guest', services: { name: 'Massage' } });
+    const { data } = await run();
+    expect(data).toMatchObject({ customerName: 'Linked Guest', serviceName: 'Massage' });
+  });
+
+  it('no buyer name on the row: the account name, as before', async () => {
+    rows.orders = { id: 'o2', reference_code: 'WA-OR-2', status: 'delivered', total_amount: 100, created_at: '2026-11-10T10:00:00Z', businesses: BIZ, order_items: [] };
+    const { data } = await run();
+    expect(data.customerName).toBe('Ada Eze');
+  });
+
+  it('a booking with nothing paid online (walk-in, pay at venue) prints as before, without deposit lines', async () => {
+    rows.bookings = bookingRow({ id: 'bk5', reference_code: 'WA-BK-5', status: 'confirmed', total_amount: 30000, created_at: '2026-11-10T10:00:00Z', services: { name: 'Facial' }, businesses: BIZ });
+    mockGetEntityBalance.mockResolvedValue({ totalAmount: 30000, netPaid: 0, balanceDue: 30000 });
+    const { data } = await run();
+    expect(data).toMatchObject({ amount: 30000 });
+    expect(data.totalDue).toBeUndefined();
+    expect(data.balanceDue).toBeUndefined();
+  });
+
+  it('a subscription charge is found: the select no longer asks for the missing reference_code', async () => {
+    MISSING.subscription_charges = /\breference_code\b/;
+    rows.subscription_charges = { id: 'c1', gateway_reference: 'SUB-77', amount: 9900, currency: 'NGN', status: 'success', created_at: '2026-11-10T10:00:00Z', businesses: BIZ };
+    const { out, data } = await run();
+    delete MISSING.subscription_charges;
+    expect(out).not.toBeNull();
+    expect(data).toMatchObject({ serviceName: 'Subscription', referenceCode: 'SUB-77', amount: 9900, currencyCode: 'NGN' });
+  });
+
   it('a ticket booking names the event and lists the tickets', async () => {
     rows.bookings = bookingRow({ id: 'bk3', reference_code: 'WA-TK-1', status: 'confirmed', total_amount: 20000, quantity: 2, event_id: 'ev1', created_at: '2026-11-10T10:00:00Z', services: null, businesses: BIZ });
     rows.events = { name: 'Lagos Jazz Night' };

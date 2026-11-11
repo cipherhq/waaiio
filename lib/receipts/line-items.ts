@@ -2,7 +2,7 @@
  * #889 (Owner decision 2026-11-11): what the buyer paid for, as receipt line items.
  *
  * Read-only lookups shared by the automatic receipt (send-confirmation) and the
- * on-demand "receipt" command (generate-direct). A failed lookup returns no items:
+ * on-demand "receipt" command (generate-direct). A failed lookup (error or throw) returns no items:
  * the receipt still goes out with its one-line description, as before.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -34,6 +34,14 @@ export function toOrderLineItems(rows: unknown): ReceiptLineItem[] {
 }
 
 export async function loadInvoiceLineItems(supabase: SupabaseClient, invoiceId: string): Promise<ReceiptLineItem[]> {
+  try {
+    return await readInvoiceLineItems(supabase, invoiceId);
+  } catch {
+    return [];
+  }
+}
+
+async function readInvoiceLineItems(supabase: SupabaseClient, invoiceId: string): Promise<ReceiptLineItem[]> {
   const { data, error } = await supabase
     .from('invoice_items')
     .select('description, quantity, unit_price, amount, sort_order')
@@ -58,6 +66,17 @@ export async function loadInvoiceLineItems(supabase: SupabaseClient, invoiceId: 
  * The ticket type is known once issuance state exists (M481); until then the line uses the event name.
  */
 export async function loadTicketLine(
+  supabase: SupabaseClient,
+  booking: { id: string; event_id?: string | null; quantity?: number | null; total_amount?: number | null },
+): Promise<{ eventName: string | null; items: ReceiptLineItem[] }> {
+  try {
+    return await readTicketLine(supabase, booking);
+  } catch {
+    return { eventName: null, items: [] };
+  }
+}
+
+async function readTicketLine(
   supabase: SupabaseClient,
   booking: { id: string; event_id?: string | null; quantity?: number | null; total_amount?: number | null },
 ): Promise<{ eventName: string | null; items: ReceiptLineItem[] }> {

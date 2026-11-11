@@ -61,6 +61,35 @@ describe('#889 receipt item table', () => {
     expect(t).not.toContain(`Itemnumber${RECEIPT_MAX_ITEM_ROWS + 1}`);
   });
 
+  it('large amounts and long headers never wrap into the next row (review finding)', async () => {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const buf = await generateReceiptPdf({
+      ...BASE, currencyCode: 'NGN', amount: 24691357,
+      items: [
+        { name: 'Generator', quantity: 2, unitPrice: 12345678.5, lineTotal: 24691357 },
+        { name: 'Cable', quantity: 1, unitPrice: 0, lineTotal: 0 },
+      ],
+      labels: getPdfLocalizationBundle('tw').receipt,
+    });
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf), verbosity: 0 }).promise;
+    expect(pdf.numPages).toBe(1);
+    const items = (await (await pdf.getPage(1)).getTextContent()).items as Array<{ str: string; transform: number[] }>;
+    const amounts = items.filter(i => /12,345,678|24,691,357/.test(i.str));
+    expect(amounts.map(i => i.str.replace(/\s+/g, ''))).toEqual(expect.arrayContaining(['NGN12,345,678.50', 'NGN24,691,357']));
+    // Every money cell is one line, on the same baseline as its item name.
+    const genY = Math.round(items.find(i => i.str === 'Generator')!.transform[5]);
+    for (const a of amounts.filter(i => !/Total|Nkabom/.test(i.str))) {
+      if (Math.round(a.transform[5]) !== genY) continue;
+      expect(a.str).not.toMatch(/\n/);
+    }
+    expect(amounts.filter(i => Math.round(i.transform[5]) === genY).length).toBe(2);
+    const cableY = Math.round(items.find(i => i.str === 'Cable')!.transform[5]);
+    expect(genY - cableY).toBeGreaterThanOrEqual(14);
+    // The Twi Qty header (DODOW) stays one line.
+    const header = items.filter(i => i.str.trim() === 'DODOW');
+    expect(header.length).toBe(1);
+  });
+
   it('items with zero quantity are left out', async () => {
     const t = squash((await pdfText(await generateReceiptPdf({
       ...BASE, items: [{ name: 'Ghost', quantity: 0, unitPrice: 1, lineTotal: 0 }],

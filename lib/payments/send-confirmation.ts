@@ -449,9 +449,11 @@ export async function sendProactiveConfirmation(
         serviceName = `Order ${referenceCode}`;
         receiptItems = toOrderLineItems(order.order_items);
         const orderTotal = Number(order.total_amount || 0);
-        if (orderTotal > Number(payment.amount || 0)) {
-          // #889: an order deposit shows what is still owed, from payment history (#381 rule).
-          const balance = await getEntityBalance(supabase, { orderId: canonicalOrderId, totalAmount: orderTotal });
+        // #889: an order deposit shows what is still owed, from payment history (#381 rule).
+        // Only for payments linked by payments.order_id: a legacy metadata-only link would be
+        // missing from that history and overstate the balance.
+        if (payment.order_id && orderTotal > Number(payment.amount || 0)) {
+          const balance = await getEntityBalance(supabase, { orderId: payment.order_id, totalAmount: orderTotal }).catch(() => null);
           if (balance && balance.balanceDue > 0) {
             receiptTotalDue = orderTotal;
             receiptBalanceDue = balance.balanceDue;

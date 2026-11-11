@@ -213,23 +213,33 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   // #889: item table (Description / Qty / Unit price / Amount), one line per item.
   const items = (data.items || []).filter((item) => item && item.name && item.quantity > 0);
   if (items.length > 0) {
-    const descW = 160;
-    const qtyX = margin + 168;
-    const unitX = margin + 196;
-    const amountX = margin + 268;
-    const amountW = contentWidth - 268;
+    const descW = 128;
+    const qtyX = margin + 132;
+    const qtyW = 32;
+    const unitX = margin + 168;
+    const unitW = 82;
+    const amountX = margin + 254;
+    const amountW = contentWidth - 254;
+    // Numbers and headers never wrap into the next row: the font shrinks until the text fits.
+    const fitRight = (text: string, x: number, w: number, size: number) => {
+      let fs = size;
+      doc.fontSize(fs);
+      while (fs > 5 && doc.widthOfString(text) > w) { fs -= 0.5; doc.fontSize(fs); }
+      doc.text(text, x, y, { width: w, align: 'right', lineBreak: false });
+      doc.fontSize(size);
+    };
     doc.fontSize(7).font('Helvetica-Bold').fillColor(TEXT_MUTED);
-    doc.text(L.colDescription.toUpperCase(), labelX, y, { width: descW });
-    doc.text(L.colQty.toUpperCase(), qtyX, y, { width: 26, align: 'right' });
-    doc.text(L.colUnitPrice.toUpperCase(), unitX, y, { width: 68, align: 'right' });
-    doc.text(L.colAmount.toUpperCase(), amountX, y, { width: amountW, align: 'right' });
+    doc.text(L.colDescription.toUpperCase(), labelX, y, { width: descW, height: 9, ellipsis: true });
+    fitRight(L.colQty.toUpperCase(), qtyX, qtyW, 7);
+    fitRight(L.colUnitPrice.toUpperCase(), unitX, unitW, 7);
+    fitRight(L.colAmount.toUpperCase(), amountX, amountW, 7);
     y += 14;
     doc.fontSize(9).font('Helvetica').fillColor(TEXT_PRIMARY);
     for (const item of items.slice(0, RECEIPT_MAX_ITEM_ROWS)) {
       doc.text(item.name, labelX, y, { width: descW, height: 11, ellipsis: true });
-      doc.text(String(item.quantity), qtyX, y, { width: 26, align: 'right' });
-      doc.text(fmtAmount(item.unitPrice, data.countryCode, data.currencyCode), unitX, y, { width: 68, align: 'right' });
-      doc.text(fmtAmount(item.lineTotal, data.countryCode, data.currencyCode), amountX, y, { width: amountW, align: 'right' });
+      fitRight(String(item.quantity), qtyX, qtyW, 9);
+      fitRight(fmtAmount(item.unitPrice, data.countryCode, data.currencyCode), unitX, unitW, 9);
+      fitRight(fmtAmount(item.lineTotal, data.countryCode, data.currencyCode), amountX, amountW, 9);
       y += 15;
     }
     if (items.length > RECEIPT_MAX_ITEM_ROWS) {

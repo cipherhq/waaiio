@@ -163,6 +163,25 @@ describe('#889 receipt details handed to the receipt step', () => {
     expect(receiptArgs()).toMatchObject({ amountPaid: 5500, receiptTotalDue: 10000, receiptBalanceDue: 4500 });
   });
 
+  it('order linked only through legacy metadata: no deposit lines (its payment is not in the order payment history)', async () => {
+    rows.orders = { delivery_phone: '+234555', reference_code: 'WA-OR-3', business_id: 'b1', total_amount: 10000, businesses: { name: 'Mama Put', country_code: 'NG' }, order_items: ORDER_ITEMS };
+    rows.payments = (cols: string) => (cols.includes('campaign_id') && !cols.includes('metadata') ? { currency: 'NGN', campaign_id: null } : { currency: 'NGN', gateway: 'paystack', metadata: { order_id: 'o3' }, user_id: null });
+    mockGetEntityBalance.mockResolvedValue({ totalAmount: 10000, netPaid: 0, balanceDue: 10000 });
+    await confirm(claim({ order_id: null }));
+    expect(mockGetEntityBalance).not.toHaveBeenCalled();
+    const a = receiptArgs();
+    expect(a.receiptItems).toHaveLength(2);
+    expect(a.receiptBalanceDue).toBeUndefined();
+  });
+
+  it('a lookup that throws never blocks the confirmation (no items, receipt still sent)', async () => {
+    rows.invoices = { customer_phone: '+234777', customer_name: 'Tunde Bakare', reference_code: 'INV-10', business_id: 'b1', businesses: { name: 'Mama Put', country_code: 'NG' } };
+    rows.invoice_items = () => { throw new Error('network'); };
+    const res = await confirm(claim({ invoice_id: 'inv2' }));
+    expect(res.status).toBe('completed');
+    expect(receiptArgs()).toMatchObject({ serviceName: 'Invoice INV-10', receiptItems: [] });
+  });
+
   it('invoice: the lookup no longer selects the missing description column, so the business resolves and the receipt lists the invoice lines', async () => {
     rows.invoices = { customer_phone: '+234777', customer_name: 'Tunde Bakare', reference_code: 'INV-9', business_id: 'b1', businesses: { name: 'Mama Put', country_code: 'NG' } };
     rows.invoice_items = [
