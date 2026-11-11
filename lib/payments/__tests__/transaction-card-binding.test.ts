@@ -2,19 +2,21 @@ import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryDb } from '@/lib/__tests__/helpers/memory-db';
 
-const mocks = vi.hoisted(() => ({ finish: vi.fn(), fence: vi.fn(), verifyPin: vi.fn() }));
+const mocks = vi.hoisted(() => ({ finish: vi.fn(), fence: vi.fn(), verifyPin: vi.fn(), evidence: vi.fn(), downgrade: vi.fn() }));
+vi.mock('@/lib/payments/stripe-saved-card', () => ({ extractStripeSavedCardEvidence: mocks.evidence, downgradeAllowRedisplay: mocks.downgrade }));
 vi.mock('@/lib/payments/transaction-followup', () => ({ finishTransactionCardStep: mocks.finish }));
 vi.mock('@/lib/payments/saved-card-delivery', () => ({ sendWithFencedDelivery: mocks.fence }));
 vi.mock('@/lib/payments/saved-payment-adapter', () => ({ savedPaymentAdapter: { verifyPin: mocks.verifyPin } }));
 vi.mock('@/lib/payments/saved-card-compat', () => ({
   canonicalSavedCardPhone: (phone: string) => phone.startsWith('+') ? phone : `+${phone}`,
   isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: true }),
+  isCompatibleForSavedCard: vi.fn().mockResolvedValue({ compatible: true }),
 }));
 vi.mock('@/lib/payments/proactive-localization', () => ({
   resolveProactiveLocalization: vi.fn().mockResolvedValue({ language: 'en', translate: async (text: string) => text }),
 }));
 
-import { startSavedCardFromPaymentId } from '../saved-card-offer';
+import { checkStripeConsentAndOffer, startSavedCardFromPaymentId } from '../saved-card-offer';
 import { handleReplacementPinStep } from '@/lib/bot/handlers/saved-cards';
 
 const phone = '+2348012345678';
@@ -99,6 +101,7 @@ describe('Exact accepted-offer binding at PIN entry', () => {
     const call = db.rpc.mock.calls.find(([name]) => name === 'update_session_cas') as any;
     expect(call[1].p_session_data._save_card_offer_id).toBeNull();
     expect(call[1].p_session_data._saved_card_channel_id).toBeNull();
+    expect(call[1].p_session_data._inbound_channel_id).toBeUndefined();
   });
 
   it.each([false, true])('removes a previous offer binding when current exact offer is absent, replacement=%s', async replacement => {
@@ -110,6 +113,54 @@ describe('Exact accepted-offer binding at PIN entry', () => {
     expect(call[1].p_session_data._save_card_offer_id).toBeNull();
     expect(call[1].p_session_data._replace_offer_id).toBeNull();
     expect(call[1].p_session_data._saved_card_channel_id).toBeNull();
+  });
+
+  it.each([false, true])('persists accepted-offer inbound provenance with and without a session, replacement=%s', async replacement => {
+    for (const current of [null, session({ _inbound_channel_id: 'stale-channel', keep: true })]) {
+      const db = database({ replacement });
+      await startSavedCardFromPaymentId(db as any, vi.fn(), phone, current, paymentId);
+      const call = db.rpc.mock.calls.find(([name]) => name === (current ? 'update_session_cas' : 'establish_saved_card_session')) as any;
+      expect(call[1].p_session_data._inbound_channel_id).toBe(channel);
+      expect(call[1].p_session_data._saved_card_channel_id).toBe(channel);
+      if (current) expect(call[1].p_session_data.keep).toBe(true);
+      expect(db.rpc.mock.calls.some(([name]) => name === 'select_shared_conversation')).toBe(false);
+    }
+  });
+
+  it.each([false, true])('uses verified payment provenance for manual save/replacement=%s', async replacement => {
+    const db = database({ replacement, offers: [] });
+    db.tables.payments[0].metadata = { ...payment.metadata, _inbound_channel_id: 'payment-channel' };
+    await startSavedCardFromPaymentId(db as any, vi.fn(), phone, null, paymentId);
+    const call = db.rpc.mock.calls.find(([name]) => name === 'establish_saved_card_session') as any;
+    expect(call[1].p_session_data._inbound_channel_id).toBe('payment-channel');
+    expect(call[1].p_session_data._saved_card_channel_id).toBeNull();
+  });
+
+  it('preserves existing manual-session provenance and does not invent absent provenance', async () => {
+    for (const current of [null, session({ _inbound_channel_id: 'session-channel' })]) {
+      const db = database({ offers: [] });
+      await startSavedCardFromPaymentId(db as any, vi.fn(), phone, current, paymentId);
+      const call = db.rpc.mock.calls.find(([name]) => name === (current ? 'update_session_cas' : 'establish_saved_card_session')) as any;
+      expect(call[1].p_session_data._inbound_channel_id).toBe(current ? 'session-channel' : undefined);
+    }
+  });
+
+  it.each([false, true])('preserves the exact channel in provider-consented Stripe activation, replacement=%s', async replacement => {
+    const db = database();
+    db.tables.payments[0] = { ...payment, gateway: 'stripe', metadata: { _inbound_channel_id: channel } };
+    db.tables.saved_payment_methods = replacement ? [{ ...oldMethod, gateway: 'stripe', stripe_payment_method_id: 'pm_old' }] : [];
+    mocks.evidence.mockResolvedValue({ consented: true, paymentMethodId: 'pm_new', customerId: 'cus_fixture', cardLast4: '4242', cardBrand: 'visa' });
+    mocks.downgrade.mockResolvedValue(true);
+    db.rpc.mockImplementation(async (name: string) => {
+      if (name === 'create_provider_consented_offer') return { data: { offer_id: offerId } as any, error: null };
+      if (name === 'claim_exact_activation_delivery') return { data: { claim_token: 'token' } as any, error: null };
+      return { data: { success: true } as any, error: null };
+    });
+    expect(await checkStripeConsentAndOffer(db as any, paymentId, phone, business, null)).toBe('pending');
+    expect(db.rpc).toHaveBeenCalledWith('establish_saved_card_session', expect.objectContaining({
+      p_session_data: expect.objectContaining({ _inbound_channel_id: channel, _saved_card_channel_id: channel }),
+    }));
+    expect(mocks.fence).toHaveBeenCalledWith(expect.objectContaining({ channelId: channel }));
   });
 
   it('fails closed on the offer read error instead of creating an unfenced PIN session', async () => {

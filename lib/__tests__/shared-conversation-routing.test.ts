@@ -2,6 +2,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createTestSupabase } from './helpers/mock-supabase';
 
+vi.mock('@/lib/bot/handlers/saved-cards', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/bot/handlers/saved-cards')>(),
+  handleCardPinStep: vi.fn().mockResolvedValue(undefined),
+  handleReplacementPinStep: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }) }));
 vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30, abuse_cooldown_soft_minutes: 5, abuse_cooldown_hard_minutes: 30, conversation_limits: { free: 200, growth: 1000, business: 5000 } }) }));
@@ -181,6 +187,18 @@ describe('shared-channel dispatch continuity', () => {
     vi.clearAllMocks();
     const {handleGlobalQuery} = await import('@/lib/bot/handlers/global-queries');
     vi.mocked(handleGlobalQuery).mockImplementation(async (opts:any)=>({handled:false,session:opts.session}));
+  });
+  it.each(['save_card_pin', 'verify_card_pin', 'replace_card_pin'])('dispatches the bound %s session before business discovery', async step => {
+    const session = { ...pickerSession, id: 'card-session', business_id: 'ayo', current_step: step,
+      session_data: { _inbound_channel_id: channelId, _saved_card_channel_id: channelId } };
+    const { bot, supabase } = setup(session);
+    const handlers = await import('@/lib/bot/handlers/saved-cards');
+    const { detectBotCodeWithSuggestions } = await import('@/lib/bot/handlers/bot-code-detection');
+    await bot.handleMessage('+234800', '2468', 'text', 'provider-id');
+    const handler = step === 'replace_card_pin' ? handlers.handleReplacementPinStep : handlers.handleCardPinStep;
+    expect(handler).toHaveBeenCalledWith(supabase, expect.any(Function), '+234800', expect.objectContaining({ id: 'card-session', current_step: step }), '2468');
+    expect(detectBotCodeWithSuggestions).not.toHaveBeenCalled();
+    expect(supabase.rpc.mock.calls.some(([name]) => name === 'get_bot_context')).toBe(false);
   });
   it('routes numeric picker response to the selected stored code instead of redisplaying suggestions', async () => {
     const {bot,supabase} = setup(pickerSession);
