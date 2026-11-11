@@ -1,5 +1,6 @@
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { createServiceClient } from '@/lib/supabase/service';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 import { logger } from '@/lib/logger';
 import { isWhiteLabel } from '@/lib/whitelabel';
 import { resolvePaymentFromRef } from '@/lib/payments/payment-success-resolver';
@@ -107,8 +108,11 @@ export default async function PaymentSuccessPage({
             }
             if (!businessPhone) {
               const cc = biz?.country_code || 'US';
-              const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
-                .eq('channel_type', 'shared').eq('country_code', cc).eq('is_active', true).limit(1).maybeSingle();
+              // Staging: only the designated shared number, whatever the country.
+              const { data: shared } = isStagingWhatsAppRouting()
+                ? { data: await loadStagingDesignatedChannel(supabase) }
+                : await supabase.from('whatsapp_channels').select('phone_number')
+                  .eq('channel_type', 'shared').eq('country_code', cc).eq('is_active', true).limit(1).maybeSingle();
               if (shared?.phone_number) businessPhone = shared.phone_number;
             }
           }

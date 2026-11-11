@@ -112,9 +112,12 @@ describe('#402 dashboard deletion banner — truthfulness', () => {
     expect(dashboardSrc).not.toMatch(/automatically\s+(deleted|removed)/i);
   });
 
-  it('describes current state (deactivated) and offers cancel action', () => {
-    expect(dashboardSrc).toContain('deactivated');
-    expect(dashboardSrc).toContain('Cancel Deletion');
+  // #887 (Owner decision 2026-11-10): no deletion can be scheduled yet, so the
+  // dashboard shows no scheduled-deletion banner or Cancel Deletion button.
+  // Behaviour is covered by dashboard-no-deletion-banner-887.test.tsx.
+  it('shows no scheduled-deletion banner while 30-day deletion is unavailable (#887)', () => {
+    expect(dashboardSrc).not.toContain('Cancel Deletion');
+    expect(dashboardSrc).not.toMatch(/scheduled for deletion/i);
   });
 });
 
@@ -126,9 +129,12 @@ describe('#402 backend alignment — soft-delete confirmation', () => {
     expect(apiSrc).not.toMatch(/\.delete\(\).*businesses/);
   });
 
-  it('backend supports both immediate and grace-period paths', () => {
+  // #887: the grace-period request is refused before any change
+  // (behaviour: account-deletion-grace-887.test.ts).
+  it('backend refuses the grace-period path and keeps the immediate path', () => {
     expect(apiSrc).toContain('gracePeriod');
-    expect(apiSrc).toContain('deletion_scheduled');
+    expect(apiSrc).toContain('grace_period_unavailable');
+    expect(apiSrc).not.toContain('deletion_scheduled: true');
   });
 
   it('backend deletes auth user on immediate path only', () => {

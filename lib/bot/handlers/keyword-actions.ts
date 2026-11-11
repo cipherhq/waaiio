@@ -15,6 +15,7 @@ import { capabilityToFirstStep } from './flow-routing';
 import { handleTransactionDocument } from './transaction-docs';
 import { handleMyBookings } from './my-bookings';
 import { handleRefundRequest } from './refund-request';
+import { isFinancialDenial } from '../financial-denial';
 
 /**
  * Execute the action from a unified keyword match.
@@ -418,6 +419,8 @@ export async function executeKeywordAction(
         return false;
     }
   } catch (err) {
+    // #976: a refused flow reply goes to BotService's #682 notice, not on to more routing.
+    if (isFinancialDenial(err)) throw err;
     logger.error('[BOT] executeKeywordAction error (non-fatal):', err);
     return false;
   }

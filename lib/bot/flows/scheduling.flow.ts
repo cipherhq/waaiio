@@ -414,6 +414,85 @@ async function backToTimeList(ctx: FlowContext, notice?: string): Promise<Prompt
   return [{ type: 'text', text: notice ?? getFlowCopy(ctx.copyLang, 'booking.time_taken') }, ...(timeList ? [timeList] : [])];
 }
 
+type StaffCandidate = { id: string; name: string };
+
+/**
+ * "Any available" on a service that requires staff. book_slot_atomic refuses a booking
+ * with no staff member for such a service, with the same answer as a full slot, so the
+ * customer was told the time had just been booked. Instead, create_booking offers the
+ * time to each staff member shown on the staff step, least busy that day first, until the
+ * booking function accepts one (claimAnyStaff). Each try is a full booking-function call:
+ * the staff schedule, per-staff capacity and buffer and the slot lock are unchanged.
+ *
+ * A booking this session already made (an answer lost before the session was saved) is
+ * tried first with its own staff member, so the retry repeats the same request and the
+ * booking function returns that booking instead of refusing a changed request.
+ * Returns null when "Any available" does not apply; then exactly one call is made, as before.
+ */
+async function anyStaffCandidates(ctx: FlowContext): Promise<StaffCandidate[] | null> {
+  const d = ctx.session.session_data;
+  if (d._staff_any !== true || d._service_requires_staff !== true) return null;
+  if (d._is_table_reservation === true || d._service_is_class === true || d._class_session_id) return null;
+  // A list kept from an earlier service (e.g. the staff step skipped by a merchant override)
+  // only counts for staff members this service names.
+  const serviceStaff = (d._service_staff_ids as string[] | undefined) || [];
+  const listed = ((d._available_staff as StaffCandidate[] | undefined) || [])
+    .filter(s => s && s.id && (serviceStaff.length === 0 || serviceStaff.includes(s.id)));
+  if (listed.length === 0 || !ctx.business) return null;
+
+  const { data: existing } = await ctx.supabase.from('bookings')
+    .select('staff_id')
+    .eq('bot_session_id', ctx.session.id)
+    .eq('business_id', ctx.business.id)
+    .in('status', ['pending', 'confirmed'])
+    .maybeSingle();
+  const already = listed.find(s => s.id === (existing as { staff_id?: string | null } | null)?.staff_id);
+  if (already) return [already];
+
+  // Least busy that day first, as the staff step does when it assigns one itself
+  const counts = await Promise.all(listed.map(async (s, i) => {
+    const { count } = await ctx.supabase.from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', ctx.business!.id)
+      .eq('staff_id', s.id)
+      .eq('date', d.date as string)
+      .in('status', ['confirmed', 'pending', 'in_progress']);
+    return { s, i, n: count || 0 };
+  }));
+  counts.sort((a, b) => a.n - b.n || a.i - b.i);
+  return counts.map(c => ({ id: c.s.id, name: c.s.name }));
+}
+
+/**
+ * Runs one booking-function call per staff candidate (or one call when there are none),
+ * with d.staff_id / d.staff_name set to the staff member being tried. Stops at a booking,
+ * or at the first answer that is not a plain refusal (an error, or a refusal for another reason).
+ * Without a booking, staff_id / staff_name are cleared again: the time list shown next is not
+ * narrowed to the last staff member tried, and a later confirmation or retry starts from
+ * "Any available" (a booking this session already made is then found by anyStaffCandidates).
+ */
+async function claimAnyStaff<R>(
+  ctx: FlowContext,
+  candidates: StaffCandidate[] | null,
+  call: () => Promise<R>,
+  refused: (r: R) => boolean,
+  booked: (r: R) => boolean,
+): Promise<R> {
+  const d = ctx.session.session_data;
+  if (!candidates) return call();
+  let result!: R;
+  for (const c of candidates) {
+    d.staff_id = c.id;
+    d.staff_name = c.name;
+    result = await call();
+    if (booked(result)) return result;
+    if (!refused(result)) break;
+  }
+  d.staff_id = null;
+  d.staff_name = null;
+  return result;
+}
+
 /** WhatsApp lists hold at most 10 rows. */
 const DATE_LIST_MAX_ROWS = 10;
 
@@ -1079,6 +1158,8 @@ export const schedulingFlow: FlowDefinition = {
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
         const d = ctx.session.session_data;
+        // A new pass through this step (e.g. after "Change date") forgets an earlier "Any available"
+        delete d._staff_any;
 
         // Table reservations don't use staff selection
         if (d._is_table_reservation) return true;
@@ -1234,8 +1315,11 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _staff_action: 'cancel' } };
         }
 
+        // "Any available": no staff member yet. A staff member kept from an earlier pass is
+        // dropped; create_booking picks one the booking function accepts (see claimAnyStaff).
+        const anyStaff = { valid: true, data: { staff_id: null, staff_name: null, _staff_any: true } };
         if (input === 'staff_any') {
-          return { valid: true };
+          return anyStaff;
         }
         const match = input.match(/^staff_(.+)$/);
         if (match) {
@@ -1243,12 +1327,12 @@ export const schedulingFlow: FlowDefinition = {
           const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
           const found = staff?.find(s => s.id === staffId);
           if (found) {
-            return { valid: true, data: { staff_id: found.id, staff_name: found.name } };
+            return { valid: true, data: { staff_id: found.id, staff_name: found.name, _staff_any: false } };
           }
         }
         // Fuzzy match by typed name (e.g., "Mike" matches "Mike Johnson")
         if (input.toLowerCase() === 'any' || input.toLowerCase() === 'anyone') {
-          return { valid: true };
+          return anyStaff;
         }
         const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
         if (staff) {
@@ -1259,7 +1343,7 @@ export const schedulingFlow: FlowDefinition = {
             lower.includes(s.name.toLowerCase().split(' ')[0])
           );
           if (nameMatch) {
-            return { valid: true, data: { staff_id: nameMatch.id, staff_name: nameMatch.name } };
+            return { valid: true, data: { staff_id: nameMatch.id, staff_name: nameMatch.name, _staff_any: false } };
           }
         }
         return { valid: false, errorMessage: 'Try typing a name like *Mike*, or tap an option above.' };
@@ -3377,7 +3461,13 @@ export const schedulingFlow: FlowDefinition = {
             d.service_name = d.seating_resource_name; // For confirmation message
           } else if (packageEnrollmentId) {
             // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
-            const { data: pkgResult, error: pkgError } = await ctx.supabase
+            // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
+            const pkgStaff = await anyStaffCandidates(ctx);
+            // The terms the customer confirmed: for "Any available" always no staff member, so they
+            // match the confirmation claim (_604_confirmation) and, on a retry, the request already
+            // stored with the booking, while p_staff_id names the staff member being tried.
+            const pkgTerms = schedulingExpectedTerms604(pkgStaff ? { ...d, staff_id: null } : d, ctx.business?.country_code || 'NG');
+            const { data: pkgResult, error: pkgError } = await claimAnyStaff(ctx, pkgStaff, async () => await ctx.supabase
               .rpc('book_with_package_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
                 p_user_id: userId,
@@ -3408,8 +3498,9 @@ export const schedulingFlow: FlowDefinition = {
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
-                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
-              });
+                p_expected_terms: pkgTerms,
+              }), r => !r.error && r.data?.success !== true && r.data?.reason === 'slot_full',
+              r => !r.error && r.data?.success === true);
 
             if (pkgError || !pkgResult?.success) {
               const reason = pkgResult?.reason || 'unknown';
@@ -3427,7 +3518,13 @@ export const schedulingFlow: FlowDefinition = {
             d._package_covered = true;
           } else {
             // ── Standard non-package booking ──
-            const { data: slotResult, error: slotError } = await ctx.supabase
+            // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
+            const slotStaff = await anyStaffCandidates(ctx);
+            // The terms the customer confirmed: for "Any available" always no staff member, so they
+            // match the confirmation claim (_604_confirmation) and, on a retry, the request already
+            // stored with the booking, while p_staff_id names the staff member being tried.
+            const slotTerms = schedulingExpectedTerms604(slotStaff ? { ...d, staff_id: null } : d, ctx.business?.country_code || 'NG');
+            const { data: slotResult, error: slotError } = await claimAnyStaff(ctx, slotStaff, async () => (await ctx.supabase
               .rpc('book_slot_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
                 p_user_id: userId,
@@ -3457,9 +3554,11 @@ export const schedulingFlow: FlowDefinition = {
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
-                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
+                p_expected_terms: slotTerms,
               })
-              .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+              .single()) as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown },
+              r => !r.error && !!r.data && r.data.slot_available === false,
+              r => !r.error && r.data?.slot_available === true);
 
             if (slotError || !slotResult) {
               // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)

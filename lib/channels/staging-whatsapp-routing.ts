@@ -14,6 +14,7 @@
  *
  * See docs/WHATSAPP_ENVIRONMENT_ROUTING.md.
  */
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { isStagingTestMode } from '@/lib/staging-test-mode';
 
 export const STAGING_SHARED_WHATSAPP_CHANNEL = Object.freeze({
@@ -71,4 +72,33 @@ export function stagingDesignatedChannelProblem(
   if (channel.is_active !== true) return 'staging_designated_channel_inactive';
   if (channel.connection_status !== 'active') return 'staging_designated_channel_disconnected';
   return null;
+}
+
+export interface StagingDesignatedChannelRow extends DesignatedChannelCandidate {
+  id: string;
+  phone_number: string;
+  phone_number_id: string | null;
+  provider: string | null;
+  meta_access_token?: string | null;
+  waba_id?: string | null;
+}
+
+const DESIGNATED_COLUMNS = 'id,phone_number,phone_number_id,provider,channel_type,business_id,is_active,connection_status,country_code';
+
+/**
+ * Staging only: the designated shared channel row, or null (fail closed) when
+ * it cannot serve. Looks the row up by its pinned id, never by country or
+ * type, so no other number can come back. Pass `credentials` only when the
+ * caller sends a message and needs the token.
+ */
+export async function loadStagingDesignatedChannel(
+  db: SupabaseClient,
+  options: { credentials?: boolean } = {},
+): Promise<StagingDesignatedChannelRow | null> {
+  const columns: string = options.credentials ? `${DESIGNATED_COLUMNS},meta_access_token,waba_id` : DESIGNATED_COLUMNS;
+  const { data, error } = await db.from('whatsapp_channels').select(columns)
+    .eq('id', STAGING_SHARED_WHATSAPP_CHANNEL.id).maybeSingle();
+  if (error || !data) return null;
+  const row = data as unknown as StagingDesignatedChannelRow;
+  return stagingDesignatedChannelProblem(row) === null ? row : null;
 }

@@ -54,6 +54,7 @@ const SHARED_SELECTION_KEYS = [
   'skip_service',
   'staff_id',
   'staff_name',
+  '_staff_any',
   'date',
   'time',
   'party_size',

@@ -7,7 +7,7 @@ export interface EntityBalance {
 }
 
 /**
- * #381 canonical balance authority for bookings/reservations.
+ * #381 canonical balance authority for bookings/reservations (and orders, #889).
  *
  * A booking may have multiple payment rows (deposit + one or more balance
  * attempts). Never infer outstanding balance from the configured deposit alone.
@@ -18,15 +18,17 @@ export async function getEntityBalance(
   opts: {
     bookingId?: string;
     reservationId?: string;
+    /** #889: order deposits use the same payment-history rule. */
+    orderId?: string;
     totalAmount?: number;
   },
 ): Promise<EntityBalance | null> {
-  const entityCount = Number(!!opts.bookingId) + Number(!!opts.reservationId);
+  const entityCount = Number(!!opts.bookingId) + Number(!!opts.reservationId) + Number(!!opts.orderId);
   if (entityCount !== 1) return null;
 
-  const entityId = opts.bookingId || opts.reservationId!;
-  const entityTable = opts.bookingId ? 'bookings' : 'reservations';
-  const paymentColumn = opts.bookingId ? 'booking_id' : 'reservation_id';
+  const entityId = (opts.bookingId || opts.reservationId || opts.orderId)!;
+  const entityTable = opts.bookingId ? 'bookings' : opts.reservationId ? 'reservations' : 'orders';
+  const paymentColumn = opts.bookingId ? 'booking_id' : opts.reservationId ? 'reservation_id' : 'order_id';
 
   let totalAmount = opts.totalAmount;
   if (totalAmount == null) {
