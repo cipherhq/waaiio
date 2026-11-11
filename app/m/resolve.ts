@@ -124,6 +124,8 @@ export async function resolveBusinessChannel(
 
   const rb: ReadinessBusiness = { id: biz.id, country_code: biz.country_code };
   const rc: ReadinessChannel = {
+    id: ch.id,
+    phone_number: ch.phone_number,
     channel_type: ch.channel_type,
     is_active: ch.is_active,
     connection_status: ch.connection_status,
