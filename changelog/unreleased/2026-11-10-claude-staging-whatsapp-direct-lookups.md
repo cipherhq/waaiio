@@ -15,7 +15,7 @@
 
 **Not changed, on purpose:** inbound identification (`lib/bot/launch-optin.ts` market label, `lib/bot/bot.service.ts` shared-number country) — the number a message arrived on identifies the channel, as documented in `docs/WHATSAPP_ENVIRONMENT_ROUTING.md`; the dashboard shared-target preview (`app/api/settings/whatsapp-channel/route.ts`, authority is the `channel_change_shared_target` RPC); the admin campaign channel list; the `whatsapp_channels_public` fallback; the payment-success exact-origin path.
 
-**Residual (follow-up, not in this PR):** the `supabase/functions/chat-timeout` edge function picks its own channel (dedicated → country shared → any shared) and does not apply the staging rule. No effect today: staging has one shared channel and no `cron.job` schedules the function (read-only check, 2026-11-10).
+**Residual (follow-up, not in this PR):** the `supabase/functions/chat-timeout` edge function picks its own channel (dedicated → country shared → any shared) and does not apply the staging rule. No effect today: staging has one shared channel and no `cron.job` schedules the function (read-only check, 2026-11-10). Likewise the browser-side number lookups in `app/dashboard/keyword-campaigns/page.tsx` and `app/get-started/OnboardingWizard.tsx` (display only). Staging OTP: the designated row has no stored token, so OTP still goes out through the env fallback, as before.
 
 **Affects:** staging only at runtime. Production code paths run the same queries in the same order with the same results (tests record and compare the exact query chains).
 
