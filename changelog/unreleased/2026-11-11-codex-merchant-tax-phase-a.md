@@ -36,3 +36,7 @@
 ### Payout fixture currency compatibility
 - M440/M444 test fixtures now supply consistent NGN business/payout/adjustment identity and retain immutable provenance with isolated IDs. Assertions and runtime code are unchanged.
 - Fresh disposable PG17: M440 18 and M444 5 tests passed, zero skipped. Bounded later database suites also passed; remote verification remains required.
+
+### DB delta replay setup
+- Separate advisory replay now restores the approved M501 accounting entrypoints using the exact applied Git blob, through the existing local-only guarded helper. Both base/candidate paths are covered; default bootstrap behavior and catalog locks remain unchanged.
+- Full disposable PG17 CLI replay completed; 24 new/existing tests passed with zero skips. Advisory findings remain visible and are not release approval.

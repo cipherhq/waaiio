@@ -181,3 +181,11 @@ At `3fd68f6b0a5a37a0cdb7d70c7bd7180ce0d08311`, CI's migration merge was `cee457e
 ## Payout fixture currency compatibility
 
 The same CI merge passed all repaired M398/M383/M427 cases (11/70/1 tests, zero skips), then shard B reached M440 and failed during fixture setup. Independent verification reproduced missing nullable currencies causing the existing accounting adjustment source/target guards to reject M440 and M444 seeds. Both test fixtures now use consistent NGN for their Nigerian merchant payouts/adjustments, unique identities, and retained immutable provenance. All original assertion expectations and runtime guards remain unchanged. Fresh disposable PG17: M440 18 passed/zero skipped; M444 5 passed/zero skipped. The remaining bounded later suites also passed locally: M464 10, M468 6, M469 16, M712 16 and M476 30, all zero skips. These local checks are not a replacement for the new-head CI run.
+
+## DB delta replay setup correction
+
+At `fcdeb357d02b959e3e6d78cffd4f01616ccf6049`, both shards passed all database test steps and shard B completed successfully. Shard A's final advisory DB-delta tool failed because its separate base/candidate replay omitted the already-approved M501 operational entrypoints required by M532. Independent review confirmed this tooling setup gap.
+
+The delta CLI now invokes the existing guarded restoration helper immediately after successfully applying exactly M501, forwarding the already-loaded Git revision blob over stdin. Both base and candidate paths preserve exact migration content. Existing callers retain the helper's checkout default; local endpoint restriction, canonical postgres ownership, transactional rollback and approved catalog-lock checks are unchanged. No accounting enrollment or activation is performed.
+
+Fresh disposable PG17 full CLI base `0a5b2d4798ca8d1c99aa45c7a291c0434f804483` to candidate `fcdeb357d02b959e3e6d78cffd4f01616ccf6049` completed with exit 0 and captured both baselines after all six tax migrations. New and existing delta tests: 24 passed, zero skipped. The advisory diff reports BLOCKED for additions/changes requiring review; its verdict and exit policy are unchanged, and this is not release approval. Full new-head CI remains required.

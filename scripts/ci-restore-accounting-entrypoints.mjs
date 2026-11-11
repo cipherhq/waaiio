@@ -5,6 +5,10 @@ import { readFileSync } from 'node:fs';
 import { installAccountingFinalizers } from './release-v3/catalog-oracle.mjs';
 
 const connectionString = process.argv[2];
+const migrationSource = process.argv[3];
+if (migrationSource && migrationSource !== '--migration-stdin') {
+  throw new Error('Unknown accounting fixture restoration source');
+}
 const host = connectionString ? new URL(connectionString).hostname : (process.env.PGHOST || 'localhost');
 if (!['localhost', '127.0.0.1', '[::1]', 'postgres'].includes(host)) {
   throw new Error('Accounting fixture restoration requires a disposable local PostgreSQL endpoint');
@@ -17,7 +21,7 @@ try {
   }
   await client.query('BEGIN');
   try {
-    await installAccountingFinalizers(client, readFileSync(new URL('../supabase/migrations/501_accounting_cutover_installer.sql', import.meta.url), 'utf8'));
+    await installAccountingFinalizers(client, readFileSync(migrationSource === '--migration-stdin' ? 0 : new URL('../supabase/migrations/501_accounting_cutover_installer.sql', import.meta.url), 'utf8'));
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
