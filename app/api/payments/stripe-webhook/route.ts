@@ -9,6 +9,7 @@ import { createAlert } from '@/lib/alerts/create-alert';
 import { sendEmail } from '@/lib/email/client';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
+import { confirmTaxPaymentFailure } from '@/lib/payments/tax-authority';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
 import { classifyInvoiceSubscription, extractInvoicePaymentIdentity, extractSubscriptionLinePeriod } from '@/lib/payments/stripe-invoice-extractors';
 import { finalizeStripeRenewal } from '@/lib/payments/stripe-renewal-finalization';
@@ -445,16 +446,23 @@ export async function POST(request: NextRequest) {
       if (sessionId) {
         const { data: expiredPayment } = await supabase
           .from('payments')
-          .select('id, amount, business_id')
+          .select('id, amount, business_id, gateway, tax_allocation')
           .eq('gateway_reference', sessionId)
           .neq('status', 'success')
           .maybeSingle();
 
-        await supabase
-          .from('payments')
-          .update({ status: 'failed', gateway_status: 'expired' })
-          .eq('gateway_reference', sessionId)
-          .neq('status', 'success');
+        if (expiredPayment?.tax_allocation) {
+          // Taxed sale (#980): Stripe proved this checkout ended, so mark it failed and
+          // release its hold in one database step. The customer can then pay again.
+          const released = await confirmTaxPaymentFailure(supabase, expiredPayment.id, expiredPayment.gateway, sessionId, 'expired');
+          if (!released) logger.warn('[STRIPE-WEBHOOK] Taxed checkout expiry not released', { paymentId: expiredPayment.id });
+        } else {
+          await supabase
+            .from('payments')
+            .update({ status: 'failed', gateway_status: 'expired' })
+            .eq('gateway_reference', sessionId)
+            .neq('status', 'success');
+        }
 
         // Cancel any pending subscription created during this checkout.
         // Only affects pending rows — already-active rows are not touched.

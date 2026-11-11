@@ -1,4 +1,4 @@
-import { reserveTaxPayment } from '@/lib/payments/tax-authority';
+import { reserveTaxPayment, openTaxCheckout } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 
@@ -392,6 +392,8 @@ export async function initializePayment(
             },
           };
           const taxReservation = await reserveTaxPayment(supabase, taxPayload);
+          // Retry while the earlier checkout is still open: same link, no new charge.
+          if (taxReservation?.reused) return openTaxCheckout(taxReservation.payment);
           if (taxReservation) platformFeeAmount = taxReservation.fee.feeTotal;
           const { data: preRow, error: preErr } = taxReservation
             ? { data: taxReservation.payment, error: null }
@@ -442,6 +444,8 @@ export async function initializePayment(
           ...(connectAccountId && { connect: true, connect_account_id: connectAccountId }),
         },
       });
+      // Retry while the earlier checkout is still open: same link, no new charge.
+      if (reservation?.reused) return openTaxCheckout(reservation.payment);
       if (reservation) {
         v1PaymentId = String(reservation.payment.id);
         platformFeeAmount = reservation.fee.feeTotal;

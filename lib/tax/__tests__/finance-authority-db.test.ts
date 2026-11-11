@@ -231,6 +231,25 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
     expect(() => reserve(order,6,{gateway_reference:'different-intent'})).toThrow();
   });
 
+  it('lets the customer pay again after the provider proves the checkout expired (Owner decision #980)', () => {
+    const order=sale(); const input={gateway_reference:'retry-intent'};
+    const p=reserve(order,12,input).payment;
+    sql(`SET ROLE service_role; SELECT public.bind_merchant_tax_fee_980('${p.id}'); RESET ROLE;
+      UPDATE public.payments SET provider_init_state='dispatched' WHERE id='${p.id}';
+      UPDATE public.payments SET provider_init_state='provider_confirmed',gateway_reference='cs_retry_expired' WHERE id='${p.id}';`);
+    // Still open: the retry gets the same attempt back, never a second one.
+    expect(reserve(order,12,input)).toMatchObject({reused:true,payment:{id:p.id,status:'pending'}});
+    // Wrong evidence cannot release it.
+    expect(() => sql(`SET ROLE service_role; SELECT public.confirm_merchant_tax_payment_failure_980('${p.id}','stripe','cs_other','expired')`)).toThrow();
+    expect(sql(`SET ROLE service_role; SELECT public.confirm_merchant_tax_payment_failure_980('${p.id}','stripe','cs_retry_expired','expired')`)).toBe('t');
+    const again=reserve(order,12,input);
+    expect(again).toMatchObject({taxable:true,reused:false});
+    expect(again.payment.id).not.toBe(p.id);
+    expect(again.payment.tax_allocation).toEqual(p.tax_allocation);
+    // The expired attempt can never also be collected, so the sale cannot be paid twice.
+    expect(() => sql(`UPDATE public.payments SET status='success' WHERE id='${p.id}'`)).toThrow();
+  });
+
   it('rejects nonfinite and fractional minor-unit input before recording a hold', () => {
     const order=sale();
     for (const amount of ['NaN','Infinity',1.001]) expect(() => reserve(order,12,{amount})).toThrow();

@@ -330,6 +330,13 @@ export async function GET(request: NextRequest) {
       if (result.lifecycle?.status === 'completed' || result.lifecycle?.status === 'already_completed') {
         reconciled++;
         logger.info(`[PAYMENT-RECONCILIATION] Reconciled payment ${payment.id} (${payment.gateway})`);
+      } else if (result.providerOutcome === 'not_paid'
+        && sp.tax_allocation && payment.gateway === 'stripe' && payment.status === 'pending'
+        && typeof payment.gateway_reference === 'string' && payment.gateway_reference.startsWith('cs_')
+        && await verifyStripePayment(payment.gateway_reference) === 'expired') {
+        // Taxed sale (#980) whose Stripe checkout has expired (a missed webhook):
+        // Stripe proves it ended, so release the hold and let the customer pay again.
+        if (await confirmTaxPaymentFailure(supabase, payment.id, 'stripe', payment.gateway_reference, 'expired')) markedFailed++;
       } else if (result.providerOutcome === 'not_paid') {
         // Generic not_paid is NOT proof of terminal failure.
         // Leave as pending — provider may still be processing, or the check was ambiguous.

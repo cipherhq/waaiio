@@ -40,3 +40,8 @@
 ### DB delta replay setup
 - Separate advisory replay now restores the approved M501 accounting entrypoints using the exact applied Git blob, through the existing local-only guarded helper. Both base/candidate paths are covered; default bootstrap behavior and catalog locks remain unchanged.
 - Full disposable PG17 CLI replay completed; 24 new/existing tests passed with zero skips. Advisory findings remain visible and are not release approval.
+
+### Taxed checkout retry (release review P1, Owner decision 2026-11-11)
+- What changed: a customer can pay again after a taxed checkout. While the earlier checkout is still open, a retry returns the same link (`openTaxCheckout` in `lib/payments/tax-authority.ts`, used by `initializePayment` in `lib/bot/flows/shared/payment.ts`). No second provider charge is created. When Stripe proves a checkout expired, the hold is released in one database step (`confirm_merchant_tax_payment_failure_980`). That release now happens in the `checkout.session.expired` webhook, and in the reconciliation cron when a webhook was missed. A new attempt is then allowed. No SQL changed.
+- What it affects: every hosted-checkout start for taxed orders, bookings and invoices (bot, `/api/invoices/pay`, public booking, balance requests, quotes, catalog orders). Untaxed payments keep the plain expiry update.
+- What could break: a retry within Stripe's expiry window gets the original (still valid) link. Paystack and Flutterwave attempts are not released from "abandoned" alone, because that status is not proof the link can no longer be paid; the customer keeps the same link instead. Merged main (#981) and registered M528–M533 in `docs/MIGRATION_REGISTRY.md`.

@@ -41,6 +41,23 @@ export async function reserveTaxPayment(supabase: SupabaseClient, payment: Recor
   return { payment: data.payment as Record<string, any>, fee, reused: Boolean(data.reused) };
 }
 
+/**
+ * Owner decision (#980, 2026-11-11): a customer may retry a taxed checkout.
+ * While the earlier checkout for the same sale and reference is still open at the
+ * provider, the retry gets that same link back. No second provider charge is
+ * created, so retrying cannot pay twice. Any other unresolved state returns null.
+ */
+export function openTaxCheckout(payment: Record<string, any> | null | undefined): { url: string; reference: string } | null {
+  const url = payment?.metadata?.checkout_url;
+  if (payment?.status !== 'pending' || payment?.provider_init_state !== 'provider_confirmed'
+    || typeof payment?.gateway_reference !== 'string' || !payment.gateway_reference || typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return null;
+  } catch { return null; }
+  return { url, reference: payment.gateway_reference };
+}
+
 /** Call only after a provider response conclusively proves this intent failed. */
 export async function confirmTaxPaymentFailure(supabase:SupabaseClient,paymentId:string,gateway:string,reference:string,status:'failed'|'abandoned'|'expired'):Promise<boolean>{
   const {data,error}=await supabase.rpc('confirm_merchant_tax_payment_failure_980',{

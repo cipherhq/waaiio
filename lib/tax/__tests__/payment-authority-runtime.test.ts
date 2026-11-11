@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-const state=vi.hoisted(()=>({events:[] as string[],gate:false,failReservation:false,failCas:false,provider:vi.fn(),errors:[] as unknown[]}));
+const state=vi.hoisted(()=>({events:[] as string[],gate:false,failReservation:false,failCas:false,reserved:null as null|Record<string,unknown>,provider:vi.fn(),errors:[] as unknown[]}));
 vi.mock('@/lib/payments/factory',()=>({getPaymentGateway:vi.fn(),getPaymentGatewayByName:()=>({name:'stripe',initializePayment:state.provider})}));
 vi.mock('@/lib/payments/gateway-resolver',()=>({resolveBusinessGateway:async()=>({gateway:'stripe',currency:'USD'}),resolveCountryGateway:async()=>({gateway:'stripe',currency:'USD'})}));
 vi.mock('@/lib/payments/resolve-stripe-routing',()=>({resolvePaymentRoutingAuthority:async()=>({isByo:false,stripeAccountId:'acct_merchant',platformFeeAmount:99})}));
@@ -26,7 +26,7 @@ function client() {
   return {from:(table:string)=>chain(table),rpc:vi.fn(async(name:string)=>{
     state.events.push(name);
     if(name==='reserve_merchant_tax_payment_980') return state.failReservation ? {data:null,error:{message:'unresolved'}}
-      : {data:{taxable:true,payment:{id:'payment-tax'}},error:null};
+      : {data:state.reserved??{taxable:true,payment:{id:'payment-tax'}},error:null};
     return {data:{version:1,feePolicyVersion:state.gate?1:0,configVersionId:state.gate?'config-tax':null,
       tier:'free',currency:'USD',feePercentage:3,feeFlat:0,feeTotal:3,netAmount:10000,grossAmount:12000,
       flatMinor:0,percentageMinor:300,totalMinor:300},error:null};
@@ -35,7 +35,7 @@ function client() {
 const opts={userId:null,amount:120,referenceCode:'intent-tax',businessName:'Merchant',phone:'+15550000000',
   orderId:'order-tax',businessId:'business-tax',transactionCategory:'ordering'};
 beforeEach(()=>{
-  state.events=[];state.errors=[];state.gate=false;state.failReservation=false;state.failCas=false;state.provider.mockReset();
+  state.events=[];state.errors=[];state.gate=false;state.reserved=null;state.failReservation=false;state.failCas=false;state.provider.mockReset();
   state.provider.mockImplementation(async()=>{state.events.push('provider');return {url:'https://checkout.test',reference:'session-tax'};});
 });
 describe('tax checkout provider dispatch (real initializer, mocked boundaries)',()=>{
@@ -47,6 +47,27 @@ describe('tax checkout provider dispatch (real initializer, mocked boundaries)',
   });
   it('does not contact the provider when reservation fails',async()=>{
     state.failReservation=true;expect(await initializePayment(client(),opts)).toBeNull();expect(state.provider).not.toHaveBeenCalled();
+  });
+  // Owner decision #980: a customer may retry; while the earlier checkout is still open
+  // they get the same link back and no second provider charge is created.
+  const openAttempt={id:'payment-tax',status:'pending',provider_init_state:'provider_confirmed',
+    gateway_reference:'cs_open',metadata:{checkout_url:'https://checkout.stripe.test/c/cs_open'}};
+  for(const gate of [false,true]) it(`retry returns the still-open checkout link without a new charge (v${gate?1:0})`,async()=>{
+    state.gate=gate;state.reserved={taxable:true,reused:true,payment:openAttempt};
+    expect(await initializePayment(client(),opts)).toEqual({url:'https://checkout.stripe.test/c/cs_open',reference:'cs_open'});
+    expect(state.provider).not.toHaveBeenCalled();
+    expect(state.events).toEqual(['reserve_merchant_tax_payment_980','bind_merchant_tax_fee_980']);
+  });
+  for(const attempt of [
+    {...openAttempt,provider_init_state:'dispatched'},
+    {...openAttempt,status:'failed'},
+    {...openAttempt,metadata:{}},
+    {...openAttempt,metadata:{checkout_url:'javascript:alert(1)'}},
+  ]) it(`retry of an attempt that is not an open checkout returns nothing (${JSON.stringify(attempt).slice(0,60)})`,async()=>{
+    state.reserved={taxable:true,reused:true,payment:attempt};
+    expect(await initializePayment(client(),opts)).toBeNull();
+    expect(state.provider).not.toHaveBeenCalled();
+    expect(state.events).not.toContain('dispatched');
   });
   it('does not contact the provider when another dispatch owns the row',async()=>{
     state.failCas=true;expect(await initializePayment(client(),opts)).toBeNull();expect(state.provider).not.toHaveBeenCalled();
