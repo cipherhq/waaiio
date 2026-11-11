@@ -73,11 +73,19 @@ function mockDb(opts: DbOpts) {
     return chain;
   });
   let lastAccepted: string | null = null;
+  let session: { session_data: Record<string, unknown> } | null = null;
+  /** Like private.scheduling_604_create_booking: the terms sent must equal the confirmed claim's terms. */
+  const claimMatches = (params: Record<string, unknown>) => {
+    const claim = session?.session_data._604_confirmation as { terms?: unknown } | undefined;
+    return !!claim && JSON.stringify(claim.terms) === JSON.stringify(params.p_expected_terms);
+  };
+  const claimError = { code: 'P0001', message: 'booking_confirmation_required' };
   const answer = (staffId: string | null) => opts.answers[staffId ?? 'none'] ?? 'refuse';
   const rpc = vi.fn((name: string, params: Record<string, unknown>) => {
     if (name === 'update_session_cas') return Promise.resolve({ data: { success: true, version: 2 }, error: null });
     const staffId = (params.p_staff_id as string | null) ?? null;
     if (name === SLOT_RPC) {
+      if (!claimMatches(params)) return { single: async () => ({ data: null, error: claimError }) };
       const a = answer(staffId);
       if (a === 'accept') lastAccepted = staffId;
       return {
@@ -87,6 +95,7 @@ function mockDb(opts: DbOpts) {
       };
     }
     if (name === PKG_RPC) {
+      if (!claimMatches(params)) return Promise.resolve({ data: null, error: claimError });
       const a = answer(staffId);
       if (a === 'accept') lastAccepted = staffId;
       if (a === 'error') return Promise.resolve({ data: null, error: { code: 'P0001', message: 'package_unavailable' } });
@@ -96,7 +105,7 @@ function mockDb(opts: DbOpts) {
     }
     return Promise.resolve({ data: null, error: null });
   });
-  return { client: { from, rpc } };
+  return { client: { from, rpc }, bind: (s: { session_data: Record<string, unknown> }) => { session = s; } };
 }
 
 function ctxFor(db: ReturnType<typeof mockDb>, sessionData: Record<string, unknown> = {}): FlowContext {
@@ -137,7 +146,22 @@ function ctxFor(db: ReturnType<typeof mockDb>, sessionData: Record<string, unkno
 
 async function steps() {
   const { schedulingFlow } = await import('@/lib/bot/flows/scheduling.flow');
-  return { staff: getStep(schedulingFlow, 'select_staff'), create: getStep(schedulingFlow, 'create_booking') };
+  return {
+    staff: getStep(schedulingFlow, 'select_staff'),
+    confirmation: getStep(schedulingFlow, 'confirmation'),
+    create: getStep(schedulingFlow, 'create_booking'),
+  };
+}
+
+/** The customer taps Confirm on the summary (real step): stores the _604_confirmation claim. */
+async function confirmed(db: ReturnType<typeof mockDb>, ctx: FlowContext) {
+  const { confirmation } = await steps();
+  db.bind(ctx.session);
+  const r = await confirmation.validate('confirm', ctx);
+  expect(r.valid).toBe(true);
+  Object.assign(ctx.session.session_data, r.data);
+  expect(ctx.session.session_data._604_confirmation).toBeTruthy();
+  return ctx;
 }
 
 const claims = (db: ReturnType<typeof mockDb>, name = SLOT_RPC) =>
@@ -203,7 +227,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('named staff: one call with that staff member, as before', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { [JOHN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: JOHN.id, staff_name: JOHN.name, _staff_any: false });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: JOHN.id, staff_name: JOHN.name, _staff_any: false }));
     const msgs = await create.prompt(ctx);
     expect(claims(db)).toEqual([JOHN.id]);
     expect(texts(msgs)).not.toContain(TAKEN);
@@ -213,7 +237,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('named staff refused: the time list again, no other staff member is tried', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { [JOHN.id]: 'refuse', [JONATHAN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: JOHN.id, staff_name: JOHN.name, _staff_any: false });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: JOHN.id, staff_name: JOHN.name, _staff_any: false }));
     const msgs = await create.prompt(ctx);
     expect(claims(db)).toEqual([JOHN.id]);
     expect((msgs[0] as { text?: string }).text).toBe(TAKEN);
@@ -222,7 +246,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('any staff: the least busy staff member that day is tried first and booked', async () => {
     const { create } = await steps();
     const db = mockDb({ bookings: [row(JOHN.id)], answers: { [JOHN.id]: 'accept', [JONATHAN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
     const msgs = await create.prompt(ctx);
     expect(claims(db)).toEqual([JONATHAN.id]);
     expect(texts(msgs)).not.toContain(TAKEN);
@@ -232,7 +256,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('any staff, first one unavailable at that time (refused by the booking function): the next one is booked', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { [JOHN.id]: 'refuse', [JONATHAN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
     const msgs = await create.prompt(ctx);
     expect(claims(db)).toEqual([JOHN.id, JONATHAN.id]);
     expect(texts(msgs)).not.toContain(TAKEN);
@@ -242,7 +266,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('any staff, availability changed before the commit (every staff member now refused): "time taken" and the time list, no staff kept', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { [JOHN.id]: 'refuse', [JONATHAN.id]: 'refuse' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
     const msgs = await create.prompt(ctx);
     expect(claims(db)).toEqual([JOHN.id, JONATHAN.id]);
     expect((msgs[0] as { text?: string }).text).toBe(TAKEN);
@@ -254,7 +278,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('never books without staff: no call is made with an empty staff member', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { none: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
     await create.prompt(ctx);
     expect(claims(db)).not.toContain(null);
   });
@@ -262,7 +286,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('an error that is not a refusal stops at once (no other staff member is tried)', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { [JOHN.id]: 'error', [JONATHAN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
     const msgs = await create.prompt(ctx);
     expect(claims(db)).toEqual([JOHN.id]);
     expect(texts(msgs)).not.toContain(TAKEN);
@@ -272,7 +296,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('a booking this session already made is retried with its own staff member only (same request, no intent change)', async () => {
     const { create } = await steps();
     const db = mockDb({ sessionBooking: { staff_id: JONATHAN.id }, answers: { [JOHN.id]: 'accept', [JONATHAN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
     await create.prompt(ctx);
     expect(claims(db)).toEqual([JONATHAN.id]);
     expect(ctx.session.session_data).toMatchObject({ booking_id: 'bk-new', staff_id: JONATHAN.id });
@@ -281,7 +305,7 @@ describe('create_booking — "Any available" on a service that requires staff', 
   it('a service that does not require staff keeps "Any available" as no staff member (one call, as before)', async () => {
     const { create } = await steps();
     const db = mockDb({ answers: { none: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true, _service_requires_staff: false });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true, _service_requires_staff: false }));
     await create.prompt(ctx);
     expect(claims(db)).toEqual([null]);
   });
@@ -293,11 +317,53 @@ describe('create_booking — "Any available" on a service that requires staff', 
       service_packages: { id: 'pkg-1', service_ids: ['svc-lash'], is_active: true },
     };
     const db = mockDb({ pkg: true, enrollments: [enrollment], answers: { [JOHN.id]: 'refuse', [JONATHAN.id]: 'accept' } });
-    const ctx = ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true, service_price: 500000 });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true, service_price: 500000 }));
     const msgs = await create.prompt(ctx);
     expect(claims(db, PKG_RPC)).toEqual([JOHN.id, JONATHAN.id]);
     expect(claims(db, SLOT_RPC)).toEqual([]);
     expect(texts(msgs)).not.toContain(TAKEN);
     expect(ctx.session.session_data).toMatchObject({ staff_id: JONATHAN.id, _package_covered: true });
+  });
+
+  it('the confirmation claim (no staff member for "Any available") still matches on every staff member tried', async () => {
+    const { create } = await steps();
+    const db = mockDb({ answers: { [JOHN.id]: 'refuse', [JONATHAN.id]: 'accept' } });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
+    expect((ctx.session.session_data._604_confirmation as { terms: { staff: unknown } }).terms.staff).toBeNull();
+    await create.prompt(ctx);
+    const sent = db.client.rpc.mock.calls.filter(([n]) => n === SLOT_RPC).map(([, p]) => p as Record<string, unknown>);
+    expect(sent.map(p => p.p_staff_id)).toEqual([JOHN.id, JONATHAN.id]);
+    expect(sent.every(p => (p.p_expected_terms as { staff: unknown }).staff === null)).toBe(true);
+    expect(ctx.session.session_data).toMatchObject({ booking_id: 'bk-new', staff_id: JONATHAN.id });
+  });
+
+  it('appointment-type service that requires staff: same loop, booked with the next staff member', async () => {
+    const { create } = await steps();
+    const db = mockDb({ answers: { [JOHN.id]: 'refuse', [JONATHAN.id]: 'accept' } });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true, _is_appointment: true }));
+    await create.prompt(ctx);
+    const sent = db.client.rpc.mock.calls.filter(([n]) => n === SLOT_RPC).map(([, p]) => p as Record<string, unknown>);
+    expect(sent.map(p => p.p_staff_id)).toEqual([JOHN.id, JONATHAN.id]);
+    expect(sent[0]).toMatchObject({ p_appointment_id: 'svc-lash', p_service_id: null });
+  });
+
+  it('no staff list (staff step not shown): one call as before, refused, "time taken"', async () => {
+    const { create } = await steps();
+    const db = mockDb({ answers: {} });
+    const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true, _available_staff: [] }));
+    const msgs = await create.prompt(ctx);
+    expect(claims(db)).toEqual([null]);
+    expect((msgs[0] as { text?: string }).text).toBe(TAKEN);
+  });
+
+  it('a staff list kept from an earlier service only offers staff this service names', async () => {
+    const { create } = await steps();
+    const db = mockDb({ answers: { [JOHN.id]: 'accept', [JONATHAN.id]: 'accept' } });
+    const ctx = await confirmed(db, ctxFor(db, {
+      staff_id: null, staff_name: null, _staff_any: true,
+      _available_staff: [{ id: 'staff-other', name: 'Other' }, JONATHAN], _service_staff_ids: [JOHN.id, JONATHAN.id],
+    }));
+    await create.prompt(ctx);
+    expect(claims(db)).toEqual([JONATHAN.id]);
   });
 });

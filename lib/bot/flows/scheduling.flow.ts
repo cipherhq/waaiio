@@ -433,7 +433,11 @@ async function anyStaffCandidates(ctx: FlowContext): Promise<StaffCandidate[] | 
   const d = ctx.session.session_data;
   if (d._staff_any !== true || d._service_requires_staff !== true) return null;
   if (d._is_table_reservation === true || d._service_is_class === true || d._class_session_id) return null;
-  const listed = (d._available_staff as StaffCandidate[] | undefined)?.filter(s => s && s.id) || [];
+  // A list kept from an earlier service (e.g. the staff step skipped by a merchant override)
+  // only counts for staff members this service names.
+  const serviceStaff = (d._service_staff_ids as string[] | undefined) || [];
+  const listed = ((d._available_staff as StaffCandidate[] | undefined) || [])
+    .filter(s => s && s.id && (serviceStaff.length === 0 || serviceStaff.includes(s.id)));
   if (listed.length === 0 || !ctx.business) return null;
 
   const { data: existing } = await ctx.supabase.from('bookings')
@@ -3456,6 +3460,10 @@ export const schedulingFlow: FlowDefinition = {
             // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
             // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
             const pkgStaff = await anyStaffCandidates(ctx);
+            // The terms the customer confirmed ("Any available": no staff member). They are built
+            // before the staff loop so they keep matching the confirmation claim (_604_confirmation)
+            // while p_staff_id names the staff member being tried.
+            const pkgTerms = schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG');
             const { data: pkgResult, error: pkgError } = await claimAnyStaff(ctx, pkgStaff, async () => await ctx.supabase
               .rpc('book_with_package_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
@@ -3487,7 +3495,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
-                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
+                p_expected_terms: pkgTerms,
               }), r => !r.error && r.data?.success !== true && r.data?.reason === 'slot_full');
 
             if (pkgError || !pkgResult?.success) {
@@ -3508,6 +3516,10 @@ export const schedulingFlow: FlowDefinition = {
             // ── Standard non-package booking ──
             // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
             const slotStaff = await anyStaffCandidates(ctx);
+            // The terms the customer confirmed ("Any available": no staff member). They are built
+            // before the staff loop so they keep matching the confirmation claim (_604_confirmation)
+            // while p_staff_id names the staff member being tried.
+            const slotTerms = schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG');
             const { data: slotResult, error: slotError } = await claimAnyStaff(ctx, slotStaff, async () => (await ctx.supabase
               .rpc('book_slot_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
@@ -3538,7 +3550,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
-                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
+                p_expected_terms: slotTerms,
               })
               .single()) as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown },
               r => !r.error && !!r.data && r.data.slot_available === false);
