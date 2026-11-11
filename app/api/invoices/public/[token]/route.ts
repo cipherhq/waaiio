@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
@@ -58,8 +59,11 @@ export async function GET(
       if (dedicated?.phone_number) whatsappPhone = dedicated.phone_number;
     }
     if (!whatsappPhone) {
-      const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
-        .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle();
+      // Staging: only the designated shared number.
+      const { data: shared } = isStagingWhatsAppRouting()
+        ? { data: await loadStagingDesignatedChannel(supabase) }
+        : await supabase.from('whatsapp_channels').select('phone_number')
+          .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle();
       if (shared?.phone_number) whatsappPhone = shared.phone_number;
     }
 

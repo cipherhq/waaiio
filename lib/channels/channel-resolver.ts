@@ -335,6 +335,7 @@ export class ChannelResolver {
    *
    * Authorization rules:
    * - Shared channel (channel_type='shared'): any business may use it
+   *   (staging: only the designated number)
    * - Dedicated channel owned by this business: authorized
    * - Channel explicitly assigned to this business: authorized
    * - Otherwise: rejected (returns null)
@@ -361,6 +362,12 @@ export class ChannelResolver {
     // Authorization check
     const isShared = channel.channel_type === 'shared';
     const isOwnedByBusiness = channel.business_id === authoritativeBusinessId;
+
+    // Staging sends shared traffic only through the designated number.
+    if (isShared && isStagingWhatsAppRouting() && stagingDesignatedChannelProblem(channel) !== null) {
+      logger.warn('[ChannelResolver] Refusing non-designated shared channel in staging', { channelId });
+      return null;
+    }
 
     if (!isShared && !isOwnedByBusiness) {
       // Check if the business explicitly references this channel

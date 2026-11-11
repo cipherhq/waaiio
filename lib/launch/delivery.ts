@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 
 // ── Types ──
 
@@ -148,6 +149,20 @@ export async function resolveChannelCredentials(
   supabase: SupabaseClient,
   receivingNumber: string,
 ): Promise<ChannelCredentials | null> {
+  // Staging: send only from the designated shared number, and only when the
+  // subscriber signed up on it (same two identifiers as the lookups below).
+  if (isStagingWhatsAppRouting()) {
+    const designated = await loadStagingDesignatedChannel(supabase, { credentials: true });
+    if (!designated?.phone_number_id) return null;
+    if (receivingNumber !== designated.phone_number_id && receivingNumber !== designated.phone_number) return null;
+    return {
+      phone_number_id: designated.phone_number_id,
+      meta_access_token: designated.meta_access_token ?? null,
+      waba_id: designated.waba_id ?? null,
+      phone_number: designated.phone_number,
+    };
+  }
+
   // Primary: match by Meta phone_number_id (the identifier stored by launch-optin
   // and passed by Meta webhooks). This is a numeric API identifier, not human-readable.
   const { data } = await supabase
