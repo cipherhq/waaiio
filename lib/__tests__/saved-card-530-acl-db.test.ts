@@ -1,5 +1,6 @@
 /** #530 / M427 PostgreSQL proof; CI runs this after migration bootstrap. */
 import { execSync } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -15,9 +16,20 @@ describe.skipIf(!dbUrl)('M427 saved-card ACL and RPC', () => {
       expect(sql(`SELECT has_table_privilege('anon','public.saved_payment_methods','${p}')`)).toBe('f');
       expect(sql(`SELECT has_table_privilege('authenticated','public.saved_payment_methods','${p}')`)).toBe('f');
     }
-    const id = '00000000-0000-4530-a000-000000000001';
+    const id = randomUUID();
+    const businessId = randomUUID();
+    const ownerId = randomUUID();
     expect(sql(`SELECT has_table_privilege('service_role','public.payments','UPDATE')`)).toBe('f');
-    sql(`DELETE FROM payments WHERE id='${id}'; INSERT INTO payments(id,amount,currency,gateway_reference,gateway,status,metadata) VALUES ('${id}',5000,'NGN','REF-530-TEST','paystack','pending','{"payment_origin":"platform","keep":"yes"}')`);
+    // Own the fixture tenant explicitly; no dependency on another suite's seed.
+    sql(`
+      BEGIN;
+      INSERT INTO auth.users (id) VALUES ('${ownerId}');
+      INSERT INTO profiles (id) VALUES ('${ownerId}') ON CONFLICT (id) DO NOTHING;
+      INSERT INTO businesses (id,owner_id,name,slug,address,city,phone,country_code,status)
+        VALUES ('${businessId}','${ownerId}','Saved Card ACL','card-acl-${businessId}','1 Test','Lagos','+2340000530','NG','active');
+      COMMIT;
+    `);
+    sql(`DELETE FROM payments WHERE id='${id}'; INSERT INTO payments(id,business_id,amount,currency,gateway_reference,gateway,status,metadata) VALUES ('${id}','${businessId}',5000,'NGN','REF-530-${id}','paystack','pending','{"payment_origin":"platform","keep":"yes"}')`);
     const auth = `'{"authorization_code":"AUTH-530","email":"customer@example.test","reusable":true,"pan":"4111111111111111","cvv":"123"}'::jsonb`;
     const args = `'${id}',5000,'NGN',${auth}`;
     expect(sql(`SET ROLE service_role; SELECT persist_verified_paystack_card_authorization(${args}); RESET ROLE`)).toBe('t');

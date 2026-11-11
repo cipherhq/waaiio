@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server';
 const fixture = vi.hoisted(() => ({
   rows: {} as Record<string, any[]>, token: 'admin-token', session: 'session-a',
   role: 'admin', aal: 'aal2', active: true, user: 'admin-a',
-  writes: [] as Array<{ table: string; values: any }>, clients: [] as any[],
+  writes: [] as Array<{ table: string; values: any }>, clients: [] as any[], taxReads: [] as unknown[],
 }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: (options: any) => {
   fixture.clients.push(options);
@@ -17,7 +17,11 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: (options: any) =
         : { error: new Error('invalid token') },
       getUser: async () => ({ data: { user: { id: fixture.user, app_metadata: { role: fixture.role } } } }),
     },
-    rpc: () => ({ maybeSingle: async () => ({ data: { session_exists: fixture.active } }) }),
+    rpc: (name: string, args: unknown) => {
+      if (name === 'tax_refund_payout_currencies_980') { fixture.taxReads.push([name, args]); return Promise.resolve({ data: [], error: null }); }
+      if (name === 'tax_refund_payout_projection_980') { fixture.taxReads.push([name, args]); return Promise.resolve({ data: { affected: false }, error: null }); }
+      return { maybeSingle: async () => ({ data: { session_exists: fixture.active } }) };
+    },
     from: (table: string) => {
       let mode = 'select', values: any, single = false;
       const filters: Array<(row: any) => boolean> = [];
@@ -78,7 +82,7 @@ async function grant(params: any = { action: 'generate' }) {
   return stepUpId;
 }
 beforeEach(() => {
-  Object.assign(fixture, { rows: {}, writes: [], clients: [], role: 'admin', aal: 'aal2', active: true, session: 'session-a', user: 'admin-a' });
+  Object.assign(fixture, { rows: {}, writes: [], clients: [], taxReads: [], role: 'admin', aal: 'aal2', active: true, session: 'session-a', user: 'admin-a' });
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://auth.fixture.invalid');
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'synthetic-public');
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -126,6 +130,7 @@ describe('canonical admin → backend prepare/verify/generate compatibility', ()
     fixture.writes = [];
     expect((await generate(request('payouts/generate', { stepUpId: id }))).status).toBe(403);
     expect(fixture.writes).toEqual([]); expect(row.consumed_at).toBeUndefined();
+    expect(fixture.taxReads).toEqual([]);
   });
   it('preserves separate currency platform-held totals while excluding connected-provider funds', async () => {
     const id = await grant();
@@ -139,6 +144,11 @@ describe('canonical admin → backend prepare/verify/generate compatibility', ()
     expect(fixture.rows.business_payouts.map(r => [r.currency, r.gross_amount, r.net_amount])).toEqual([['NGN', 100, 85], ['USD', 50, 47]]);
     expect(fixture.rows.business_payouts.map(r => r.status)).toEqual(['pending', 'held']);
     expect(fixture.rows.business_payouts[1].flags).toContainEqual(expect.objectContaining({ type: 'currency_review' }));
+    expect(fixture.taxReads).toEqual([
+      ['tax_refund_payout_currencies_980', { p_business_id: 'business-a' }],
+      ['tax_refund_payout_projection_980', { p_business_id: 'business-a', p_currency: 'NGN' }],
+      ['tax_refund_payout_projection_980', { p_business_id: 'business-a', p_currency: 'USD' }],
+    ]);
     expect(fetch).toHaveBeenCalledTimes(1); // Factor lookup only; paired Auth transport is mocked separately.
   });
 });

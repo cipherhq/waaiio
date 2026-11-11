@@ -53,6 +53,7 @@ beforeEach(() => {
   deliver.mockClear();
   mockRpc.mockReset();
   mockRpc.mockImplementation((name: string) => {
+    if (name === 'quote_booking_tax_980') return { data: { total: 0, deposit: 0, tax_snapshot: null }, error: null };
     const single = async () => ({ data: { booking_id: 'book-1', reference_code: 'REF-001', slot_available: true }, error: null });
     if (name === 'book_manual_slot_authoritative_604') return { single };
     const p = Promise.resolve({ data: null, error: null });

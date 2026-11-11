@@ -5,6 +5,9 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
 
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+import { initialQuotedItems, type QuotedItem } from '@/lib/tax/quote-items';
+
 type QuoteStatus = 'pending' | 'quoted' | 'accepted' | 'rejected' | 'expired' | 'cancelled';
 
 interface QuoteRequest {
@@ -12,8 +15,9 @@ interface QuoteRequest {
   customer_phone: string | null;
   customer_name: string | null;
   status: QuoteStatus;
-  cart_snapshot: Array<{ name: string; quantity: number; price: number; variant_label?: string; addons?: Array<{ name: string; price: number; quantity?: number }> }>;
+  cart_snapshot: Array<{ product_id?: string; name: string; quantity: number; price: number; variant_label?: string; addons?: Array<{ name: string; price: number; quantity?: number }> }>;
   addons_snapshot: Array<{ name: string; price: number; quantity?: number }>;
+  service_id?: string | null;
   delivery_zone_name: string | null;
   delivery_address: string | null;
   estimated_subtotal: number;
@@ -44,7 +48,10 @@ export default function QuotesPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<QuoteStatus | 'all'>('all');
   const [selectedQuote, setSelectedQuote] = useState<QuoteRequest | null>(null);
-  const [respondAmount, setRespondAmount] = useState('');
+  const [quotedItems, setQuotedItems] = useState<QuotedItem[]>([]);
+  const [respondError, setRespondError] = useState('');
+  const [quotePreview, setQuotePreview] = useState<{ quoted_amount: number; tax_snapshot: TaxSnapshot } | null>(null);
+  useEffect(() => { setQuotePreview(null); }, [quotedItems, selectedQuote?.id]);
   const [respondNotes, setRespondNotes] = useState('');
   const [responding, setResponding] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -68,8 +75,9 @@ export default function QuotesPage() {
 
   useEffect(() => { fetchQuotes(); }, [fetchQuotes]);
 
-  async function handleRespond() {
-    if (!selectedQuote || !respondAmount) return;
+  async function handleRespond(previewOnly = false) {
+    if (!selectedQuote || !quotedItems.length) return;
+    setRespondError('');
     setResponding(true);
 
     try {
@@ -79,19 +87,24 @@ export default function QuotesPage() {
         body: JSON.stringify({
           quote_id: selectedQuote.id,
           business_id: business.id,
-          quoted_amount: Number(respondAmount),
+          quoted_items: quotedItems,
+          preview: previewOnly, expected_tax_snapshot: quotePreview?.tax_snapshot,
           quote_notes: respondNotes.trim() || null,
         }),
       });
 
       if (res.ok) {
+        if (previewOnly) { setQuotePreview(await res.json()); setResponding(false); return; }
         setSelectedQuote(null);
-        setRespondAmount('');
+        setQuotedItems([]);
         setRespondNotes('');
         fetchQuotes();
+      } else {
+        const result = await res.json();
+        setRespondError(result.error || 'Unable to send quote');
       }
     } catch {
-      // error handled silently
+      setRespondError('Unable to send quote. Please try again.');
     }
     setResponding(false);
   }
@@ -114,7 +127,7 @@ export default function QuotesPage() {
 
       if (res.ok) {
         setSelectedQuote(null);
-        setRespondAmount('');
+        setQuotedItems([]);
         setRespondNotes('');
         fetchQuotes();
       }
@@ -203,7 +216,7 @@ export default function QuotesPage() {
             <div
               key={quote.id}
               className="cursor-pointer rounded-xl border border-gray-100 bg-white p-5 transition hover:shadow-sm"
-              onClick={() => setSelectedQuote(quote)}
+              onClick={() => { setSelectedQuote(quote); setQuotedItems(initialQuotedItems(quote)); setRespondError(''); }}
             >
               <div className="flex items-start justify-between">
                 <div>
@@ -361,20 +374,27 @@ export default function QuotesPage() {
               <div className="mt-5 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-gray-900">Set Your Price</p>
                 <div className="mt-3 space-y-3">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">Quoted Amount ({curr})</label>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={respondAmount || ''}
-                        onChange={(e) => setRespondAmount(e.target.value)}
-                        placeholder={String(selectedQuote.estimated_subtotal)}
-                        className="w-full rounded-lg border border-gray-200 py-2 pl-7 pr-3 text-sm outline-none focus:border-brand"
-                      />
+                  <p className="text-xs text-gray-500">Enter the agreed price for every item. Your tax settings apply before the customer accepts.</p>
+                  {quotedItems.map((item, index) => (
+                    <div key={item.id} className="grid grid-cols-3 gap-2">
+                      <label className="col-span-2 text-xs">{item.description} × {item.quantity}
+                        <input aria-label={`Description ${index + 1}`} value={item.description}
+                          onChange={e => setQuotedItems(rows => rows.map((row, i) => i === index ? { ...row, description: e.target.value } : row))}
+                          className="mt-1 w-full rounded border p-2" />
+                      </label>
+                      <label className="text-xs">Unit price ({curr})
+                        <input aria-label={`Unit price ${index + 1}`} type="number" min="0" step="0.01" value={item.unit_price}
+                          onChange={e => setQuotedItems(rows => rows.map((row, i) => i === index ? { ...row, unit_price: Number(e.target.value) } : row))}
+                          className="mt-1 w-full rounded border p-2" />
+                      </label>
                     </div>
-                  </div>
+                  ))}
+                  {quotePreview && <div className="rounded border p-3 text-sm">
+                    <p>Before tax: {formatCurrency(quotePreview.tax_snapshot.netAmount / 100, country)}</p>
+                    <p>Tax: {formatCurrency(quotePreview.tax_snapshot.taxAmount / 100, country)}</p>
+                    <p className="font-semibold">Customer total: {formatCurrency(quotePreview.quoted_amount, country)}</p>
+                  </div>}
+                  {respondError && <p role="alert" className="text-sm text-red-600">{respondError}</p>}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-600">Notes (optional)</label>
                     <textarea
@@ -387,11 +407,11 @@ export default function QuotesPage() {
                   </div>
                   <div className="flex gap-3">
                     <button
-                      onClick={handleRespond}
-                      disabled={responding || rejecting || !respondAmount}
+                      onClick={() => handleRespond(!quotePreview)}
+                      disabled={responding || rejecting || !quotedItems.length}
                       className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                     >
-                      {responding ? 'Sending...' : 'Send Price to Customer'}
+                      {responding ? 'Loading...' : quotePreview ? 'Confirm and Send Price' : 'Review Price and Tax'}
                     </button>
                     <button
                       onClick={handleReject}

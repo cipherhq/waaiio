@@ -1,0 +1,1055 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.bookings.deposit_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.bookings.discount_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.bookings.platform_fee",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.bookings.total_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "a5dfc3a436ba248191929217eeb8faa08bfb02ecef4b6ba89981b2b0d22e7316",
+   "identity": "column:public.order_items.unit_price",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.orders.addons_total",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.orders.balance_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.orders.deposit_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.orders.discount_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.orders.platform_fee",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.orders.shipping_cost",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.orders.total_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.orders.volume_discount_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.payment_spend_applications.amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.payment_visit_applications.visit_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "a5dfc3a436ba248191929217eeb8faa08bfb02ecef4b6ba89981b2b0d22e7316",
+   "identity": "column:public.payments.amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.payments.gateway_fee",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "d2927712b8fb0455037599c4358bc30314625d91d6fb030c8c52493810405182",
+   "identity": "column:public.payments.gateway_fee_claim_snapshot",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "d2927712b8fb0455037599c4358bc30314625d91d6fb030c8c52493810405182",
+   "identity": "column:public.payments.verified_gateway_fee",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.platform_fees.fee_flat",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.platform_fees.fee_total",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "51bdb67a19b0cc6b26705fb77d33307bc469dfb53b703e9e6bc55fb2525f1778",
+   "identity": "column:public.platform_fees.gateway_fee",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.platform_fees.reseller_commission",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "a5dfc3a436ba248191929217eeb8faa08bfb02ecef4b6ba89981b2b0d22e7316",
+   "identity": "column:public.platform_fees.transaction_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "e3a68bfaaad2b4ec73c14438b7a75a2223e7eb7da5639e6fc0fdad5470c960b1",
+   "identity": "column:public.quote_requests.estimated_subtotal",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(20,2)"
+   },
+   "after_sha256": "d2927712b8fb0455037599c4358bc30314625d91d6fb030c8c52493810405182",
+   "identity": "column:public.quote_requests.quoted_amount",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (amount >= 0::numeric)",
+    "validated": true
+   },
+   "after_sha256": "84150b4908c5aef530357f32ba006b25190b8d9050915153a7afb79f985e41ce",
+   "identity": "constraint:public.payments.chk_payments_amount_nonneg",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (gateway_fee_claim_sealed_at IS NULL AND gateway_fee_claim_snapshot IS NULL AND verified_gateway_fee IS NULL OR gateway_fee_claim_sealed_at IS NOT NULL AND gateway_fee_claim_snapshot IS NOT NULL AND gateway_fee_claim_snapshot >= 0::numeric AND gateway_fee = gateway_fee_claim_snapshot AND (verified_gateway_fee IS NULL OR verified_gateway_fee = gateway_fee_claim_snapshot))",
+    "validated": true
+   },
+   "after_sha256": "6573b9274b04cd4fd7bc758644eae1056235c548aea1563b1380acd9698a00f4",
+   "identity": "constraint:public.payments.payments_gateway_fee_snapshot_check",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (verified_gateway_fee IS NULL OR verified_gateway_fee >= 0::numeric)",
+    "validated": true
+   },
+   "after_sha256": "dd44332a98195dc1a32348f18bad52dae2797ee0df937e8b816e95030d534844",
+   "identity": "constraint:public.payments.payments_verified_gateway_fee_check",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (transaction_amount >= 0::numeric AND fee_total >= 0::numeric)",
+    "validated": true
+   },
+   "after_sha256": "214dfdd1d9b41c2266677438e40b016968aeb30aed9577109ba3e09c47786e2a",
+   "identity": "constraint:public.platform_fees.chk_platform_fees_amount_nonneg",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (gateway_fee >= 0::numeric)",
+    "validated": true
+   },
+   "after_sha256": "79ae2908df5ca016d37a5585a132997f48697dd7bd128b6407b0a7f9082ac945",
+   "identity": "constraint:public.platform_fees.chk_platform_fees_gateway_fee_nonneg",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p jsonb, p_mode text DEFAULT 'customer'::text, p_enrollment uuid DEFAULT NULL::uuid",
+    "body_sha256": "81565ffb252d352fd4a1ecc89d735cb74fc704b83c6e8e3879bacfc67ed82fc8",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "4a8c0b1f214d46c25a69b75b46f656ddd5d8531b5c1b72614f6e1aeab5b4cbb6",
+   "identity": "function:private.scheduling_604_create_booking(p jsonb, p_mode text, p_enrollment uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business uuid, p_service uuid, p_appointment uuid, p_party integer, p_addons jsonb, p_promo uuid, p_expected jsonb",
+    "body_sha256": "e5ac9410695391d3877d6ea97efa666bae01aa8481748e58e44ff821d37bcffd",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "c75bf280097d7357edd6e9fb672e799d6596e22c46c152f78a6fa85a49b95f8d",
+   "identity": "function:private.scheduling_604_quote(p_business uuid, p_service uuid, p_appointment uuid, p_party integer, p_addons jsonb, p_promo uuid, p_expected jsonb)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_quote_id uuid, p_customer_phone text",
+    "body_sha256": "4c9171e62e3249d1e01c9c14dc046d4a7e33b35434f520ef6734412d3a182b7f",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "c5e1003d684faf54a248302c64c89b70de27d84a2ef8ad37ce02980a1ddc00b2",
+   "identity": "function:public.accept_order_quote_atomic(p_quote_id uuid, p_customer_phone text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid",
+    "body_sha256": "ea96d42142fdb78c12359e28c9ba996e9f0121d5294ccd950b10b5b0275f99b9",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "bc2f30a4afa20cf8a56e047094b77fa55b04c191c31b318986b24eef0c5ac0fa",
+   "identity": "function:public.apply_payment_customer_visit_once(p_payment_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "identity": "function:public.book_manual_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount integer, p_staff_name text, p_buffer_minutes integer, p_duration integer, p_appointment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount numeric, p_staff_name text, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_appointment_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_terms jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "39ebad33ff55a9166d608553b89a6954bff2290d18e8fb68d52dce49e96d6e87",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean, committed_total numeric, committed_deposit numeric)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "9bbbeb7c35dbaf2b9fd5941417df4501dd835f384274da7b71a5a82a540ca8e8",
+   "identity": "function:public.book_manual_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount numeric, p_staff_name text, p_buffer_minutes integer, p_duration integer, p_appointment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
+   "operation": "add"
+  },
+  {
+   "identity": "function:public.book_slot_atomic(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer)",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount numeric, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount numeric, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_price numeric DEFAULT NULL::integer, p_expected_deposit numeric DEFAULT NULL::integer",
+    "body_sha256": "55c07a2d165b6221996bea4b757779f615f08b89f2ce69306db6907789ab25f1",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "d5049535a6dccce799c4ba206ea470a742195aab12b6edb2d1a61b31fb36b978",
+   "identity": "function:public.book_slot_atomic(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount numeric, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount numeric, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price numeric, p_expected_deposit numeric)",
+   "operation": "add"
+  },
+  {
+   "identity": "function:public.book_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer, p_expected_terms jsonb)",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount numeric, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount numeric, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_price numeric DEFAULT NULL::integer, p_expected_deposit numeric DEFAULT NULL::integer, p_expected_terms jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "f1bb576a97ed857ea2aad4d903a1de9cd4f22c6ca1a72b6b839da6bf31f2c9ad",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean, committed_total numeric, committed_deposit numeric)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "2e7c2da095d162418678f5bdda724cc8bcbf66ef1854003f14a219e0118860d0",
+   "identity": "function:public.book_slot_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount numeric, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount numeric, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price numeric, p_expected_deposit numeric, p_expected_terms jsonb)",
+   "operation": "add"
+  },
+  {
+   "identity": "function:public.book_with_package_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_enrollment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount numeric, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount numeric, p_staff_name text, p_location_id uuid DEFAULT NULL::uuid, p_appointment_id uuid DEFAULT NULL::uuid, p_buffer_minutes integer DEFAULT 0, p_duration integer DEFAULT 30, p_bot_session_id uuid DEFAULT NULL::uuid, p_enrollment_id uuid DEFAULT NULL::uuid, p_class_session_id uuid DEFAULT NULL::uuid, p_expected_terms jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "e8dcc91cc488555eb290edc872c59dfd650e018dee29d5224a38e52a3f8537c8",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "205f7a12e08bfa43df4b1b62c34cdca262ecf4c0664bc06f22c7112860bd1af0",
+   "identity": "function:public.book_with_package_authoritative_604(p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount numeric, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount numeric, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_enrollment_id uuid, p_class_session_id uuid, p_expected_terms jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid, p_provider text, p_reference text, p_amount numeric, p_currency text, p_fee_supplied boolean, p_gateway_fee numeric",
+    "body_sha256": "094c05b58cd7ba76b096ec9a40738891dc307182c56f0343e3aa5efec7c6e051",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "3cf137d3b2004c01762064887b729d082a4c5d7a47ddc43d48f24b323148015a",
+   "identity": "function:public.claim_payment_finalization_with_verified_fee(p_payment_id uuid, p_provider text, p_reference text, p_amount numeric, p_currency text, p_fee_supplied boolean, p_gateway_fee numeric)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_transfer_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean",
+    "body_sha256": "5af303e806664645cce96ab5af77e5df9b012463242964aba2c05ef17b248b52",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "0240dad10b0ce357cb503ed9530b9fd2c0748a168c6799300c17dc09e0ab8aed",
+   "identity": "function:public.confirm_nonorder_transfer_atomic(p_transfer_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+    "body_sha256": "80c47e5a30fa38f2f45cf72535c9a48cd04a2b387225d1bf9a19f6c7940a486d",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "aae965f933ad7cef42e5f29fd4cee1a5f7b4686e3cb4d3cbe7e78f0c7605756f",
+   "identity": "function:public.create_catalog_order_atomic(p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb)",
+   "operation": "modify"
+  },
+  {
+   "identity": "function:public.create_order_atomic(p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_status text, p_delivery_address text, p_delivery_phone text, p_total_amount integer, p_discount_amount integer, p_shipping_cost integer, p_promo_code_id uuid, p_channel text, p_notes text, p_delivery_zone_id uuid, p_delivery_zone_name text, p_addons_total integer, p_volume_discount_amount integer, p_pickup_address text, p_dropoff_address text, p_package_description text, p_package_photo_url text, p_items jsonb, p_referral_id uuid, p_validate_products boolean, p_expected_total integer)",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_status text DEFAULT 'pending'::text, p_delivery_address text DEFAULT NULL::text, p_delivery_phone text DEFAULT NULL::text, p_total_amount numeric DEFAULT 0, p_discount_amount numeric DEFAULT 0, p_shipping_cost numeric DEFAULT 0, p_promo_code_id uuid DEFAULT NULL::uuid, p_channel text DEFAULT 'whatsapp'::text, p_notes text DEFAULT NULL::text, p_delivery_zone_id uuid DEFAULT NULL::uuid, p_delivery_zone_name text DEFAULT NULL::text, p_addons_total numeric DEFAULT 0, p_volume_discount_amount numeric DEFAULT 0, p_pickup_address text DEFAULT NULL::text, p_dropoff_address text DEFAULT NULL::text, p_package_description text DEFAULT NULL::text, p_package_photo_url text DEFAULT NULL::text, p_items jsonb DEFAULT '[]'::jsonb, p_referral_id uuid DEFAULT NULL::uuid, p_validate_products boolean DEFAULT false, p_expected_total numeric DEFAULT NULL::integer",
+    "body_sha256": "d428d5b3ce724bd8cfe87e856dca62aca5eda774cdd7d7633c255987ffaecfbe",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "d9c10ce68f2dab86235c0611720bd018be073084c14756faaf9eab0159e7023e",
+   "identity": "function:public.create_order_atomic(p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_status text, p_delivery_address text, p_delivery_phone text, p_total_amount numeric, p_discount_amount numeric, p_shipping_cost numeric, p_promo_code_id uuid, p_channel text, p_notes text, p_delivery_zone_id uuid, p_delivery_zone_name text, p_addons_total numeric, p_volume_discount_amount numeric, p_pickup_address text, p_dropoff_address text, p_package_description text, p_package_photo_url text, p_items jsonb, p_referral_id uuid, p_validate_products boolean, p_expected_total numeric)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid",
+    "body_sha256": "edaf23996b40eeb5f645574b14189507037ec906806b1471cfa58fd8aec4b6bb",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "numeric",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "c616bfe7a2c35eba7cac7be9c4a4f7267bff4f21be37ffc4174c9e293c6e63f9",
+   "identity": "function:public.get_business_revenue(p_business_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid",
+    "body_sha256": "1d7c8b4205221cd1af87140ffe98586514e0917354d60a4b666f3687720f762c",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_revenue numeric, order_revenue numeric, invoice_revenue numeric, total_revenue numeric)",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "ab6e07b0b62f071f80c04405293f19ea844ce219bbf2ea5c853110ab598e000c",
+   "identity": "function:public.get_business_revenue_totals(p_business_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_limit integer DEFAULT 500, p_offset integer DEFAULT 0",
+    "body_sha256": "859e5c1356abb1a14b937a126b5c3ce2235fc86ef6c1e2f0c92bca0ad902edd5",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(txn_id uuid, txn_type text, flow_type text, reference_code text, purpose text, customer_name text, amount numeric, status text, event_date timestamp with time zone)",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "04b819f97d5a8f6cafaacd3118f0e52026f6da3f7b03c31d73bea4c8bc9286ce",
+   "identity": "function:public.get_business_transactions(p_business_id uuid, p_limit integer, p_offset integer)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_customer_profile_id uuid, p_limit integer DEFAULT 50",
+    "body_sha256": "2f071bce896d5bf23f205eed7504cccfe4ef1bdb7549d97472d42768f3d13f04",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(history_type text, subject_id uuid, reference_code text, purpose text, amount numeric, currency text, status text, event_date timestamp with time zone)",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "d658987aa7cdb4abfa189078055cfb6ed39b45c7bc7dc188872611b606a0fe11",
+   "identity": "function:public.get_customer_history(p_business_id uuid, p_customer_profile_id uuid, p_limit integer)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid",
+    "body_sha256": "e0d013a52210f252e3064a7e3abd44874c13489a77fb670f179942e887cdb88b",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "numeric",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "e47c0627d8941751156d7f20ef11a6bcd229a53394636ff28d67ff56ce2170e2",
+   "identity": "function:public.get_order_revenue(p_business_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX idx_orders_balance_pending ON public.orders USING btree (business_id, status) WHERE ((balance_amount > (0)::numeric) AND (balance_paid_at IS NULL))",
+    "predicate": "((balance_amount > (0)::numeric) AND (balance_paid_at IS NULL))",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "32f62ed6ab541fa36fe6e4274a1de8792144fd22b5f2c51a812e529fa7defca8",
+   "identity": "index:public.orders.idx_orders_balance_pending",
+   "operation": "modify"
+  }
+ ],
+ "migration": "529_merchant_tax_money_precision.sql",
+ "migration_sha256": "3900da2554abe2e4089550e22fa4db651bc717e833fa63aa0135b6d54ef7f3ef",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

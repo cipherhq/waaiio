@@ -1,0 +1,1343 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.merchant_tax_payment_ledger.allocation",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_payment_ledger.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_tax_payment_ledger.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_payment_ledger.entity_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_tax_payment_ledger.entity_kind",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.merchant_tax_payment_ledger.fee_basis",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_tax_payment_ledger.intent_reference",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_payment_ledger.payment_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.merchant_tax_payment_ledger.release_reason",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.merchant_tax_payment_ledger.released_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.merchant_tax_refund_ledger.allocation",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_refund_ledger.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_tax_refund_ledger.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_refund_ledger.entity_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.merchant_tax_refund_ledger.entity_kind",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.merchant_tax_refund_ledger.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_refund_ledger.payment_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'{}'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "0c0bca4211e8bff8dac8edacf710386b0b5172224b544a42742acbb07415e85c",
+   "identity": "column:public.merchant_tax_refund_ledger.quantities",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.merchant_tax_refund_ledger.refund_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.merchant_tax_refund_ledger.request_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.merchant_tax_refund_ledger.selection",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "false",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "8297533d5dfe9297714c79d7fce4b1991c9dba7a34f9ee58a3f8eada63fad6ea",
+   "identity": "column:public.merchant_tax_refund_ledger.zero_value",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.payments.tax_allocation",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.payments.tax_fee_basis",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.payout_adjustments.payout_id",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.payout_adjustments.tax_refund_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.refunds.tax_allocation",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id)",
+    "validated": true
+   },
+   "after_sha256": "1c39889ada11b69df67a135fbcbabd7cc89c6bc3684707fc6c3a519657577eaf",
+   "identity": "constraint:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((released_at IS NULL) = (release_reason IS NULL))",
+    "validated": true
+   },
+   "after_sha256": "0c66287cd7d3a6eea7ed0ccb08293b663cc48d09c2394bcbf5347949305427fe",
+   "identity": "constraint:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (entity_kind = ANY (ARRAY['order'::text, 'booking'::text, 'invoice'::text]))",
+    "validated": true
+   },
+   "after_sha256": "d99a94443e8c063af6f2eb2d6879ce906d8beba8db0d4b13b53e7bc48527963b",
+   "identity": "constraint:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_entity_kind_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": true,
+    "deferred": true,
+    "definition": "FOREIGN KEY (payment_id) REFERENCES payments(id) DEFERRABLE INITIALLY DEFERRED",
+    "validated": true
+   },
+   "after_sha256": "563212f4f4a9e6eb458649ca1b397dbdba680aa495f9fb157ec473d949dd7f96",
+   "identity": "constraint:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_payment_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (payment_id)",
+    "validated": true
+   },
+   "after_sha256": "7c715a2bc992e30cce155f208c1238294c4d026346759e8d3e1665c7652d2afe",
+   "identity": "constraint:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (release_reason = ANY (ARRAY['not_dispatched'::text, 'provider_declined'::text]))",
+    "validated": true
+   },
+   "after_sha256": "3a259bdcc3a38e811913a910368e39e6fe0a7a80233775d95488c0c3f54bf722",
+   "identity": "constraint:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_release_reason_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id)",
+    "validated": true
+   },
+   "after_sha256": "1c39889ada11b69df67a135fbcbabd7cc89c6bc3684707fc6c3a519657577eaf",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((refund_id IS NULL) = zero_value)",
+    "validated": true
+   },
+   "after_sha256": "551b42e6b1dadcc71b58a44c6829d77c13105fbeec3068a48c46b12ead4877d6",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (entity_kind = ANY (ARRAY['order'::text, 'booking'::text, 'invoice'::text]))",
+    "validated": true
+   },
+   "after_sha256": "d99a94443e8c063af6f2eb2d6879ce906d8beba8db0d4b13b53e7bc48527963b",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_entity_kind_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (payment_id) REFERENCES payments(id)",
+    "validated": true
+   },
+   "after_sha256": "f1f939fbf0e40007efb820a48b8967ddc8d10edeff5c5ad6828624efa7bac2b3",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_payment_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": true,
+    "deferred": true,
+    "definition": "FOREIGN KEY (refund_id) REFERENCES refunds(id) DEFERRABLE INITIALLY DEFERRED",
+    "validated": true
+   },
+   "after_sha256": "0b77939eb29d32bf4e09ced10eb7ddbb5580acdbc3907e4b6adb097b8789b8d8",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_refund_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (refund_id)",
+    "validated": true
+   },
+   "after_sha256": "6a09f3a1bbf7fbb8e8ac3a5914dfba3a9b5181d3da2414428b3915d8fb694361",
+   "identity": "constraint:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_refund_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (tax_refund_id) REFERENCES refunds(id)",
+    "validated": true
+   },
+   "after_sha256": "142ea597bfaea8873fbcd5c105b39dc726bd792c4dd16bae4252b6225e4e9208",
+   "identity": "constraint:public.payout_adjustments.payout_adjustments_tax_refund_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (tax_refund_id)",
+    "validated": true
+   },
+   "after_sha256": "00a08d562caf2c94f2a429d815db5e46f9c6eaf198a9b578702d8531cbaa829f",
+   "identity": "constraint:public.payout_adjustments.payout_adjustments_tax_refund_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (payout_id IS NOT NULL OR tax_refund_id IS NOT NULL)",
+    "validated": true
+   },
+   "after_sha256": "f1fee838c697591b3d8d48476f1d1e39e74d947716d0445a609266ec4a6bf29a",
+   "identity": "constraint:public.payout_adjustments.tax_adjustment_source_980",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (tax_refund_id IS NULL OR applied_to_payout_id IS NULL)",
+    "validated": true
+   },
+   "after_sha256": "e57a9342db47b50bb30ce8ab5875cccd3afff71956d3bf23ca69cb0c0cdf08d9",
+   "identity": "constraint:public.payout_adjustments.tax_adjustment_unlinked_980",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_refund_id uuid",
+    "body_sha256": "3951d1207ca001b1d2b912535e23df6a82073880dd6cd1422ebbf0fecd1e2e6d",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "149adca747681a08d34a7f69fcce7d69f6c01b324fb24133c095c2306f4f9d00",
+   "identity": "function:accounting_private.finalize_refund_accounting_modern(p_refund_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "51c85488fe35c15a68222febb38805deb5e3926c673ed23a7de2cba2ea0e9244",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "baf53ab708fb8a8a49a29393928724ca09cc2483bbea1d6732bc51dabe9d8bd2",
+   "identity": "function:private.guard_merchant_tax_payment_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "7bd8130cf16c08033789af668f8c99755b05e4c13d603d44f2127f1637f2c82d",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f102886a3f7b4473e4986c8a72b8d5614c78bf0966728bcd3d42ca371566a277",
+   "identity": "function:private.guard_merchant_tax_refund_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "534925e0b37da4546539bae6a1820c782680183f41d032c1aa6ef0ad51e2aa6c",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "582d7eaebf93b5e0e69c870c228e3b2fb885f824ce097ec67300258514824d8f",
+   "identity": "function:private.guard_tax_adjustment_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p jsonb",
+    "body_sha256": "b43cd171af809fc2af138008ee8101b29f3f7cea7207376e83f3e9b9f95366c4",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "uuid",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5c1893194772f2cd8f62a19d7775658ee1d522129a8123f1e4cecd4ca20aa0d7",
+   "identity": "function:private.record_direct_tax_payment_980(p jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_amount numeric, p_pool jsonb",
+    "body_sha256": "3b38680750a8238d2955403ffc8b5edbb3148d9392b748510dd05c5f62570ddc",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "15c0dc8e95412fa50564b7927f6589add9d57e2bdb117db68583354b878c0755",
+   "identity": "function:private.tax_980_allocate_pool(p_amount numeric, p_pool jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p jsonb, p_lock boolean DEFAULT false",
+    "body_sha256": "eef82e73ad1ecb93212b109f9f86cfe7af8c6cfece845560d4c432b6fd5d3bef",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "2573f8d65aba586758bbc105207e87b3e702313279320a0fd2a30695b54258df",
+   "identity": "function:private.tax_980_source(p jsonb, p_lock boolean)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid",
+    "body_sha256": "b2c9f0064166d4f0523f4c095628455b178eaecf3fbde963a6ab0854a337bace",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "e41472048bad6d3ca7fbebafbec7e03f7e3a98e1f78db4671c5c0b2253fd317d",
+   "identity": "function:public.bind_merchant_tax_fee_980(p_payment_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid, p_gateway text, p_reference text, p_status text",
+    "body_sha256": "11a60ec5c7e2be300a2456d6b0fc1f191439282c9e27bc25b2250379cb942d90",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "6dd60916988489981c85a6027e1c0eb3ea24833afc5ba2a106bf93b5579ff457",
+   "identity": "function:public.confirm_merchant_tax_payment_failure_980(p_payment_id uuid, p_gateway text, p_reference text, p_status text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_transfer_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean",
+    "body_sha256": "727527c4038127bdd7336b22968ce9c1aed3044316314877ad84a65e5398bafb",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "9e233c918e60287daf8088a26232f56df06bb3232aaf25439dfaa127fd87907d",
+   "identity": "function:public.confirm_nonorder_transfer_atomic(p_transfer_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_transfer_id uuid, p_order_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean",
+    "body_sha256": "3ce33dc70b36acf5be658f70a0c400de15ed83c7a6b4f859fbfd8ea1e731fc20",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5395ee49b08cb7744047aa8d3a65d3ad6999e64289a746e56bfb5681bc61d516",
+   "identity": "function:public.confirm_order_transfer_atomic(p_transfer_id uuid, p_order_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p jsonb",
+    "body_sha256": "7db67c6c1724ce89fa0ec480044376585db1787f8f355b3f3bb1d5969d92cbc6",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "2b3d069b8b279f4deea3072d344a7c8f4202beae19e5c580afc78a23134f062f",
+   "identity": "function:public.create_tax_refund_payout_980(p jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid, p_reason text, p_evidence jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "06f3fbfe9b819ac69530877cc7913e7083d1d4d663451a8fd16c23e076eb6103",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "53f75498e99edc87b7ea6fea8901af04f5848e25a132415f1c1e7f7626aa992c",
+   "identity": "function:public.release_merchant_tax_payment_980(p_payment_id uuid, p_reason text, p_evidence jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment jsonb",
+    "body_sha256": "f7d226f3043f5fe84524a9d0de1dbf9944577d9742bbceae53ded79bb9ad1adc",
+    "config": [
+     "search_path=pg_catalog, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "ce627c0ec98a21d765e546b3bf80f2fb2a99426928a5e4cc5a426b592f9be8b0",
+   "identity": "function:public.reserve_merchant_tax_payment_980(p_payment jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid, p_business_id uuid, p_amount numeric, p_selection jsonb, p_request_id uuid, p_reason text, p_initiated_by uuid, p_initiated_by_role text",
+    "body_sha256": "add8b54f5e680ebb22f6a195655ab0b4a6ffd10cb113d99ee85b5f0ffb94ad80",
+    "config": [
+     "search_path=pg_catalog, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "0ce162c01ea405b1c7042076471944b419e7ce08ed7279c68faf09b60e234f3d",
+   "identity": "function:public.reserve_merchant_tax_refund_980(p_payment_id uuid, p_business_id uuid, p_amount numeric, p_selection jsonb, p_request_id uuid, p_reason text, p_initiated_by uuid, p_initiated_by_role text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid",
+    "body_sha256": "b2d0f8eef3d4cfe14261b56e6572018dcc45235b18eb65b0ce5388d617c98de9",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "333568f6e44397bca05fadf5e202814572986bb7dba65cb0f2390a03dda6aeec",
+   "identity": "function:public.tax_refund_payout_currencies_980(p_business_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_currency text",
+    "body_sha256": "b6f0a77a7da5e7ff290ecb6caaaab5913f9b037bbe7cd14963a834be00c5929c",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "3a5c8f2e985cccbeb1de663ff35e10babd767c5f27ca12349f4db85ead8129bc",
+   "identity": "function:public.tax_refund_payout_projection_980(p_business_id uuid, p_currency text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX merchant_tax_payment_entity ON public.merchant_tax_payment_ledger USING btree (business_id, entity_kind, entity_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "782a06aac85397b85076e947bdaf3d4871460c52a469200c76afe7e36c91c5ed",
+   "identity": "index:public.merchant_tax_payment_ledger.merchant_tax_payment_entity",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_tax_payment_ledger_pkey ON public.merchant_tax_payment_ledger USING btree (payment_id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "46c72f6c04a13d5af7e6f0f18c1740b30aa69251a8dcefd57324bb9cea0c40f1",
+   "identity": "index:public.merchant_tax_payment_ledger.merchant_tax_payment_ledger_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX merchant_tax_refund_entity ON public.merchant_tax_refund_ledger USING btree (business_id, entity_kind, entity_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "c8b2eed8a3dd1f07edfb2fa2a0e5f9d2899b13884de18d74bf4fd5a2119fd6f4",
+   "identity": "index:public.merchant_tax_refund_ledger.merchant_tax_refund_entity",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_tax_refund_ledger_pkey ON public.merchant_tax_refund_ledger USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "f08a52e4670dfc817f9128250c5682ac6008a9c0638b91dc3bce5011c10211e0",
+   "identity": "index:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_tax_refund_ledger_refund_id_key ON public.merchant_tax_refund_ledger USING btree (refund_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "598bb3809d7e43d72d6f6267673a9093d60902322dd933ce5c63a7f72f30a7f0",
+   "identity": "index:public.merchant_tax_refund_ledger.merchant_tax_refund_ledger_refund_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_tax_refund_request ON public.merchant_tax_refund_ledger USING btree (business_id, request_id) WHERE (request_id IS NOT NULL)",
+    "predicate": "(request_id IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "f41ac906a57f21b15aadccd758c28df4846be232bc906b63861874675539ded1",
+   "identity": "index:public.merchant_tax_refund_ledger.merchant_tax_refund_request",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX payout_adjustments_tax_refund_id_key ON public.payout_adjustments USING btree (tax_refund_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "1c6a82acd46fd0a2af63f0f0a8c0e33dbf69b52d66079af735ee05f59e4780c5",
+   "identity": "index:public.payout_adjustments.payout_adjustments_tax_refund_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "6c3311e74432f322c967ccbd41eb56c959b738f833e7c83d4d1a31afd9d5ae3c",
+   "identity": "table:public.merchant_tax_payment_ledger",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "6c3311e74432f322c967ccbd41eb56c959b738f833e7c83d4d1a31afd9d5ae3c",
+   "identity": "table:public.merchant_tax_refund_ledger",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_merchant_tax_payment_980 BEFORE INSERT OR UPDATE ON payments FOR EACH ROW EXECUTE FUNCTION private.guard_merchant_tax_payment_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "29c75696e73f37e728d47a7f06c6a18be0ddba5913ac6d2684ce024bcb5c3aee",
+   "identity": "trigger:public.payments.guard_merchant_tax_payment_980",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER tax_adjustment_identity_980 BEFORE INSERT OR DELETE OR UPDATE ON payout_adjustments FOR EACH ROW EXECUTE FUNCTION private.guard_tax_adjustment_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "fec0997865450fe3758b88f3dc891c0f9d103ce945af62ec1f6242120dbacc98",
+   "identity": "trigger:public.payout_adjustments.tax_adjustment_identity_980",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_merchant_tax_refund_980 BEFORE INSERT OR UPDATE ON refunds FOR EACH ROW EXECUTE FUNCTION private.guard_merchant_tax_refund_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "3f3793341e8fecd10dafd910d0bf722e5eaa921f247328717f3d4f337e6f717c",
+   "identity": "trigger:public.refunds.guard_merchant_tax_refund_980",
+   "operation": "add"
+  }
+ ],
+ "migration": "532_merchant_tax_payment_refund_authority.sql",
+ "migration_sha256": "5cf98945029297410e32c238806e4a859fcbdbc0bac5d8d4c028f5ece3cd3fca",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

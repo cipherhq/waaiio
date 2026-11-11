@@ -259,7 +259,7 @@ describe('(3) Successful no-BYO platform path', () => {
       return makeChain({ data: null, error: null });
     });
 
-    const supabase = { from: fromMock, rpc: vi.fn(() => makeChain({ data: null, error: null })) };
+    const supabase = { from: fromMock, rpc: vi.fn((name: string) => makeChain({ data: name === 'reserve_merchant_tax_payment_980' ? { taxable: false } : null, error: null })) };
 
     const result = await initializePayment(supabase as any, BASE_OPTS);
 

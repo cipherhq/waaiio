@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
+import { randomUUID } from 'node:crypto';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -47,50 +48,45 @@ function runSQLSafe(sql: string): { stdout: string; exitCode: number } {
   }
 }
 
-const OWNER = 'c2320000-0000-0000-0000-000000000001';
-const BIZ = 'c2320000-0000-0000-0000-000000000010';
-const CUSTOMER = 'c2320000-0000-0000-0000-000000000003';
-const BOOKING = 'c2320000-0000-0000-0000-000000000030';
-const PAYMENT = 'c2320000-0000-0000-0000-000000000050';
-const SERVICE = 'c2320000-0000-0000-0000-000000000020';
+const OWNER = randomUUID();
+const BIZ = randomUUID();
+const CUSTOMER = randomUUID();
+const BOOKING = randomUUID();
+const PAYMENT = randomUUID();
+const SERVICE = randomUUID();
 
 describe('#232 Refund convergence PostgreSQL', () => {
   beforeAll(() => {
+    // Keep immutable financial provenance until the disposable database is dropped.
     runSQL(`
-      DELETE FROM public.refunds WHERE business_id = '${BIZ}';
-      DELETE FROM public.platform_fees WHERE business_id = '${BIZ}';
-      DELETE FROM public.payments WHERE business_id = '${BIZ}';
-      DELETE FROM public.bookings WHERE business_id = '${BIZ}';
-      DELETE FROM public.services WHERE business_id = '${BIZ}';
-      DELETE FROM public.businesses WHERE id = '${BIZ}';
-      DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${CUSTOMER}');
+      BEGIN;
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      DELETE FROM auth.users WHERE id IN ('${OWNER}', '${CUSTOMER}');
       INSERT INTO auth.users (id) VALUES ('${OWNER}'), ('${CUSTOMER}') ON CONFLICT DO NOTHING;
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
       INSERT INTO public.profiles (id, first_name, last_name, email)
-      VALUES ('${OWNER}', 'RefOwner', 'Test', 'ref-owner@test.local'),
-             ('${CUSTOMER}', 'RefCust', 'Test', 'ref-cust@test.local');
+      VALUES ('${OWNER}', 'RefOwner', 'Test', 'ref-owner-${OWNER}@test.local'),
+             ('${CUSTOMER}', 'RefCust', 'Test', 'ref-cust-${CUSTOMER}@test.local');
 
       INSERT INTO public.businesses (id, owner_id, name, slug, category, address, city, phone, status, subscription_tier, country_code)
-      VALUES ('${BIZ}', '${OWNER}', 'RefundTestBiz', 'refund-test-232', 'church', '1 St', 'Lagos', '+2340000232', 'active', 'growth', 'NG');
+      VALUES ('${BIZ}', '${OWNER}', 'RefundTestBiz', 'refund-test-${BIZ}', 'church', '1 St', 'Lagos', '+2340000232', 'active', 'growth', 'NG');
 
       INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
       VALUES ('${SERVICE}', '${BIZ}', 'Ref Giving', 'giving', 'recurring', 'monthly', true, 10000, 0, 0);
 
       INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
-      VALUES ('${BOOKING}', 'WA-RF-001', '${BIZ}', '${CUSTOMER}', '${SERVICE}', 'payment', 'RefCust', '+2340000232', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 10000, now());
+      VALUES ('${BOOKING}', 'RF-' || left('${BOOKING}',8), '${BIZ}', '${CUSTOMER}', '${SERVICE}', 'payment', 'RefCust', '+2340000232', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 10000, now());
 
       INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, paid_at, created_at)
-      VALUES ('${PAYMENT}', '${BOOKING}', '${CUSTOMER}', '${BIZ}', 10000, 'NGN', 'WA-RF-001-PAY', 'success', now(), now());
+      VALUES ('${PAYMENT}', '${BOOKING}', '${CUSTOMER}', '${BIZ}', 10000, 'NGN', 'refund-${PAYMENT}', 'success', now(), now());
 
-      INSERT INTO public.platform_fees (business_id, booking_id, transaction_amount, fee_percentage, fee_flat, fee_total, tier)
-      VALUES ('${BIZ}', '${BOOKING}', 10000, 2.5, 0, 250, 'growth');
+      INSERT INTO public.platform_fees (business_id, booking_id, payment_id, is_direct_transfer, transaction_amount, fee_percentage, fee_flat, fee_total, tier)
+      VALUES ('${BIZ}', '${BOOKING}', '${PAYMENT}', false, 10000, 2.5, 0, 250, 'growth');
 
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS
       $fn$ SELECT '${OWNER}'::UUID $fn$
       LANGUAGE SQL STABLE;
+      COMMIT;
     `);
   });
 
@@ -99,17 +95,6 @@ describe('#232 Refund convergence PostgreSQL', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS
       $fn$ SELECT NULL::UUID $fn$
       LANGUAGE SQL STABLE;
-
-      DELETE FROM public.refunds WHERE business_id = '${BIZ}';
-      DELETE FROM public.platform_fees WHERE business_id = '${BIZ}';
-      DELETE FROM public.payments WHERE business_id = '${BIZ}';
-      DELETE FROM public.bookings WHERE business_id = '${BIZ}';
-      DELETE FROM public.services WHERE business_id = '${BIZ}';
-      DELETE FROM public.businesses WHERE id = '${BIZ}';
-      DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${CUSTOMER}');
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      DELETE FROM auth.users WHERE id IN ('${OWNER}', '${CUSTOMER}');
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
   });
 
@@ -440,6 +425,14 @@ describe('#232 Refund convergence PostgreSQL', () => {
       expect(runSQL(`SELECT has_table_privilege('authenticated', 'public.refunds', 'SELECT');`)).toBe('t');
       expect(runSQL(`SELECT has_table_privilege('authenticated', 'public.refunds', 'INSERT');`)).toBe('f');
 
+      // Restore the historical M356 baseline: M529 later changed these TABLE
+      // return amounts from bigint to numeric, which CREATE OR REPLACE cannot undo.
+      // This replay certifies M355/M356 convergence, not current M532 authority.
+      runSQL(`
+        DROP FUNCTION IF EXISTS public.get_business_transactions(uuid, integer, integer);
+        DROP FUNCTION IF EXISTS public.get_customer_history(uuid, uuid, integer);
+        DROP FUNCTION IF EXISTS public.get_business_revenue_totals(uuid);
+      `);
       // Execute actual migration 356 (depends on 355's refunds table)
       execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${mig356}"`, { encoding: 'utf-8', timeout: 30000 });
 

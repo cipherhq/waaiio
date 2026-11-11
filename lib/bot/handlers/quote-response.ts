@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { quoteAcceptanceDigest } from '@/lib/tax/quote-acceptance';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -18,6 +19,7 @@ export async function handleQuoteResponse(
   from: string,
   quoteId: string,
   action: 'accept' | 'reject',
+  expectedDigest?: string,
 ): Promise<void> {
   try {
     if (action === 'reject') {
@@ -78,12 +80,36 @@ export async function handleQuoteResponse(
     }
 
     // ── Accept ──
+    // Never substitute freshly read terms for the terms displayed in the button.
+    // The digest binds that message; the RPC compares this exact snapshot under
+    // its row lock, closing a concurrent change between this read and commit.
+    const { data: quote, error: quoteError } = await supabase.from('quote_requests')
+      .select('tax_snapshot, customer_phone').eq('id', quoteId).single();
+    if (quoteError || !quote) {
+      await sendText(from, 'This quote is no longer available.');
+      return;
+    }
+    if (!quote.customer_phone || stripPlus(quote.customer_phone) !== stripPlus(from)) {
+      await sendText(from, 'This quote was sent to a different number. Please use the original number.');
+      return;
+    }
+    const snapshot = quote.tax_snapshot ?? null;
+    if ((snapshot !== null && !expectedDigest) ||
+      (expectedDigest && quoteAcceptanceDigest(quoteId, snapshot) !== expectedDigest)) {
+      await sendText(from, 'This price has changed. Please ask the business to send the current quote and review it before accepting.');
+      return;
+    }
     const { data: result, error } = await supabase.rpc('accept_order_quote_atomic', {
       p_quote_id: quoteId,
       p_customer_phone: from,
+      p_expected_tax_snapshot: snapshot,
     });
 
     if (error) {
+      if (error.message?.includes('tax_terms_changed')) {
+        await sendText(from, 'This price has changed. Please ask the business to send the current quote and review it before accepting.');
+        return;
+      }
       // Check for insufficient stock exception
       if (error.message?.includes('insufficient_stock')) {
         const items = error.message.split(':').slice(1).join(':');

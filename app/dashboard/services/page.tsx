@@ -16,8 +16,10 @@ import { buildServicePayload } from '@/lib/services/payload-builders';
 import { getDepositConfigurationError } from '@/lib/payments/deposit-amount-authority';
 import { getLimitTier } from '@/lib/capabilities/policy';
 import { ServiceIntakeSettings } from '@/components/dashboard/ServiceIntakeSettings';
+import { ItemTaxFields, type ItemTaxFieldsValue } from '@/components/dashboard/ItemTaxFields';
+import { parseItemTax } from '@/lib/tax/settings';
 
-interface Service {
+interface Service extends ItemTaxFieldsValue {
   id: string;
   name: string;
   description: string | null;
@@ -313,6 +315,9 @@ export default function ServicesPage() {
 
   async function handleSave() {
     if (!form.name.trim()) return;
+    let tax: ReturnType<typeof parseItemTax> | undefined;
+    try { tax = form.tax_treatment === undefined ? undefined : parseItemTax(form); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Invalid tax settings'); return; }
     const depositError = getDepositConfigurationError({
       price: form.price,
       deposit: form.deposit_amount,
@@ -326,6 +331,7 @@ export default function ServicesPage() {
     const supabase = createClient();
 
     const payload = buildServicePayload({
+      tax,
       businessId: business.id, name: form.name, description: form.description,
       price: form.price, price_is_variable: form.price_is_variable,
       duration_minutes: form.duration_minutes || 0, buffer_minutes: form.buffer_minutes,
@@ -626,6 +632,8 @@ export default function ServicesPage() {
                 )}
               </div>
             )}
+
+            <ItemTaxFields value={form} onChange={tax => setForm({ ...form, ...tax })} disabled={saving} />
 
             {/* ── Optional Sections (toggle to reveal) ── */}
             <div className="space-y-2 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">

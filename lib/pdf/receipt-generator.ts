@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
 import { WAAIIO_WORDMARK_PNG, WAAIIO_WORDMARK_ASPECT } from './brand-assets';
 import { loadBusinessLogo } from './merchant-image';
+import { buildReceiptTax, type ReceiptTaxSource } from '@/lib/tax/receipt';
 
 // ── Types ──
 
@@ -37,6 +38,8 @@ export interface ReceiptData {
    */
   totalDue?: number;
   balanceDue?: number;
+  /** Immutable sale terms and, when known, the saved allocations for this payment. */
+  tax?: ReceiptTaxSource;
   /** Slice 5B: deterministic Waaiio-owned labels selected by the caller's authorized language. */
   labels?: import('./localize-pdf').ReceiptPdfLabels;
 }
@@ -117,6 +120,9 @@ function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
 // ── Single Receipt PDF (A5, Waaiio-branded) ──
 
 export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
+  const tax = data.tax ? buildReceiptTax(data.tax, data.amount) : undefined;
+  if (tax && data.currencyCode && data.currencyCode !== tax.currency) throw new Error('Receipt currency does not match original tax snapshot');
+  const currencyCode = tax?.currency || data.currencyCode;
   const doc: any = new PDFDocument({ size: 'A5', margin: 40 });
   const bufferPromise = collectPdfBuffer(doc);
 
@@ -211,7 +217,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   y += 12;
 
   // #889: item table (Description / Qty / Unit price / Amount), one line per item.
-  const items = (data.items || []).filter((item) => item && item.name && item.quantity > 0);
+  const items = (tax?.items || data.items || []).filter((item) => item && item.name && item.quantity > 0);
   if (items.length > 0) {
     const descW = 128;
     const qtyX = margin + 132;
@@ -238,8 +244,8 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     for (const item of items.slice(0, RECEIPT_MAX_ITEM_ROWS)) {
       doc.text(item.name, labelX, y, { width: descW, height: 11, ellipsis: true });
       fitRight(String(item.quantity), qtyX, qtyW, 9);
-      fitRight(fmtAmount(item.unitPrice, data.countryCode, data.currencyCode), unitX, unitW, 9);
-      fitRight(fmtAmount(item.lineTotal, data.countryCode, data.currencyCode), amountX, amountW, 9);
+      fitRight(fmtAmount(item.unitPrice, data.countryCode, currencyCode), unitX, unitW, 9);
+      fitRight(fmtAmount(item.lineTotal, data.countryCode, currencyCode), amountX, amountW, 9);
       y += 15;
     }
     if (items.length > RECEIPT_MAX_ITEM_ROWS) {
@@ -259,14 +265,46 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     y = margin;
   }
 
-  if (data.subtotal !== undefined) {
+  if (tax) {
+    const taxRows: Array<[string, number | undefined]> = [
+      ['Full sale before tax', tax.netAmount],
+      ...tax.groups.map(group => [group.label, group.taxAmount] as [string, number]),
+      ['Full sale tax', tax.taxAmount],
+      ['Full sale including tax', tax.grossAmount],
+      ...(tax.taxCollected !== undefined ? [['Tax in amount paid', tax.taxCollected] as [string, number]] : []),
+    ];
+    for (const [label, value] of taxRows) {
+      doc.fontSize(8).font('Helvetica');
+      const rowHeight = Math.max(lineHeight, doc.heightOfString(label, { width: 205 }) + 8);
+      if (y + rowHeight + 100 > pageHeight - margin - 24) {
+        doc.addPage(); doc.rect(0, 0, pageWidth, pageHeight).fillColor(BG_LIGHT).fill(); y = margin;
+      }
+      doc.fontSize(8).font('Helvetica').fillColor(TEXT_SECONDARY).text(label, labelX, y, { width: 205 });
+      doc.text(fmtAmount(value!, data.countryCode, currencyCode), margin + 210, y, { width: contentWidth - 210, align: 'right', lineBreak: false });
+      y += rowHeight;
+    }
+    if (tax.taxCollected === undefined) {
+      doc.fontSize(8).fillColor(TEXT_MUTED).text('Tax breakdown describes the full sale; collected tax is not available.', labelX, y, { width: contentWidth });
+      y += lineHeight * 2;
+    }
+    if (data.tax?.refundsApplied) {
+      doc.fontSize(8).fillColor(TEXT_MUTED).text('Amount paid and collected tax are net of completed refunds.', labelX, y, { width: contentWidth });
+      y += lineHeight * 2;
+    }
+  }
+
+  if (tax && y + 110 > pageHeight - margin - 24) {
+    doc.addPage(); doc.rect(0, 0, pageWidth, pageHeight).fillColor(BG_LIGHT).fill(); y = margin;
+  }
+
+  if (data.subtotal !== undefined && !tax) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblSubtotal, labelX, y);
-    doc.text(fmtAmount(data.subtotal, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
+    doc.text(fmtAmount(data.subtotal, data.countryCode, currencyCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
   if (data.fees !== undefined && data.fees > 0) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblFees, labelX, y);
-    doc.text(fmtAmount(data.fees, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
+    doc.text(fmtAmount(data.fees, data.countryCode, currencyCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
 
@@ -278,16 +316,16 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const showBalance = data.totalDue !== undefined && data.balanceDue !== undefined && data.balanceDue > 0;
   if (showBalance) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblTotal, labelX, y);
-    doc.text(fmtAmount(data.totalDue!, data.countryCode, data.currencyCode), valueX + 40, y, { width: 120, align: 'right' });
+    doc.text(fmtAmount(data.totalDue!, data.countryCode, currencyCode), valueX + 40, y, { width: 120, align: 'right' });
     y += lineHeight;
   }
-  doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text(showBalance ? L.lblAmountPaid : L.lblTotal, labelX, y);
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text(showBalance || tax?.partial ? L.lblAmountPaid : L.lblTotal, labelX, y);
   doc.fontSize(14).font('Helvetica-Bold').fillColor(BRAND_PURPLE)
-    .text(fmtAmount(data.amount, data.countryCode, data.currencyCode), valueX + 40, y - 2, { width: 120, align: 'right' });
+    .text(fmtAmount(data.amount, data.countryCode, currencyCode), valueX + 40, y - 2, { width: 120, align: 'right' });
   if (showBalance) {
     y += lineHeight + 4;
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblBalanceDue, labelX, y);
-    doc.text(fmtAmount(data.balanceDue!, data.countryCode, data.currencyCode), valueX + 40, y, { width: 120, align: 'right' });
+    doc.text(fmtAmount(data.balanceDue!, data.countryCode, currencyCode), valueX + 40, y, { width: 120, align: 'right' });
   }
 
   if (!data.whitelabel) {

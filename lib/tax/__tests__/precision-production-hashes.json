@@ -1,0 +1,122 @@
+[
+  {
+    "schema": "private",
+    "name": "scheduling_604_create_booking",
+    "args": "p jsonb, p_mode text, p_enrollment uuid",
+    "hash": "89e60c176f2b174d7977e2a42566f743"
+  },
+  {
+    "schema": "private",
+    "name": "scheduling_604_quote",
+    "args": "p_business uuid, p_service uuid, p_appointment uuid, p_party integer, p_addons jsonb, p_promo uuid, p_expected jsonb",
+    "hash": "2be5504d9e1d80bd2c63dc15d0adf470"
+  },
+  {
+    "schema": "public",
+    "name": "apply_payment_customer_visit_once",
+    "args": "p_payment_id uuid",
+    "hash": "a9fddbc28b66d4706bb55e5cc600c73d"
+  },
+  {
+    "schema": "public",
+    "name": "book_manual_slot_authoritative_604",
+    "args": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_notes text, p_total_amount integer, p_staff_name text, p_buffer_minutes integer, p_duration integer, p_appointment_id uuid, p_class_session_id uuid, p_expected_terms jsonb",
+    "hash": "5bb2ea6189c4deea7bcd6973552c67b0"
+  },
+  {
+    "schema": "public",
+    "name": "book_slot_atomic",
+    "args": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer",
+    "hash": "a2f456faee58526042ceaab829f570cc"
+  },
+  {
+    "schema": "public",
+    "name": "book_slot_authoritative_604",
+    "args": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer, p_expected_terms jsonb",
+    "hash": "404d35c564762a7bbe39a0204ee19bd1"
+  },
+  {
+    "schema": "public",
+    "name": "book_with_package_authoritative_604",
+    "args": "p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_enrollment_id uuid, p_class_session_id uuid, p_expected_terms jsonb",
+    "hash": "9d237b8ff11040d0de0d8fc4e2f13541"
+  },
+  {
+    "schema": "public",
+    "name": "claim_payment_finalization_with_verified_fee",
+    "args": "p_payment_id uuid, p_provider text, p_reference text, p_amount numeric, p_currency text, p_fee_supplied boolean, p_gateway_fee numeric",
+    "hash": "294846cd6d7efbe8c65fff128efb5633"
+  },
+  {
+    "schema": "public",
+    "name": "confirm_nonorder_transfer_atomic",
+    "args": "p_transfer_id uuid, p_business_id uuid, p_confirmed_by uuid, p_approve_fulfillment boolean",
+    "hash": "f067876bf3a00a76f3d07492c34cc62b"
+  },
+  {
+    "schema": "public",
+    "name": "create_catalog_order_atomic",
+    "args": "p_business_id uuid, p_user_id uuid, p_delivery_phone text, p_meta_message_id text, p_customer_note text, p_items jsonb",
+    "hash": "5e23a92cfbbadf3668b9d3d2778a47c9"
+  },
+  {
+    "schema": "public",
+    "name": "create_order_atomic",
+    "args": "p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_status text, p_delivery_address text, p_delivery_phone text, p_total_amount integer, p_discount_amount integer, p_shipping_cost integer, p_promo_code_id uuid, p_channel text, p_notes text, p_delivery_zone_id uuid, p_delivery_zone_name text, p_addons_total integer, p_volume_discount_amount integer, p_pickup_address text, p_dropoff_address text, p_package_description text, p_package_photo_url text, p_items jsonb, p_referral_id uuid, p_validate_products boolean, p_expected_total integer",
+    "hash": "3a8b1027dc0ad6ccc037deb81b295ab8"
+  },
+  {
+    "schema": "public",
+    "name": "create_recurring_offer",
+    "args": "p_source_payment_id uuid, p_business_id uuid, p_provider text",
+    "hash": "38e88c75ed4bcf92a07898de980efb09"
+  },
+  {
+    "schema": "public",
+    "name": "create_transfer_with_reservation",
+    "args": "p_order_id uuid, p_business_id uuid, p_customer_phone text, p_customer_name text, p_country_code text, p_transfer_expiry_hours integer",
+    "hash": "9f66f8e2be2fdea4fe023fe91c6d156d"
+  },
+  {
+    "schema": "public",
+    "name": "finalize_stripe_recurring_charge",
+    "args": "p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text, p_payment_intent_id text",
+    "hash": "8d2c7d916de528b885c70190f23b67ea"
+  },
+  {
+    "schema": "public",
+    "name": "get_business_revenue",
+    "args": "p_business_id uuid",
+    "hash": "02223b6d0295a77f0d6068ff29b8054d"
+  },
+  {
+    "schema": "public",
+    "name": "get_business_revenue_totals",
+    "args": "p_business_id uuid",
+    "hash": "d9c2963d1c4933b86767c48c5076ae9b"
+  },
+  {
+    "schema": "public",
+    "name": "get_business_transactions",
+    "args": "p_business_id uuid, p_limit integer, p_offset integer",
+    "hash": "82be90e8b89c9ec942c2c4b1e3030c0e"
+  },
+  {
+    "schema": "public",
+    "name": "get_customer_history",
+    "args": "p_business_id uuid, p_customer_profile_id uuid, p_limit integer",
+    "hash": "d162bced7f941646f538ad57f9d46886"
+  },
+  {
+    "schema": "public",
+    "name": "get_order_revenue",
+    "args": "p_business_id uuid",
+    "hash": "3f0dd33cf8b5f26d53f129f98f374ac3"
+  },
+  {
+    "schema": "public",
+    "name": "accept_order_quote_atomic",
+    "args": "p_quote_id uuid, p_customer_phone text",
+    "hash": "d92224be02f266f5e1c3a09feefa9085"
+  }
+]

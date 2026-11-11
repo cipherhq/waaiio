@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
+import { parseTaxRefundSelection, parseTaxRefundRequestId } from '@/lib/tax/refund-selection';
 import { processRefund } from '@/lib/payments/refund-handler';
 import type { RefundState } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
@@ -27,8 +28,19 @@ export async function POST(request: NextRequest) {
       reason?: string;
     };
 
-    if (!paymentId || !businessId || !amount || typeof amount !== 'number' || amount <= 0) {
+    if (!paymentId || !businessId || typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
       return NextResponse.json({ error: 'Missing or invalid fields: paymentId, businessId, amount (must be positive number)' }, { status: 400 });
+    }
+
+    let taxSelection; let requestId;
+    try {
+      taxSelection = parseTaxRefundSelection(body.taxSelection);
+      requestId = parseTaxRefundRequestId(body.requestId, taxSelection);
+    } catch {
+      return NextResponse.json({ error: 'Invalid refund selection or request ID' }, { status: 400 });
+    }
+    if (amount === 0 && taxSelection?.mode !== 'items') {
+      return NextResponse.json({ error: 'Zero-value returns require item quantities' }, { status: 400 });
     }
 
     // Verify the user owns the business
@@ -68,6 +80,8 @@ export async function POST(request: NextRequest) {
       businessId,
       amount,
       reason,
+      taxSelection,
+      requestId,
       initiatedBy: user.id,
       initiatedByRole: 'business',
     });
@@ -77,12 +91,16 @@ export async function POST(request: NextRequest) {
         error: result.errorMessage,
         state: result.state,
         refundId: result.refundId,
+      returnId: result.returnId,
+      zeroValueReturn: result.zeroValueReturn,
       }, { status: 400 });
     }
 
     return NextResponse.json({
       success: true,
       refundId: result.refundId,
+      returnId: result.returnId,
+      zeroValueReturn: result.zeroValueReturn,
       isDirectSplit: result.isDirectSplit,
       state: result.state,
     });

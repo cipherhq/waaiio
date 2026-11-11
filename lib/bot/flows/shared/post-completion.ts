@@ -49,6 +49,7 @@ interface PostCompletionParams {
   receiptCustomerName?: string | null;
   /** #889: what was bought, printed as the receipt's item table. */
   receiptItems?: import('@/lib/pdf/receipt-generator').ReceiptLineItem[];
+  receiptTax?: import('@/lib/tax/receipt').ReceiptTaxSource;
   /** #889 deposit: full price and what is still owed (shown only when the balance is above 0). */
   receiptTotalDue?: number;
   receiptBalanceDue?: number;
@@ -207,6 +208,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           logoUrl: (biz as any)?.logo_url || undefined,
           currencyCode: params.currencyCode || undefined,
           items: params.receiptItems,
+          tax: params.receiptTax,
           totalDue: params.receiptTotalDue,
           balanceDue: params.receiptBalanceDue,
           labels: receiptPdfLabels,

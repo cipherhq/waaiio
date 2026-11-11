@@ -93,6 +93,7 @@ function makeSupabase(opts: {
     rpc: vi.fn(async (name: string, params: Record<string, unknown>) => {
       state.rpcCalls.push({ name, params });
       state.events.push(`rpc:${name}`);
+      if (name === 'reserve_merchant_tax_payment_980') return { data: { taxable: false }, error: null };
       return opts.donationIntentResult || { data: { created: true, already_existed: false }, error: null };
     }),
     from: vi.fn((table: string) => {
@@ -285,8 +286,9 @@ describe('#379 Stripe saved-payment adapter behavior', () => {
     });
     expect(state.inserts).toHaveLength(1);
     expect(state.inserts[0]).toMatchObject({ campaign_id: 'campaign-1', gateway: 'stripe' });
-    expect(state.rpcCalls).toHaveLength(1);
-    expect(state.rpcCalls[0]).toMatchObject({
+    expect(state.rpcCalls).toHaveLength(2);
+    expect(state.rpcCalls[0]).toMatchObject({ name: 'reserve_merchant_tax_payment_980' });
+    expect(state.rpcCalls[1]).toMatchObject({
       name: 'ensure_campaign_donation_intent_for_payment',
       params: {
         p_payment_id: 'pay-giving-new',
@@ -295,6 +297,7 @@ describe('#379 Stripe saved-payment adapter behavior', () => {
       },
     });
     expect(state.events).toEqual([
+      'rpc:reserve_merchant_tax_payment_980',
       'payment_insert',
       'rpc:ensure_campaign_donation_intent_for_payment',
     ]);

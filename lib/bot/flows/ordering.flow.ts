@@ -1,3 +1,5 @@
+import { quoteOrderTax, isTaxTermsChanged } from '@/lib/tax/server-quote';
+import type { TaxSnapshot } from '@/lib/tax/calculation';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
@@ -18,6 +20,7 @@ import { checkBankTransferEligibility, createPendingTransfer, formatBankTransfer
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
@@ -2283,7 +2286,7 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        const promoDiscount = (d.discount_amount as number) || 0;
+        let promoDiscount = (d.discount_amount as number) || 0;
         const zonePrice = (d.delivery_zone_price as number) || 0;
         const zoneName = d.delivery_zone_name as string | undefined;
 
@@ -2311,7 +2314,27 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const deliveryCost = zoneName ? zonePrice : shippingCost;
-        const total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - promoDiscount + deliveryCost);
+        let total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - promoDiscount + deliveryCost);
+        delete d._tax_snapshot;
+        if (!d.custom_order_started && !d._force_quote_mode) {
+          try {
+            const quote = await quoteOrderTax(ctx.supabase, {
+              businessId: ctx.business!.id, userId: ctx.session.user_id ?? null, sessionId: ctx.session.id,
+              items: cart.map(item => ({ product_id: item.product_id, quantity: item.quantity, unit_price: item.price,
+                variant_id: item.variant_id || '', variant_label: item.variant_label || '',
+                addons: item.addons?.map(addon => ({ ...addon, quantity: addon.quantity || 1 })) ?? null })),
+              shippingCost, deliveryZoneId: (d.delivery_zone_id as string) || null,
+              promoCodeId: (d.promo_code_id as string) || null,
+            });
+            total = quote.server_total; promoDiscount = quote.server_discount;
+            volumeDiscountTotal = quote.server_volume_discount;
+            addonsTotal = quote.server_addons_total ?? addonsTotal;
+            d.discount_amount = promoDiscount; d._tax_snapshot = quote.tax_snapshot;
+          } catch (error) {
+            logger.warn('[ORDERING] Authoritative preview unavailable', safeLogErrorContext(error));
+            return [{ type: 'text', text: 'Your order details changed or could not be checked. Please review your cart again before confirming.' }];
+          }
+        }
 
         // Store calculated values for process_order
         d._calc_subtotal = subtotal;
@@ -2359,6 +2382,8 @@ export const orderingFlow: FlowDefinition = {
           summary.push(`🚚 Shipping: ${formatCurrency(shippingCost, cc)}`);
         }
 
+        const taxSnapshot = d._tax_snapshot as TaxSnapshot | null | undefined;
+        if (taxSnapshot) summary.push(`Before tax: ${formatCurrency(taxSnapshot.netAmount / 100, cc)}`, `Tax: ${formatCurrency(taxSnapshot.taxAmount / 100, cc)}`);
         summary.push('', `💰 *Total: ${formatCurrency(total, cc)}*`);
 
         // Customer details
@@ -2693,6 +2718,7 @@ export const orderingFlow: FlowDefinition = {
       // only when payment was initialized (paid orders). Free orders stay on process_order.
       nextAfterPrompt(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        if (d._tax_reconfirm) { delete d._tax_reconfirm; return 'review_order_summary'; }
         if (d.payment_reference || d.bank_transfer_reference) return 'await_order_payment';
         return undefined;
       },
@@ -2739,7 +2765,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-        const total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - discount + shippingCost);
+        const total = d._tax_snapshot ? (d._calc_total as number) : Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - discount + shippingCost);
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
@@ -2949,9 +2975,14 @@ export const orderingFlow: FlowDefinition = {
             p_referral_id: (d.referral_id as string) || null,
             p_validate_products: true,
             p_expected_total: total,
+            p_expected_tax_snapshot: d._tax_snapshot ?? null,
           });
 
           if (rpcError || !rpcResult) {
+            if (isTaxTermsChanged(rpcError)) {
+              d._tax_reconfirm = true; delete d._terms_accepted;
+              return [{ type: 'text', text: 'Your order total or tax details changed. Please review and confirm the updated summary.' }];
+            }
             return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
           }
 

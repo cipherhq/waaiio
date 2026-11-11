@@ -1,4 +1,5 @@
 import { assertValidDepositConfiguration } from '@/lib/payments/deposit-amount-authority';
+import { parseItemTax } from '@/lib/tax/settings';
 
 /**
  * Pure payload builders for service create/edit operations.
@@ -44,6 +45,8 @@ export function buildGivingServicePayload(input: GivingServiceInput) {
 // ── Services page payload ──
 
 export interface ServiceFormInput {
+  /** Omitted by non-tax writers so existing item tax is preserved. */
+  tax?: Parameters<typeof parseItemTax>[0];
   businessId: string;
   name: string;
   description?: string | null;
@@ -93,6 +96,7 @@ export function buildServicePayload(input: ServiceFormInput) {
   });
 
   return {
+    ...(input.tax === undefined ? {} : parseItemTax(input.tax)),
     business_id: input.businessId,
     name: input.name.trim(),
     description: input.description?.trim() || null,

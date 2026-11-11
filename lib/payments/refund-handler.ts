@@ -20,6 +20,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { getPaymentGatewayByName } from './factory';
 import type { PaymentGatewayName } from '@/lib/constants';
 import type { RefundOutcome } from './types';
+import { parseTaxRefundSelection, parseTaxRefundRequestId, type TaxRefundSelection } from '@/lib/tax/refund-selection';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
@@ -38,6 +39,8 @@ interface ProcessRefundOpts {
   businessId: string;
   amount: number;
   reason?: string;
+  taxSelection?: TaxRefundSelection;
+  requestId?: string;
   initiatedBy: string;
   initiatedByRole: 'business' | 'admin';
 }
@@ -63,6 +66,8 @@ export type RefundState =
 export interface ProcessRefundResult {
   success: boolean;
   refundId?: string;
+  returnId?: string;
+  zeroValueReturn?: boolean;
   isDirectSplit?: boolean;
   errorMessage?: string;
   state: RefundState;
@@ -102,12 +107,46 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   // ── 1. Load + validate payment ──
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
-    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata')
+    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata, tax_allocation')
     .eq('id', paymentId)
     .single();
   if (paymentErr || !payment) return { success: false, errorMessage: 'Payment not found', state: 'failed' };
   if (payment.status !== 'success' && payment.status !== 'refunded')
     return { success: false, errorMessage: `Payment status "${payment.status}" is not refundable`, state: 'failed' };
+
+  if (payment.tax_allocation) {
+    if (payment.business_id !== businessId || !Number.isFinite(amount) || amount < 0) {
+      return { success: false, errorMessage: 'Invalid tax refund request', state: 'failed' };
+    }
+    let selection: TaxRefundSelection | undefined; let requestId: string | undefined;
+    try {
+      selection = parseTaxRefundSelection(opts.taxSelection);
+      requestId = parseTaxRefundRequestId(opts.requestId, selection);
+    } catch {
+      return { success: false, errorMessage: 'Invalid tax refund selection or request ID', state: 'failed' };
+    }
+    const { data: business } = await supabase.from('businesses').select('payout_mode').eq('id', businessId).single();
+    const isDirectSplit = business?.payout_mode === 'direct_split';
+    const { data: reserved, error } = await service.rpc('reserve_merchant_tax_refund_980', {
+      p_payment_id: paymentId, p_business_id: businessId, p_amount: amount,
+      p_selection: selection ?? null, p_request_id: requestId ?? null,
+      p_reason: reason ?? null, p_initiated_by: initiatedBy, p_initiated_by_role: initiatedByRole,
+    });
+    if (error || !reserved?.taxable) {
+      return { success: false, errorMessage: 'Refund could not be reserved. Check the remaining payment amount and selected items.', state: 'failed' };
+    }
+    if (reserved.zero_value) return { success: true, zeroValueReturn: true, returnId: reserved.return_id, isDirectSplit, state: 'success' };
+    if (!reserved.refund_id) return { success: false, errorMessage: 'Refund reservation missing', state: 'failed' };
+    if (reserved.reused) {
+      if (reserved.status === 'success') return { success: true, refundId: reserved.refund_id, isDirectSplit, state: 'success' };
+      if (reserved.status === 'failed') return { success: false, refundId: reserved.refund_id, isDirectSplit, errorMessage: 'Previous refund failed; use a new request ID after review.', state: 'failed' };
+      return resumeExistingRefund(service, paymentId, payment, isDirectSplit);
+    }
+    return dispatchAndFinalize(service, reserved.refund_id, null, payment, isDirectSplit);
+  }
+  if (opts.taxSelection || opts.requestId) {
+    return { success: false, errorMessage: 'Item selection requires a payment with a tax snapshot', state: 'failed' };
+  }
 
   const { data: completedRefunds } = await service.from('refunds').select('amount').eq('payment_id', paymentId).eq('status', 'success');
   const ledgerRefunded = (completedRefunds || []).reduce((s, r) => s + Number(r.amount), 0);

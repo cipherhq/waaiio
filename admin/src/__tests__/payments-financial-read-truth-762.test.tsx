@@ -2,12 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  from: vi.fn(), getSession: vi.fn(), setSession: vi.fn(), fetch: vi.fn(), audit: vi.fn(),
+  taxLines:vi.fn(), from: vi.fn(), getSession: vi.fn(), setSession: vi.fn(), fetch: vi.fn(), audit: vi.fn(),
   role: 'admin', token: 'synthetic-before-mfa', refresh: null as null | (() => Promise<void>),
 }));
 vi.mock('@/lib/supabase', () => ({ adminDb: { from: h.from }, supabase: { auth: { getSession: h.getSession, setSession: h.setSession } } }));
 vi.mock('@/components/AdminLayout', () => ({ useAdminSession: () => ({ role: h.role, userId: 'synthetic-admin' }) }));
 vi.mock('@/lib/auditLog', () => ({ logAudit: h.audit }));
+vi.mock('../../../lib/tax/refund-ui',async()=>({...await vi.importActual('../../../lib/tax/refund-ui'),loadTaxRefundLines:h.taxLines}));
 import Payments from '@/pages/Payments';
 
 type Result = { data: unknown[] | null; error: unknown };
@@ -34,7 +35,7 @@ async function ready() { await screen.findByRole('button', { name: 'Export CSV' 
 async function refresh() { await act(async () => { await h.refresh!(); }); }
 
 beforeEach(() => {
-  vi.clearAllMocks(); h.role = 'admin'; h.token = 'synthetic-before-mfa'; h.refresh = null; updates.length = 0;
+  vi.clearAllMocks(); h.taxLines.mockResolvedValue([{id:'item-a',label:'Appointment',remainingMinor:10000}]); h.role = 'admin'; h.token = 'synthetic-before-mfa'; h.refresh = null; updates.length = 0;
   Object.keys(plans).forEach(k => delete plans[k]);
   rows('payments', [original]); rows('bookings', [{ id: 'booking-1', business_id: 'ordinary', reference_code: 'ORDINARY-REF' }]);
   rows('orders', [{ id: 'order-1', business_id: 'ordinary', reference_code: 'ORDER-REF' }]);
@@ -384,4 +385,40 @@ describe('#779 retire authorization when its financial request dispatches', () =
       expect(calls('/payments/refund')[0][1].headers.Authorization).toBe('Bearer synthetic-after-mfa');
     });
   }
+});
+
+
+describe('#980 tax refund selection and admin step-up',()=>{
+ it('binds identical selected lines and request ID before and after MFA',async()=>{
+  rows('payments',[{...original,tax_allocation:{version:1}}]);rows('refund_requests',[]);
+  render(<Payments/>);await ready();fireEvent.click(screen.getByText('Synthetic Store').closest('tr')!);
+  await screen.findByText('Choose item amounts');fireEvent.click(screen.getByLabelText('Choose item amounts'));
+  fireEvent.change(screen.getByLabelText('Refund for Appointment'),{target:{value:'25.50'}});
+  fireEvent.click(screen.getByRole('button',{name:'Confirm Refund'}));await screen.findByText('Confirm operation');
+  const prepared=JSON.parse(calls('/step-up/prepare')[0][1].body);
+  fireEvent.change(screen.getByPlaceholderText('000000'),{target:{value:'123456'}});
+  fireEvent.click(screen.getByRole('button',{name:'Authorize'}));
+  await waitFor(()=>expect(calls('/payments/refund')).toHaveLength(1));
+  const sent=JSON.parse(calls('/payments/refund')[0][1].body);
+  expect(sent).toMatchObject({amount:25.5,taxSelection:{mode:'lines',lines:[{id:'item-a',grossAmount:2550}]}});
+  expect(sent.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(prepared.params).toEqual({businessId:'ordinary',amount:25.5,reason:null,taxSelection:sent.taxSelection,requestId:sent.requestId});
+ });
+ it('binds zero-value quantity returns through MFA without a positive amount',async()=>{
+  rows('payments',[{...original,tax_allocation:{version:1}}]);rows('refund_requests',[]);
+  h.taxLines.mockResolvedValueOnce([{id:'free',label:'Sample',remainingMinor:0,zeroValue:true,quantity:1}]);
+  render(<Payments/>);await ready();fireEvent.click(screen.getByText('Synthetic Store').closest('tr')!);
+  await screen.findByText('Record a no-value item return');fireEvent.click(screen.getByLabelText('Record a no-value item return'));
+  fireEvent.change(screen.getByLabelText('Return quantity for Sample'),{target:{value:'1'}});
+  fireEvent.click(screen.getByRole('button',{name:'Confirm Refund'}));await screen.findByText('Confirm operation');
+  fireEvent.change(screen.getByPlaceholderText('000000'),{target:{value:'123456'}});fireEvent.click(screen.getByRole('button',{name:'Authorize'}));
+  await waitFor(()=>expect(calls('/payments/refund')).toHaveLength(1));
+  expect(JSON.parse(calls('/payments/refund')[0][1].body)).toMatchObject({amount:0,taxSelection:{mode:'items',items:[{id:'free',quantity:1}]}});
+ });
+ it('refuses a tax partial refund request until items are selected',async()=>{
+  rows('payments',[{...original,tax_allocation:{version:1}}]);
+  render(<Payments/>);await ready();fireEvent.click(screen.getByRole('button',{name:'Approve & Refund'}));
+  await screen.findByText('This request needs item selection. Open the payment refund form and choose the item amounts before authorizing.');
+  expect(calls('/step-up/prepare')).toHaveLength(0);expect(calls('/payments/refund')).toHaveLength(0);
+ });
 });

@@ -1,5 +1,7 @@
 'use client';
 
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+
 import { useState, useEffect, useCallback } from 'react';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
@@ -128,6 +130,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
 
 export default function BookingForm({ business, services }: BookingFormProps) {
   const [step, setStep] = useState(1);
+  const [taxQuote, setTaxQuote] = useState<{ total: number; deposit: number; tax_snapshot: TaxSnapshot | null } | null>(null);
   const [selectedService, setSelectedService] = useState<ServiceInfo | null>(null);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
@@ -289,7 +292,17 @@ export default function BookingForm({ business, services }: BookingFormProps) {
       setError('Please add your phone number.');
       return;
     }
-    setError('');
+    setError(''); setTaxQuote(null); setAgreedToTerms(false);
+    try {
+      const response = await fetch('/api/bookings/public/create', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preview: true, businessSlug: business.slug,
+          ...(selectedService?.is_appointment ? { appointmentId: selectedService.id } : { serviceId: selectedService?.id }),
+          date: selectedDate, time: selectedTime, guestName: guestName.trim(), guestEmail: guestEmail.trim().toLowerCase(), guestPhone, otpToken }) });
+      const quote = await response.json();
+      if (!response.ok || !Number.isFinite(quote.total) || !Number.isFinite(quote.deposit)) { setError(quote.error || 'Could not verify the booking total. Please try again.'); return; }
+      setTaxQuote(quote); setTermsNeedRefresh(false);
+      if (quote.currentTerms) setSelectedService(current => current ? { ...current, price: quote.currentTerms.price, deposit_amount: quote.currentTerms.deposit } : current);
+    } catch { setError('Could not verify the booking total. Please try again.'); return; }
     setStep(5);
     // Back then Continue reuses the same intake (kept if already answered); the server
     // opens a new one only if the service or phone no longer match it.
@@ -317,7 +330,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
           guestPhone: guestPhone || undefined,
           otpToken,
           ...(intake?.done ? { intakeId: intake.id } : {}),
-          expectedTerms: { price: selectedService.price, deposit: selectedService.deposit_amount ?? 0, country: business.country_code, quantity: 1 },
+          expectedTerms: { price: selectedService.price, deposit: selectedService.deposit_amount ?? 0, country: business.country_code, quantity: 1, tax_snapshot: taxQuote?.tax_snapshot ?? null },
         }),
       });
 
@@ -325,10 +338,10 @@ export default function BookingForm({ business, services }: BookingFormProps) {
 
       if (!res.ok) {
         if (data.code === 'terms_changed') {
-          setAgreedToTerms(false);
+          setAgreedToTerms(false); setTaxQuote(null); setStep(4);
           if (data.currentTerms && data.currentTerms.country === business.country_code
-              && Number.isSafeInteger(data.currentTerms.price) && data.currentTerms.price >= 0
-              && Number.isSafeInteger(data.currentTerms.deposit) && data.currentTerms.deposit >= 0) {
+              && Number.isFinite(data.currentTerms.price) && data.currentTerms.price >= 0
+              && Number.isFinite(data.currentTerms.deposit) && data.currentTerms.deposit >= 0) {
             setSelectedService({ ...selectedService, price: data.currentTerms.price, deposit_amount: data.currentTerms.deposit });
           } else {
             setTermsNeedRefresh(true);
@@ -694,12 +707,13 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                 <div className="border-t border-gray-100 pt-3">
                   <SummaryRow
                     label="Total"
-                    value={selectedService.price > 0 ? formatPrice(selectedService.price, cc) : 'Free'}
+                    value={taxQuote ? formatPrice(taxQuote.total, cc) : 'Unavailable'}
                     bold
                   />
-                  {selectedService.deposit_amount && selectedService.deposit_amount > 0 && selectedService.deposit_amount < selectedService.price && (
+                  {taxQuote?.tax_snapshot && <><SummaryRow label="Before tax" value={formatPrice(taxQuote.tax_snapshot.netAmount / 100, cc)} /><SummaryRow label="Tax" value={formatPrice(taxQuote.tax_snapshot.taxAmount / 100, cc)} /></>}
+                  {taxQuote && taxQuote.deposit > 0 && taxQuote.deposit < taxQuote.total && (
                     <p className="mt-1 text-xs text-gray-500">
-                      Deposit due now: {formatPrice(selectedService.deposit_amount, cc)}
+                      Deposit due now: {formatPrice(taxQuote.deposit, cc)}
                     </p>
                   )}
                 </div>
@@ -720,13 +734,13 @@ export default function BookingForm({ business, services }: BookingFormProps) {
               {termsNeedRefresh && <button type="button" onClick={() => window.location.reload()} className="text-brand underline">Refresh booking details</button>}
               <button
                 onClick={handleBooking}
-                disabled={submitting || !agreedToTerms || termsNeedRefresh}
+                disabled={submitting || !agreedToTerms || termsNeedRefresh || !taxQuote}
                 className="w-full rounded-lg bg-brand py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
                 {submitting
                   ? 'Processing...'
-                  : selectedService.price > 0
-                    ? `Pay ${formatPrice(selectedService.deposit_amount || selectedService.price, cc)}`
+                  : (taxQuote?.deposit ?? 0) > 0
+                    ? `Pay ${formatPrice(taxQuote!.deposit, cc)}`
                     : 'Book Now'}
               </button>
             </div>
