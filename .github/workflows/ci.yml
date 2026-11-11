@@ -4478,6 +4478,23 @@ jobs:
         run: npm ci
       - name: Verify PostgreSQL client
         run: psql --version
+      - name: Transaction follow-up sequencing and cancellation proof (M534, PostgreSQL 17)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          test -f scripts/tests/transaction-followups-db.py
+          python3 scripts/tests/transaction-followups-db.py > transaction-followups-db.json
+          cat transaction-followups-db.json
+          python3 - <<'PY'
+          import json
+          with open('transaction-followups-db.json') as source:
+              result = json.load(source)
+          expected = {'postgres_major': 17, 'checks_passed': 24, 'checks_failed': 0, 'checks_skipped': 0}
+          if any(result.get(key) != value for key, value in expected.items()):
+              raise SystemExit('Expected PostgreSQL 17 and exactly 24 passed, 0 failed, 0 skipped checks')
+          print('M534 transaction follow-up SQL proof: 24 passed, 0 failed, 0 skipped')
+          PY
       - name: Regenerate and compare catalog deltas
         env:
           ORACLE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres

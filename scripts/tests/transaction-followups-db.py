@@ -1,7 +1,10 @@
 """Disposable local PostgreSQL review. Run: python3 scripts/tests/transaction-followups-db.py
-Requires PostgreSQL binaries on PATH. No external database or credentials are used.
+Defaults to an isolated local cluster (PostgreSQL binaries on PATH).
+CI may set TEST_DATABASE_URL to a localhost PostgreSQL service; a fresh disposable
+database is created there and removed afterward. Remote servers are rejected.
 """
-import tempfile, subprocess, pathlib, json, shutil
+import tempfile, subprocess, pathlib, json, shutil, os, uuid
+from urllib.parse import urlsplit, urlunsplit
 base=pathlib.Path(tempfile.mkdtemp(prefix='waaiio-followup-review-'))
 data=base/'data'
 def run(args,input=None):
@@ -9,12 +12,26 @@ def run(args,input=None):
  if r.returncode: raise RuntimeError(r.stderr+'\n'+r.stdout)
  return r.stdout
 started=False
+admin_psql=None
+database_name=None
 try:
- run(['initdb','-D',str(data),'-A','trust','--no-locale'])
- run(['pg_ctl','-D',str(data),'-l',str(base/'server.log'),'-o',f"-k {base} -p 55483 -h ''",'-w','start']); started=True
- psql=['psql','-h',str(base),'-p','55483','-d','postgres','-X','-v','ON_ERROR_STOP=1','-At']
- run(psql,input='CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE TABLE businesses(id uuid primary key); CREATE TABLE whatsapp_channels(id uuid primary key); CREATE TABLE payments(id uuid primary key); CREATE TABLE bot_sessions(id uuid primary key, business_id uuid, whatsapp_number text, is_active boolean, current_step text, session_data jsonb, version integer, updated_at timestamptz); CREATE TABLE payment_saved_card_offers(id uuid primary key, payment_id uuid, business_id uuid, customer_phone text, state text, consent_source text, activation_prompt_sent_at timestamptz, claim_token uuid, claim_expires_at timestamptz, credential_committed_at timestamptz, confirmation_send_started_at timestamptz, confirmation_claim_token uuid, confirmation_claim_expires_at timestamptz, resolved_at timestamptz);')
- migration=(pathlib.Path(__file__).resolve().parents[2] / 'supabase/migrations/20261111134639_transaction_followups.sql').read_text()
+ server_url=os.environ.get('TEST_DATABASE_URL')
+ if server_url:
+  parsed=urlsplit(server_url)
+  if parsed.scheme not in ('postgres', 'postgresql') or parsed.hostname not in ('localhost', '127.0.0.1', '::1') or parsed.query:
+   raise RuntimeError('TEST_DATABASE_URL must name a localhost disposable PostgreSQL service')
+  database_name='waaiio_followups_'+uuid.uuid4().hex
+  admin_psql=['psql',server_url,'-X','-v','ON_ERROR_STOP=1','-At']
+  run(admin_psql,input=f'CREATE DATABASE "{database_name}";')
+  db_url=urlunsplit((parsed.scheme,parsed.netloc,'/'+database_name,parsed.query,parsed.fragment))
+  psql=['psql',db_url,'-X','-v','ON_ERROR_STOP=1','-At']
+ else:
+  run(['initdb','-D',str(data),'-A','trust','--no-locale'])
+  run(['pg_ctl','-D',str(data),'-l',str(base/'server.log'),'-o',f"-k {base} -p 55483 -h ''",'-w','start']); started=True
+  psql=['psql','-h',str(base),'-p','55483','-d','postgres','-X','-v','ON_ERROR_STOP=1','-At']
+ postgres_major=int(run(psql,input='SHOW server_version_num;').strip())//10000
+ run(psql,input='DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$; DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$; DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$; CREATE TABLE businesses(id uuid primary key); CREATE TABLE whatsapp_channels(id uuid primary key); CREATE TABLE payments(id uuid primary key); CREATE TABLE bot_sessions(id uuid primary key, business_id uuid, whatsapp_number text, is_active boolean, current_step text, session_data jsonb, version integer, updated_at timestamptz); CREATE TABLE payment_saved_card_offers(id uuid primary key, payment_id uuid, business_id uuid, customer_phone text, state text, consent_source text, activation_prompt_sent_at timestamptz, claim_token uuid, claim_expires_at timestamptz, credential_committed_at timestamptz, confirmation_send_started_at timestamptz, confirmation_claim_token uuid, confirmation_claim_expires_at timestamptz, resolved_at timestamptz);')
+ migration=(pathlib.Path(__file__).resolve().parents[2] / 'supabase/migrations/534_transaction_followups.sql').read_text()
  run(psql,input=migration)
  for role,statement in [('anon','SELECT * FROM transaction_followups'),('authenticated',"INSERT INTO transaction_followups DEFAULT VALUES")]:
   denied=subprocess.run(psql,input=f'SET ROLE {role}; {statement};',text=True,capture_output=True)
@@ -65,7 +82,9 @@ DO $$ BEGIN
 END $$;
 """
  run(psql,input=cancellation_sql)
- print(json.dumps({'checks_passed':24,'checks_failed':0,'checks_skipped':0,'migration_applied':True,'rls_enabled':True,'anon_select_denied':True,'authenticated_insert_denied':True,'service_role_select_insert_update_allowed':True,'concurrent_prompt_second_claim_rejected':True,'completed_prompt_releases_conversation':True,'card_conversation_checks_passed':4,'cancellation_checks_passed':13,'checks':checks,'state_results':result},indent=2))
+ print(json.dumps({'postgres_major':postgres_major,'checks_passed':24,'checks_failed':0,'checks_skipped':0,'migration_applied':True,'rls_enabled':True,'anon_select_denied':True,'authenticated_insert_denied':True,'service_role_select_insert_update_allowed':True,'concurrent_prompt_second_claim_rejected':True,'completed_prompt_releases_conversation':True,'card_conversation_checks_passed':4,'cancellation_checks_passed':13,'checks':checks,'state_results':result},indent=2))
 finally:
+ if admin_psql and database_name:
+  run(admin_psql,input=f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE);')
  if started: subprocess.run(['pg_ctl','-D',str(data),'-m','immediate','-w','stop'],capture_output=True)
  shutil.rmtree(base)
