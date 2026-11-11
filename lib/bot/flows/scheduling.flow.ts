@@ -465,16 +465,18 @@ async function anyStaffCandidates(ctx: FlowContext): Promise<StaffCandidate[] | 
 
 /**
  * Runs one booking-function call per staff candidate (or one call when there are none),
- * with d.staff_id / d.staff_name set to the staff member being tried. Stops at the first
- * answer that is not a plain refusal: a booking, an error, or a refusal for another reason.
- * When every staff member refused, staff_id / staff_name are cleared again so the time list
- * shown next is not narrowed to the last staff member tried.
+ * with d.staff_id / d.staff_name set to the staff member being tried. Stops at a booking,
+ * or at the first answer that is not a plain refusal (an error, or a refusal for another reason).
+ * Without a booking, staff_id / staff_name are cleared again: the time list shown next is not
+ * narrowed to the last staff member tried, and a later confirmation or retry starts from
+ * "Any available" (a booking this session already made is then found by anyStaffCandidates).
  */
 async function claimAnyStaff<R>(
   ctx: FlowContext,
   candidates: StaffCandidate[] | null,
   call: () => Promise<R>,
   refused: (r: R) => boolean,
+  booked: (r: R) => boolean,
 ): Promise<R> {
   const d = ctx.session.session_data;
   if (!candidates) return call();
@@ -483,7 +485,8 @@ async function claimAnyStaff<R>(
     d.staff_id = c.id;
     d.staff_name = c.name;
     result = await call();
-    if (!refused(result)) return result;
+    if (booked(result)) return result;
+    if (!refused(result)) break;
   }
   d.staff_id = null;
   d.staff_name = null;
@@ -3460,10 +3463,10 @@ export const schedulingFlow: FlowDefinition = {
             // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
             // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
             const pkgStaff = await anyStaffCandidates(ctx);
-            // The terms the customer confirmed ("Any available": no staff member). They are built
-            // before the staff loop so they keep matching the confirmation claim (_604_confirmation)
-            // while p_staff_id names the staff member being tried.
-            const pkgTerms = schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG');
+            // The terms the customer confirmed: for "Any available" always no staff member, so they
+            // match the confirmation claim (_604_confirmation) and, on a retry, the request already
+            // stored with the booking, while p_staff_id names the staff member being tried.
+            const pkgTerms = schedulingExpectedTerms604(pkgStaff ? { ...d, staff_id: null } : d, ctx.business?.country_code || 'NG');
             const { data: pkgResult, error: pkgError } = await claimAnyStaff(ctx, pkgStaff, async () => await ctx.supabase
               .rpc('book_with_package_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
@@ -3496,7 +3499,8 @@ export const schedulingFlow: FlowDefinition = {
                 p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
                 p_expected_terms: pkgTerms,
-              }), r => !r.error && r.data?.success !== true && r.data?.reason === 'slot_full');
+              }), r => !r.error && r.data?.success !== true && r.data?.reason === 'slot_full',
+              r => !r.error && r.data?.success === true);
 
             if (pkgError || !pkgResult?.success) {
               const reason = pkgResult?.reason || 'unknown';
@@ -3516,10 +3520,10 @@ export const schedulingFlow: FlowDefinition = {
             // ── Standard non-package booking ──
             // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
             const slotStaff = await anyStaffCandidates(ctx);
-            // The terms the customer confirmed ("Any available": no staff member). They are built
-            // before the staff loop so they keep matching the confirmation claim (_604_confirmation)
-            // while p_staff_id names the staff member being tried.
-            const slotTerms = schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG');
+            // The terms the customer confirmed: for "Any available" always no staff member, so they
+            // match the confirmation claim (_604_confirmation) and, on a retry, the request already
+            // stored with the booking, while p_staff_id names the staff member being tried.
+            const slotTerms = schedulingExpectedTerms604(slotStaff ? { ...d, staff_id: null } : d, ctx.business?.country_code || 'NG');
             const { data: slotResult, error: slotError } = await claimAnyStaff(ctx, slotStaff, async () => (await ctx.supabase
               .rpc('book_slot_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
@@ -3553,7 +3557,8 @@ export const schedulingFlow: FlowDefinition = {
                 p_expected_terms: slotTerms,
               })
               .single()) as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown },
-              r => !r.error && !!r.data && r.data.slot_available === false);
+              r => !r.error && !!r.data && r.data.slot_available === false,
+              r => !r.error && r.data?.slot_available === true);
 
             if (slotError || !slotResult) {
               // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)

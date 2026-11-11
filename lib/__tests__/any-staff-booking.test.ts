@@ -24,6 +24,7 @@ const SLOT_RPC = 'book_slot_authoritative_604';
 const PKG_RPC = 'book_with_package_authoritative_604';
 
 type Row = { date: string; time: string; staff_id: string | null; metadata: null; services: { duration_minutes: number; buffer_minutes: number }; seating_resource_id: null };
+type Answer = 'accept' | 'refuse' | 'error' | 'lost';
 interface DbOpts {
   /** Existing bookings on the day (used for the least-busy order and the time list). */
   bookings?: Row[];
@@ -31,8 +32,12 @@ interface DbOpts {
   sessionBooking?: { staff_id: string | null } | null;
   /** Active package enrollments for the customer (package path). */
   enrollments?: unknown[];
-  /** Answers per staff id tried: 'accept' | 'refuse' | 'error'. Missing = refuse. */
-  answers: Record<string, 'accept' | 'refuse' | 'error'>;
+  /**
+   * Answers per staff id tried ('none' = no staff): one answer, or one per call in order.
+   * 'lost' = the booking commits but the answer never arrives (the bot sees an error).
+   * Missing = refuse.
+   */
+  answers: Record<string, Answer | Answer[]>;
   pkg?: boolean;
 }
 
@@ -64,7 +69,9 @@ function mockDb(opts: DbOpts) {
       error: null,
     }));
     chain.maybeSingle = vi.fn(async () => ({
-      data: table === 'bookings' && has('bot_session_id') ? (opts.sessionBooking ?? null) : null, error: null,
+      data: table === 'bookings' && has('bot_session_id')
+        ? (stored ? { staff_id: stored.staff } : (opts.sessionBooking ?? null)) : null,
+      error: null,
     }));
     chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
       const data = rows();
@@ -80,26 +87,47 @@ function mockDb(opts: DbOpts) {
     return !!claim && JSON.stringify(claim.terms) === JSON.stringify(params.p_expected_terms);
   };
   const claimError = { code: 'P0001', message: 'booking_confirmation_required' };
-  const answer = (staffId: string | null) => opts.answers[staffId ?? 'none'] ?? 'refuse';
+  const calls = new Map<string, number>();
+  const answer = (staffId: string | null): Answer => {
+    const key = staffId ?? 'none';
+    const a = opts.answers[key];
+    const n = calls.get(key) || 0;
+    calls.set(key, n + 1);
+    if (Array.isArray(a)) return a[Math.min(n, a.length - 1)];
+    return a ?? 'refuse';
+  };
+  /** The request stored with this session's booking (scheduling_604_create_booking metadata). */
+  let stored: { req: string; staff: string | null } | null = null;
+  /**
+   * Like private.scheduling_604_create_booking: an existing session booking is returned only
+   * for the same request (else booking_intent_changed); otherwise the claim must match, then
+   * book_slot_atomic decides. Returns 'booked' | 'refused' | an error.
+   */
+  const decide = (params: Record<string, unknown>): 'booked' | 'refused' | { code: string; message: string } => {
+    const req = JSON.stringify(params);
+    if (stored) return stored.req === req ? 'booked' : { code: 'P0001', message: 'booking_intent_changed' };
+    if (!claimMatches(params)) return claimError;
+    const staffId = (params.p_staff_id as string | null) ?? null;
+    const a = answer(staffId);
+    if (a === 'accept' || a === 'lost') { stored = { req, staff: staffId }; lastAccepted = staffId; }
+    if (a === 'accept') return 'booked';
+    if (a === 'refuse') return 'refused';
+    return { code: 'P0001', message: a === 'lost' ? 'connection reset' : 'terms_changed' };
+  };
   const rpc = vi.fn((name: string, params: Record<string, unknown>) => {
     if (name === 'update_session_cas') return Promise.resolve({ data: { success: true, version: 2 }, error: null });
-    const staffId = (params.p_staff_id as string | null) ?? null;
     if (name === SLOT_RPC) {
-      if (!claimMatches(params)) return { single: async () => ({ data: null, error: claimError }) };
-      const a = answer(staffId);
-      if (a === 'accept') lastAccepted = staffId;
+      const r = decide(params);
       return {
-        single: async () => a === 'error'
-          ? { data: null, error: { code: 'P0001', message: 'terms_changed' } }
-          : { data: a === 'accept' ? { booking_id: 'bk-new', reference_code: 'REF1', slot_available: true } : { booking_id: null, reference_code: null, slot_available: false }, error: null },
+        single: async () => typeof r === 'object'
+          ? { data: null, error: r }
+          : { data: r === 'booked' ? { booking_id: 'bk-new', reference_code: 'REF1', slot_available: true } : { booking_id: null, reference_code: null, slot_available: false }, error: null },
       };
     }
     if (name === PKG_RPC) {
-      if (!claimMatches(params)) return Promise.resolve({ data: null, error: claimError });
-      const a = answer(staffId);
-      if (a === 'accept') lastAccepted = staffId;
-      if (a === 'error') return Promise.resolve({ data: null, error: { code: 'P0001', message: 'package_unavailable' } });
-      return Promise.resolve({ data: a === 'accept'
+      const r = decide(params);
+      if (typeof r === 'object') return Promise.resolve({ data: null, error: r });
+      return Promise.resolve({ data: r === 'booked'
         ? { success: true, booking_id: 'bk-new', reference_code: 'REF1', slot_available: true }
         : { success: false, slot_available: false, reason: 'slot_full' }, error: null });
     }
@@ -365,5 +393,48 @@ describe('create_booking — "Any available" on a service that requires staff', 
     }));
     await create.prompt(ctx);
     expect(claims(db)).toEqual([JONATHAN.id]);
+  });
+
+  describe('a second round after an error (session saved with the error message)', () => {
+    const termsStaff = (db: ReturnType<typeof mockDb>) => db.client.rpc.mock.calls
+      .filter(([n]) => n === SLOT_RPC).map(([, p]) => ((p as Record<string, unknown>).p_expected_terms as { staff: unknown }).staff);
+
+    it('error, then the customer retries: no staff member is kept, the retry books', async () => {
+      const { create } = await steps();
+      const db = mockDb({ answers: { [JOHN.id]: ['error', 'accept'], [JONATHAN.id]: 'refuse' } });
+      const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
+      const first = await create.prompt(ctx);
+      expect(texts(first)).not.toContain(TAKEN);
+      expect(ctx.session.session_data.staff_id).toBeNull();
+      expect(ctx.session.session_data.staff_name).toBeNull();
+      expect(ctx.session.session_data).not.toHaveProperty('booking_id');
+      await create.prompt(ctx); // e.g. paid service: the terms loop returns to create_booking
+      expect(claims(db)).toEqual([JOHN.id, JOHN.id]);
+      expect(termsStaff(db)).toEqual([null, null]);
+      expect(ctx.session.session_data).toMatchObject({ booking_id: 'bk-new', staff_id: JOHN.id });
+    });
+
+    it('booked but the answer was lost: the retry repeats the same request and gets that booking', async () => {
+      const { create } = await steps();
+      const db = mockDb({ answers: { [JOHN.id]: 'lost', [JONATHAN.id]: 'accept' } });
+      const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
+      await create.prompt(ctx);
+      expect(ctx.session.session_data).not.toHaveProperty('booking_id');
+      const second = await create.prompt(ctx);
+      expect(texts(second)).not.toMatch(/went wrong|could not be verified/i);
+      expect(claims(db)).toEqual([JOHN.id, JOHN.id]); // not Jonathan: no second booking
+      expect(ctx.session.session_data).toMatchObject({ booking_id: 'bk-new', staff_id: JOHN.id });
+    });
+
+    it('error, then the customer confirms again: the new claim and the terms still match', async () => {
+      const { create } = await steps();
+      const db = mockDb({ answers: { [JOHN.id]: ['error', 'accept'] } });
+      const ctx = await confirmed(db, ctxFor(db, { staff_id: null, staff_name: null, _staff_any: true }));
+      await create.prompt(ctx);
+      await confirmed(db, ctx);
+      expect((ctx.session.session_data._604_confirmation as { terms: { staff: unknown } }).terms.staff).toBeNull();
+      await create.prompt(ctx);
+      expect(ctx.session.session_data).toMatchObject({ booking_id: 'bk-new', staff_id: JOHN.id });
+    });
   });
 });
