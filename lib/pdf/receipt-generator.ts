@@ -5,6 +5,14 @@ import { loadBusinessLogo } from './merchant-image';
 
 // ── Types ──
 
+/** One bought item (#889). Amounts are in the same unit as `amount`. */
+export interface ReceiptLineItem {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
 export interface ReceiptData {
   businessName: string;
   referenceCode: string;
@@ -21,9 +29,20 @@ export interface ReceiptData {
   fees?: number;
   paymentMethod?: string;
   currencyCode?: string;
+  /** #889: what was bought. Omitted or empty = no item table. */
+  items?: ReceiptLineItem[];
+  /**
+   * #889 deposit: the full price and what is still owed. Shown only when balanceDue > 0;
+   * `amount` is then the amount paid now.
+   */
+  totalDue?: number;
+  balanceDue?: number;
   /** Slice 5B: deterministic Waaiio-owned labels selected by the caller's authorized language. */
   labels?: import('./localize-pdf').ReceiptPdfLabels;
 }
+
+/** A5 has room for this many item rows; the rest are summarised as "+N more". */
+export const RECEIPT_MAX_ITEM_ROWS = 6;
 
 export interface HistoryRow {
   date: string;
@@ -191,6 +210,45 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   doc.moveTo(margin, y).lineTo(pageWidth - margin, y).strokeColor(DIVIDER).lineWidth(0.5).stroke();
   y += 12;
 
+  // #889: item table (Description / Qty / Unit price / Amount), one line per item.
+  const items = (data.items || []).filter((item) => item && item.name && item.quantity > 0);
+  if (items.length > 0) {
+    const descW = 160;
+    const qtyX = margin + 168;
+    const unitX = margin + 196;
+    const amountX = margin + 268;
+    const amountW = contentWidth - 268;
+    doc.fontSize(7).font('Helvetica-Bold').fillColor(TEXT_MUTED);
+    doc.text(L.colDescription.toUpperCase(), labelX, y, { width: descW });
+    doc.text(L.colQty.toUpperCase(), qtyX, y, { width: 26, align: 'right' });
+    doc.text(L.colUnitPrice.toUpperCase(), unitX, y, { width: 68, align: 'right' });
+    doc.text(L.colAmount.toUpperCase(), amountX, y, { width: amountW, align: 'right' });
+    y += 14;
+    doc.fontSize(9).font('Helvetica').fillColor(TEXT_PRIMARY);
+    for (const item of items.slice(0, RECEIPT_MAX_ITEM_ROWS)) {
+      doc.text(item.name, labelX, y, { width: descW, height: 11, ellipsis: true });
+      doc.text(String(item.quantity), qtyX, y, { width: 26, align: 'right' });
+      doc.text(fmtAmount(item.unitPrice, data.countryCode, data.currencyCode), unitX, y, { width: 68, align: 'right' });
+      doc.text(fmtAmount(item.lineTotal, data.countryCode, data.currencyCode), amountX, y, { width: amountW, align: 'right' });
+      y += 15;
+    }
+    if (items.length > RECEIPT_MAX_ITEM_ROWS) {
+      // A number only, so it needs no translation.
+      doc.fontSize(8).fillColor(TEXT_MUTED).text(`+${items.length - RECEIPT_MAX_ITEM_ROWS} …`, labelX, y, { width: descW });
+      y += 14;
+    }
+    y += 4;
+    doc.moveTo(margin, y).lineTo(pageWidth - margin, y).strokeColor(DIVIDER).lineWidth(0.5).stroke();
+    y += 12;
+  }
+
+  // Keep the totals on the page, above the footer.
+  if (y + 90 > pageHeight - margin - 24) {
+    doc.addPage();
+    doc.rect(0, 0, pageWidth, pageHeight).fillColor(BG_LIGHT).fill();
+    y = margin;
+  }
+
   if (data.subtotal !== undefined) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblSubtotal, labelX, y);
     doc.text(fmtAmount(data.subtotal, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
@@ -206,9 +264,21 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     doc.moveTo(margin + 80, y - 4).lineTo(pageWidth - margin, y - 4).strokeColor(DIVIDER).lineWidth(0.5).stroke();
     y += 4;
   }
-  doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text(L.lblTotal, labelX, y);
+  // #889 deposit: Total (full price), then Amount paid (this payment), then Balance due.
+  const showBalance = data.totalDue !== undefined && data.balanceDue !== undefined && data.balanceDue > 0;
+  if (showBalance) {
+    doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblTotal, labelX, y);
+    doc.text(fmtAmount(data.totalDue!, data.countryCode, data.currencyCode), valueX + 40, y, { width: 120, align: 'right' });
+    y += lineHeight;
+  }
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text(showBalance ? L.lblAmountPaid : L.lblTotal, labelX, y);
   doc.fontSize(14).font('Helvetica-Bold').fillColor(BRAND_PURPLE)
     .text(fmtAmount(data.amount, data.countryCode, data.currencyCode), valueX + 40, y - 2, { width: 120, align: 'right' });
+  if (showBalance) {
+    y += lineHeight + 4;
+    doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblBalanceDue, labelX, y);
+    doc.text(fmtAmount(data.balanceDue!, data.countryCode, data.currencyCode), valueX + 40, y, { width: 120, align: 'right' });
+  }
 
   if (!data.whitelabel) {
     const footerY = pageHeight - margin - 10;

@@ -11,6 +11,8 @@ import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { loadInvoiceLineItems, loadTicketLine, ORDER_ITEMS_SELECT, toOrderLineItems } from '@/lib/receipts/line-items';
+import type { ReceiptLineItem } from '@/lib/pdf/receipt-generator';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
 import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
 import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
@@ -220,12 +222,17 @@ export async function sendProactiveConfirmation(
   let balanceRemaining = 0;
   let bookingFlowType: string | undefined;
   let bookingServiceType: string | undefined;
+  // #889: receipt-only details. Never used for the CRM/loyalty name or for any amount charged.
+  let receiptBuyerName: string | null = null;
+  let receiptItems: ReceiptLineItem[] = [];
+  let receiptTotalDue: number | undefined;
+  let receiptBalanceDue: number | undefined;
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, guest_email, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
+      .select('guest_phone, guest_email, guest_name, quantity, event_id, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -266,6 +273,13 @@ export async function sendProactiveConfirmation(
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
+      receiptBuyerName = booking.guest_name || null;
+      if (bookingFlowType === 'ticketing') {
+        // #889: ticket bookings have no service; name the event and list the tickets.
+        const ticket = await loadTicketLine(supabase, { id: payment.booking_id, event_id: booking.event_id, quantity: booking.quantity, total_amount: booking.total_amount });
+        if (ticket.eventName) serviceName = ticket.eventName;
+        receiptItems = ticket.items;
+      }
       if (booking.date && booking.time && booking.flow_type !== 'ordering') {
         bookingDate = booking.date;
         bookingTime = booking.time;
@@ -283,6 +297,8 @@ export async function sendProactiveConfirmation(
         });
         if (balance && balance.balanceDue > 0) {
           balanceRemaining = balance.balanceDue;
+          receiptTotalDue = total;
+          receiptBalanceDue = balance.balanceDue;
         }
       }
     }
@@ -300,6 +316,7 @@ export async function sendProactiveConfirmation(
       customerPhone = reservation.guest_phone;
       businessId = reservation.business_id;
       referenceCode = reservation.reference_code || '';
+      receiptBuyerName = reservation.guest_name || null;
       const biz = reservation.businesses as unknown as { name: string; country_code?: string; payment_gateway?: string } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
@@ -315,6 +332,8 @@ export async function sendProactiveConfirmation(
         });
         if (balance && balance.balanceDue > 0) {
           balanceRemaining = balance.balanceDue;
+          receiptTotalDue = total;
+          receiptBalanceDue = balance.balanceDue;
         }
       }
     }
@@ -324,7 +343,8 @@ export async function sendProactiveConfirmation(
   if (!customerPhone && payment.invoice_id) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('customer_phone, reference_code, description, business_id, businesses:business_id(name, country_code)')
+      // #889: invoices have no description column (it is on invoice_items); selecting it failed the whole lookup.
+      .select('customer_phone, customer_name, reference_code, business_id, businesses:business_id(name, country_code)')
       .eq('id', payment.invoice_id)
       .single();
 
@@ -335,7 +355,9 @@ export async function sendProactiveConfirmation(
       const biz = invoice.businesses as unknown as { name: string; country_code?: string } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
-      serviceName = invoice.description || `Invoice ${referenceCode}`;
+      serviceName = `Invoice ${referenceCode}`;
+      receiptBuyerName = invoice.customer_name || null;
+      receiptItems = await loadInvoiceLineItems(supabase, payment.invoice_id);
     }
   }
 
@@ -397,6 +419,7 @@ export async function sendProactiveConfirmation(
     if (campaign.businesses?.name) businessName = campaign.businesses.name;
     if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
     serviceName = campaign.title || 'Campaign Donation';
+    receiptBuyerName = donation.donor_name || null;
   }
 
   // ── 3. Fallback: orders via payment metadata ──
@@ -413,7 +436,7 @@ export async function sendProactiveConfirmation(
     if (canonicalOrderId) {
       const { data: order } = await supabase
         .from('orders')
-        .select('delivery_phone, reference_code, business_id, businesses(name, country_code)')
+        .select(`delivery_phone, reference_code, business_id, total_amount, businesses(name, country_code), ${ORDER_ITEMS_SELECT}`)
         .eq('id', canonicalOrderId)
         .maybeSingle();
       if (order) {
@@ -424,6 +447,16 @@ export async function sendProactiveConfirmation(
         if (biz?.name) businessName = biz.name;
         if (biz?.country_code) countryCode = biz.country_code as CountryCode;
         serviceName = `Order ${referenceCode}`;
+        receiptItems = toOrderLineItems(order.order_items);
+        const orderTotal = Number(order.total_amount || 0);
+        if (orderTotal > Number(payment.amount || 0)) {
+          // #889: an order deposit shows what is still owed, from payment history (#381 rule).
+          const balance = await getEntityBalance(supabase, { orderId: canonicalOrderId, totalAmount: orderTotal });
+          if (balance && balance.balanceDue > 0) {
+            receiptTotalDue = orderTotal;
+            receiptBalanceDue = balance.balanceDue;
+          }
+        }
       }
     }
 
@@ -1003,6 +1036,8 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
+        // #889: the receipt (and the owner's order alert) use the name the buyer gave first.
+        receiptBuyerName = receiptBuyerName || customerName;
         // All entity types: pass real payment.amount so receipts are generated.
         // Stage 2 owns durable spend for bookings/reservations/orders via RPCs;
         // skipCustomerSpend prevents double-counting in post-completion.
@@ -1036,6 +1071,10 @@ export async function sendProactiveConfirmation(
           skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
           currencyCode: paymentCurrencyCode,
+          receiptCustomerName: receiptBuyerName,
+          receiptItems,
+          receiptTotalDue,
+          receiptBalanceDue,
           translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [businessName, serviceName, referenceCode].filter(Boolean))) : undefined,
         });
       } catch (pcErr) {
@@ -1118,8 +1157,9 @@ export async function sendProactiveConfirmation(
             const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
             await notifyOwnerNewDonation({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: don?.reference_code || referenceCode, donorName: don?.donor_name || null, amount: payment.amount, campaignTitle: ct });
           } else if (payment.order_id) {
-            const { data: ord } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
-            if (ord) { const its = ((ord.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: ord.delivery_name || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
+            // #889: orders have no delivery_name and order_items no product_name; the old select failed.
+            const { data: ord } = await supabase.from('orders').select(`reference_code, delivery_address, ${ORDER_ITEMS_SELECT}`).eq('id', payment.order_id).single();
+            if (ord) { const its = toOrderLineItems(ord.order_items).map(i => ({ name: i.name, quantity: i.quantity, price: i.lineTotal })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: receiptBuyerName || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
           }
           return true;
         });
@@ -1224,10 +1264,11 @@ export async function sendProactiveConfirmation(
         }
         if (payment.order_id && resolved) {
           const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
-          const { data: order } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
+          // #889: same fix as the manifest path above.
+          const { data: order } = await supabase.from('orders').select(`reference_code, delivery_address, ${ORDER_ITEMS_SELECT}`).eq('id', payment.order_id).single();
           if (order) {
-            const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity }));
-            notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: order.reference_code || referenceCode, customerName: order.delivery_name || 'Customer', items, totalAmount: payment.amount, deliveryAddress: order.delivery_address || undefined }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
+            const items = toOrderLineItems(order.order_items).map(i => ({ name: i.name, quantity: i.quantity, price: i.lineTotal }));
+            notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: order.reference_code || referenceCode, customerName: receiptBuyerName || 'Customer', items, totalAmount: payment.amount, deliveryAddress: order.delivery_address || undefined }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
           }
         }
         try {

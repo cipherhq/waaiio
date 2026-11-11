@@ -1,6 +1,8 @@
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } from '@/lib/pdf/receipt-generator';
-import type { HistoryRow } from '@/lib/pdf/receipt-generator';
+import type { HistoryRow, ReceiptLineItem } from '@/lib/pdf/receipt-generator';
+import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { loadTicketLine, ORDER_ITEMS_SELECT, toOrderLineItems } from '@/lib/receipts/line-items';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -89,30 +91,32 @@ async function buildReceipt(
     : [customerPhone, `+${customerPhone}`];
 
   const [bookingRes, bookingByPhoneRes, chargeRes, paymentRes, orderRes, donationRes] = await Promise.all([
+    // #889: a pending booking is unpaid, so it never becomes a "receipt".
     supabase.from('bookings')
-      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
-      .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
+      .select('id, reference_code, date, status, total_amount, quantity, event_id, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
+      .eq('user_id', userId).in('status', ['completed', 'confirmed'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     // Fallback: find by guest_phone (bot bookings may not link user_id correctly)
     supabase.from('bookings')
-      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
+      .select('id, reference_code, date, status, total_amount, quantity, event_id, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .or(`guest_phone.eq.${phoneVariants[0]},guest_phone.eq.${phoneVariants[1]}`)
-      .in('status', ['completed', 'confirmed', 'pending'])
+      .in('status', ['completed', 'confirmed'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('subscription_charges')
-      .select('id, reference_code, amount, status, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
+      .select('id, reference_code, amount, currency, status, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('payments')
-      .select('id, gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code, subscription_tier)')
+      .select('id, gateway_reference, amount, currency, status, created_at, booking_id, businesses:business_id(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('orders')
-      .select('id, reference_code, status, total_amount, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
+      .select(`id, reference_code, status, total_amount, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url), ${ORDER_ITEMS_SELECT}`)
       .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('campaign_donations')
-      .select('id, reference_code, amount, status, created_at, campaigns:campaign_id(name, businesses:business_id(name, country_code, subscription_tier, logo_url))')
+      // #889: the campaign column is title (name does not exist, so this query always failed).
+      .select('id, reference_code, amount, currency, status, created_at, campaigns:campaign_id(title, businesses:business_id(name, country_code, subscription_tier, logo_url))')
       .in('donor_phone', phoneVariants)
       .eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
@@ -154,12 +158,35 @@ async function buildReceipt(
   const svc = d.services as { name: string } | null;
   const cc = (biz?.country_code || 'NG') as CountryCode;
 
-  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : best.source === 'donation' ? ((d.campaigns as any)?.name || 'Donation') : 'Payment');
+  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : best.source === 'donation' ? ((d.campaigns as any)?.title || 'Donation') : 'Payment');
   if (best.source === 'payment' && d.booking_id) {
     const { data: linked } = await supabase.from('bookings').select('services(name)').eq('id', d.booking_id).single();
     if (linked) {
       const ls = linked.services as unknown as { name: string } | null;
       if (ls?.name) serviceName = ls.name;
+    }
+  }
+
+  // #889: what was bought, and for a part-paid booking what was paid and what is still owed.
+  let amount = d.total_amount || d.amount || 0;
+  let items: ReceiptLineItem[] = [];
+  let totalDue: number | undefined;
+  let balanceDue: number | undefined;
+  if (best.source === 'order') items = toOrderLineItems(d.order_items);
+  if (best.source === 'booking') {
+    if (d.event_id) {
+      const ticket = await loadTicketLine(supabase, d);
+      if (ticket.eventName) serviceName = ticket.eventName;
+      items = ticket.items;
+    }
+    const total = Number(d.total_amount || 0);
+    if (total > 0) {
+      const balance = await getEntityBalance(supabase, { bookingId: d.id, totalAmount: total });
+      if (balance && balance.balanceDue > 0) {
+        amount = balance.netPaid;
+        totalDue = total;
+        balanceDue = balance.balanceDue;
+      }
     }
   }
 
@@ -169,13 +196,18 @@ async function buildReceipt(
     referenceCode: d.reference_code || d.gateway_reference || '-',
     date: d.date || d.created_at,
     serviceName,
-    amount: d.total_amount || d.amount || 0,
+    amount,
     paymentStatus: d.status,
     customerName,
     customerPhone,
     countryCode: cc,
     whitelabel: PRICING_TIERS[tier]?.whitelabel === true,
     logoUrl: biz?.logo_url || undefined,
+    // #889: the payment's own currency where the row records it; otherwise the business country.
+    currencyCode: d.currency || undefined,
+    items,
+    totalDue,
+    balanceDue,
   });
 }
 
