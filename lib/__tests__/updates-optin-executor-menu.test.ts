@@ -1,5 +1,5 @@
 /**
- * Customer updates opt-in on the chat's next-steps menu (Owner decision 2026-11-06).
+ * Generic exits must leave transaction opt-in to the durable completion coordinator.
  * Drives the real FlowExecutor.execute() completion branch against an in-memory
  * database. Harness copied from executor-payment-menu-dedupe.test.ts.
  */
@@ -126,19 +126,20 @@ describe('Chat next-steps menu: updates opt-in', () => {
 
   beforeEach(() => { vi.clearAllMocks(); mockMenuSent.mockResolvedValue(false); });
 
-  it('first completed transaction → menu becomes a list with the opt-in on top, other options and footer kept', async () => {
+  it('generic terminal step keeps navigation without inventing transaction consent', async () => {
     const sender = await complete(makeDb());
-    expect(sender.sendButtons).not.toHaveBeenCalled();
-    expect(sender.sendList).toHaveBeenCalledTimes(1);
-    const menu = sender.sendList.mock.calls[0][0];
-    expect(menu.items[0]).toEqual({
-      title: '🎁 Get first dibs',
-      description: 'Offers & updates from Mama Put Kitchen and Waaiio. Stop anytime.',
-      postbackText: `updates_yes:menu:${BIZ}`,
-    });
-    expect(menu.items.slice(1).map((i: { postbackText: string }) => i.postbackText)).toEqual(['pc_again', 'pc_history', 'pc_options']);
+    expect(sender.sendList).not.toHaveBeenCalled();
+    expect(sender.sendButtons).toHaveBeenCalledTimes(1);
+    const menu = sender.sendButtons.mock.calls[0][0];
+    expect(menu.buttons.map((b: { id: string }) => b.id)).toEqual(['pc_again', 'pc_history', 'pc_options']);
     expect(menu.footer).toBe('Powered by Waaiio.com');
     expect(menu.body).toBe('What would you like to do next?');
+  });
+
+  it('durably enrolled transaction suppresses competing generic navigation', async () => {
+    const sender = await complete(makeDb(), makeBusiness(), { _transaction_followup_key: 'booking:confirmed-1' });
+    expect(sender.sendList).not.toHaveBeenCalled();
+    expect(sender.sendButtons).not.toHaveBeenCalled();
   });
 
   it('after the customer agreed → the usual three buttons, no opt-in', async () => {
@@ -156,10 +157,10 @@ describe('Chat next-steps menu: updates opt-in', () => {
     expect(sender.sendButtons).toHaveBeenCalledTimes(1);
   });
 
-  it('white-label business → opt-in names only the business; no footer', async () => {
+  it('white-label generic navigation keeps no footer', async () => {
     const sender = await complete(makeDb(), makeBusiness({ is_whitelabel: true }));
-    const menu = sender.sendList.mock.calls[0][0];
-    expect(menu.items[0].description).toBe('Offers, reminders & updates from Mama Put Kitchen. Stop anytime.');
+    expect(sender.sendList).not.toHaveBeenCalled();
+    const menu = sender.sendButtons.mock.calls[0][0];
     expect(menu.footer).toBeUndefined();
   });
 

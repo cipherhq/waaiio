@@ -498,43 +498,13 @@
       "grantable": false,
       "grantee": "service_role",
       "grantor": "postgres",
-      "privilege": "DELETE"
-     },
-     {
-      "grantable": false,
-      "grantee": "service_role",
-      "grantor": "postgres",
       "privilege": "INSERT"
      },
      {
       "grantable": false,
       "grantee": "service_role",
       "grantor": "postgres",
-      "privilege": "MAINTAIN"
-     },
-     {
-      "grantable": false,
-      "grantee": "service_role",
-      "grantor": "postgres",
-      "privilege": "REFERENCES"
-     },
-     {
-      "grantable": false,
-      "grantee": "service_role",
-      "grantor": "postgres",
       "privilege": "SELECT"
-     },
-     {
-      "grantable": false,
-      "grantee": "service_role",
-      "grantor": "postgres",
-      "privilege": "TRIGGER"
-     },
-     {
-      "grantable": false,
-      "grantee": "service_role",
-      "grantor": "postgres",
-      "privilege": "TRUNCATE"
      },
      {
       "grantable": false,
@@ -549,13 +519,13 @@
     "rls": true,
     "view": null
    },
-   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "after_sha256": "f2fe515ce7cb36576c0b89be5cb24ceaab7d8875f00cfe8dd3cab3149c1d08de",
    "identity": "table:public.transaction_followups",
    "operation": "add"
   }
  ],
  "migration": "534_transaction_followups.sql",
- "migration_sha256": "ad83a016438d9ca8f01ee792735c35cd1072a39f9129a41dc16eb1ad5a29ab37",
+ "migration_sha256": "7c8cb04181ef7b9d18be27efa5965b6618121499ed6c9d0631766d7ba0dc1597",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

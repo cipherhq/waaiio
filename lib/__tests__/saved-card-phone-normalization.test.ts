@@ -608,7 +608,11 @@ describe('R8-B1 Test 1: processSavedCardConfirmationRecovery — committed pendi
       return { data: null, error: null };
     });
 
-    const supabase = { rpc: rpcFn } as never;
+    // A historical offer resolves its payment, but has no new transaction-followup row.
+    const supabase = { rpc: rpcFn, from: vi.fn((table: string) => ({
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: table === 'payment_saved_card_offers' ? { payment_id: PAY_ID } : null, error: null }),
+    })) } as never;
     const result = await processSavedCardConfirmationRecovery(supabase, 1);
 
     expect(result.recovered).toBe(1);
@@ -668,7 +672,11 @@ describe('R8-B1 Test 2: interactive-vs-recovery exactly-once via production help
       return { data: null, error: null };
     });
 
-    const supabase = { rpc: rpcFn } as never;
+    // A historical offer resolves its payment, but has no new transaction-followup row.
+    const supabase = { rpc: rpcFn, from: vi.fn((table: string) => ({
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: table === 'payment_saved_card_offers' ? { payment_id: PAY_ID } : null, error: null }),
+    })) } as never;
 
     // First call succeeds
     const r1 = await processSavedCardConfirmationRecovery(supabase, 5);
@@ -799,6 +807,9 @@ describe('R8-B2: release_activation_delivery result=false is counted as error', 
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
             is: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           }),
         };

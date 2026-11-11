@@ -10,6 +10,20 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Isolate durable follow-up delivery from this confirmation/recipient contract.
+const completionFollowup = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  release: vi.fn().mockResolvedValue(undefined),
+  resume: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/bot/transaction-followups', () => ({
+  startTransactionFollowup: completionFollowup.start,
+  releaseTransactionFollowupAfterConfirmation: completionFollowup.release,
+}));
+vi.mock('@/lib/payments/transaction-followup', () => ({
+  resumePaidTransactionFollowup: completionFollowup.resume,
+}));
+
 // ── Sender mock with message ID ──
 const campaignSender = { sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid.campaign-001' }), sendDocument: vi.fn().mockResolvedValue({ success: true }) };
 const mockResolveByChForBiz = vi.fn();
@@ -145,6 +159,11 @@ describe('campaign donation confirmation (#736)', () => {
     const result = await sendProactiveConfirmation(sb as never, PAY);
 
     expect(result.status).toBe('completed');
+    expect(completionFollowup.start).toHaveBeenCalledWith(sb, expect.objectContaining({
+      completionKey: 'payment:pay-camp-1', paymentId: 'pay-camp-1', businessId: 'biz-camp-1',
+      phone: '+2349012345678', channelId: 'ch-shared', waitForCard: true,
+    }));
+    expect(completionFollowup.resume).toHaveBeenCalledWith(sb, 'pay-camp-1');
     // Recipient resolution
     const args = (handlePostCompletion as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(args.customerPhone).toBe('+2349012345678');

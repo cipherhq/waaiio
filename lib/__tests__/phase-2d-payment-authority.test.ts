@@ -15,6 +15,7 @@ import { join } from 'path';
 const authoritySource = readFileSync(join(process.cwd(), 'lib/payments/authority.ts'), 'utf-8');
 const processSuccessSource = readFileSync(join(process.cwd(), 'lib/payments/process-success.ts'), 'utf-8');
 const sendConfirmSource = readFileSync(join(process.cwd(), 'lib/payments/send-confirmation.ts'), 'utf-8');
+const followupSource = readFileSync(join(process.cwd(), 'lib/payments/transaction-followup.ts'), 'utf-8');
 const terminalEffectsSource = readFileSync(join(process.cwd(), 'lib/payments/terminal-effects.ts'), 'utf-8');
 const dashboardRoute = readFileSync(join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'), 'utf-8');
 const cronRoute = readFileSync(join(process.cwd(), 'app/api/cron/payment-reconciliation/route.ts'), 'utf-8');
@@ -85,8 +86,11 @@ describe('send-confirmation.ts structural', () => {
   it('canonical order resolution', () => {
     expect(sendConfirmSource).toContain('canonicalOrderId = payment.order_id');
   });
-  it('Save Card suppressed for direct', () => {
-    expect(sendConfirmSource).toContain('!isDirectOrderTransfer');
+  it('Save Card dispatch moved to gateway-specific continuation (direct exclusion has runtime coverage)', () => {
+    expect(sendConfirmSource).toContain('resumePaidTransactionFollowup(supabase, payment.id)');
+    expect(followupSource).toContain("if (payment.gateway === 'stripe')");
+    expect(followupSource).toContain("else if (payment.gateway === 'paystack')");
+    expect(followupSource).not.toContain("payment.gateway === 'direct'");
   });
   it('transfer_confirmed in owner_notif_inapp', () => {
     expect(sendConfirmSource).toContain("type: 'transfer_confirmed'");

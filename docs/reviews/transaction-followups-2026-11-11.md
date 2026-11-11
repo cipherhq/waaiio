@@ -68,3 +68,9 @@ Migration SHA-256: `7c8cb04181ef7b9d18be27efa5965b6618121499ed6c9d0631766d7ba0dc
 ## Catalog ACL correction during PR packaging
 
 The first PostgreSQL 17 catalog artifact exposed Supabase default privileges granting service_role more than the intended SELECT/INSERT/UPDATE. A new default-privilege fixture reproduced the excess grants locally. M534 now revokes inherited service_role privileges before granting exactly those three operations. The harness additionally checks the complete ACL via `aclexplode` (including privileges introduced by newer PostgreSQL versions) and proves service_role DELETE is denied. The corrected local PostgreSQL 16 run passed 26 checks with zero failures/skips. The CI step requires the same 26 checks on PostgreSQL 17; its catalog delta must be regenerated from the corrected migration before final approval.
+
+## PR CI regression reconciliation
+
+Initial full CI found 39 failing assertions across 11 existing suites. Updated scoped coordinator fixtures and the Owner-changed menu expectations; retained original notification, recipient/channel, loyalty, direct-transfer card suppression and eligible-card assertions. Local rerun: 143 tests across five suites with disposable PostgreSQL, plus 53 tests across six suites; zero failures or skips in these runs. These are local results pending final PR CI.
+
+PostgreSQL 17 CI run `43040052787`, head `052d25507243293209274d141ddaf98f9817cf74`, Catalog oracle job `130589318466`, step `Transaction follow-up sequencing and cancellation proof (M534, PostgreSQL 17)`: 26 passed / 0 failed / 0 skipped in `scripts/tests/transaction-followups-db.py`. Its generated catalog artifact supplies the corrected M534 delta with exactly SELECT/INSERT/UPDATE for service_role. Final-head CI must still compare this committed delta.

@@ -9,6 +9,20 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Isolate durable follow-up delivery from this confirmation/recipient contract.
+const completionFollowup = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  release: vi.fn().mockResolvedValue(undefined),
+  resume: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/bot/transaction-followups', () => ({
+  startTransactionFollowup: completionFollowup.start,
+  releaseTransactionFollowupAfterConfirmation: completionFollowup.release,
+}));
+vi.mock('@/lib/payments/transaction-followup', () => ({
+  resumePaidTransactionFollowup: completionFollowup.resume,
+}));
+
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();
 
@@ -243,6 +257,8 @@ describe('customer_whatsapp Phase-A lifecycle', () => {
 
     // No provider send occurred
     expect(mockSendText).not.toHaveBeenCalled();
+    expect(completionFollowup.start).not.toHaveBeenCalled();
+    expect(completionFollowup.resume).not.toHaveBeenCalled();
 
     // customer_whatsapp was NOT terminalized as failed
     const failCalls = rpcCalls.filter(c => c.name === 'fail_external_effect' && (c.params as Record<string, unknown>).p_effect_key === 'customer_whatsapp');
@@ -300,6 +316,11 @@ describe('customer_whatsapp Phase-A lifecycle', () => {
 
     // Finalization succeeded
     expect(result.status).toBe('completed');
+    expect(completionFollowup.start).toHaveBeenCalledWith(s, expect.objectContaining({
+      completionKey: 'payment:pay-pa', paymentId: 'pay-pa', businessId: 'b1',
+      phone: '+2348012345678', channelId: 'ch-repaired', waitForCard: true,
+    }));
+    expect(completionFollowup.resume).toHaveBeenCalledWith(s, 'pay-pa');
   });
 
   it('3. Third retry after completion: no duplicate emission', async () => {

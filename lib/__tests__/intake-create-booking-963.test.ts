@@ -6,6 +6,20 @@
  *    from translation.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Isolate durable follow-up delivery from this confirmation/recipient contract.
+const completionFollowup = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  release: vi.fn().mockResolvedValue(undefined),
+  resume: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/bot/transaction-followups', () => ({
+  startTransactionFollowup: completionFollowup.start,
+  releaseTransactionFollowupAfterConfirmation: completionFollowup.release,
+}));
+vi.mock('@/lib/payments/transaction-followup', () => ({
+  resumePaidTransactionFollowup: completionFollowup.resume,
+}));
 import type { FlowContext, PromptText } from '@/lib/bot/flows/types';
 import { getStep } from '@/lib/bot/flows/__tests__/helpers';
 
@@ -24,7 +38,7 @@ vi.mock('@/lib/intake/send', async (importOriginal) => ({
 
 const SAT = '2026-11-07';
 const COMMITTED = {
-  id: 'bk-new', service_id: 'svc-cut', appointment_id: null, party_size: 1, date: SAT, time: '10:00:00',
+  id: 'bk-new', status: 'confirmed', service_id: 'svc-cut', appointment_id: null, party_size: 1, date: SAT, time: '10:00:00',
   class_session_id: null, staff_id: null, total_amount: 0, deposit_amount: 0,
 };
 
@@ -65,7 +79,7 @@ function ctxFor(sessionData: Record<string, unknown> = {}): FlowContext {
     session: {
       id: 'sess-963', user_id: 'user-1', business_id: 'biz-963', current_step: 'create_booking', version: 1,
       session_data: {
-        first_name: 'Ada', last_name: 'Obi', party_size: 1, active_capability: 'scheduling',
+        _inbound_channel_id: 'channel-963', first_name: 'Ada', last_name: 'Obi', party_size: 1, active_capability: 'scheduling',
         service_id: 'svc-cut', service_name: 'Assessment', service_price: 0, service_deposit: 0,
         service_duration: 60, _service_max_capacity: 1, _service_buffer_minutes: 0,
         _service_available_days: [], _service_requires_staff: false,
@@ -89,6 +103,7 @@ beforeAll(async () => { await import('@/lib/bot/flows/registry'); }, 60_000);
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-05T12:00:00Z'));
+  vi.clearAllMocks();
   intake.link.mockClear();
   intake.deliver.mockClear();
   intake.sync.mockClear();
@@ -137,14 +152,22 @@ describe('after-booking intake: the bot reply', () => {
     expect(intake.deliver).toHaveBeenCalledWith(expect.anything(), 'bk-new', { prepareOnly: true });
     const last = messages[messages.length - 1] as PromptText & { _localization?: { protectedValues?: string[] } };
     expect(last.type).toBe('text');
-    // The next-steps menu stays last (bot completion rule); the intake sits just above it.
-    const blocks = last.text.split('\n\n');
-    expect(blocks[blocks.length - 1]).toContain('Type *menu*');
-    expect(blocks[blocks.length - 2]).toContain(url);
+    // Intake is part of the confirmation; consent and navigation follow delivery.
+    expect(last.text.split('\n\n').at(-1)).toContain(url);
+    expect(last.text).not.toContain('Type *menu*');
     expect(last._localization?.protectedValues).toEqual(expect.arrayContaining([url, 'Healing Labs']));
-    // Saved only after delivery: the executor runs _afterSend once the reply reaches WhatsApp.
-    expect((last as { _afterSend?: unknown })._afterSend).toBe(finalize);
+    expect(completionFollowup.start).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      completionKey: 'booking:bk-new', businessId: 'biz-963', phone: '+2348000000000',
+      channelId: 'channel-963', awaitingConfirmation: true,
+    }));
     expect(finalize).not.toHaveBeenCalled();
+    expect(completionFollowup.release).not.toHaveBeenCalled();
+    const afterSend = (last as { _afterSend?: () => Promise<void> })._afterSend;
+    expect(afterSend).toEqual(expect.any(Function));
+    await afterSend!();
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(completionFollowup.release).toHaveBeenCalledWith(expect.anything(), 'biz-963', 'booking:bk-new');
+    expect(finalize.mock.invocationCallOrder[0]).toBeLessThan(completionFollowup.release.mock.invocationCallOrder[0]);
   });
 
   it('adds nothing when no intake was prepared', async () => {
