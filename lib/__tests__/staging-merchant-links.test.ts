@@ -58,6 +58,9 @@ describe('staging merchant links use the designated number for every country', (
     const base = await baseGET(req(`/m/${BIZ_ID}`), ctx({ businessId: BIZ_ID }));
     expect(base.status).toBe(302);
     expect(base.headers.get('location')).toBe('https://wa.me/12404712139?text=TESTBIZ');
+    const short = await baseGET(req('/m/TESTBIZ'), ctx({ businessId: 'TESTBIZ' }));
+    expect(short.status).toBe(302);
+    expect(short.headers.get('location')).toBe(base.headers.get('location'));
     const queue = await actionGET(req(`/m/${BIZ_ID}/queue`), ctx({ businessId: BIZ_ID, action: 'queue' }));
     expect(queue.status).toBe(302);
     expect(queue.headers.get('location')).toBe('https://wa.me/12404712139?text=TESTBIZ%3Aqueue');
