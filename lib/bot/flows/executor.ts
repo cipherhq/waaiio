@@ -27,6 +27,7 @@ import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlow
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage, checkSpendThresholds } from '@/lib/bot/conversation-guard';
 import { checkLowBalanceAlerts } from '@/lib/messaging/low-balance-alerts';
+import { after } from 'next/server';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -1064,8 +1065,10 @@ export class FlowExecutor {
       trackOutboundMessage(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Failed to track outbound message:', err));
       // #682: Non-blocking threshold check after each outbound message
       checkSpendThresholds(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Threshold check failed (non-critical):', err));
-      // Low messaging-balance alert for the merchant (dashboard + email); also runs when a send was refused
-      checkLowBalanceAlerts(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Low-balance check failed (non-critical):', err));
+      // Low messaging-balance alert for the merchant (dashboard + email); also runs when a send was refused.
+      // Not awaited (the reply is not delayed), but kept alive after the webhook responds via after().
+      const lowBalance = checkLowBalanceAlerts(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Low-balance check failed (non-critical):', err));
+      try { after(lowBalance); } catch { /* outside a request (cron, tests): the check runs on its own */ }
     }
   }
 

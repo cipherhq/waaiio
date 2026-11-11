@@ -12,6 +12,8 @@ vi.mock('@/lib/bot/conversation-guard', async (orig) => ({
   checkSpendThresholds: vi.fn(async () => undefined),
 }));
 vi.mock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
+const after = vi.fn((_p: unknown): void => { throw new Error('`after` was called outside a request scope'); });
+vi.mock('next/server', async (orig) => ({ ...(await orig<typeof import('next/server')>()), after: (p: unknown) => after(p) }));
 
 // The executor module is large: import it once, before the tests, with a long timeout.
 // (Imported cold inside the first test it can pass the 5 s default and leak a late send into the next test.)
@@ -46,5 +48,21 @@ describe('FlowExecutor.sendMessages → low-balance check', () => {
     const ex = await executorWith(sendText);
     await expect(ex.sendMessages('+1', [{ type: 'text', text: 'hi' }], undefined, {})).resolves.toBeUndefined();
     expect(sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('inside a request the check is kept alive with after() (the webhook may respond first)', async () => {
+    checkLowBalanceAlerts.mockClear();
+    after.mockImplementationOnce(() => undefined);
+    const ex = await executorWith(async () => ({ ok: true }));
+    await ex.sendMessages('+1', [{ type: 'text', text: 'hi' }], undefined, {});
+    expect(after).toHaveBeenCalledWith(expect.any(Promise));
+  });
+
+  it('outside a request (after() throws) the reply and the check still run', async () => {
+    checkLowBalanceAlerts.mockClear();
+    const sendText = vi.fn(async () => ({ ok: true }));
+    const ex = await executorWith(sendText);
+    await expect(ex.sendMessages('+1', [{ type: 'text', text: 'hi' }], undefined, {})).resolves.toBeUndefined();
+    expect(checkLowBalanceAlerts).toHaveBeenCalledTimes(1);
   });
 });

@@ -14,7 +14,7 @@
   - An email left `pending` (the function stopped before recording) or `failed` is sent again by a later check after 10 minutes, at most 3 attempts in all. The retry first claims the row (an update that applies only while `claimed_at` is unchanged), so two checks cannot both send it. `not_sent` is not retried.
   - Deduplication: the alert id is a fixed UUID derived from business, currency, newest allowance and level. The existing `alerts` primary key refuses a second copy (23505), also from two sends at once; only the inserting send emails.
   - Reset on top-up: every top-up or other credit grant creates a new allowance row (verified on staging), which gives new ids, so the levels alert again.
-- `lib/bot/flows/executor.ts`: `sendMessages` runs the check after each batch of bot replies, next to the existing spend-cap check, also when a send was refused. Non-blocking: it never throws into the reply, never sends WhatsApp and never changes a balance.
+- `lib/bot/flows/executor.ts`: `sendMessages` runs the check after each batch of bot replies, next to the existing spend-cap check, also when a send was refused. Non-blocking: it never throws into the reply, never sends WhatsApp and never changes a balance. The check is not awaited (the reply is not delayed) but is registered with Next's `after()`, so it keeps running after the webhook responds; outside a request (crons, tests) `after()` throws and is ignored.
 
 **Unchanged:** billing and authorization (`authorize_message_send`, allowances, ledger), prices, top-up packages, spend caps and their alerts. No migration, no data change.
 
