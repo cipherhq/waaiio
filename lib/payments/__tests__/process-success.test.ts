@@ -5,7 +5,7 @@ vi.mock('@/lib/getPlatformFees', () => ({
 }));
 
 vi.mock('@/lib/logger', () => ({
-  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), withContext: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }) },
 }));
 
 import { processSuccessfulPayment, recordPlatformFee, processInvoicePayment, processCampaignDonation } from '../process-success';
@@ -29,6 +29,8 @@ function mockSupabase(overrides: Record<string, unknown> = {}) {
               ? { business_id: 'biz1', total_amount: 5000, status: 'confirmed', deposit_status: 'paid' }
               : table === 'businesses'
               ? { subscription_tier: 'free', trial_ends_at: '2025-01-01', payout_mode: 'platform_managed' }
+              : table === 'payments'
+              ? { business_id: 'biz1', currency: 'NGN', tax_allocation: null, tax_fee_basis: null }
               : table === 'invoices'
               ? { business_id: 'biz1', total_amount: 1000, amount_paid: 0 }
               : table === 'campaigns'

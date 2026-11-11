@@ -135,7 +135,7 @@ function buildSupabase(countriesConfig: { data?: unknown; error?: unknown; throw
       if (table === 'platform_config_versions') return makeChain({ data: { id: 'cfg-001', config_snapshot: { fee_policy_enabled: false } }, error: null });
       return makeChain({ data: null, error: null });
     }),
-    rpc: vi.fn(async () => ({ data: null, error: null })),
+    rpc: vi.fn(async (name: string) => ({ data: name === 'reserve_merchant_tax_payment_980' ? { taxable: false } : null, error: null })),
   };
 }
 

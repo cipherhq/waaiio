@@ -2894,7 +2894,7 @@ export const schedulingFlow: FlowDefinition = {
             servicePrice = quote.total; deposit = quote.deposit;
             if (quote.tax_snapshot) lines.push(`Before tax: ${formatCurrency(quote.tax_snapshot.netAmount / 100, cc)}`, `Tax: ${formatCurrency(quote.tax_snapshot.taxAmount / 100, cc)}`);
           } catch (error) {
-            logger.warn('[SCHEDULING] Authoritative tax preview unavailable', error);
+            logger.warn('[SCHEDULING] Authoritative tax preview unavailable', safeLogErrorContext(error));
             return [{ type: 'text', text: 'Your booking details changed or could not be checked. Please review the service again before confirming.' }];
           }
         }

@@ -83,6 +83,24 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
       ${readFileSync('supabase/migrations/532_merchant_tax_payment_refund_authority.sql','utf8')}`);
   },60_000);
 
+  it.each([
+    ['orders', 'order_id'], ['bookings', 'booking_id'], ['invoices', 'invoice_id'],
+  ])('preserves untaxed GHS %s payments without creating a tax reservation', (table, sourceKey) => {
+    const id = `10000000-0000-4000-8000-${String(counter++).padStart(12, '0')}`;
+    sql(`INSERT INTO public.${table}(id,business_id,tax_snapshot) VALUES('${id}','${b}',NULL)`);
+    const payment = { business_id: b, [sourceKey]: id, amount: 12.5, currency: 'GHS', gateway: 'paystack', gateway_reference: `legacy-${counter++}` };
+    expect(json(`SET ROLE service_role; SELECT public.reserve_merchant_tax_payment_980(${q(payment)})`)).toEqual({ taxable: false });
+    expect(sql(`SELECT count(*) FROM public.merchant_tax_payment_ledger WHERE entity_id='${id}'`)).toBe('0');
+    expect(sql(`SELECT count(*) FROM public.payments WHERE gateway_reference='${payment.gateway_reference}'`)).toBe('0');
+  });
+
+  it('still rejects a taxable source in an unsupported currency', () => {
+    const order = sale();
+    sql(`UPDATE public.orders SET tax_snapshot=jsonb_set(tax_snapshot,'{currency}','"GHS"') WHERE id='${order}'`);
+    expect(() => reserve(order, 12, { currency: 'GHS', gateway: 'paystack' })).toThrow(/invalid_tax_payment/);
+    expect(sql(`SELECT count(*) FROM public.merchant_tax_payment_ledger WHERE entity_id='${order}'`)).toBe('0');
+  });
+
   it('reserves deposit and balance exactly, including previously refunded collections', () => {
     const order = sale(); const first = reserve(order,6).payment;
     expect(first.tax_allocation).toMatchObject({netAmount:500,taxAmount:100,grossAmount:600});

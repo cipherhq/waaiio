@@ -969,7 +969,7 @@
      }
     ],
     "arguments": "p_payment jsonb",
-    "body_sha256": "d1d55e6377119c9ce55cafd8718e9e11e1b66d50f49c24be9bcdfb2555f6e3b4",
+    "body_sha256": "f7d226f3043f5fe84524a9d0de1dbf9944577d9742bbceae53ded79bb9ad1adc",
     "config": [
      "search_path=pg_catalog, extensions"
     ],
@@ -983,7 +983,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "fed704f5972bd15b0ec84673da269d8e7c927d57e45320d28b6c14e66024d79b",
+   "after_sha256": "ce627c0ec98a21d765e546b3bf80f2fb2a99426928a5e4cc5a426b592f9be8b0",
    "identity": "function:public.reserve_merchant_tax_payment_980(p_payment jsonb)",
    "operation": "add"
   },
@@ -1336,7 +1336,7 @@
   }
  ],
  "migration": "532_merchant_tax_payment_refund_authority.sql",
- "migration_sha256": "1b918ffdd1538e0e7f617688c3d3b9c3714579d4fb1bfa2e5a98309bc637054b",
+ "migration_sha256": "5cf98945029297410e32c238806e4a859fcbdbc0bac5d8d4c028f5ece3cd3fca",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

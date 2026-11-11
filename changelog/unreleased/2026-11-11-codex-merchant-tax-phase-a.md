@@ -1,5 +1,7 @@
 ## 2026-11-11 — Merchant-configured purchase tax (unreleased)
 
+- PR982 CI follow-up keeps legacy booking/payment regression fixtures aligned with explicit untaxed authority responses, sanitizes tax-preview log metadata, and verifies the Owner-approved CI-only deployment exception. Disposable replay restores the existing lock-verified accounting entrypoints; historical M518 HTTP compatibility stays bounded to its original schema versions, while current-schema tests assert the intentional numeric-money signatures. No live migration or deployment is included.
+
 - Adds `lib/tax/calculation.ts` and focused tests for optional merchant tax, item overrides/exemptions, inclusive/exclusive prices, discount allocation, payment allocation and item refunds. Validates stored snapshot arithmetic before allocation.
 - Extends `lib/payments/calculateFee.ts` with an optional pre-tax percentage basis. Existing callers retain their current behavior; gross still controls the flat-fee microtransaction threshold. Records Owner-approved rules in `docs/contracts/980-merchant-tax-phase-a.md`.
 - Adds whitelisted settings parsing, explicit major/minor conversion for NGN/USD/GBP/CAD, and an unapplied draft configuration migration. No existing amount is rescaled.

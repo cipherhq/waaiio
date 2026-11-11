@@ -127,3 +127,27 @@ Completion evidence now includes exact partial/full and sequential refunds befor
 - No pushed branch, remote CI, deployment, existing-environment migration, notification or real provider transaction is included in this evidence.
 
 Residual UI limitation: zero-value return forms display the original quantity as their input maximum; SQL enforces the remaining quantity and rejects an excessive repeat return. Existing recurring notification authentication remains unchanged and actual automatic delivery is uncertified. These limitations do not remove the required release/provider acceptance gates.
+
+## PR982 first CI checkpoint
+
+Draft PR #982, head `7a566aaeff8f53ad8acc08df55aa504f8a29b2df`, ran CI `43045571693`. This supersedes the earlier local-only publication status; it does not imply release approval.
+
+In `.github/workflows/ci.yml`, job `merchant-tax-postgres-tests`, step `Execute each required tax SQL suite and verify zero skipped tests`, emitted exact-head receipts for:
+
+| Test file under `lib/tax/__tests__/` | Passed | Skipped |
+| --- | ---: | ---: |
+| `precision-db.test.ts` | 7 | 0 |
+| `finance-authority-db.test.ts` | 14 | 0 |
+| `invoice-authority.pg.test.ts` | 15 | 0 |
+| `sql-calculation-authority.pg.test.ts` | 16 | 0 |
+| `sql-calculation.pg.test.ts` | 23 | 0 |
+
+Job `catalog-oracle`, step `Full-schema merchant tax purchase lifecycle (real PostgreSQL 17)`, emitted the same exact-head receipt for `lib/tax/__tests__/purchase-lifecycle.pg.test.ts`: 11 passed, zero skipped. These are disposable database results, not HTTP/provider acceptance.
+
+Overall CI failed: legacy migration replay lacked the approved accounting dispatcher fixture; a full-schema scheduling fixture used a different object-owner role; existing unit/UI fixtures need the added authority responses; the branch-only deployment exception needs an explicit regression assertion; and preview error logging needs sanitization. The admin browser installation and separate Core604 client installation also encountered runner package-host DNS failures. Corrections and a new exact-head run are required; no passing overall CI or release readiness is claimed.
+
+Follow-up local corrections: booking fixture group 218 passed (31 existing optional DB skips), payment fixture group 239 passed (11 existing optional DB skips), deployment/logging group 14 passed with zero skips, and final bot/scheduling/payment confirmation group 23 passed with zero skips. Groups overlap and are not a unique total. Full-current-schema Core604 SQL now passes all 25 cases with zero skips under the CI-shaped login; authorization role switches remain explicit. Historical Core604 HTTP fixtures compare M517/M518; that HTTP run awaits CI because Docker is unavailable locally.
+
+The pre-push review also identified an undeployed currency compatibility defect. Tax-specific currency validation now occurs after the untaxed-source return, preserving supported untaxed purchases. Independent review confirmed the bounded correction; real PostgreSQL finance regression increased from 14 to 18 tests, all passed with zero skips, including three previously failing untaxed GHS source cases and a taxable unsupported-currency denial. Amount, tenant and gateway checks remain intact. No deployed failure was observed.
+
+The broad local unit run was not green: 20,106 passed, 28 failed and 3,398 optional database tests skipped. Failures include sandbox-denied local sockets/CLI checks, concurrent-run timeouts, timezone-sensitive payout assertions, and a payment fixture corrected during that run and separately reverified. No unrelated production code or test assertions were changed to mask these limitations. Fresh CI remains the acceptance gate.

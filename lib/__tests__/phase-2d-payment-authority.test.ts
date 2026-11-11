@@ -764,6 +764,7 @@ describe('processSuccessfulPayment: replay and edge cases (executable)', () => {
 
     const mockSupabase = {
       from: (table: string) => {
+        if (table === 'payments') return chain({ business_id: 'biz-1', amount: 3000, currency: 'NGN', tax_allocation: null, tax_fee_basis: null });
         if (table === 'orders') return chain({ business_id: 'biz-1', referral_id: null, delivery_phone: '+234900' });
         if (table === 'businesses') return chain({ subscription_tier: 'growth', trial_ends_at: null, custom_fee_percentage: null, custom_fee_flat: null, payout_mode: null, reseller_id: null });
         return chain();

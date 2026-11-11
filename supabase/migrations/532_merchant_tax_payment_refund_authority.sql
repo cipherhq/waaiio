@@ -152,11 +152,14 @@ BEGIN
     OR (p_payment->>'amount')::numeric*100>9007199254740991 THEN RAISE EXCEPTION 'invalid_tax_payment'; END IF;
   p:=jsonb_populate_record(NULL::public.payments,p_payment);
   IF p.business_id IS NULL OR p.amount IS NULL OR p.amount<=0 OR p.amount*100<>trunc(p.amount*100)
-    OR p.currency IS NULL OR p.currency NOT IN ('NGN','USD','GBP','CAD') OR p.gateway IS NULL OR NULLIF(p.gateway_reference,'') IS NULL THEN
+    OR p.currency IS NULL OR p.gateway IS NULL OR NULLIF(p.gateway_reference,'') IS NULL THEN
     RAISE EXCEPTION 'invalid_tax_payment'; END IF;
   PERFORM accounting_private.accounting_business_lock(p.business_id);
   source:=private.tax_980_source(p_payment,true);
   IF source IS NULL THEN RETURN jsonb_build_object('taxable',false); END IF;
+  -- The rollout currency restriction applies only to tax-bearing sources.
+  -- Untaxed historical purchases keep the existing provider currency path.
+  IF p.currency NOT IN ('NGN','USD','GBP','CAD') THEN RAISE EXCEPTION 'invalid_tax_payment'; END IF;
   snapshot:=source->'snapshot';
   IF snapshot->>'currency' IS DISTINCT FROM p.currency THEN RAISE EXCEPTION 'tax_currency_mismatch'; END IF;
   -- Reusing a reservation never grants a second dispatch: callers still require CAS.

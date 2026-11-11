@@ -20,6 +20,7 @@ import { checkBankTransferEligibility, createPendingTransfer, formatBankTransfer
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
@@ -2330,7 +2331,7 @@ export const orderingFlow: FlowDefinition = {
             addonsTotal = quote.server_addons_total ?? addonsTotal;
             d.discount_amount = promoDiscount; d._tax_snapshot = quote.tax_snapshot;
           } catch (error) {
-            logger.warn('[ORDERING] Authoritative preview unavailable', error);
+            logger.warn('[ORDERING] Authoritative preview unavailable', safeLogErrorContext(error));
             return [{ type: 'text', text: 'Your order details changed or could not be checked. Please review your cart again before confirming.' }];
           }
         }

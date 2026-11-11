@@ -267,8 +267,10 @@ describe('#889 owner order alert lists the products', () => {
       return { ok: true };
     });
     await confirm(claim({ order_id: 'o1' }));
-    // The fallback lookup and the owner alert both read orders.
-    expect(selects.filter(s => s.table === 'orders').length).toBe(2);
+    // Fallback lookup, historical tax snapshot, and owner alert read orders.
+    const orderSelects = selects.filter(s => s.table === 'orders');
+    expect(orderSelects).toHaveLength(3);
+    expect(orderSelects.some(s => s.cols === 'tax_snapshot')).toBe(true);
     for (const s of selects.filter(x => x.table === 'orders')) expect(s.cols).not.toMatch(/delivery_name|product_name/);
   });
 });
