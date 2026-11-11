@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createMemoryDb } from '@/lib/__tests__/helpers/memory-db';
 import { createMockContext, createMockSupabase, getStep } from './helpers';
 import { reservationFlow } from '../reservation.flow';
 import { schedulingFlow } from '../scheduling.flow';
@@ -321,7 +322,8 @@ describe('Returning customer: name/email reuse', () => {
     expect(skip).toBe(true);
     expect(ctx.session.session_data.first_name).toBe('Jane');
     expect(ctx.session.session_data.last_name).toBe('Doe');
-    expect(ctx.session.session_data.email).toBe('jane@example.com');
+    // A global identity profile can supply the name, but not this store's email.
+    expect(ctx.session.session_data.email).toBeUndefined();
   });
 
   it('collect_name skipIf returns false when no user_id', async () => {
@@ -334,7 +336,7 @@ describe('Returning customer: name/email reuse', () => {
 
   it('collect_email skipIf returns true for real email', async () => {
     const ctx = createMockContext({
-      session: { id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'collect_email', session_data: { email: 'jane@example.com' }, version: 0 },
+      session: { id: 's1', user_id: 'u1', business_id: 'test-business-id', current_step: 'collect_email', session_data: { email: 'jane@example.com' }, version: 0 },
     });
     const skip = await reservationEmailStep.skipIf!(ctx);
     expect(skip).toBe(true);
@@ -342,10 +344,22 @@ describe('Returning customer: name/email reuse', () => {
 
   it('collect_email skipIf returns false for generated fallback email', async () => {
     const ctx = createMockContext({
-      session: { id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'collect_email', session_data: { email: '2341234567890@whatsapp.waaiio.com' }, version: 0 },
+      supabase: createMemoryDb() as any,
+      session: { id: 's1', user_id: 'u1', business_id: 'test-business-id', current_step: 'collect_email', session_data: { email: '2341234567890@whatsapp.waaiio.com' }, version: 0 },
     });
     const skip = await reservationEmailStep.skipIf!(ctx);
     expect(skip).toBe(false);
+  });
+
+  it('does not reuse a valid session email when the session belongs to another business', async () => {
+    const supabase = createMockSupabase();
+    const ctx = createMockContext({
+      supabase: supabase as any,
+      session: { id: 's1', user_id: 'u1', business_id: 'other-business', current_step: 'collect_email',
+        session_data: { email: 'jane@example.com' }, version: 0 },
+    });
+    expect(await reservationEmailStep.skipIf!(ctx)).toBe(false);
+    expect(supabase.from).not.toHaveBeenCalled();
   });
 });
 
