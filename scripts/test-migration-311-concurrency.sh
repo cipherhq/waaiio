@@ -6,35 +6,31 @@
 # ═══════════════════════════════════════════════════════════
 set -euo pipefail
 
-RESELLER_ID='00000000-0000-0000-0000-000000000311'
-PAYOUT_A='00000000-0000-0000-0000-00000000031a'
-PAYOUT_B='00000000-0000-0000-0000-00000000031b'
-ADMIN_ID='00000000-0000-0000-0000-000000000001'
+# Each execution owns its fixtures; immutable financial rows live until DB disposal.
+new_id() { psql -X -v ON_ERROR_STOP=1 -t -A -c 'SELECT gen_random_uuid()'; }
+RESELLER_ID=$(new_id)
+PAYOUT_A=$(new_id)
+PAYOUT_B=$(new_id)
+ADMIN_ID=$(new_id)
+RESELLER_AUTH_USER=$(new_id)
+BIZ_OWNER=$(new_id)
+BIZ_ID=$(new_id)
+PAYMENT_ID=$(new_id)
+RESULT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/m311.XXXXXX")
 FAILED=0
 
 cleanup() {
-  echo "Cleaning up migration 311 test data..."
-  psql -q -c "DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID'" 2>/dev/null || true
-  psql -q -c "DELETE FROM platform_fees WHERE reseller_id = '$RESELLER_ID'" 2>/dev/null || true
-  psql -q -c "DELETE FROM resellers WHERE id IN ('$RESELLER_ID', '00000000-0000-0000-0000-000000000313')" 2>/dev/null || true
-  psql -q -c "DELETE FROM businesses WHERE id = '00000000-0000-0000-0000-000000311097'" 2>/dev/null || true
-  psql -q -c "DELETE FROM profiles WHERE id = '00000000-0000-0000-0000-000000311098'" 2>/dev/null || true
-  psql -q -c "ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id IN ('00000000-0000-0000-0000-000000311099','00000000-0000-0000-0000-000000311098'); ALTER TABLE auth.users ENABLE TRIGGER ALL;" 2>/dev/null || true
-  rm -f /tmp/m311_*.txt
+  echo "Cleaning up migration 311 mutable test data..."
+  psql -v ON_ERROR_STOP=1 -q -c "DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID'"
+  rm -rf "$RESULT_DIR"
 }
 trap cleanup EXIT
 
 echo "=== Migration 311: Reseller Payout Concurrency Tests ==="
 
 # ── SETUP ──
-RESELLER_AUTH_USER='00000000-0000-0000-0000-000000311099'
-BIZ_OWNER='00000000-0000-0000-0000-000000311098'
-BIZ_ID='00000000-0000-0000-0000-000000311097'
 psql -v ON_ERROR_STOP=1 -q <<SETUP
-DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID';
-DELETE FROM platform_fees WHERE reseller_id = '$RESELLER_ID';
-DELETE FROM resellers WHERE id = '$RESELLER_ID';
-DELETE FROM businesses WHERE id = '$BIZ_ID';
+BEGIN;
 ALTER TABLE auth.users DISABLE TRIGGER ALL;
 INSERT INTO auth.users (id, raw_app_meta_data) VALUES
   ('$RESELLER_AUTH_USER', '{}'::jsonb),
@@ -42,14 +38,17 @@ INSERT INTO auth.users (id, raw_app_meta_data) VALUES
   ('$ADMIN_ID', '{"role":"admin"}'::jsonb)
   ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data;
 ALTER TABLE auth.users ENABLE TRIGGER ALL;
-INSERT INTO profiles (id, first_name, last_name, email) VALUES ('$BIZ_OWNER', 'M311', 'Test', 'm311biz@test.local') ON CONFLICT DO NOTHING;
+INSERT INTO profiles (id, first_name, last_name, email) VALUES ('$BIZ_OWNER', 'M311', 'Test', 'm311-$BIZ_OWNER@test.local') ON CONFLICT DO NOTHING;
 INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
-  VALUES ('$BIZ_ID', 'M311 Test Biz', 'm311-test-biz', '$BIZ_OWNER', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG') ON CONFLICT DO NOTHING;
+  VALUES ('$BIZ_ID', 'M311 Test Biz', 'm311-test-biz-$BIZ_ID', '$BIZ_OWNER', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG') ON CONFLICT DO NOTHING;
 INSERT INTO resellers (id, user_id, company_name, commission_percentage)
   VALUES ('$RESELLER_ID', '$RESELLER_AUTH_USER', 'M311 Test Reseller', 10);
 -- Seed 1000 in commission earnings
-INSERT INTO platform_fees (business_id, transaction_amount, fee_total, reseller_id, reseller_commission)
-  VALUES ('$BIZ_ID', 10000, 100, '$RESELLER_ID', 1000);
+INSERT INTO payments (id, business_id, amount, currency, gateway, gateway_reference, status)
+  VALUES ('$PAYMENT_ID', '$BIZ_ID', 10000, 'NGN', 'paystack', 'm311-$PAYMENT_ID', 'success');
+INSERT INTO platform_fees (business_id, payment_id, is_direct_transfer, transaction_amount, fee_total, reseller_id, reseller_commission)
+  VALUES ('$BIZ_ID', '$PAYMENT_ID', false, 10000, 100, '$RESELLER_ID', 1000);
+COMMIT;
 SETUP
 
 # ════════════════════════════════════════
@@ -67,7 +66,7 @@ VALUES
 SEED1
 
 # Session A: mark_paid with pg_sleep to hold advisory lock
-psql -t -A <<SESSION_A > /tmp/m311_a1.txt 2>&1 &
+psql -t -A <<SESSION_A > "$RESULT_DIR/a1.txt" 2>&1 &
 BEGIN;
 SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID');
 SELECT pg_sleep(2);
@@ -78,7 +77,7 @@ PID_A=$!
 sleep 0.5
 
 # Session B: concurrent mark_paid
-psql -t -A <<SESSION_B > /tmp/m311_b1.txt 2>&1 &
+psql -t -A <<SESSION_B > "$RESULT_DIR/b1.txt" 2>&1 &
 SELECT mark_reseller_payout_paid('$PAYOUT_B', '$ADMIN_ID');
 SESSION_B
 PID_B=$!
@@ -86,8 +85,8 @@ PID_B=$!
 wait $PID_A || true
 wait $PID_B || true
 
-RESULT_A=$(grep -oP '"success"\s*:\s*(true|false)' /tmp/m311_a1.txt | head -1 | grep -oP 'true|false')
-RESULT_B=$(grep -oP '"success"\s*:\s*(true|false)' /tmp/m311_b1.txt | head -1 | grep -oP 'true|false')
+RESULT_A=$(grep -oE '"success"[[:space:]]*:[[:space:]]*(true|false)' "$RESULT_DIR/a1.txt" | head -1 | grep -oE 'true|false')
+RESULT_B=$(grep -oE '"success"[[:space:]]*:[[:space:]]*(true|false)' "$RESULT_DIR/b1.txt" | head -1 | grep -oE 'true|false')
 PAID_COUNT=$(psql -t -A -c "SELECT COUNT(*) FROM reseller_payouts WHERE reseller_id='$RESELLER_ID' AND status='paid'")
 TOTAL_PAID=$(psql -t -A -c "SELECT COALESCE(SUM(net_amount),0) FROM reseller_payouts WHERE reseller_id='$RESELLER_ID' AND status='paid'")
 
@@ -121,7 +120,7 @@ VALUES
 SEED2
 
 # Deterministic overlap: Session A holds advisory lock with pg_sleep
-psql -t -A <<SESSION_A2 > /tmp/m311_a2.txt 2>&1 &
+psql -t -A <<SESSION_A2 > "$RESULT_DIR/a2.txt" 2>&1 &
 BEGIN;
 SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID');
 SELECT pg_sleep(2);
@@ -130,13 +129,13 @@ SESSION_A2
 PID_A=$!
 sleep 0.5
 # Session B blocks on advisory lock until A commits
-psql -t -A -c "SELECT mark_reseller_payout_paid('$PAYOUT_B', '$ADMIN_ID')" > /tmp/m311_b2.txt 2>&1 &
+psql -t -A -c "SELECT mark_reseller_payout_paid('$PAYOUT_B', '$ADMIN_ID')" > "$RESULT_DIR/b2.txt" 2>&1 &
 PID_B=$!
 wait $PID_A || true
 wait $PID_B || true
 
-RESULT_A=$(grep -oP '"success"\s*:\s*(true|false)' /tmp/m311_a2.txt | head -1 | grep -oP 'true|false')
-RESULT_B=$(grep -oP '"success"\s*:\s*(true|false)' /tmp/m311_b2.txt | head -1 | grep -oP 'true|false')
+RESULT_A=$(grep -oE '"success"[[:space:]]*:[[:space:]]*(true|false)' "$RESULT_DIR/a2.txt" | head -1 | grep -oE 'true|false')
+RESULT_B=$(grep -oE '"success"[[:space:]]*:[[:space:]]*(true|false)' "$RESULT_DIR/b2.txt" | head -1 | grep -oE 'true|false')
 TOTAL_PAID=$(psql -t -A -c "SELECT COALESCE(SUM(net_amount),0) FROM reseller_payouts WHERE reseller_id='$RESELLER_ID' AND status='paid'")
 
 echo "  Session A success: $RESULT_A"
@@ -160,7 +159,7 @@ INSERT INTO reseller_payouts (id, reseller_id, period_start, period_end, gross_c
 VALUES ('$PAYOUT_A', '$RESELLER_ID', '2026-05-01', '2026-05-15', 500, 500, 'approved');
 SEED3
 
-psql -t -A <<SESSION_A3 > /tmp/m311_a3.txt 2>&1 &
+psql -t -A <<SESSION_A3 > "$RESULT_DIR/a3.txt" 2>&1 &
 BEGIN;
 SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID');
 SELECT pg_sleep(2);
@@ -168,13 +167,13 @@ COMMIT;
 SESSION_A3
 PID_A=$!
 sleep 0.5
-psql -t -A -c "SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID')" > /tmp/m311_b3.txt 2>&1 &
+psql -t -A -c "SELECT mark_reseller_payout_paid('$PAYOUT_A', '$ADMIN_ID')" > "$RESULT_DIR/b3.txt" 2>&1 &
 PID_B=$!
 wait $PID_A || true
 wait $PID_B || true
 
-RESULT_A=$(grep -oP '"success"\s*:\s*(true|false)' /tmp/m311_a3.txt | head -1 | grep -oP 'true|false')
-RESULT_B=$(grep -oP '"success"\s*:\s*(true|false)' /tmp/m311_b3.txt | head -1 | grep -oP 'true|false')
+RESULT_A=$(grep -oE '"success"[[:space:]]*:[[:space:]]*(true|false)' "$RESULT_DIR/a3.txt" | head -1 | grep -oE 'true|false')
+RESULT_B=$(grep -oE '"success"[[:space:]]*:[[:space:]]*(true|false)' "$RESULT_DIR/b3.txt" | head -1 | grep -oE 'true|false')
 PAID_COUNT=$(psql -t -A -c "SELECT COUNT(*) FROM reseller_payouts WHERE id='$PAYOUT_A' AND status='paid'")
 
 echo "  Session A success: $RESULT_A"
@@ -200,7 +199,7 @@ psql -v ON_ERROR_STOP=1 -q <<SEED4
 DELETE FROM reseller_payouts WHERE reseller_id = '$RESELLER_ID';
 SEED4
 
-psql -t -A <<INSERT_A > /tmp/m311_a4.txt 2>&1 &
+psql -t -A <<INSERT_A > "$RESULT_DIR/a4.txt" 2>&1 &
 BEGIN;
 INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status)
   VALUES ('$RESELLER_ID', '2026-12-01', '2026-12-15', 100, 'pending');
@@ -210,7 +209,7 @@ INSERT_A
 PID_A=$!
 sleep 0.5
 # Session B: expected to fail with exclusion constraint (23P01)
-psql -t -A -c "INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('$RESELLER_ID', '2026-12-10', '2026-12-20', 100, 'pending')" > /tmp/m311_b4.txt 2>&1 || true
+psql -t -A -c "INSERT INTO reseller_payouts (reseller_id, period_start, period_end, net_amount, status) VALUES ('$RESELLER_ID', '2026-12-10', '2026-12-20', 100, 'pending')" > "$RESULT_DIR/b4.txt" 2>&1 || true
 PID_B_EXIT=$?
 wait $PID_A || true
 
@@ -219,10 +218,10 @@ ROW_COUNT=$(psql -t -A -c "SELECT COUNT(*) FROM reseller_payouts WHERE reseller_
 echo "  Active payout rows: $ROW_COUNT"
 
 # Verify the loser got an exclusion constraint violation
-if grep -q "exclusion" /tmp/m311_b4.txt || grep -q "23P01" /tmp/m311_b4.txt; then
+if grep -q "exclusion" "$RESULT_DIR/b4.txt" || grep -q "23P01" "$RESULT_DIR/b4.txt"; then
   echo "  Loser received exclusion constraint violation (23P01) — correct"
 else
-  echo "  Session B output: $(cat /tmp/m311_b4.txt)"
+  echo "  Session B output: $(cat "$RESULT_DIR/b4.txt")"
   echo "FAIL: loser did not receive exclusion constraint violation"
   FAILED=1
 fi

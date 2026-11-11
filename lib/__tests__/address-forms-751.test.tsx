@@ -64,7 +64,7 @@ import type { StepDetailsProps } from '@/app/get-started/steps/types';
 beforeEach(() => {
   state.rows = []; state.writes = [];
   state.createEvent.mockReset().mockResolvedValue({ success: true, eventId: 'new-event' });
-  state.fetch.mockReset().mockImplementation(async () => ({ ok: true, json: async () => ({ locations: [], invoices: [] }) }));
+  state.fetch.mockReset().mockImplementation(async () => ({ ok: true, json: async () => ({ locations: [], invoices: [], settings: { enabled: false, label: 'Tax', rate_bps: 0, price_mode: 'exclusive' } }) }));
   vi.stubGlobal('fetch', state.fetch);
   vi.stubGlobal('alert', vi.fn());
 });

@@ -13,7 +13,7 @@
  * - Tenant isolation: cross-business denial
  * - Amount precision: fractional rejection, whole-unit posting
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
 import { Client } from 'pg';
 
@@ -64,23 +64,10 @@ const SERVICE = 'c4790000-0000-0000-0000-000000000020';
 
 describe('M479 Offline merchant approval PostgreSQL', () => {
   beforeAll(() => {
-    // Clean up test data (deterministic UUIDs ensure isolation)
-    // Circular FK: bookings.payment_id → payments AND payments.reservation_id → bookings
-    // Break the cycle by nullifying cross-references before deleting
+    // CI creates a fresh dedicated database and drops it after this suite.
+    // Keep accounting rows intact; M500/M501 forbid deleting fee provenance.
     runSQL(`
-      UPDATE public.payments SET reservation_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      UPDATE public.bookings SET payment_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.refunds WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.platform_fees WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.pending_transfers WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.bookings WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.invoices WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.services WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.businesses WHERE id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${OWNER_B}');
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      DELETE FROM auth.users WHERE id IN ('${OWNER}', '${OWNER_B}');
       INSERT INTO auth.users (id) VALUES ('${OWNER}'), ('${OWNER_B}') ON CONFLICT DO NOTHING;
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
@@ -122,27 +109,6 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
       -- Transfer: cross-tenant (belongs to BIZ_B)
       INSERT INTO public.pending_transfers (id, business_id, customer_phone, customer_name, expected_amount, currency, reference_code, status, expires_at)
       VALUES ('${TRANSFER_CROSS}', '${BIZ_B}', '+2349999999', 'Cross Cust', 500000, 'NGN', 'WA-CR01', 'pending', NOW() + INTERVAL '24 hours');
-    `);
-  });
-
-  afterAll(() => {
-    // Circular FK: bookings.payment_id → payments AND payments.reservation_id → bookings
-    // Break the cycle by nullifying cross-references before deleting
-    runSQL(`
-      UPDATE public.payments SET reservation_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      UPDATE public.bookings SET payment_id = NULL WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.refunds WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.platform_fees WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.pending_transfers WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.payments WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.bookings WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.invoices WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.services WHERE business_id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.businesses WHERE id IN ('${BIZ}', '${BIZ_B}');
-      DELETE FROM public.profiles WHERE id IN ('${OWNER}', '${OWNER_B}');
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      DELETE FROM auth.users WHERE id IN ('${OWNER}', '${OWNER_B}');
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
   });
 
@@ -208,7 +174,7 @@ describe('M479 Offline merchant approval PostgreSQL', () => {
     expect(bkStatus).toBe('confirmed');
     // Verify payment exists in major units
     const payAmt = runSQL(`SELECT amount FROM payments WHERE business_id = '${BIZ}' AND gateway = 'direct' AND status = 'success' LIMIT 1`);
-    expect(payAmt).toBe('5000');
+    expect(Number(payAmt)).toBe(5000);
   });
 
   it('T6: fractional amount is rejected', () => {

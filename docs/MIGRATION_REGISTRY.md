@@ -373,3 +373,16 @@ Adds `businesses.feature_trial_ends_at` with server-only sign-up and update trig
 | 534 | transaction_followups | codex/transaction-followups | Reserved; not applied |
 
 Checked main at `0a5b2d4798ca8d1c99aa45c7a291c0434f804483`, registry and both open PRs (#939/#945) on 2026-11-11; local merchant-tax drafts occupy 528–533, so 534 is reserved here. Adds service-only completion sequencing and scoped card-setup cancellation.
+
+### Reservation — merchant tax Phase A (#980, PR #982)
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 528 | merchant_tax_foundation | codex/merchant-tax-phase-a | Reserved; not applied |
+| 529 | merchant_tax_money_precision | codex/merchant-tax-phase-a | Reserved; not applied |
+| 530 | merchant_tax_calculator | codex/merchant-tax-phase-a | Reserved; not applied |
+| 531 | merchant_tax_purchase_authority | codex/merchant-tax-phase-a | Reserved; not applied |
+| 532 | merchant_tax_payment_refund_authority | codex/merchant-tax-phase-a | Reserved; not applied |
+| 533 | merchant_tax_invoices_quotes | codex/merchant-tax-phase-a | Reserved; not applied |
+
+These numbers were held for the tax drafts before 534 was reserved (see the 534 note above), so they land after 534 on main by design. Release admission has no ordering check today, and the lock bootstrap (508) is below 528. They must be released before any release lock advances past 527. M529 widens money columns on `payments`, `orders`, `bookings` and `platform_fees` under exclusive locks, so it needs a deployment window. Checked main at `f15d56d9c` and the registry on 2026-11-11; no collision.

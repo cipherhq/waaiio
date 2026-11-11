@@ -38,7 +38,7 @@ const BUSINESS = {
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (t: string) => chain(() => ({ data: t === 'businesses' ? BUSINESS : t === 'services' ? env.service : t === 'profiles' ? { id: 'user-1' } : null, error: null })),
-    rpc: () => ({ single: async () => { env.calls.push('book'); return { data: { booking_id: 'bk-1', reference_code: 'REF1', slot_available: true, committed_total: (env.service.price as number) || 0, committed_deposit: (env.service.deposit_amount as number) || 0 }, error: null }; } }),
+    rpc: (name: string) => name === 'quote_booking_tax_980' ? { data: { total: Number(env.service.price || 0), deposit: Number(env.service.deposit_amount || 0), tax_snapshot: null }, error: null } : ({ single: async () => { env.calls.push('book'); return { data: { booking_id: 'bk-1', reference_code: 'REF1', slot_available: true, committed_total: (env.service.price as number) || 0, committed_deposit: (env.service.deposit_amount as number) || 0 }, error: null }; } }),
     auth: { admin: { createUser: async () => ({ data: { user: { id: 'user-1' } }, error: null }) } },
   }),
 }));

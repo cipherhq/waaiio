@@ -42,12 +42,19 @@ suite('M518 final-state scheduling authority', () => {
      throw new Error('Core604 requires a disposable local CI PostgreSQL endpoint');
    }
    admin=new pg.Pool({connectionString:url,max:1});
+   // CI's outer superuser is test_runner. Replay uses the same connection with
+   // canonical Supabase object ownership so exact migration ACL guards apply.
+   await admin.query("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='postgres') THEN CREATE ROLE postgres NOLOGIN SUPERUSER; END IF; END $$");
    await admin.query('CREATE DATABASE "' + databaseName + '" TEMPLATE template0');
    databaseCreated = true;
    const isolatedUrl = new URL(url!);
    isolatedUrl.pathname = '/' + databaseName;
-   execFileSync('bash',['scripts/ci-bootstrap-test-db.sh',isolatedUrl.toString()],{encoding:'utf8',timeout:180000,stdio:'pipe'});
-   pool=new pg.Pool({connectionString:isolatedUrl.toString(),max:6});
+   const bootstrapUrl = new URL(isolatedUrl);
+   bootstrapUrl.searchParams.set('options', '-crole=postgres');
+   execFileSync('bash',['scripts/ci-bootstrap-test-db.sh',bootstrapUrl.toString()],{encoding:'utf8',timeout:180000,stdio:'pipe'});
+   // Seed rows as the canonical owner too; the assertions below still switch
+   // explicitly to service_role/anon/authenticated for application operations.
+   pool=new pg.Pool({connectionString:bootstrapUrl.toString(),max:6});
    await pool.query("INSERT INTO auth.users(id,email) VALUES($1,'core604@example.test') ON CONFLICT DO NOTHING",[user]);
    await pool.query("INSERT INTO profiles(id,phone) VALUES($1,'+2348000000604') ON CONFLICT(id) DO UPDATE SET phone=EXCLUDED.phone",[user]);
    await pool.query(`INSERT INTO businesses(id,name,slug,address,city,neighborhood,phone,country_code,owner_id,status,metadata)
@@ -262,11 +269,12 @@ suite('M518 final-state scheduling authority', () => {
      'finalize_booking_promo_reservation']);
    for (const r of rows) expect(r).toMatchObject({nspname:'public',anon:false,auth:false,svc:true});
  });
- it('preserves the exact legacy signature and direct-payment function',async()=>{
+ it('preserves legacy named arguments with numeric money and the direct-payment function',async()=>{
    const row=(await pool.query(`SELECT
-    to_regprocedure('public.book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer)') IS NOT NULL AS legacy,
+    to_regprocedure('public.book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,numeric,text,text,text,text,text,text,text,date,jsonb,uuid,numeric,text,uuid,uuid,integer,integer,uuid,uuid,numeric,numeric,jsonb,text)') IS NOT NULL AS legacy,
+    to_regprocedure('public.book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer)') IS NULL AS no_obsolete_overload,
     to_regprocedure('public.create_payment_booking_atomic(uuid,uuid,uuid,uuid,integer,text,text,text,integer)') IS NOT NULL AS direct,
     to_regprocedure('public.cancel_booking_with_release(uuid,text,uuid)') IS NOT NULL AS cancel`)).rows[0];
-   expect(row).toEqual({legacy:true,direct:true,cancel:true});
+   expect(row).toEqual({legacy:true,no_obsolete_overload:true,direct:true,cancel:true});
  });
 });

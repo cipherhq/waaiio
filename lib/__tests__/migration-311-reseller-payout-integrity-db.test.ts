@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
+import { randomUUID } from 'node:crypto';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
@@ -287,30 +288,33 @@ describeIfDb('Migration 311: overlap exclusion constraint', () => {
 // ══════════════════════════════════════════════════════════
 
 describeIfDb('Migration 311: mark_reseller_payout_paid RPC', () => {
-  const RESELLER_USER = '00000000-0000-0000-0000-000000311005';
-  const BIZ_OWNER = '00000000-0000-0000-0000-000000311007';
-  const BIZ_ID = '00000000-0000-0000-0000-000000311008';
-  const RESELLER_ID = '00000000-0000-0000-0000-000000000314';
-  const PAYOUT_ID = '00000000-0000-0000-0000-00000000031c';
-  const ADMIN_ID = '00000000-0000-0000-0000-000000311001';
+  // Financial provenance is immutable; isolate each run until its disposable DB is dropped.
+  const RESELLER_USER = randomUUID();
+  const BIZ_OWNER = randomUUID();
+  const BIZ_ID = randomUUID();
+  const RESELLER_ID = randomUUID();
+  const PAYOUT_ID = randomUUID();
+  const ADMIN_ID = randomUUID();
+  const PAYMENT_ID = randomUUID();
 
   beforeAll(() => {
-    runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; INSERT INTO auth.users (id, raw_app_meta_data) VALUES ('${RESELLER_USER}', '{}'::jsonb), ('${ADMIN_ID}', '{"role":"admin"}'::jsonb), ('${BIZ_OWNER}', '{}'::jsonb) ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
-    runSQL(`INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${BIZ_OWNER}', 'RPC', 'Test', 'rpc@test.local') ON CONFLICT DO NOTHING;`);
-    runSQL(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code) VALUES ('${BIZ_ID}', 'RPC Biz', 'rpc-biz', '${BIZ_OWNER}', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG') ON CONFLICT DO NOTHING;`);
-    runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
-    runSQL(`DELETE FROM platform_fees WHERE reseller_id = '${RESELLER_ID}';`);
-    runSQL(`DELETE FROM resellers WHERE id = '${RESELLER_ID}';`);
-    runSQL(`INSERT INTO resellers (id, user_id, company_name, commission_percentage) VALUES ('${RESELLER_ID}', '${RESELLER_USER}', 'RPC Test', 10) ON CONFLICT DO NOTHING;`);
-    runSQL(`INSERT INTO platform_fees (business_id, transaction_amount, fee_total, reseller_id, reseller_commission) VALUES ('${BIZ_ID}', 10000, 100, '${RESELLER_ID}', 1000);`);
+    const setup = runSQL(`
+      BEGIN;
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id, raw_app_meta_data) VALUES ('${RESELLER_USER}', '{}'::jsonb), ('${ADMIN_ID}', '{"role":"admin"}'::jsonb), ('${BIZ_OWNER}', '{}'::jsonb);
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
+      INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${BIZ_OWNER}', 'RPC', 'Test', 'rpc-${BIZ_OWNER}@test.local');
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code) VALUES ('${BIZ_ID}', 'RPC Biz', 'rpc-biz-${BIZ_ID}', '${BIZ_OWNER}', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG');
+      INSERT INTO resellers (id, user_id, company_name, commission_percentage) VALUES ('${RESELLER_ID}', '${RESELLER_USER}', 'RPC Test', 10);
+      INSERT INTO payments (id, business_id, amount, currency, gateway, gateway_reference, status) VALUES ('${PAYMENT_ID}', '${BIZ_ID}', 10000, 'NGN', 'paystack', 'm311-${PAYMENT_ID}', 'success');
+      INSERT INTO platform_fees (business_id, payment_id, is_direct_transfer, transaction_amount, fee_total, reseller_id, reseller_commission) VALUES ('${BIZ_ID}', '${PAYMENT_ID}', false, 10000, 100, '${RESELLER_ID}', 1000);
+      COMMIT;
+    `);
+    expect(setup).not.toContain('ERROR:');
   });
 
   afterAll(() => {
-    runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
-    runSQL(`DELETE FROM platform_fees WHERE reseller_id = '${RESELLER_ID}';`);
-    runSQL(`DELETE FROM resellers WHERE id = '${RESELLER_ID}';`);
-    runSQL(`DELETE FROM businesses WHERE id = '${BIZ_ID}';`);
-    runSQL(`DELETE FROM profiles WHERE id = '${BIZ_OWNER}';`);
+    expect(runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`)).not.toContain('ERROR:');
   });
 
   it('returns not_found for non-existent payout', () => {

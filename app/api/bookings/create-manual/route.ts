@@ -1,3 +1,4 @@
+import { quoteBookingTax } from '@/lib/tax/server-quote';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
       staffId,
       notes,
       sendConfirmation,
-      classSessionId,
+      classSessionId, preview, expectedTaxSnapshot,
     } = body;
 
     // Validate required fields — exactly one of serviceId or appointmentId
@@ -165,6 +166,19 @@ export async function POST(request: NextRequest) {
       staffName = staffMember.name || null;
     }
 
+    const quantity = partySize ?? 1;
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
+      return NextResponse.json({ error: 'Invalid party size' }, { status: 400 });
+    }
+    const taxQuote = await quoteBookingTax(serviceClient, { businessId,
+      serviceId: appointmentId ? null : serviceId, appointmentId: appointmentId || null,
+      partySize: quantity, addons: [], mode: 'manual',
+      expectedTerms: { price: itemPrice, deposit: itemDeposit, country: biz.country_code, discount: 0 } });
+    if (preview === true) return NextResponse.json(taxQuote);
+    if (JSON.stringify(expectedTaxSnapshot ?? null) !== JSON.stringify(taxQuote.tax_snapshot)) {
+      return NextResponse.json({ code: 'terms_changed', error: 'Tax details changed. Review the updated total before creating this booking.' }, { status: 409 });
+    }
+
     // ── Resolve customer identity (bookings.user_id = customer, not operator) ──
     const { createWhatsAppUser } = await import('@/lib/bot/flows/shared/user');
     const nameParts = customerName.trim().split(/\s+/);
@@ -183,10 +197,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to resolve customer identity' }, { status: 500 });
     }
 
-    const quantity = partySize ?? 1;
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
-      return NextResponse.json({ error: 'Invalid party size' }, { status: 400 });
-    }
     // ── Atomic manual booking via wrapper RPC ──
     const { data: slotResult, error: slotError } = await serviceClient
       .rpc('book_manual_slot_authoritative_604', {
@@ -202,13 +212,13 @@ export async function POST(request: NextRequest) {
         p_guest_phone: customerPhone,
         p_guest_email: customerEmail || null,
         p_notes: notes || null,
-        p_total_amount: itemPrice * quantity,
+        p_total_amount: taxQuote.total,
         p_staff_name: staffName,
         p_buffer_minutes: itemBufferMinutes,
         p_duration: itemDuration,
         p_appointment_id: appointmentId || null,
         p_class_session_id: classSessionId || null,
-        p_expected_terms: { price: itemPrice, deposit: itemDeposit, country: biz.country_code, discount: 0 },
+        p_expected_terms: { price: itemPrice, deposit: itemDeposit, country: biz.country_code, discount: 0, tax_snapshot: taxQuote.tax_snapshot },
       })
       .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

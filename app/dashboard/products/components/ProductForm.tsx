@@ -20,6 +20,7 @@ import {
 } from './types';
 import ToggleRow from './ToggleRow';
 import OptionValueInput from './OptionValueInput';
+import { ItemTaxFields } from '@/components/dashboard/ItemTaxFields';
 
 interface ProductFormProps {
   view: 'add' | 'edit';
@@ -305,6 +306,8 @@ export default function ProductForm({
               </p>
             </div>
           )}
+
+          <ItemTaxFields value={form} onChange={tax => setForm({ ...form, ...tax })} disabled={saving} />
 
           {/* Description */}
           <div>

@@ -17,14 +17,29 @@ const lock = (env: string) => JSON.parse(readFileSync(`scripts/release-v3/lock-c
 const digest = (s: string) => createHash('sha256').update(s).digest('hex');
 
 describe('M501 installer extraction', () => {
-  it('returns exactly one CREATE for each listed finalizer', () => {
-    for (const { tag, identity } of ACCOUNTING_INSTALLED) {
+  it('extracts exact recurring, financial and dispatcher blocks with all listed objects', () => {
+    const tags = [...new Set(ACCOUNTING_INSTALLED.map(entry => entry.tag))];
+    expect(tags).toHaveLength(4);
+    for (const tag of tags) {
       const sql = accountingInstallerStatement(m501, tag);
-      const name = identity.slice('function:public.'.length, identity.indexOf('('));
-      expect(sql.match(/CREATE OR REPLACE FUNCTION/g)).toHaveLength(1);
-      expect(sql).toContain(`CREATE OR REPLACE FUNCTION ${name}(`);
       expect(sql).not.toContain(`$${tag}$`);
+      expect(sql.match(/CREATE OR REPLACE FUNCTION/g)).toHaveLength(tag === 'financial' ? 3 : 1);
+      for (const { identity } of ACCOUNTING_INSTALLED.filter(entry => entry.tag === tag)) {
+        if (identity.startsWith('function:')) {
+          const name = identity.slice('function:'.length, identity.indexOf('('));
+          expect(sql).toMatch(new RegExp(`CREATE OR REPLACE FUNCTION (?:public\\.)?${name.replace('public.', '')}\\s*\\(`));
+        } else {
+          expect(sql).toContain(identity.split('.').at(-1));
+        }
+      }
     }
+  });
+
+  it('preserves helpers with environment-specific ACLs and never runs enrollment', () => {
+    const financial = accountingInstallerStatement(m501, 'financial');
+    expect(financial).not.toContain('CREATE OR REPLACE FUNCTION public.payout_flag');
+    expect(financial).not.toContain('CREATE OR REPLACE FUNCTION public.fn_payout_linkage_guard');
+    expect(ACCOUNTING_INSTALLED.some(entry => ['enrollment','before','after'].includes(entry.tag))).toBe(false);
   });
 
   it('fails closed when a block is missing, repeated or unclosed', () => {
@@ -60,14 +75,15 @@ describe('installAccountingFinalizers', () => {
   it('runs each installer block, then reads the catalog, and passes when it equals both locks', async () => {
     const client = fakeClient(matching());
     await installAccountingFinalizers(client, m501);
-    expect(client.queries).toHaveLength(ACCOUNTING_INSTALLED.length + 1);
-    ACCOUNTING_INSTALLED.forEach(({ tag }, i) => expect(client.queries[i]).toBe(accountingInstallerStatement(m501, tag)));
+    const tags = [...new Set(ACCOUNTING_INSTALLED.map(entry => entry.tag))];
+    expect(client.queries).toHaveLength(tags.length + 1);
+    tags.forEach((tag, i) => expect(client.queries[i]).toBe(accountingInstallerStatement(m501, tag)));
     expect(client.queries.at(-1)).toBe(CATALOG_QUERY);
   });
 
-  it('fails when an installed body differs from the approved lock', async () => {
+  it.each(ACCOUNTING_INSTALLED.map(entry => entry.identity))('fails when installed %s differs from the approved lock', async identity => {
     const digests = matching();
-    digests[ACCOUNTING_INSTALLED[1].identity] = digest('different body');
+    digests[identity] = digest('different body');
     await expect(installAccountingFinalizers(fakeClient(digests), m501)).rejects.toThrow(/does not equal the approved lock/);
   });
 

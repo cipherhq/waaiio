@@ -1,3 +1,5 @@
+import type { ItemTaxFieldsValue } from '@/components/dashboard/ItemTaxFields';
+
 export interface OptionGroup {
   name: string;
   values: string[];
@@ -67,7 +69,7 @@ export const EMPTY_DISCOUNT: Omit<VolumeDiscountRule, 'sort_order'> = {
   is_active: true,
 };
 
-export interface Product {
+export interface Product extends ItemTaxFieldsValue {
   id: string;
   name: string;
   description: string | null;

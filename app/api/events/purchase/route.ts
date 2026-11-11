@@ -205,6 +205,7 @@ export async function POST(request: NextRequest) {
     if (rpcError.message?.includes('tier_paused')) {
       return NextResponse.json({ error: 'This ticket type is no longer available. Please refresh and try another.' }, { status: 409 });
     }
+    if (rpcError.message?.includes('unsupported_tax_purchase')) return NextResponse.json({ code: 'unsupported_tax_purchase', error: 'This purchase needs an itemized invoice from the business so tax can be shown correctly. Please contact the business.' }, { status: 409 });
     // All ticket types paused or tier selection required for a tiered event.
     if (rpcError.message?.includes('all_tiers_paused') || rpcError.message?.includes('tier_required')) {
       return NextResponse.json({ error: 'Tickets are currently unavailable for this event.' }, { status: 409 });

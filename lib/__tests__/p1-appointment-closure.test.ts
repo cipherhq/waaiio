@@ -178,7 +178,9 @@ vi.mock('@/lib/supabase/service', () => ({
       // maybeSingle used by is_class check — default to non-class service
       maybeSingle: vi.fn().mockResolvedValue({ data: { is_class: false }, error: null }),
     })),
-    rpc: mockRpc2,
+    rpc: (name: string, args: Record<string, any>) => name === 'quote_booking_tax_980'
+      ? { data: { total: Number(args.p_expected.price || 0) * args.p_party, deposit: Number(args.p_expected.deposit || 0), tax_snapshot: null }, error: null }
+      : mockRpc2(name, args),
   })),
 }));
 

@@ -84,6 +84,8 @@ function mockSupabase(opts: {
                 ? { business_id: campaignBusinessId }
                 : table === 'businesses'
                 ? { subscription_tier: tier, trial_ends_at: null, payout_mode: payoutMode, reseller_id: resellerId }
+                : table === 'payments'
+                ? { business_id: campaignBusinessId, amount: rpcResult.amount, currency: 'NGN', tax_allocation: null, tax_fee_basis: null }
                 : table === 'platform_config_versions'
                 ? { config_snapshot: configSnapshot }
                 : null,

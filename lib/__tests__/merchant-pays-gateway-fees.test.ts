@@ -322,6 +322,7 @@ describe('Fee ledger (real recordPlatformFee)', () => {
     vi.doMock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn() }));
     const { client, writes } = makeSupabase((table) => {
       if (table === 'platform_config_versions') return { data: { config_snapshot: { fee_policy_enabled: true, pricing_tiers: { free: { feePercentage: 3, feeFlat: 0 } } } }, error: null };
+      if (table === 'payments') return { data: { business_id: 'biz-1', amount: 10000, currency: 'NGN', tax_allocation: null, tax_fee_basis: null }, error: null };
       if (table === 'businesses') return { data: { payout_mode: 'platform_managed', reseller_id: null }, error: null };
       return { data: null, error: null };
     });
@@ -340,6 +341,7 @@ describe('Fee ledger (real recordPlatformFee)', () => {
   it('v0 (live) BYO payment: fee_total = Waaiio plan fee (unchanged), gateway_fee recorded', async () => {
     vi.doMock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 3, feeFlat: 0, feeTotal: 300 }) }));
     const { client, writes } = makeSupabase((table) => {
+      if (table === 'payments') return { data: { business_id: 'biz-1', amount: 10000, currency: 'NGN', tax_allocation: null, tax_fee_basis: null }, error: null };
       if (table === 'businesses') return { data: { subscription_tier: 'free', trial_ends_at: null, payout_mode: 'platform_managed', custom_fee_percentage: null, custom_fee_flat: null, reseller_id: null }, error: null };
       return { data: null, error: null };
     });
@@ -354,6 +356,7 @@ describe('Fee ledger (real recordPlatformFee)', () => {
   it('duplicate fee insert (webhook + "I\'ve Paid" race) is idempotent — no throw, one logical fee', async () => {
     vi.doMock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 3, feeFlat: 0, feeTotal: 300 }) }));
     const { client } = makeSupabase((table, op) => {
+      if (table === 'payments') return { data: { business_id: 'biz-1', amount: 10000, currency: 'NGN', tax_allocation: null, tax_fee_basis: null }, error: null };
       if (table === 'businesses') return { data: { subscription_tier: 'free', trial_ends_at: null, payout_mode: 'platform_managed', custom_fee_percentage: null, custom_fee_flat: null, reseller_id: null }, error: null };
       if (table === 'platform_fees' && op === 'insert') return { data: null, error: { message: 'duplicate key value violates unique constraint' } };
       return { data: null, error: null };

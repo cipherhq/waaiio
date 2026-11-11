@@ -19,7 +19,7 @@ export async function GET(
       .from('invoices')
       .select(`
         id, reference_code, customer_name, customer_phone, customer_email, customer_address,
-        status, subtotal, tax_rate, tax_amount, discount_type, discount_value, discount_amount,
+        status, subtotal, tax_rate, tax_amount, tax_snapshot, discount_type, discount_value, discount_amount,
         total_amount, amount_paid, currency, issue_date, due_date, notes, terms,
         paid_at, created_at, business_id,
         invoice_items(id, description, quantity, unit_price, amount, sort_order)
@@ -90,6 +90,7 @@ export async function GET(
       status: invoice.status === 'sent' ? 'viewed' : invoice.status, // reflect the update we just made
       subtotal: invoice.subtotal,
       tax_rate: invoice.tax_rate,
+      tax_snapshot: invoice.tax_snapshot,
       tax_amount: invoice.tax_amount,
       discount_type: invoice.discount_type,
       discount_value: invoice.discount_value,
