@@ -1,3 +1,4 @@
+import { taxPayoutCurrencies, taxPayoutProjection } from '@/lib/payments/tax-payout';
 import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
@@ -197,16 +198,19 @@ export async function POST(request: NextRequest) {
       }
 
       // M466: Generate one payout per currency
-      const currencies = getEligibleCurrencies(feesWithCurrency);
+      const currencies = [...new Set([...getEligibleCurrencies(feesWithCurrency), ...await taxPayoutCurrencies(supabase, biz.id)])];
       if (currencies.length === 0) continue;
 
       for (const currency of currencies) {
       if (existing?.some(row => row.currency === currency)) continue;
       const currencyAdjustments = (adjustments || []).filter(row => row.currency === currency);
-      const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable: net } =
-        computePlatformHeldTotals(feesWithCurrency, currency, currencyAdjustments);
+      const taxProjection = await taxPayoutProjection(supabase, biz.id, currency);
+      const legacyTotals = computePlatformHeldTotals(feesWithCurrency, currency, currencyAdjustments);
+      const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable: net } = taxProjection
+        ? { gross: taxProjection.gross, totalFees: taxProjection.platformFee, gatewayFees: taxProjection.gatewayFee, netAvailable: taxProjection.netAvailable }
+        : legacyTotals;
 
-      if (gross <= 0) continue;
+      if (taxProjection ? net <= 0 : gross <= 0) continue;
 
       // Fetch payments for velocity check (same UTC bounds as fee query)
       const { data: payments, error: paymentsError } = await supabase
@@ -326,6 +330,18 @@ export async function POST(request: NextRequest) {
         .eq('business_id', biz.id)
         .eq('is_active', true)
         .maybeSingle();
+
+      if (taxProjection) {
+        const { data: payout, error } = await supabase.rpc('create_tax_refund_payout_980', { p: {
+          business_id: biz.id, payout_account_id: payoutAccount?.id || null,
+          period_start: periodStartStr, period_end: periodEndStr, covered_from: coveredFrom, covered_to: coveredTo,
+          gross_amount: gross, platform_fee: totalFees, gateway_fee: totalGatewayFees, net_amount: net,
+          currency, status, flags, auto_generated: false,
+        } });
+        if (error || !payout) { failed++; continue; }
+        if (status === 'held') held++; else created++;
+        continue;
+      }
 
       // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
       if (currencyAdjustments.length > 0) {

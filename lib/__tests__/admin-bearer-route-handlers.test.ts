@@ -98,7 +98,9 @@ vi.mock('@/lib/platformSettings', () => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: vi.fn(() => ({
     from: (table: string) => mockFromImpl(table),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
   })),
 }));
 
@@ -696,7 +698,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
   }
@@ -821,7 +825,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -915,7 +921,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1004,7 +1012,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1106,7 +1116,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1210,7 +1222,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1298,7 +1312,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1383,7 +1399,9 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1478,7 +1496,9 @@ describe('payouts/approve: flagged held payout rejection', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1525,7 +1545,9 @@ describe('payouts/approve: flagged held payout rejection', () => {
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1705,7 +1727,9 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1800,7 +1824,9 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -1902,7 +1928,9 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
     vi.doMock('@/lib/supabase/service', () => ({
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
-        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })),
       })),
     }));
 
@@ -2020,6 +2048,8 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
         rpc: vi.fn().mockImplementation((name: string, args: Record<string, unknown>) => {
+          if (name === 'tax_refund_payout_currencies_980') return Promise.resolve({ data: [], error: null });
+          if (name === 'tax_refund_payout_projection_980') return Promise.resolve({ data: { affected: false }, error: null });
           if (name === 'claim_payout_for_transfer') {
             claimCalled = true;
             claimPayoutId = args.p_payout_id as string;
@@ -2146,6 +2176,8 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
         rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'tax_refund_payout_currencies_980') return Promise.resolve({ data: [], error: null });
+          if (name === 'tax_refund_payout_projection_980') return Promise.resolve({ data: { affected: false }, error: null });
           if (name === 'claim_payout_for_transfer') claimCalled = true;
           return Promise.resolve({ data: null, error: null });
         }),
@@ -2263,6 +2295,8 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
         rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'tax_refund_payout_currencies_980') return Promise.resolve({ data: [], error: null });
+          if (name === 'tax_refund_payout_projection_980') return Promise.resolve({ data: { affected: false }, error: null });
           if (name === 'claim_payout_for_transfer') claimCalled = true;
           return Promise.resolve({ data: null, error: null });
         }),
@@ -2370,6 +2404,8 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
         rpc: vi.fn().mockImplementation((name: string) => {
+          if (name === 'tax_refund_payout_currencies_980') return Promise.resolve({ data: [], error: null });
+          if (name === 'tax_refund_payout_projection_980') return Promise.resolve({ data: { affected: false }, error: null });
           if (name === 'claim_payout_for_transfer') claimCalled = true;
           return Promise.resolve({ data: null, error: null });
         }),
@@ -2457,6 +2493,8 @@ describe('cron auto-payout: three-phase adjustment linking and held payout handl
       createServiceClient: vi.fn(() => ({
         from: (table: string) => mockFromImpl(table),
         rpc: vi.fn().mockImplementation((name: string, args: Record<string, unknown>) => {
+          if (name === 'tax_refund_payout_currencies_980') return Promise.resolve({ data: [], error: null });
+          if (name === 'tax_refund_payout_projection_980') return Promise.resolve({ data: { affected: false }, error: null });
           if (name === 'claim_payout_for_transfer') {
             return Promise.resolve({
               data: [{ claimed_token: 'tok', idempotency_key: 'key' }],

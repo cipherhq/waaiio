@@ -1,7 +1,7 @@
 # Merchant-configured sales tax — Phase A
 
 Issue: #980. Audit revision: 8a83dda5efb1d85082d1de05139ce227a1086620. Date: 2026-11-11.
-Status: Owner approved the allocation rules on 2026-11-11 and authorized isolated implementation and independent review. Deployment and migration application to existing environments are prohibited. Owner separately approved elevated disposable local PostgreSQL testing after the sandbox permission failure. Integration is in progress; this is not release-ready.
+Status: Owner approved the allocation rules on 2026-11-11 and authorized isolated implementation and independent review. Implementation and local integration verification are complete; final revision review and required remote CI remain release gates. Deployment and migration application to existing environments are prohibited. Owner separately approved disposable local PostgreSQL testing and verified local fixture baseline-grant repairs.
 
 ## Approved requirements
 
@@ -72,7 +72,7 @@ Independent review confirmed that table widening alone is insufficient: order/ca
 
 Before writing the monetary widening migration, inventory column-dependent views/functions/triggers and grants, and choose explicit RPC signature replacement/versioning to avoid overload ambiguity. Then certify decimal persistence through initiation, finalization, split/custody accounting, refunds and manual settlement. This is a new-feature prerequisite; no live failed payment was reproduced and no current production defect severity is asserted.
 
-Draft 528 only stores configuration and catalog treatment; no snapshot or checkout enablement exists yet. It must not be released independently as an operational tax feature. Independent source review found no blocking tenant-isolation issue, but its RLS/grants/constraints still need executable database allow/deny and final-state certification. No migration has been applied.
+At the initial foundation checkpoint, draft528 stored only configuration and catalog treatment. It must not be released independently as an operational tax feature. Subsequent implementation and local database verification are recorded below. No migration has been applied to staging or production.
 
 Graphify lookup returned index revision `0a5b2d4798ca8d1c99aa45c7a291c0434f804483`; isolated implementation remains based on `8a83dda5efb1d85082d1de05139ce227a1086620`. The intervening #979 changes only the billing top-up popup, its test and changelog; none overlaps this tax foundation. Graph results are navigation evidence and were cross-checked with local source and live catalog types.
 
@@ -81,15 +81,15 @@ Graphify lookup returned index revision `0a5b2d4798ca8d1c99aa45c7a291c0434f80448
 Branch rebased onto `0a5b2d4798ca8d1c99aa45c7a291c0434f804483` without conflicts. Local checkpoints (not pushed/deployed): foundation `ff34fc70462f4d851769eb79a6e388ae24984920`, precision `476e0c5cf`, SQL calculator `e76c9690e`, catalog/receipts `e96544156`.
 
 - [x] Deterministic minor-unit calculator, explicit major/minor boundary and fee-basis extension.
-- [x] Merchant settings route and unmounted settings component, owner allow/deny and rendered stale-save tests.
+- [x] Merchant settings route and Payments-tab component, supported-country/currency gate, owner allow/deny and rendered stale-save tests.
 - [x] Catalog item controls and preservation of omitted fields from other writers.
 - [x] Decimal precision prerequisite draft and seven disposable PostgreSQL tests (zero skipped).
 - [x] SQL/TypeScript calculator parity, including direct line discounts before basket discounts. Latest targeted run: 20 PostgreSQL and 30 TypeScript tests, zero skipped.
 - [x] Historical receipt rendering and allocation validation: 62 targeted tests, zero skipped. Database responses in receipt tests are mocked; PDF generation executes.
 - [x] Authoritative order/catalog/booking snapshots and customer preview/commit wiring; unsupported paid capabilities explicitly gated when tax is enabled.
 - [x] Atomic invoice and itemized negotiated-quote writes, UI, PDFs and recurring preservation. Independent compatibility corrections are under final verification.
-- [ ] Durable per-line payment/refund allocations, initialization/fee replay, bank transfers and authorization-bound refunds.
-- [ ] Full related regression testing, database concurrency/custody evidence, migration catalog deltas and CI wiring.
+- [x] Durable per-line payment/refund allocations, initialization/fee replay, bank transfers and authorization-bound refunds.
+- [x] Related local regression testing, database concurrency/custody evidence, migration catalog deltas and CI wiring. Remote CI has not run for this branch.
 - [ ] Independent final exact-head review. No merge/deploy/application authorization is implied.
 
 Architecture checkpoints: calculate tax before existing authoritative persistence/status/deposit decisions. Do not wrap a committed untaxed purchase and rewrite totals. Preview and commit share one price authority; commit requires the entire expected snapshot, not gross alone. Direct item volume discounts stay attributed to their own line. Configuration writes and missing-default reads serialize through the business row.
@@ -105,3 +105,25 @@ Parent verification on PostgreSQL17: precision 7, calculator parity 23, purchase
 Independent draft review found compatibility and preview issues: legacy invoices outside the four-currency rollout must retain existing single-rate behavior, and invoice settings loads must be identity-bound and fail visibly before inherited-tax preview/save. These corrections are being verified. Zero-value quantity returns are exposed through merchant/admin controls without a provider refund. Review of the final committed revision, full-schema purchase/refund evidence, TypeScript and final catalog checks remain outstanding.
 
 Recurring invoice copies retain original financial terms. Existing cron-to-send authentication was not changed; actual automatic delivery remains uncertified. No notification or provider transaction was attempted. The feature branch has not been pushed or deployed, and no migration has been applied to an existing environment.
+
+## Full-schema refund and settlement checkpoint
+
+The first full-schema refund fee mismatch was a disposable replay setup gap: live staging and production already use the documented M501 public dispatcher, while migration-only replay had not installed it. Independent read-only verification confirmed this distinction. Replay now restores only the exact required M501 entrypoints and guards and compares every restored identity against both unchanged approved catalog locks. M532 requires the approved dispatcher before modifying its delegated modern function. No accounting enrollment or activation is performed by the test setup.
+
+A separate full-schema test exposed a real integration requirement for new tax refunds: reducing the platform fee alone does not account for refunded principal in merchant payable balances. Independent review confirmed the calculation path; no production occurrence or loss was established. The correction is limited to tax-refund transactions. It retains original gross amounts and existing legacy refund behavior, appends uniquely attributable adjustment deltas, and keeps connected-provider receipts outside the Waaiio-held pool.
+
+Independent architecture review agreed that affected merchant/currency pairs must use the existing lifetime balance model for generation as well as approval, including paid and outstanding commitments. A period-only projection would misread historical fee reversals. Payout creation must recompute under the accounting lock, preserve account/risk/held-status checks and scheduling metadata, and record its lifetime calculation basis. Historical payouts and adjustments are not rewritten. Pre-settlement tax adjustments may lack a source payout only when uniquely linked to an immutable, validated tax refund; legacy adjustments still require their source payout.
+
+Completion evidence now includes exact partial/full and sequential refunds before and after settlement, historical waived-fee handling, retained gateway costs, concurrency, cross-tenant denials, duplicate finalization, legacy-null rejection, refund deletion protection, and both custody routes. Current trial fee policy is unchanged; historical waived-row fixtures are not certification of a new trial waiver.
+
+## Final local verification
+
+- Complete tax unit/handler/rendered UI group: **163 passed, zero skipped, 26 files** (`lib/tax`, excluding the separately executed database suites).
+- Final five dedicated PostgreSQL17 suites: **75 passed, zero skipped** (precision 7, finance 14, invoices 15, purchase authority 16, calculator parity 23).
+- Full migration-replayed PostgreSQL17 lifecycle: **11 passed, zero skipped**. Tests use real SQL authorities and synthetic provider-success evidence; no provider/webhook acceptance is claimed. Assertions cover 94.50 available after a 107.50 refund on a 215 sale, retained post-settlement debt, 100 of subsequent earnings leaving 2.50, historical waived rows, connected-provider exclusion, stale projection rejection, and concurrent payout creation.
+- Existing payout route regressions: 235 in the primary batch, 347 in neighboring suites and 17 in the final step-up suite passed, zero skipped. These batches overlap by 16 tests; do not add them to other historical counts as unique coverage. Existing assertions remain intact, with explicit new read-RPC authorization checks.
+- Admin Payments execution: **72 passed**; admin production build passed. Full main TypeScript reported ten errors in three unchanged test files and no tax implementation errors; scoped final payout TypeScript passed. Admin TypeScript reported 75 errors outside the changed finance files, so neither project is described as globally type-clean.
+- Migration lint passed for all six new migrations. The PG17 oracle restores only documented, lock-verified operational accounting entrypoints; approved lock files remain unchanged.
+- No pushed branch, remote CI, deployment, existing-environment migration, notification or real provider transaction is included in this evidence.
+
+Residual UI limitation: zero-value return forms display the original quantity as their input maximum; SQL enforces the remaining quantity and rejects an excessive repeat return. Existing recurring notification authentication remains unchanged and actual automatic delivery is uncertified. These limitations do not remove the required release/provider acceptance gates.

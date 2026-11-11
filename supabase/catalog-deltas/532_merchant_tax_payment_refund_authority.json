@@ -320,6 +320,32 @@
     "generated": "",
     "identity": "",
     "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.payout_adjustments.payout_id",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.payout_adjustments.tax_refund_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
     "type": "jsonb"
    },
    "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
@@ -471,6 +497,50 @@
   },
   {
    "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (tax_refund_id) REFERENCES refunds(id)",
+    "validated": true
+   },
+   "after_sha256": "142ea597bfaea8873fbcd5c105b39dc726bd792c4dd16bae4252b6225e4e9208",
+   "identity": "constraint:public.payout_adjustments.payout_adjustments_tax_refund_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (tax_refund_id)",
+    "validated": true
+   },
+   "after_sha256": "00a08d562caf2c94f2a429d815db5e46f9c6eaf198a9b578702d8531cbaa829f",
+   "identity": "constraint:public.payout_adjustments.payout_adjustments_tax_refund_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (payout_id IS NOT NULL OR tax_refund_id IS NOT NULL)",
+    "validated": true
+   },
+   "after_sha256": "f1fee838c697591b3d8d48476f1d1e39e74d947716d0445a609266ec4a6bf29a",
+   "identity": "constraint:public.payout_adjustments.tax_adjustment_source_980",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (tax_refund_id IS NULL OR applied_to_payout_id IS NULL)",
+    "validated": true
+   },
+   "after_sha256": "e57a9342db47b50bb30ce8ab5875cccd3afff71956d3bf23ca69cb0c0cdf08d9",
+   "identity": "constraint:public.payout_adjustments.tax_adjustment_unlinked_980",
+   "operation": "add"
+  },
+  {
+   "after": {
     "acl": [
      {
       "grantable": false,
@@ -480,7 +550,7 @@
      }
     ],
     "arguments": "p_refund_id uuid",
-    "body_sha256": "fccad4b08eeed325665f6e0751b6ad514592aa7ca552e249f359e39dd1ad5550",
+    "body_sha256": "3951d1207ca001b1d2b912535e23df6a82073880dd6cd1422ebbf0fecd1e2e6d",
     "config": [
      "search_path=\"\""
     ],
@@ -494,7 +564,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "1c43e2b92b08e627cfb0957226bf3a1f08e35e2f5a0c7a126f13d7d1499ccd10",
+   "after_sha256": "149adca747681a08d34a7f69fcce7d69f6c01b324fb24133c095c2306f4f9d00",
    "identity": "function:accounting_private.finalize_refund_accounting_modern(p_refund_id uuid)",
    "operation": "modify"
   },
@@ -554,6 +624,35 @@
    },
    "after_sha256": "f102886a3f7b4473e4986c8a72b8d5614c78bf0966728bcd3d42ca371566a277",
    "identity": "function:private.guard_merchant_tax_refund_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "534925e0b37da4546539bae6a1820c782680183f41d032c1aa6ef0ad51e2aa6c",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "582d7eaebf93b5e0e69c870c228e3b2fb885f824ce097ec67300258514824d8f",
+   "identity": "function:private.guard_tax_adjustment_980()",
    "operation": "add"
   },
   {
@@ -799,6 +898,41 @@
       "privilege": "EXECUTE"
      }
     ],
+    "arguments": "p jsonb",
+    "body_sha256": "7db67c6c1724ce89fa0ec480044376585db1787f8f355b3f3bb1d5969d92cbc6",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "2b3d069b8b279f4deea3072d344a7c8f4202beae19e5c580afc78a23134f062f",
+   "identity": "function:public.create_tax_refund_payout_980(p jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
     "arguments": "p_payment_id uuid, p_reason text, p_evidence jsonb DEFAULT NULL::jsonb",
     "body_sha256": "06f3fbfe9b819ac69530877cc7913e7083d1d4d663451a8fd16c23e076eb6103",
     "config": [
@@ -837,7 +971,7 @@
     "arguments": "p_payment jsonb",
     "body_sha256": "d1d55e6377119c9ce55cafd8718e9e11e1b66d50f49c24be9bcdfb2555f6e3b4",
     "config": [
-     "search_path=\"\""
+     "search_path=pg_catalog, extensions"
     ],
     "definer": true,
     "kind": "f",
@@ -849,7 +983,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "a2c24afe6d6de3e9995c94bcbb3567f24be4322240f2dbd4bd5da6e743117bd6",
+   "after_sha256": "fed704f5972bd15b0ec84673da269d8e7c927d57e45320d28b6c14e66024d79b",
    "identity": "function:public.reserve_merchant_tax_payment_980(p_payment jsonb)",
    "operation": "add"
   },
@@ -872,7 +1006,7 @@
     "arguments": "p_payment_id uuid, p_business_id uuid, p_amount numeric, p_selection jsonb, p_request_id uuid, p_reason text, p_initiated_by uuid, p_initiated_by_role text",
     "body_sha256": "add8b54f5e680ebb22f6a195655ab0b4a6ffd10cb113d99ee85b5f0ffb94ad80",
     "config": [
-     "search_path=\"\""
+     "search_path=pg_catalog, extensions"
     ],
     "definer": true,
     "kind": "f",
@@ -884,8 +1018,78 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "38e05ee9aadfd7f923e79c654299b38d8f3c9e26c096b88ef39d6332d1db50db",
+   "after_sha256": "0ce162c01ea405b1c7042076471944b419e7ce08ed7279c68faf09b60e234f3d",
    "identity": "function:public.reserve_merchant_tax_refund_980(p_payment_id uuid, p_business_id uuid, p_amount numeric, p_selection jsonb, p_request_id uuid, p_reason text, p_initiated_by uuid, p_initiated_by_role text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid",
+    "body_sha256": "b2d0f8eef3d4cfe14261b56e6572018dcc45235b18eb65b0ce5388d617c98de9",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "333568f6e44397bca05fadf5e202814572986bb7dba65cb0f2390a03dda6aeec",
+   "identity": "function:public.tax_refund_payout_currencies_980(p_business_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_currency text",
+    "body_sha256": "b6f0a77a7da5e7ff290ecb6caaaab5913f9b037bbe7cd14963a834be00c5929c",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "3a5c8f2e985cccbeb1de663ff35e10babd767c5f27ca12349f4db85ead8129bc",
+   "identity": "function:public.tax_refund_payout_projection_980(p_business_id uuid, p_currency text)",
    "operation": "add"
   },
   {
@@ -964,6 +1168,19 @@
    },
    "after_sha256": "f41ac906a57f21b15aadccd758c28df4846be232bc906b63861874675539ded1",
    "identity": "index:public.merchant_tax_refund_ledger.merchant_tax_refund_request",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX payout_adjustments_tax_refund_id_key ON public.payout_adjustments USING btree (tax_refund_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "1c6a82acd46fd0a2af63f0f0a8c0e33dbf69b52d66079af735ee05f59e4780c5",
+   "identity": "index:public.payout_adjustments.payout_adjustments_tax_refund_id_key",
    "operation": "add"
   },
   {
@@ -1101,6 +1318,15 @@
   },
   {
    "after": {
+    "definition": "CREATE TRIGGER tax_adjustment_identity_980 BEFORE INSERT OR DELETE OR UPDATE ON payout_adjustments FOR EACH ROW EXECUTE FUNCTION private.guard_tax_adjustment_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "fec0997865450fe3758b88f3dc891c0f9d103ce945af62ec1f6242120dbacc98",
+   "identity": "trigger:public.payout_adjustments.tax_adjustment_identity_980",
+   "operation": "add"
+  },
+  {
+   "after": {
     "definition": "CREATE TRIGGER guard_merchant_tax_refund_980 BEFORE INSERT OR UPDATE ON refunds FOR EACH ROW EXECUTE FUNCTION private.guard_merchant_tax_refund_980()",
     "enabled": "O"
    },
@@ -1110,7 +1336,7 @@
   }
  ],
  "migration": "532_merchant_tax_payment_refund_authority.sql",
- "migration_sha256": "6b491cb5e082c301cd2cd28cfa474e7c04ea8bfe95ccfeaa694f12c5f3cac806",
+ "migration_sha256": "1b918ffdd1538e0e7f617688c3d3b9c3714579d4fb1bfa2e5a98309bc637054b",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

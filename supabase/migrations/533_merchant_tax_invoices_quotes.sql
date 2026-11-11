@@ -99,7 +99,7 @@ REVOKE ALL ON FUNCTION public.guard_quoted_items_980() FROM PUBLIC,anon,authenti
 GRANT EXECUTE ON FUNCTION public.guard_quoted_items_980() TO service_role;
 CREATE TRIGGER quoted_items_guard BEFORE INSERT OR UPDATE ON public.quote_requests FOR EACH ROW EXECUTE FUNCTION public.guard_quoted_items_980();
 CREATE FUNCTION public.save_invoice_tax_980(p_business_id uuid,p_invoice_id uuid,p_body jsonb) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions AS $$
 DECLARE inv public.invoices%ROWTYPE; ctx jsonb; cfg jsonb; fields jsonb:='{}'; k text;
  item jsonb; rows jsonb:='[]'; lines jsonb:='[]'; snap jsonb; rule jsonb;
  qty numeric; unit numeric; extended numeric; subtotal numeric:=0; discount bigint:=0; idx integer:=0; rate numeric; legacy_currency boolean;

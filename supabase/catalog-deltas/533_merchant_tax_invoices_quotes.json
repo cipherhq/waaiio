@@ -378,7 +378,7 @@
     "arguments": "p_business_id uuid, p_invoice_id uuid, p_body jsonb",
     "body_sha256": "1e8215c72de339bdb3774f3a88ce9b02a2cad2af4ab2fe2687507e631af20eba",
     "config": [
-     "search_path=pg_catalog"
+     "search_path=pg_catalog, extensions"
     ],
     "definer": true,
     "kind": "f",
@@ -390,7 +390,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "15576f8bfc8c7cace0dfd6cd5f3c063ce3f594870e51b3d682a747b1af501414",
+   "after_sha256": "0720413bf0134ba8f271530afbbcc325e938f26a26a3dff2236b1f63673d5619",
    "identity": "function:public.save_invoice_tax_980(p_business_id uuid, p_invoice_id uuid, p_body jsonb)",
    "operation": "add"
   },
@@ -445,7 +445,7 @@
   }
  ],
  "migration": "533_merchant_tax_invoices_quotes.sql",
- "migration_sha256": "b56c3cfe578724a07c624e94f08199118167b5d96b5ae0688867f70ff2cc6412",
+ "migration_sha256": "8e638c89fd50667a3714ac804307c2e2034540836cb0a22443ef98f8a15ce4de",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

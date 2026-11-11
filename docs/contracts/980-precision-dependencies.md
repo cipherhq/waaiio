@@ -58,3 +58,41 @@ Coverage: historical no-rescale, fractional gross/fees, signature and ACL final 
 The first local `initdb` hit a sandbox shared-memory permission error. That path stopped; after explicit Owner authorization, the elevated disposable server was initialized on localhost only. No staging or production migration, business row, provider operation or deployment was performed. Existing-environment application still requires separate authorization.
 
 CI integration is pending with the coordinating agent: the dedicated PostgreSQL job must set `TAX_PRECISION_TEST_DATABASE_URL` and `REQUIRE_TAX_PG_TESTS=true`. A generic green test run with this suite skipped is not evidence that these database tests ran.
+
+
+## M532 public refund dispatcher prerequisite
+
+Read-only catalog comparison on 2026-11-11 confirmed staging and production have
+identical `pg_get_functiondef(public.finalize_refund_execution(uuid))` with MD5
+`b516f6b27b8a5e42f2e5cfc6a09490e8`. M532 requires that approved M501 dispatcher
+before changing its existing private modern-accounting branch. The dispatcher
+preserves legacy accounting holds and delegates unenrolled payments to the modern
+branch. The exact definition is retained in the finance test fixture; no public
+refund function is rewritten by M532. An absent dispatcher is an explicit
+migration-prerequisite failure, exercised against disposable PostgreSQL.
+
+## Tax-refund settlement reconciliation (M532 draft)
+
+For new tax-backed platform-custody payments, each finalized refund appends one
+currency-scoped adjustment with immutable refund/payment provenance. Partial
+refunds retain the original gross fee row and target cumulative adjustments of
+minus refunded gross. A full refund excludes the fee row through the existing
+`refunded_at` rule, so the adjustment target becomes minus retained gateway cost.
+A final refund may therefore append a positive reconciliation delta; earlier
+adjustments are never rewritten or falsely marked applied. Direct transfers and
+connected merchant custody do not create these adjustments. Legacy untaxed
+refund accounting remains unchanged.
+
+Affected merchant/currency pairs permanently use lifetime payout projections:
+all eligible fee rows and adjustments, less paid and outstanding committed
+payouts. Period metadata, verification, risk flags, and account eligibility still
+apply. The new service-only creation RPC recomputes financial components under
+the existing accounting lock and rejects stale projections or duplicate periods.
+It records the calculation basis on the payout without changing historical
+adjustment links. Existing unrelated merchants retain period-based generation.
+
+`payout_adjustments.payout_id` becomes nullable only where the new unique
+`tax_refund_id` supplies exact refund provenance. Legacy null-source inserts are
+still denied. Tax adjustment identity/amount cannot change, tax adjustments
+cannot be deleted, and referenced refunds cannot be deleted. These are new
+feature prerequisites, not claims about an active production defect.

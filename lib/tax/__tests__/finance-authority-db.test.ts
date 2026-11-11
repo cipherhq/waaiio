@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import modernBaseline from './finance-modern-refund-baseline.json';
+import publicRefundBaseline from './finance-public-refund-baseline.json';
 import bankOrderBaseline from './finance-bank-order-baseline.json';
 const precisionSql = readFileSync('supabase/migrations/529_merchant_tax_money_precision.sql','utf8');
 const bankNonorder = precisionSql.match(/CREATE OR REPLACE FUNCTION public\.confirm_nonorder_transfer_atomic\([\s\S]*?AS \$function\$[\s\S]*?\$function\$/)![0];
@@ -56,10 +57,13 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
       CREATE SCHEMA accounting_private;
       CREATE FUNCTION accounting_private.accounting_business_lock(uuid) RETURNS void LANGUAGE sql SET search_path='' AS $$ SELECT pg_advisory_xact_lock(hashtext('payout_settle:'||$1::text)) $$;
       CREATE TABLE public.merchant_accounting_holds(business_id uuid,active boolean);
-      CREATE TABLE public.business_payouts(id uuid,business_id uuid,status varchar,currency varchar,period_start date,period_end date);
-      CREATE TABLE public.payout_adjustments(id uuid default gen_random_uuid(),business_id uuid,payout_id uuid,payment_id uuid,amount numeric,reason text,currency varchar);
+      CREATE TABLE public.business_payouts(id uuid DEFAULT gen_random_uuid() PRIMARY KEY,business_id uuid,status varchar,currency varchar,period_start date,period_end date,net_amount numeric,gross_amount numeric,platform_fee numeric,gateway_fee numeric,payout_account_id uuid,covered_from timestamptz,covered_to timestamptz,flags jsonb,auto_generated boolean);
+      CREATE TABLE public.payout_accounts(id uuid,business_id uuid,is_active boolean);
+      CREATE TABLE public.payout_adjustments(id uuid default gen_random_uuid(),business_id uuid REFERENCES public.businesses(id),payout_id uuid NOT NULL REFERENCES public.business_payouts(id),payment_id uuid REFERENCES public.payments(id),amount numeric,reason text,currency varchar,applied_to_payout_id uuid REFERENCES public.business_payouts(id));
       SET check_function_bodies=off;
       ${modernBaseline[0].definition};
+      ${publicRefundBaseline[0].definition};
+      CREATE TABLE public.legacy_refund_accounting_membership(payment_id uuid);
       ${bankOrderBaseline[0].definition};
       ${bankNonorder};
       SET check_function_bodies=on;
@@ -144,23 +148,47 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
     expect(sql(`SELECT count(*) FROM public.refunds WHERE payment_id='${p.id}'`)).toBe('0');
     expect(() => refund(p.id,0,selection,'20000000-0000-4000-8000-000000000004')).toThrow();
   });
-  it('reverses pinned percentage by net and flat by gross across mixed-rate refunds', () => {
+  it('reverses mixed-rate fees and enforces append-only tax payout provenance across partial/full refunds', () => {
     sql(`UPDATE public.platform_settings SET value='{"free":{"feePercentage":10,"feeFlat":1}}' WHERE key='pricing_tiers'`);
     const p=reserve(sale([{id:'taxed',quantity:1,netAmount:1000,taxAmount:200,grossAmount:1200},
       {id:'exempt',quantity:1,netAmount:1000,taxAmount:0,grossAmount:1000}]),22).payment;
     settle(p.id);
-    sql(`INSERT INTO public.platform_fees(id,payment_id,business_id,order_id,transaction_amount,fee_percentage,fee_flat,fee_total,is_direct_transfer)
-      VALUES(gen_random_uuid(),'${p.id}','${b}','${p.order_id}',22,10,1,3,false);`);
+    sql(`INSERT INTO public.platform_fees(id,payment_id,business_id,order_id,transaction_amount,fee_percentage,fee_flat,fee_total,is_direct_transfer,waived)
+      VALUES(gen_random_uuid(),'${p.id}','${b}','${p.order_id}',22,10,1,3,false,false);`);
     const r=refund(p.id,12,{mode:'items',items:[{id:'taxed',quantity:1}]},'20000000-0000-4000-8000-000000000005');
+    const historical='30000000-0000-4000-8000-000000000001';
+    sql(`INSERT INTO public.business_payouts(id,business_id,status,currency,net_amount) VALUES('${historical}','${b}','paid','USD',0);
+      INSERT INTO public.payout_adjustments(id,business_id,payout_id,amount,currency,applied_to_payout_id)
+      VALUES('${historical}','${b}','${historical}',0,'USD','${historical}');`);
+
     sql(`UPDATE public.refunds SET status='provider_success_unfinalized' WHERE id='${r.refund_id}';
-      SELECT accounting_private.finalize_refund_accounting_modern('${r.refund_id}');`);
+      SELECT public.finalize_refund_execution('${r.refund_id}');`);
     // Original percentage 200 minor / 2, plus 55 minor of the flat fee.
     expect(sql(`SELECT fee_total::text FROM public.platform_fees WHERE payment_id='${p.id}'`)).toBe('1.45');
+    expect(sql(`SELECT sum(amount)::text FROM public.payout_adjustments WHERE payment_id='${p.id}'`)).toBe('-12.00');
+    const projection=json(`SET ROLE service_role; SELECT public.tax_refund_payout_projection_980('${b}','USD')`);
+    expect(projection).toMatchObject({affected:true,gross:22,platformFee:1.45,gatewayFee:0,adjustments:-12,commitments:0,netAvailable:8.55});
+    expect(()=>sql(`DELETE FROM public.payout_adjustments WHERE tax_refund_id='${r.refund_id}'`)).toThrow(/tax_adjustment_/);
+    expect(()=>sql(`UPDATE public.payout_adjustments SET amount=0 WHERE tax_refund_id='${r.refund_id}'`)).toThrow(/tax_adjustment_/);
+    expect(()=>sql(`DELETE FROM public.refunds WHERE id='${r.refund_id}'`)).toThrow();
+    expect(()=>sql(`UPDATE public.payout_adjustments SET currency='NGN' WHERE tax_refund_id='${r.refund_id}'`)).toThrow(/tax_adjustment_/);
+    expect(()=>sql(`UPDATE public.payout_adjustments SET applied_to_payout_id='${historical}' WHERE tax_refund_id='${r.refund_id}'`)).toThrow(/tax_adjustment_unlinked_980/);
+    expect(sql(`SELECT applied_to_payout_id::text FROM public.payout_adjustments WHERE id='${historical}'`)).toBe(historical);
+
+    expect(()=>sql(`INSERT INTO public.payout_adjustments(business_id,amount,currency) VALUES('${b}',1,'USD')`)).toThrow(/tax_adjustment_source_980/);
+    expect(()=>sql(`INSERT INTO public.payout_adjustments(business_id,payment_id,amount,currency,tax_refund_id)
+      VALUES('${actor}','${p.id}',-12,'USD','${r.refund_id}')`)).toThrow(/tax_adjustment_refund_mismatch/);
+    expect(()=>sql(`INSERT INTO public.payout_adjustments(business_id,payment_id,amount,currency,tax_refund_id)
+      VALUES('${b}','${p.id}',-12,'NGN','${r.refund_id}')`)).toThrow(/tax_adjustment_refund_mismatch/);
+    sql(`SELECT public.finalize_refund_execution('${r.refund_id}')`);
+    expect(sql(`SELECT count(*) FROM public.payout_adjustments WHERE tax_refund_id='${r.refund_id}'`)).toBe('1');
+
     const rest=refund(p.id,10);
     sql(`UPDATE public.refunds SET status='provider_success_unfinalized' WHERE id='${rest.refund_id}';
-      SELECT accounting_private.finalize_refund_accounting_modern('${rest.refund_id}');`);
+      SELECT public.finalize_refund_execution('${rest.refund_id}');`);
     expect(sql(`SELECT fee_total::text FROM public.platform_fees WHERE payment_id='${p.id}'`)).toBe('0.00');
     expect(sql(`SELECT refund_amount::text FROM public.payments WHERE id='${p.id}'`)).toBe('22.00');
+    expect(sql(`SELECT sum(amount)::text FROM public.payout_adjustments WHERE payment_id='${p.id}'`)).toBe('0.00');
   });
 
   it('preserves direct bank approval and zero fee with fractional taxed order totals', () => {
@@ -232,6 +260,13 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
     expect(sql(`SET ROLE service_role; SELECT public.confirm_merchant_tax_payment_failure_980('${p.id}','stripe','failure-intent','failed')`)).toBe('t');
     expect(sql(`SELECT status FROM public.payments WHERE id='${p.id}'`)).toBe('failed');
     expect(reserve(order,6).taxable).toBe(true);
+  });
+
+  it('refuses migration when the approved public refund dispatcher is missing', () => {
+    expect(()=>sql(`BEGIN; DROP FUNCTION public.finalize_refund_execution(uuid);
+      ${readFileSync('supabase/migrations/532_merchant_tax_payment_refund_authority.sql','utf8')}`)).toThrow(/requires the approved M501 public refund dispatcher/);
+    // The failed test transaction rolls back its DROP; it cannot alter this fixture's dispatcher.
+    expect(sql(`SELECT to_regprocedure('public.finalize_refund_execution(uuid)') IS NOT NULL`)).toBe('t');
   });
 
 });

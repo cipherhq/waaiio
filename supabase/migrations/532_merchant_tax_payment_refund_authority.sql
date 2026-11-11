@@ -2,8 +2,53 @@
 -- Money in allocations is integer minor units; existing payment rows use major units.
 BEGIN;
 
+-- M501 operational cutover is a prerequisite: changing only the private modern
+-- branch has no effect when an older public dispatcher remains installed.
+DO $$ BEGIN
+  IF to_regprocedure('public.finalize_refund_execution(uuid)') IS NULL OR
+    md5(pg_get_functiondef(to_regprocedure('public.finalize_refund_execution(uuid)')))
+      IS DISTINCT FROM 'b516f6b27b8a5e42f2e5cfc6a09490e8' THEN
+    RAISE EXCEPTION 'M532 requires the approved M501 public refund dispatcher';
+  END IF;
+END $$;
+
 ALTER TABLE public.payments ADD COLUMN tax_allocation jsonb, ADD COLUMN tax_fee_basis jsonb;
 ALTER TABLE public.refunds ADD COLUMN tax_allocation jsonb;
+
+-- Tax refunds can precede the first settlement. Keep genuine refund provenance
+-- instead of fabricating a source payout or mutating an earlier adjustment.
+ALTER TABLE public.payout_adjustments ADD COLUMN tax_refund_id uuid UNIQUE REFERENCES public.refunds(id);
+ALTER TABLE public.payout_adjustments ALTER COLUMN payout_id DROP NOT NULL;
+ALTER TABLE public.payout_adjustments ADD CONSTRAINT tax_adjustment_source_980
+  CHECK (payout_id IS NOT NULL OR tax_refund_id IS NOT NULL);
+ALTER TABLE public.payout_adjustments ADD CONSTRAINT tax_adjustment_unlinked_980
+  CHECK (tax_refund_id IS NULL OR applied_to_payout_id IS NULL);
+CREATE FUNCTION private.guard_tax_adjustment_980() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    IF OLD.tax_refund_id IS NOT NULL THEN RAISE EXCEPTION 'tax_adjustment_append_only'; END IF;
+    RETURN OLD;
+  END IF;
+  IF TG_OP='UPDATE' AND (OLD.tax_refund_id IS NOT NULL OR NEW.tax_refund_id IS NOT NULL) AND
+    (NEW.tax_refund_id,NEW.business_id,NEW.payment_id,NEW.currency,NEW.amount,NEW.payout_id) IS DISTINCT FROM
+    (OLD.tax_refund_id,OLD.business_id,OLD.payment_id,OLD.currency,OLD.amount,OLD.payout_id) THEN
+    RAISE EXCEPTION 'tax_adjustment_identity_immutable';
+  END IF;
+  IF NEW.tax_refund_id IS NOT NULL AND NOT EXISTS(
+    SELECT 1 FROM public.refunds r JOIN public.payments p ON p.id=r.payment_id
+    WHERE r.id=NEW.tax_refund_id AND r.payment_id=NEW.payment_id
+      AND r.business_id=NEW.business_id AND p.currency=NEW.currency
+      AND r.tax_allocation IS NOT NULL AND p.tax_allocation IS NOT NULL
+      AND r.status IN ('provider_success_unfinalized','success')
+      AND EXISTS(SELECT 1 FROM public.merchant_tax_refund_ledger l WHERE l.refund_id=r.id AND l.payment_id=p.id AND l.business_id=NEW.business_id)
+  ) THEN RAISE EXCEPTION 'tax_adjustment_refund_mismatch'; END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION private.guard_tax_adjustment_980() FROM PUBLIC,anon,authenticated,service_role;
+CREATE TRIGGER tax_adjustment_identity_980 BEFORE INSERT OR UPDATE OR DELETE ON public.payout_adjustments
+FOR EACH ROW EXECUTE FUNCTION private.guard_tax_adjustment_980();
+
 
 CREATE TABLE public.merchant_tax_payment_ledger (
   payment_id uuid PRIMARY KEY REFERENCES public.payments(id) DEFERRABLE INITIALLY DEFERRED,
@@ -96,7 +141,7 @@ END $$;
 REVOKE ALL ON FUNCTION private.tax_980_allocate_pool(numeric,jsonb) FROM PUBLIC,anon,authenticated,service_role;
 
 CREATE FUNCTION public.reserve_merchant_tax_payment_980(p_payment jsonb)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions AS $$
 DECLARE p public.payments%ROWTYPE; source jsonb; snapshot jsonb; prior numeric; requested numeric; tax numeric;
   net_pool jsonb:='[]'; tax_pool jsonb:='[]'; net_parts jsonb; tax_parts jsonb; line jsonb; allocated jsonb;
   used_net numeric; used_tax numeric; net_value numeric; tax_value numeric; lines jsonb:='[]'; existing record;
@@ -319,7 +364,7 @@ FOR EACH ROW EXECUTE FUNCTION private.guard_merchant_tax_payment_980();
 CREATE FUNCTION public.reserve_merchant_tax_refund_980(
   p_payment_id uuid,p_business_id uuid,p_amount numeric,p_selection jsonb,p_request_id uuid,
   p_reason text,p_initiated_by uuid,p_initiated_by_role text)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions AS $$
 DECLARE p public.payments%ROWTYPE; source jsonb; snapshot jsonb; remaining numeric; selection jsonb;
   original jsonb; paid_line jsonb; chosen jsonb; line_id text; quantity numeric; previous_quantity numeric;
   refund_gross numeric; refund_tax numeric; prior_gross numeric; prior_tax numeric;
@@ -475,6 +520,7 @@ DECLARE
   v_tax_prior_net numeric; v_tax_prior_gross numeric;
   v_tax_net numeric; v_tax_gross numeric; v_tax_basis jsonb;
   v_tax_percentage numeric; v_tax_flat numeric;
+  v_tax_adjustment_target numeric; v_tax_adjustment_prior numeric;
 BEGIN
   SELECT r.* INTO v_refund FROM public.refunds r WHERE r.id = p_refund_id FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('finalized', false, 'reason', 'refund_not_found'); END IF;
@@ -603,6 +649,25 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.platform_fees f WHERE
     (f.payment_id=v_payment.id OR f.id=v_legacy_fee_id)
     AND f.business_id=v_refund.business_id AND f.is_direct_transfer=false) THEN
+    IF v_payment.tax_allocation IS NOT NULL THEN
+      -- Partial refunds retain the fee row, so remove refunded gross once.
+      -- Full refunds exclude that row entirely; only the retained gateway cost
+      -- remains a liability. Reconcile by append-only delta, including reversals
+      -- of earlier partial-refund adjustments when the final refund completes.
+      IF v_is_fully_refunded THEN
+        SELECT -COALESCE(sum(f.gateway_fee),0) INTO v_tax_adjustment_target
+        FROM public.platform_fees f WHERE f.payment_id=v_payment.id
+          AND f.business_id=v_refund.business_id AND f.is_direct_transfer=false;
+      ELSE v_tax_adjustment_target := -v_new_refund_amount;
+      END IF;
+      SELECT COALESCE(sum(a.amount),0) INTO v_tax_adjustment_prior
+      FROM public.payout_adjustments a WHERE a.payment_id=v_payment.id
+        AND a.business_id=v_refund.business_id AND a.currency=v_payment_currency
+        AND a.tax_refund_id IS NOT NULL;
+      INSERT INTO public.payout_adjustments(business_id,payment_id,amount,reason,currency,tax_refund_id)
+      VALUES(v_refund.business_id,v_payment.id,v_tax_adjustment_target-v_tax_adjustment_prior,
+        'Tax refund settlement reconciliation',v_payment_currency,v_refund.id);
+    ELSE
     -- Use the fee's created_at (allocation time) for payout-period matching,
     -- not payments.created_at. Payout generators filter by platform_fees.created_at,
     -- so that timestamp determines which period the fee was allocated to.
@@ -636,6 +701,7 @@ BEGIN
        'Refund for payment ' || v_payment.gateway_reference,v_refund.payment_id,v_payment_currency);
     END IF;
   END IF;
+  END IF; -- legacy paid-period adjustment branch
   UPDATE public.refunds SET status = 'success', finalized_at = now() WHERE id = p_refund_id;
   RETURN jsonb_build_object('finalized', true, 'fully_refunded', v_is_fully_refunded);
 END;
@@ -1047,5 +1113,100 @@ DO $$ DECLARE sig text; BEGIN
     OR has_table_privilege('service_role','public.merchant_tax_refund_ledger','INSERT,UPDATE,DELETE') THEN
     RAISE EXCEPTION 'M532 private ledger write privileges';
   END IF;
+END $$;
+-- Lifetime projection is deliberately limited to merchant/currency pairs with
+-- tax-refund reconciliation. Legacy period-based generation is unchanged.
+CREATE FUNCTION public.tax_refund_payout_projection_980(p_business_id uuid,p_currency text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE affected boolean; gross numeric; fees numeric; gateway numeric; adjustments numeric; commitments numeric;
+BEGIN
+  IF p_currency IS NULL OR p_currency !~ '^[A-Z]{3}$' THEN RAISE EXCEPTION 'currency_required'; END IF;
+  PERFORM accounting_private.accounting_business_lock(p_business_id);
+  SELECT EXISTS(SELECT 1 FROM public.payout_adjustments WHERE business_id=p_business_id
+    AND currency=p_currency AND tax_refund_id IS NOT NULL) INTO affected;
+  IF NOT affected THEN RETURN jsonb_build_object('affected',false); END IF;
+  IF EXISTS(SELECT 1 FROM public.business_payouts WHERE business_id=p_business_id AND (currency IS NULL OR currency !~ '^[A-Z]{3}$'))
+    OR EXISTS(SELECT 1 FROM public.payout_adjustments WHERE business_id=p_business_id AND (currency IS NULL OR currency !~ '^[A-Z]{3}$'))
+    OR EXISTS(SELECT 1 FROM public.platform_fees f LEFT JOIN public.payments p ON p.id=f.payment_id
+      WHERE f.business_id=p_business_id AND f.refunded_at IS NULL AND
+       (f.is_direct_transfer IS NULL OR (f.is_direct_transfer=false AND
+        (p.id IS NULL OR p.currency IS NULL OR p.currency !~ '^[A-Z]{3}$' OR p.business_id IS DISTINCT FROM p_business_id))))
+    THEN RAISE EXCEPTION 'tax_payout_history_reconciliation_required'; END IF;
+  SELECT COALESCE(sum(f.transaction_amount),0),COALESCE(sum(CASE WHEN NOT f.waived THEN f.fee_total ELSE 0 END),0),COALESCE(sum(f.gateway_fee),0)
+  INTO gross,fees,gateway FROM public.platform_fees f JOIN public.payments p ON p.id=f.payment_id
+  WHERE f.business_id=p_business_id AND p.business_id=p_business_id AND p.currency=p_currency
+    AND f.is_direct_transfer=false AND f.refunded_at IS NULL;
+  SELECT COALESCE(sum(amount),0) INTO adjustments FROM public.payout_adjustments
+    WHERE business_id=p_business_id AND currency=p_currency;
+  SELECT COALESCE(sum(net_amount),0) INTO commitments FROM public.business_payouts
+    WHERE business_id=p_business_id AND currency=p_currency
+      AND status IN ('paid','pending','held','approved','processing','review_required');
+  RETURN jsonb_build_object('affected',true,'gross',gross,'platformFee',fees,'gatewayFee',gateway,
+    'adjustments',adjustments,'commitments',commitments,
+    'netAvailable',greatest(0,gross-fees-gateway+adjustments-commitments));
+END $$;
+REVOKE ALL ON FUNCTION public.tax_refund_payout_projection_980(uuid,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.tax_refund_payout_projection_980(uuid,text) TO service_role;
+
+CREATE FUNCTION public.create_tax_refund_payout_980(p jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE projection jsonb; result public.business_payouts; biz uuid:=(p->>'business_id')::uuid; v_currency text:=p->>'currency';
+BEGIN
+  PERFORM accounting_private.accounting_business_lock(biz);
+  PERFORM pg_advisory_xact_lock(hashtext('payout_settle:'||biz::text));
+  IF NOT EXISTS(SELECT 1 FROM public.businesses WHERE id=biz AND payout_mode='platform_managed' AND status='active')
+    THEN RAISE EXCEPTION 'tax_payout_business_ineligible'; END IF;
+  IF EXISTS(SELECT 1 FROM public.merchant_accounting_holds WHERE business_id=biz AND active)
+    THEN RAISE EXCEPTION 'tax_payout_accounting_hold'; END IF;
+  IF p->>'period_start' IS NULL OR p->>'period_end' IS NULL
+    OR (p->>'period_start')::date>(p->>'period_end')::date
+    OR p->>'covered_from' IS NULL OR p->>'covered_to' IS NULL
+    OR (p->>'covered_from')::timestamptz >= (p->>'covered_to')::timestamptz
+    THEN RAISE EXCEPTION 'tax_payout_period_required'; END IF;
+  projection:=public.tax_refund_payout_projection_980(biz,v_currency);
+  IF projection->>'affected' IS DISTINCT FROM 'true' THEN RAISE EXCEPTION 'tax_payout_pair_required'; END IF;
+  IF (projection->>'netAvailable')::numeric<=0 THEN RAISE EXCEPTION 'tax_payout_no_available_balance'; END IF;
+  IF p->>'status' NOT IN ('pending','held','approved') OR p->>'status' IS NULL
+    OR jsonb_typeof(p->'flags') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'tax_payout_invalid_state'; END IF;
+  IF (p->>'net_amount')::numeric IS DISTINCT FROM (projection->>'netAvailable')::numeric
+    OR (p->>'gross_amount')::numeric IS DISTINCT FROM (projection->>'gross')::numeric
+    OR (p->>'platform_fee')::numeric IS DISTINCT FROM (projection->>'platformFee')::numeric
+    OR (p->>'gateway_fee')::numeric IS DISTINCT FROM (projection->>'gatewayFee')::numeric
+    THEN RAISE EXCEPTION 'tax_payout_projection_changed'; END IF;
+  IF EXISTS(SELECT 1 FROM public.business_payouts WHERE business_id=biz AND business_payouts.currency=v_currency
+    AND period_start=(p->>'period_start')::date AND period_end=(p->>'period_end')::date)
+    THEN RAISE EXCEPTION 'tax_payout_period_exists'; END IF;
+  IF p->>'payout_account_id' IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.payout_accounts
+    WHERE id=(p->>'payout_account_id')::uuid AND business_id=biz AND is_active)
+    THEN RAISE EXCEPTION 'tax_payout_account_mismatch'; END IF;
+  INSERT INTO public.business_payouts(business_id,payout_account_id,period_start,period_end,covered_from,covered_to,
+    gross_amount,platform_fee,gateway_fee,net_amount,currency,status,flags,auto_generated)
+  VALUES(biz,(p->>'payout_account_id')::uuid,(p->>'period_start')::date,(p->>'period_end')::date,
+    (p->>'covered_from')::timestamptz,(p->>'covered_to')::timestamptz,
+    (projection->>'gross')::numeric,(projection->>'platformFee')::numeric,(projection->>'gatewayFee')::numeric,
+    (projection->>'netAvailable')::numeric,v_currency,p->>'status',
+    (p->'flags')||jsonb_build_array(jsonb_build_object('type','tax_lifetime_calculation','message','Settlement uses the lifetime balance after tax refunds.','severity','info','calculation_basis',projection)),
+    COALESCE((p->>'auto_generated')::boolean,false)) RETURNING * INTO result;
+  RETURN to_jsonb(result);
+END $$;
+REVOKE ALL ON FUNCTION public.create_tax_refund_payout_980(jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.create_tax_refund_payout_980(jsonb) TO service_role;
+
+CREATE FUNCTION public.tax_refund_payout_currencies_980(p_business_id uuid)
+RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
+ SELECT COALESCE(jsonb_agg(currency),'[]'::jsonb) FROM (
+ SELECT DISTINCT currency FROM public.payout_adjustments WHERE business_id=p_business_id AND tax_refund_id IS NOT NULL
+ ) currencies
+$$;
+REVOKE ALL ON FUNCTION public.tax_refund_payout_currencies_980(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.tax_refund_payout_currencies_980(uuid) TO service_role;
+DO $$ DECLARE sig text; fn_oid regprocedure; BEGIN
+ FOREACH sig IN ARRAY ARRAY['public.tax_refund_payout_projection_980(uuid,text)',
+ 'public.create_tax_refund_payout_980(jsonb)','public.tax_refund_payout_currencies_980(uuid)'] LOOP
+   fn_oid:=sig::regprocedure;
+   IF NOT EXISTS(SELECT 1 FROM pg_proc WHERE pg_proc.oid=fn_oid AND prosecdef AND proconfig @> ARRAY['search_path=pg_catalog'])
+     OR has_function_privilege('anon',fn_oid,'EXECUTE') OR has_function_privilege('authenticated',fn_oid,'EXECUTE')
+     OR NOT has_function_privilege('service_role',fn_oid,'EXECUTE') THEN RAISE EXCEPTION 'M532 tax payout authority ACL drift'; END IF;
+ END LOOP;
 END $$;
 COMMIT;

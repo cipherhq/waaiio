@@ -39,9 +39,18 @@ export const ORACLE = Object.freeze({
 // rewrites them in place (M525) would get the wrong after-value. So, after
 // replaying M501, the oracle installs the same bodies from the installer text in
 // that file, then requires each to equal the object recorded in both approved
-// locks. Only the finalizers that a post-lock migration rewrites are listed; the
-// locks already cover everything else the installer swapped.
+// locks. Restore the finalizers that post-lock migrations rewrite, together with
+// the refund dispatcher and payout entrypoints exercised by lifecycle tests.
+// Every restored object is checked against both locks; enrollment is never run.
 export const ACCOUNTING_INSTALLED = Object.freeze([
+  Object.freeze({ tag: 'financial', identity: 'function:public.reject_payout_and_release_adjustments(p_payout_id uuid, p_reason text)' }),
+  Object.freeze({ tag: 'financial', identity: 'function:public.claim_payout_for_transfer(p_payout_id uuid, p_transfer_method text, p_approved_by uuid)' }),
+  Object.freeze({ tag: 'financial', identity: 'function:public.confirm_manual_settlement(p_payout_id uuid, p_transfer_ref text, p_attestation boolean, p_admin_id uuid)' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'function:public.finalize_refund_execution(p_refund_id uuid)' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.payments.guard_enrolled_payment_identity' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.business_payouts.guard_accounting_held_payout' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.platform_fees.guard_accounting_fee_provenance' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.payout_adjustments.guard_accounting_adjustment_provenance' }),
   Object.freeze({ tag: 'recurring_finalize_token_recurring_charge',
     identity: 'function:public.finalize_token_recurring_charge(p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text, p_gateway text, p_provider_attempt_ref text)' }),
   Object.freeze({ tag: 'recurring_finalize_stripe_recurring_charge',
@@ -57,13 +66,20 @@ export function accountingInstallerStatement(m501Text, tag) {
   const bodyStart = start + open.length;
   const end = m501Text.indexOf(close, bodyStart);
   if (end < 0 || m501Text.indexOf(close, end + 1) >= 0) fail(`M501 installer block ${tag} is not closed exactly once`);
-  return m501Text.slice(bodyStart, end);
+  const statement = m501Text.slice(bodyStart, end);
+  if (tag !== 'financial') return statement;
+  // The operational payout entrypoints are required by lifecycle replay. Keep
+  // existing helper ACLs intact: their two environment locks intentionally differ.
+  const first = 'CREATE OR REPLACE FUNCTION public.reject_payout_and_release_adjustments(';
+  const last = 'DROP TRIGGER IF EXISTS trg_payout_linkage_guard';
+  if (statement.split(first).length !== 2 || statement.split(last).length !== 2) fail('M501 financial entrypoint boundaries changed');
+  return statement.slice(statement.indexOf(first), statement.indexOf(last));
 }
 
 const lockObjects = env => JSON.parse(readFileSync(here(`./lock-catalog-${env}.json`), 'utf8')).objects;
 
 export async function installAccountingFinalizers(client, m501Text, locks = ['production', 'staging'].map(lockObjects)) {
-  for (const { tag } of ACCOUNTING_INSTALLED) await client.query(accountingInstallerStatement(m501Text, tag));
+  for (const tag of new Set(ACCOUNTING_INSTALLED.map(entry => entry.tag))) await client.query(accountingInstallerStatement(m501Text, tag));
   const observed = catalogMap(await readCatalog(client));
   for (const { identity } of ACCOUNTING_INSTALLED) {
     for (const objects of locks) {
