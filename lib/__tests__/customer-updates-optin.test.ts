@@ -19,6 +19,7 @@ import {
   recordUpdatesOptIn,
   parseUpdatesOptInPostback,
   shouldOfferUpdatesOptIn,
+  transactionUpdatesOptInEligibility,
   updatesOptInPostback,
   updatesOptInRowFor,
   UPDATES_OPTIN_POLICY_VERSION,
@@ -423,6 +424,7 @@ describe('fails closed', () => {
       const db = seed();
       db.failReads.add(table);
       expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
+      expect(await transactionUpdatesOptInEligibility(db as any, PHONE, BIZ_A, true)).toBe('error');
     });
   }
 
@@ -444,5 +446,44 @@ describe('fails closed', () => {
     const handled = await handleUpdatesOptInTap(db as any, { from: PHONE, text: 'yes', messageType: 'list', sendReply: async () => {} });
     expect(handled).toBe(false);
     expect(db.writes).toHaveLength(0);
+  });
+});
+
+describe('durable prompt scope', () => {
+  it('keeps a recovered Yes at its original decision time so a later revocation stays authoritative', async () => {
+    const decisionAt = '2026-01-01T00:00:00.000Z';
+    const db = seed({ customer_consents: [{ id: 'revoked', business_id: BIZ_A, phone: E164,
+      channel: 'whatsapp', purpose: 'marketing', status: 'revoked', created_at: '2026-01-02T00:00:00.000Z' }] });
+    await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', decisionAt });
+    const grants = consentsFor(db, BIZ_A).filter(r => r.status === 'granted');
+    expect(grants).toHaveLength(2);
+    expect(grants.every(r => r.created_at === decisionAt && r.granted_at === decisionAt)).toBe(true);
+    expect(await transactionUpdatesOptInEligibility(db as any, PHONE, BIZ_A, true)).toBe('ineligible');
+  });
+
+  it.each(['invalid', '2999-01-01T00:00:00.000Z'])('rejects invalid or future decisionAt %s without recording', async decisionAt => {
+    const db = seed();
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', decisionAt })).toEqual({ status: 'error' });
+    expect(consentsFor(db, BIZ_A)).toHaveLength(0);
+  });
+
+  it('does not add Waaiio when the original prompt named only the business', async () => {
+    const db = seed();
+    const result = await recordUpdatesOptIn(db as any, {
+      phone: PHONE, businessId: BIZ_A, source: 'menu', includesWaaiio: false,
+    });
+    expect(result).toMatchObject({ status: 'granted', waaiioSubscribed: false });
+    expect(db.tables.launch_subscribers).toHaveLength(0);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2);
+    expect(consentsFor(db, BIZ_A).every(r => String(r.policy_version).endsWith(':business'))).toBe(true);
+  });
+
+  it('an original combined prompt cannot override current white-label scope', async () => {
+    const db = seed();
+    const result = await recordUpdatesOptIn(db as any, {
+      phone: PHONE, businessId: BIZ_WL, source: 'menu', includesWaaiio: true,
+    });
+    expect(result).toMatchObject({ status: 'granted', waaiioSubscribed: false });
+    expect(db.tables.launch_subscribers).toHaveLength(0);
   });
 });

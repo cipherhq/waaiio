@@ -199,7 +199,17 @@ export async function shouldOfferUpdatesOptIn(
   businessId: string | null | undefined,
   includesWaaiio: boolean,
 ): Promise<boolean> {
-  if (!phone || !businessId || !UUID_RE.test(businessId)) return false;
+  return await transactionUpdatesOptInEligibility(supabase, phone, businessId, includesWaaiio) === 'eligible';
+}
+
+/** Completion workers must distinguish an unavailable lookup from an actual opt-out. */
+export async function transactionUpdatesOptInEligibility(
+  supabase: SupabaseClient,
+  phone: string,
+  businessId: string | null | undefined,
+  includesWaaiio: boolean,
+): Promise<'eligible' | 'ineligible' | 'error'> {
+  if (!phone || !businessId || !UUID_RE.test(businessId)) return 'ineligible';
   try {
     const [consent, optOut, waaiio, contact] = await Promise.all([
       businessConsentState(supabase, phone, businessId),
@@ -208,10 +218,12 @@ export async function shouldOfferUpdatesOptIn(
       // Same prior-contact rule as the tap, so an offer shown can always be accepted.
       hasContactWithBusiness(supabase, phone, businessId),
     ]);
-    return consent === 'none' && optOut === 'none' && (waaiio === 'none' || waaiio === 'active') && contact === true;
+    if (consent === 'error' || optOut === 'error' || waaiio === 'error' || contact === 'error') return 'error';
+    return consent === 'none' && optOut === 'none' && (waaiio === 'none' || waaiio === 'active') && contact === true
+      ? 'eligible' : 'ineligible';
   } catch (err) {
     logger.warn('[UPDATES-OPTIN] Eligibility check failed — not offering', { err: String(err) });
-    return false;
+    return 'error';
   }
 }
 
@@ -316,10 +328,17 @@ export async function recordUpdatesOptIn(
     destinationPhone?: string;
     /** The business that owns the number the message arrived on, if it is a dedicated number. */
     channelBusinessId?: string;
+    /** Restrict a durable reply to the scope actually shown in its original prompt. */
+    includesWaaiio?: boolean;
+    /** Server-persisted time of an explicit Yes, so crash recovery cannot outrank a later revocation. */
+    decisionAt?: string;
   },
 ): Promise<UpdatesOptInResult> {
   const { phone, businessId, source } = params;
   if (!phone || !UUID_RE.test(businessId)) return { status: 'unknown_business' };
+  if (params.decisionAt && (!Number.isFinite(Date.parse(params.decisionAt)) || Date.parse(params.decisionAt) > Date.now())) {
+    return { status: 'error' };
+  }
   // On a business's own number only that business can be named.
   if (params.channelBusinessId && params.channelBusinessId.toLowerCase() !== businessId.toLowerCase()) {
     logger.warn('[UPDATES-OPTIN] Business mismatch on dedicated channel — not recorded');
@@ -350,8 +369,9 @@ export async function recordUpdatesOptIn(
     if (consent === 'error') return { status: 'error' };
     if (consent === 'granted') return { status: 'already', businessName: business.name };
 
-    const includesWaaiio = updatesOptInIncludesWaaiio(business.subscription_tier, business.is_whitelabel);
-    const grantedAt = new Date().toISOString();
+    const includesWaaiio = params.includesWaaiio !== false
+      && updatesOptInIncludesWaaiio(business.subscription_tier, business.is_whitelabel);
+    const grantedAt = params.decisionAt || new Date().toISOString();
     const row = {
       business_id: businessId,
       phone: `+${phone.replace(/\D/g, '')}`,
@@ -361,6 +381,9 @@ export async function recordUpdatesOptIn(
       evidence_reference: UPDATES_OPTIN_EVIDENCE[source],
       policy_version: `${UPDATES_OPTIN_POLICY_VERSION}:${includesWaaiio ? 'business+waaiio' : 'business'}`,
       granted_at: grantedAt,
+      // Consent ordering uses created_at. A replay retains the actual decision's
+      // time so a subsequently revoked decision remains the latest authority.
+      ...(params.decisionAt ? { created_at: grantedAt } : {}),
     };
     // One statement, so both purposes are recorded or neither is.
     const { error: insertErr } = await supabase.from('customer_consents')

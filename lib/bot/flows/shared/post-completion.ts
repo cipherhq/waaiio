@@ -392,7 +392,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
         if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
         else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
-        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated, messageCategory: 'service' })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
+        if (sender) await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg), messageCategory: 'service' });
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');

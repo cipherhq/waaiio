@@ -171,6 +171,26 @@ describe('recurring-offer capability_overrides fix', () => {
     return { supabase: createMockSupabase(opts) };
   }
 
+  it('prepares an eligible final-menu row without sending an independent prompt', async () => {
+    const { supabase } = await setup();
+    const { prepareRecurringOffer } = await import('@/lib/payments/recurring-offer');
+    const offer = await prepareRecurringOffer(supabase as any,
+      { id: PAYMENT_ID, amount: 5000, booking_id: BOOKING_ID },
+      BIZ_ID, '+2341234567890', '[test]');
+    expect(offer).toMatchObject({ id: 'recurring_setup:intent-1', title: 'Set Up Recurring', intentId: 'intent-1' });
+    expect(supabase.rpc).toHaveBeenCalledWith('create_recurring_offer', {
+      p_source_payment_id: PAYMENT_ID, p_business_id: BIZ_ID, p_provider: 'paystack',
+    });
+  });
+
+  it.each(['active', 'declined', 'expired', 'setup_failed'])('does not prepare terminal recurring intent %s', async status => {
+    const { supabase } = await setup({ offerResult: { created: false, reason: 'already_exists', status, intent_id: 'intent-1' } });
+    const { prepareRecurringOffer } = await import('@/lib/payments/recurring-offer');
+    expect(await prepareRecurringOffer(supabase as any,
+      { id: PAYMENT_ID, amount: 5000, booking_id: BOOKING_ID },
+      BIZ_ID, '+2341234567890', '[test]')).toBeUndefined();
+  });
+
   it('cross-business payment mismatch returns silently (Safeguard B)', async () => {
     const { supabase } = await setup({
       payment: { ...successPayment, business_id: 'other-biz' },

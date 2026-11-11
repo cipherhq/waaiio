@@ -43,6 +43,18 @@ export async function GET(request: NextRequest) {
     const paymentId = offer.payment_id as string;
     const businessId = offer.business_id as string;
 
+    // A customer may have cancelled setup after accepting. A completed follow-up
+    // must never reactivate PIN entry on a later activation-recovery pass.
+    const { data: sourceOffer, error: sourceError } = await supabase.from('payment_saved_card_offers')
+      .select('payment_id').eq('id', offerId).maybeSingle();
+    const { data: followup, error: followupError } = sourceOffer?.payment_id
+      ? await supabase.from('transaction_followups').select('state').eq('payment_id', sourceOffer.payment_id).maybeSingle()
+      : { data: null, error: null };
+    if (sourceError || followupError || (followup && !['waiting_card', 'card_active'].includes(followup.state))) {
+      await supabase.rpc('release_activation_delivery', { p_offer_id: offerId, p_claim_token: claimToken });
+      continue;
+    }
+
     try {
       // R2-B3: Exact originating channel ONLY — no fallback
       if (!channelId) {
@@ -196,5 +208,7 @@ export async function GET(request: NextRequest) {
   const { processSavedCardConfirmationRecovery } = await import('@/lib/payments/saved-card-delivery');
   const { recovered: confirmRetried, errors: confirmErrors } = await processSavedCardConfirmationRecovery(supabase, 10);
 
+  const { recoverTransactionFollowups } = await import('@/lib/bot/transaction-followups');
+  await recoverTransactionFollowups(supabase, 20);
   return NextResponse.json({ retried, errors, confirmRetried, confirmErrors });
 }

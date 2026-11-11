@@ -1,5 +1,4 @@
 import { hasMerchantNotificationIntent } from '@/lib/merchant-notifications/compatibility';
-import { transactionNextSteps } from '@/lib/bot/flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -14,10 +13,6 @@ import { getEntityBalance } from '@/lib/payments/entity-balance';
 import { loadInvoiceLineItems, loadTicketLine, ORDER_ITEMS_SELECT, toOrderLineItems } from '@/lib/receipts/line-items';
 import type { ReceiptLineItem } from '@/lib/pdf/receipt-generator';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
-import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
-import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
-import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
-import { updatesOptInRowFor } from '@/lib/bot/customer-updates-optin';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -162,11 +157,10 @@ export async function sendProactiveConfirmation(
     }
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-      // K2/Refinement 1: Retry pending saved-card CTA via stored channel_id
       try {
-        const { retryPendingSavedCardOffer } = await import('@/lib/payments/saved-card-offer');
-        await retryPendingSavedCardOffer(supabase, payment.id);
-      } catch { /* non-blocking */ }
+        const { resumePaidTransactionFollowup } = await import('@/lib/payments/transaction-followup');
+        await resumePaidTransactionFollowup(supabase, payment.id);
+      } catch (followupError) { logSafeError(logPrefix, 'transaction-followup', followupError); }
       return { status: 'already_completed' };
     }
     logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
@@ -747,8 +741,7 @@ export async function sendProactiveConfirmation(
   }
 
   const nextStepsKind = payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment';
-  const nextStepsShared = resolved?.channel.channel_type === 'shared';
-  lines.push('', 'Type *receipt* to get your receipt', transactionNextSteps(nextStepsKind, nextStepsShared));
+  lines.push('', 'Type *receipt* to get your receipt');
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {
@@ -932,46 +925,6 @@ export async function sendProactiveConfirmation(
                 }
               }
 
-              // Owner rule 2026-11-05: every completed transaction ends with a
-              // next-steps menu and "Powered by Waaiio.com". Sent only here, after
-              // this payment's one claimed confirmation was accepted, so a Stage-3
-              // retry never repeats it. Its own try/catch: a menu failure must not
-              // mark the already-accepted confirmation as failed.
-              try {
-                const nextStepsButtons = buildPaymentNextStepsButtons(nextStepsKind, nextStepsShared, proactiveLanguage);
-                const menuFooter = getPoweredByInteractiveFooter(subscriptionTier, businessIsWhitelabel);
-                // Owner decision 2026-11-06: one tap for offers and updates from this
-                // business (and Waaiio) until the customer agrees. Buttons have no
-                // description, so when offered the same options go in a list.
-                const optInRow = await updatesOptInRowFor(supabase, {
-                  phone, lang: proactiveLanguage, source: 'menu',
-                  business: businessId && optInBusinessName ? {
-                    id: businessId, name: optInBusinessName,
-                    subscription_tier: subscriptionTier, is_whitelabel: businessIsWhitelabel,
-                  } : null,
-                });
-                if (optInRow) {
-                  await resolved.sender.sendList({
-                    to: phone,
-                    title: getFlowCopy(proactiveLanguage, 'menu.title'),
-                    body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
-                    buttonLabel: getFlowCopy(proactiveLanguage, 'nav.view_options'),
-                    items: [optInRow, ...nextStepsButtons.map(b => ({ title: b.title, postbackText: b.id }))],
-                    footer: menuFooter,
-                    messageCategory: 'service',
-                  });
-                } else {
-                  await resolved.sender.sendButtons({
-                    to: phone,
-                    body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
-                    buttons: nextStepsButtons,
-                    footer: menuFooter,
-                    messageCategory: 'service',
-                  });
-                }
-              } catch (menuErr) {
-                logSafeError(logPrefix, 'next-steps-menu', menuErr);
-              }
             } else {
               // No WAMID returned but no error thrown — indeterminate
               await supabase.rpc('fail_confirmation_send', {
@@ -1740,39 +1693,6 @@ export async function sendProactiveConfirmation(
       logger.warn(`${logPrefix} Ticket state incomplete — not finalizing confirmation claim`);
       return { status: 'retryable_failed', retryable: true, reason: 'ticket_state_incomplete' };
     }
-    const finalizeResult = await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-    if (!finalizeResult.ok) {
-      return { status: 'retryable_failed', retryable: true, reason: 'confirmation_finalize_failed' };
-    }
-
-    // #165: Post-finalization recurring offer (separate lifecycle, non-blocking)
-    try {
-      const { checkAndOfferRecurring } = await import('@/lib/payments/recurring-offer');
-      await checkAndOfferRecurring(supabase, payment, businessId, resolved?.sender || null, customerPhone || null, logPrefix);
-    } catch (recurringErr) {
-      logSafeError(logPrefix, 'recurring-offer', recurringErr);
-    }
-
-    // Post-finalization saved-card CTA (separate lifecycle, non-blocking)
-    // M394/Phase 2D: Direct bank transfers do NOT get Save Card offer
-    if (!isDirectOrderTransfer) {
-      try {
-        // #353: Dispatch by gateway — Stripe uses native checkout consent, Paystack uses WhatsApp CTA
-        const { data: payGwData } = await supabase.from('payments').select('gateway').eq('id', payment.id).single();
-        const paymentGateway = payGwData?.gateway as string | undefined;
-        if (paymentGateway === 'stripe') {
-          const { checkStripeConsentAndOffer } = await import('@/lib/payments/saved-card-offer');
-          await checkStripeConsentAndOffer(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
-        } else {
-          // Paystack + all other gateways: existing WhatsApp CTA flow (unchanged)
-          const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
-          await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
-        }
-      } catch (savedCardErr) {
-        logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
-      }
-    }
-
     // #963: after-booking client intake form (separate lifecycle, non-blocking).
     // Sent once, only for a confirmed booking whose service links an after-booking
     // form, and only inside the client's 24-hour window, on the channel the
@@ -1788,6 +1708,26 @@ export async function sendProactiveConfirmation(
         logSafeError(logPrefix, 'booking-intake', intakeErr);
       }
     }
+
+
+    if (resolved && customerPhone && businessId) {
+      const { startTransactionFollowup } = await import('@/lib/bot/transaction-followups');
+      await startTransactionFollowup(supabase, {
+        completionKey: `payment:${payment.id}`, businessId, phone: customerPhone,
+        channelId: resolved.channel.id, kind: nextStepsKind, lang: proactiveLanguage,
+        paymentId: payment.id, waitForCard: true,
+      });
+    }
+
+    const finalizeResult = await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!finalizeResult.ok) {
+      return { status: 'retryable_failed', retryable: true, reason: 'confirmation_finalize_failed' };
+    }
+
+    try {
+      const { resumePaidTransactionFollowup } = await import('@/lib/payments/transaction-followup');
+      await resumePaidTransactionFollowup(supabase, payment.id);
+    } catch (followupError) { logSafeError(logPrefix, 'transaction-followup', followupError); }
 
     return { status: 'completed' };
 

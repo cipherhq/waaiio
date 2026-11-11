@@ -1,3 +1,4 @@
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage } from './types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -311,7 +312,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     }
 
     // Insert queue entry now that user confirmed
-    const { error } = await ctx.supabase
+    const { data: entry, error } = await ctx.supabase
       .from('queue_entries')
       .insert({
         business_id: ctx.business.id,
@@ -321,9 +322,9 @@ const queueConfirmCheckinStep: FlowStepConfig = {
         estimated_wait_minutes: estimatedWait,
         channel: 'whatsapp',
         priority_level: 'normal',
-      });
+      }).select('id').single();
 
-    if (error) {
+    if (error || !entry?.id) {
       logger.withContext({ op: 'queue.insert', ...safeLogErrorContext(error) }).error('[QUEUE] Insert error');
       return { valid: false, errorMessage: 'Something went wrong on our end. Send *Hi* to start over.' };
     }
@@ -350,12 +351,14 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       ? `Estimated wait: ~${estimatedWait} minutes.`
       : 'You should be served shortly!';
 
+    const completion = await prepareFreeCompletion(ctx, { completionKey: `queue:${entry.id}`, kind: 'queue' });
     await ctx.sender.sendText({
       to: ctx.from,
       text: await ctx.t(`✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status${getPoweredByFooter(ctx.business?.subscription_tier)}`),
     });
 
-    return { valid: true };
+    await completion?.();
+    return { valid: true, data: completion ? { _transaction_followup_key: `queue:${entry.id}` } : {} };
   },
 
   async next(ctx: FlowContext) {
