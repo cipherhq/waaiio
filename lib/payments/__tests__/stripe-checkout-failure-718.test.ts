@@ -144,6 +144,19 @@ describe('#718 BalaShop — Stripe optional save validation fallback', () => {
     expect(key2).toBe(key1 + '_without_save_options');
   });
 
+  it('gives each pre-created payment attempt its own Stripe key (#980 retry after expiry)', async () => {
+    const keyFor = async (existingPaymentId?: string) => {
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValueOnce(providerSuccess);
+      await new StripeGateway().initializePayment({ ...checkoutInput, ...(existingPaymentId && { existingPaymentId }) });
+      return mockFetch.mock.calls[0][1].headers['Idempotency-Key'];
+    };
+    expect(await keyFor()).toBe('checkout_WA-TK-1940');
+    expect(await keyFor('pay_attempt_1')).toBe('checkout_WA-TK-1940_pay_attempt_1');
+    expect(await keyFor('pay_attempt_1')).toBe('checkout_WA-TK-1940_pay_attempt_1');
+    expect(await keyFor('pay_attempt_2')).not.toBe(await keyFor('pay_attempt_1'));
+  });
+
   it('never retries other invalid_request_error fields or security/routing failures', async () => {
     mockFetch.mockResolvedValueOnce(providerError('customer'));
     const out = await new StripeGateway().initializePayment(checkoutInput);

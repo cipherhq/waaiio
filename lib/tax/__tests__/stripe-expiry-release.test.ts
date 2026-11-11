@@ -10,6 +10,7 @@ import { NextRequest } from 'next/server';
 const SECRET = 'whsec_test_tax_expiry';
 const state = vi.hoisted(() => ({
   payment: null as null | Record<string, unknown>,
+  lookupError: null as null | Record<string, unknown>,
   rpcResult: true as unknown,
   rpcCalls: [] as Array<{ fn: string; args: unknown }>,
   paymentUpdates: [] as Array<Record<string, unknown>>,
@@ -19,7 +20,7 @@ function client() {
   const chain = (table: string): any => new Proxy({}, {
     get(_t, prop: string) {
       if (prop === 'then') return (resolve: (v: unknown) => unknown) => resolve({ data: null, error: null });
-      if (prop === 'maybeSingle') return async () => ({ data: table === 'payments' ? state.payment : null, error: null });
+      if (prop === 'maybeSingle') return async () => ({ data: table === 'payments' ? state.payment : null, error: table === 'payments' ? state.lookupError : null });
       if (prop === 'single') return async () => ({ data: null, error: null });
       if (prop === 'update') return (payload: Record<string, unknown>) => {
         if (table === 'payments') state.paymentUpdates.push(payload);
@@ -64,13 +65,20 @@ async function expire(sessionId: string) {
 }
 
 describe('Stripe checkout expiry on a taxed sale (#980)', () => {
-  beforeEach(() => { state.payment = null; state.rpcResult = true; state.rpcCalls = []; state.paymentUpdates = []; });
+  beforeEach(() => { state.payment = null; state.lookupError = null; state.rpcResult = true; state.rpcCalls = []; state.paymentUpdates = []; });
 
   it('releases the taxed attempt atomically instead of only marking it failed', async () => {
     state.payment = { id: 'pay-tax', amount: 12, business_id: 'biz', gateway: 'stripe', tax_allocation: { grossAmount: 1200 } };
     expect((await expire('cs_tax_expired')).status).toBe(200);
     expect(state.rpcCalls).toEqual([{ fn: 'confirm_merchant_tax_payment_failure_980',
       args: { p_payment_id: 'pay-tax', p_gateway: 'stripe', p_reference: 'cs_tax_expired', p_status: 'expired' } }]);
+    expect(state.paymentUpdates).toEqual([]);
+  });
+
+  it('asks Stripe to resend when the payment lookup fails, changing nothing', async () => {
+    state.lookupError = { message: 'db unavailable' };
+    expect((await expire('cs_lookup_error')).status).toBe(500);
+    expect(state.rpcCalls).toEqual([]);
     expect(state.paymentUpdates).toEqual([]);
   });
 

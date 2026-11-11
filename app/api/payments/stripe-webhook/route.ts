@@ -444,17 +444,23 @@ export async function POST(request: NextRequest) {
     if (event === 'checkout.session.expired') {
       const sessionId = data.id as string;
       if (sessionId) {
-        const { data: expiredPayment } = await supabase
+        const { data: expiredPayment, error: expiredLookupError } = await supabase
           .from('payments')
           .select('id, amount, business_id, gateway, tax_allocation')
           .eq('gateway_reference', sessionId)
           .neq('status', 'success')
           .maybeSingle();
+        // Unknown row: a taxed attempt must not be failed without its release, so let Stripe resend.
+        if (expiredLookupError) {
+          return NextResponse.json({ error: 'Expired checkout lookup failed' }, { status: 500 });
+        }
 
         if (expiredPayment?.tax_allocation) {
           // Taxed sale (#980): Stripe proved this checkout ended, so mark it failed and
           // release its hold in one database step. The customer can then pay again.
           const released = await confirmTaxPaymentFailure(supabase, expiredPayment.id, expiredPayment.gateway, sessionId, 'expired');
+          // Not released here: the row stays pending and the reconciliation cron releases it
+          // once Stripe reports the session expired.
           if (!released) logger.warn('[STRIPE-WEBHOOK] Taxed checkout expiry not released', { paymentId: expiredPayment.id });
         } else {
           await supabase
