@@ -1,3 +1,4 @@
+import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
@@ -5,7 +6,7 @@ import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQ
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
+import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { buildListItem, truncTitle } from '../utils/truncate';
@@ -2978,7 +2979,6 @@ export const schedulingFlow: FlowDefinition = {
           if (user?.first_name) {
             ctx.session.session_data.first_name = user.first_name;
             ctx.session.session_data.last_name = user.last_name;
-            ctx.session.session_data.email = user.email || '';
             return true;
           }
         }
@@ -3086,13 +3086,17 @@ export const schedulingFlow: FlowDefinition = {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };
         }
+        const businessId = ctx.business?.id || ctx.session.business_id;
+        if (businessId && (!ctx.business?.id || !ctx.session.business_id || ctx.business.id === ctx.session.business_id)) {
+          const d = ctx.session.session_data;
+          await persistStoreCustomerEmail(ctx.supabase, businessId, ctx.from, email,
+            `${d.first_name || ''} ${d.last_name || ''}`.trim() || null);
+        }
         return { valid: true, data: { email } };
       },
       async next() { return 'create_booking'; },
       async skipIf(ctx: FlowContext) {
-        // Existing customer identity alone is not proof that a usable email is known.
-        // Skip only when a real customer email is already present.
-        return isReusableCustomerEmail(ctx.session.session_data.email);
+        return reuseStoreCustomerEmail(ctx);
       },
     },
 
