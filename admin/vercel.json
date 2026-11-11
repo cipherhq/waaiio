@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/directory-short-links": false
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
