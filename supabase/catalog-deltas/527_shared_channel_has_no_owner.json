@@ -1,0 +1,21 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (channel_type::text IS DISTINCT FROM 'shared'::text OR business_id IS NULL)",
+    "validated": true
+   },
+   "after_sha256": "45628a50c57ec9b1a7b09c8aa22d230d8db02b131ca73e9f60b2a254e3003363",
+   "identity": "constraint:public.whatsapp_channels.chk_shared_channel_has_no_owner",
+   "operation": "add"
+  }
+ ],
+ "migration": "527_shared_channel_has_no_owner.sql",
+ "migration_sha256": "75092cd71a4c110008803ffc60c9575673519aefffaca7c7590df9fff31f9e97",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
