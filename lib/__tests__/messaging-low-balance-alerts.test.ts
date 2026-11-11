@@ -29,6 +29,9 @@ function db(opts: {
   settingsError?: boolean;
   /** Simulate another send inserting the same alert between our read and our insert. */
   raceInsert?: boolean;
+  /** Billing config snapshot overrides (newest platform_config_versions row). */
+  snapshot?: Record<string, unknown>;
+  country?: string | null;
 }) {
   const alerts = new Map<string, Record<string, unknown>>();
   const inserts: Array<Record<string, unknown>> = [];
@@ -36,8 +39,9 @@ function db(opts: {
     const filters: Array<[string, string, unknown]> = [];
     let pendingUpdate: Record<string, unknown> | null = null;
     const chain: Record<string, unknown> = {};
-    chain.select = vi.fn(() => chain);
+    for (const m of ['select', 'lte', 'order', 'limit']) chain[m] = vi.fn(() => chain);
     chain.eq = vi.fn((c: string, v: unknown) => { filters.push(['eq', c, v]); return chain; });
+    chain.is = vi.fn((c: string, v: unknown) => { filters.push(['is', c, v]); return chain; });
     chain.in = vi.fn((c: string, v: unknown) => { filters.push(['in', c, v]); return chain; });
     const eqVal = (c: string) => filters.find(f => f[0] === 'eq' && f[1] === c)?.[2];
     chain.insert = vi.fn(async (row: Record<string, unknown>) => {
@@ -49,23 +53,40 @@ function db(opts: {
     });
     chain.update = vi.fn((row: Record<string, unknown>) => { pendingUpdate = row; return chain; });
     chain.maybeSingle = vi.fn(async () => {
-      if (table === 'alerts') return { data: alerts.has(eqVal('id') as string) ? { id: eqVal('id') } : null, error: null };
-      if (table === 'businesses') return { data: { name: 'TestBiz <b>', profiles: { email: opts.ownerEmail === undefined ? 'owner@example.com' : opts.ownerEmail } }, error: null };
+      if (table === 'alerts') {
+        const row = alerts.get(eqVal('id') as string);
+        return { data: row ? { id: row.id, metadata: row.metadata } : null, error: null };
+      }
+      if (table === 'businesses') return { data: {
+        country_code: opts.country === undefined ? 'NG' : opts.country, name: 'TestBiz <b>',
+        profiles: { email: opts.ownerEmail === undefined ? 'owner@example.com' : opts.ownerEmail },
+      }, error: null };
+      if (table === 'platform_config_versions') {
+        if (opts.settingsError) return { data: null, error: { message: 'down' } };
+        return { data: { config_snapshot: { messaging_financial_gate: true, messaging_pricing: NGN_PRICING, ...(opts.snapshot || {}) } }, error: null };
+      }
       return { data: null, error: null };
     });
     chain.then = (resolve: (v: unknown) => unknown) => {
       if (pendingUpdate && table === 'alerts') {
+        // PostgREST-like: the update applies only to rows matching every filter
         const id = eqVal('id') as string;
-        if (alerts.has(id)) alerts.set(id, { ...alerts.get(id)!, ...pendingUpdate });
-        return Promise.resolve({ error: null }).then(resolve);
+        const row = alerts.get(id);
+        const email = ((row?.metadata as Record<string, unknown> | undefined)?.email || {}) as Record<string, unknown>;
+        const ok = !!row && filters.every(([op, c, v]) => {
+          if (c === 'id') return true;
+          if (c === 'metadata->email->>claimed_at') return op === 'is' ? email.claimed_at == null : email.claimed_at === v;
+          return true;
+        });
+        if (ok) alerts.set(id, { ...row!, ...pendingUpdate });
+        return Promise.resolve({ data: ok ? [{ id }] : [], error: null }).then(resolve);
       }
       if (table === 'messaging_allowances') {
-        return Promise.resolve({ data: opts.allowances.filter(a => eqVal('business_id') === BIZ && a), error: null }).then(resolve);
+        const cur = eqVal('currency_code');
+        return Promise.resolve({ data: opts.allowances.filter(a => eqVal('business_id') === BIZ && (!cur || a.currency_code === cur)), error: null }).then(resolve);
       }
       if (table === 'platform_settings') {
-        if (opts.settingsError) return Promise.resolve({ data: null, error: { message: 'down' } }).then(resolve);
-        const s = { messaging_pricing: NGN_PRICING, ...(opts.settings || {}) };
-        return Promise.resolve({ data: Object.entries(s).map(([key, value]) => ({ key, value })), error: null }).then(resolve);
+        return Promise.resolve({ data: Object.entries(opts.settings || {}).map(([key, value]) => ({ key, value })), error: null }).then(resolve);
       }
       return Promise.resolve({ data: [], error: null }).then(resolve);
     };
@@ -237,6 +258,100 @@ describe('checkLowBalanceAlerts', () => {
     const d = db({ allowances: [topup('a1', 900)], settingsError: true });
     await expect(checkLowBalanceAlerts(d.client, BIZ, NOW)).resolves.toBeUndefined();
     expect(d.alerts.size).toBe(0);
+  });
+});
+
+describe('follows billing (check_or_authorize_send / authorize_message_send)', () => {
+  it.each([
+    ['gate off', { messaging_financial_gate: false }],
+    ['gate key absent', { messaging_financial_gate: undefined }],
+  ])('%s: balances are not enforced, so no alert', async (_n, snapshot) => {
+    const d = db({ allowances: [topup('a1', 900)], snapshot });
+    await checkLowBalanceAlerts(d.client, BIZ, NOW);
+    expect(d.alerts.size).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('uses the billing config snapshot, not the live settings price', async () => {
+    // Settings say 1300; the effective config version says 2100 (as older staging versions did)
+    const d = db({
+      allowances: [topup('a1', 200 * 2100)],
+      settings: { messaging_pricing: NGN_PRICING },
+      snapshot: { messaging_pricing: { NGN: { rates: { NG: { '*': 2100 } }, default_cost_minor: 2100 } } },
+    });
+    await checkLowBalanceAlerts(d.client, BIZ, NOW);
+    expect([...d.alerts.values()][0].metadata).toMatchObject({ level: 'messages_200', cost_per_message_minor: 2100, estimated_messages: 200 });
+  });
+
+  it('rate is rates[country].service, then rates[country]["*"], then default_cost_minor', async () => {
+    const { billingCurrencyAndRate } = await import('@/lib/messaging/low-balance-alerts');
+    expect(billingCurrencyAndRate({ NGN: { rates: { NG: { service: 900, '*': 1300 } }, default_cost_minor: 1500 } }, 'NG')).toEqual({ currency: 'NGN', cost: 900 });
+    expect(billingCurrencyAndRate({ NGN: { rates: { NG: { '*': 1300 } }, default_cost_minor: 1500 } }, 'NG')).toEqual({ currency: 'NGN', cost: 1300 });
+    expect(billingCurrencyAndRate({ NGN: { rates: { NG: {} }, default_cost_minor: 1500 } }, 'NG')).toEqual({ currency: 'NGN', cost: 1500 });
+    expect(billingCurrencyAndRate({ NGN: { rates: { NG: {} } } }, 'NG')).toEqual({ currency: 'NGN', cost: null });
+  });
+
+  it('no currency, or two currencies, for the business country: no alert (billing refuses too)', async () => {
+    const { billingCurrencyAndRate } = await import('@/lib/messaging/low-balance-alerts');
+    expect(billingCurrencyAndRate({ NGN: { rates: { NG: { '*': 1 } } }, USD: { rates: { NG: { '*': 1 } } } }, 'NG')).toBeNull();
+    const d = db({ allowances: [topup('a1', 900)], country: 'KE' });
+    await checkLowBalanceAlerts(d.client, BIZ, NOW);
+    expect(d.alerts.size).toBe(0);
+  });
+
+  it('only the business-country currency counts: a leftover allowance in another currency is ignored', async () => {
+    const usd = { id: 'usd-old', currency_code: 'USD', remaining_minor: 0, expires_at: null, created_at: '2026-11-01T00:00:00Z' };
+    const d = db({ allowances: [topup('a1', 1_500_000), usd] });
+    await checkLowBalanceAlerts(d.client, BIZ, NOW);
+    expect(d.alerts.size).toBe(0);
+  });
+});
+
+describe('an email that was never sent is sent again later', () => {
+  const later = (min: number) => new Date(NOW.getTime() + min * 60_000);
+
+  /** The function stopped after the alert insert, before the email outcome was written. */
+  async function stuckPending() {
+    const d = db({ allowances: [topup('a1', 900)] });
+    sendEmail.mockImplementationOnce(() => new Promise(() => { /* never settles: function frozen */ }));
+    void checkLowBalanceAlerts(d.client, BIZ, NOW);
+    await vi.waitFor(() => expect(d.alerts.size).toBe(1));
+    sendEmail.mockClear();
+    return d;
+  }
+  const email = (d: ReturnType<typeof db>) => ([...d.alerts.values()][0].metadata as Record<string, unknown>).email as Record<string, unknown>;
+
+  it('not before 10 minutes; after that, sent once and recorded', async () => {
+    const d = await stuckPending();
+    expect(email(d)).toMatchObject({ status: 'pending', attempts: 1 });
+    await checkLowBalanceAlerts(d.client, BIZ, later(5));
+    expect(sendEmail).not.toHaveBeenCalled();
+    await checkLowBalanceAlerts(d.client, BIZ, later(11));
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(email(d)).toMatchObject({ status: 'provider_accepted', attempts: 2 });
+    await checkLowBalanceAlerts(d.client, BIZ, later(30));
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed email is retried, at most 3 attempts in all', async () => {
+    sendEmail.mockResolvedValue({ success: false, error: 'x' });
+    const d = db({ allowances: [topup('a1', 900)] });
+    for (const m of [0, 11, 22, 33, 44]) await checkLowBalanceAlerts(d.client, BIZ, later(m));
+    expect(sendEmail).toHaveBeenCalledTimes(3);
+    expect(email(d)).toMatchObject({ status: 'failed', attempts: 3 });
+  });
+
+  it('"not sent" (no owner email) is not retried', async () => {
+    const d = db({ allowances: [topup('a1', 900)], ownerEmail: null });
+    await checkLowBalanceAlerts(d.client, BIZ, NOW);
+    await checkLowBalanceAlerts(d.client, BIZ, later(20));
+    expect(email(d)).toMatchObject({ status: 'not_sent', attempts: 1 });
+  });
+
+  it('two checks retrying at once: only the one that claims the row sends', async () => {
+    const d = await stuckPending();
+    await Promise.all([checkLowBalanceAlerts(d.client, BIZ, later(11)), checkLowBalanceAlerts(d.client, BIZ, later(11))]);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 });
 

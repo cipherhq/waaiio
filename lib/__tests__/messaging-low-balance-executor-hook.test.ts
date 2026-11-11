@@ -2,7 +2,7 @@
  * The bot's send path runs the low-balance check after its messages, also when a send was
  * refused for lack of balance (TestBiz staging, 10 Nov 2026). Real FlowExecutor.sendMessages.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 const checkLowBalanceAlerts = vi.fn(async () => undefined);
 vi.mock('@/lib/messaging/low-balance-alerts', () => ({ checkLowBalanceAlerts: (...a: unknown[]) => checkLowBalanceAlerts(...(a as [])) }));
@@ -13,8 +13,12 @@ vi.mock('@/lib/bot/conversation-guard', async (orig) => ({
 }));
 vi.mock('@sentry/nextjs', () => ({ captureMessage: vi.fn(), captureException: vi.fn() }));
 
+// The executor module is large: import it once, before the tests, with a long timeout.
+// (Imported cold inside the first test it can pass the 5 s default and leak a late send into the next test.)
+let FlowExecutor: typeof import('@/lib/bot/flows/executor').FlowExecutor;
+beforeAll(async () => { ({ FlowExecutor } = await import('@/lib/bot/flows/executor')); }, 60_000);
+
 async function executorWith(sendText: (m: unknown) => Promise<unknown>) {
-  const { FlowExecutor } = await import('@/lib/bot/flows/executor');
   const ex = new FlowExecutor({} as never, { sendText } as never, {} as never, { resetAbuse: vi.fn() } as never);
   (ex as unknown as { currentBusinessId: string }).currentBusinessId = 'biz-1';
   return ex as unknown as { sendMessages: (to: string, m: unknown[], s: undefined, t: unknown) => Promise<void> };
