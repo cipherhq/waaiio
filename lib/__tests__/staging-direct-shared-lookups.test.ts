@@ -58,7 +58,7 @@ let restoreEnv: () => void;
 beforeEach(() => { restoreEnv = saveEnv(); H.cloudConfigs.length = 0; });
 afterEach(() => restoreEnv());
 
-function useDb(tables: Record<string, Row[]>): Recorded {
+function seedDb(tables: Record<string, Row[]>): Recorded {
   const rec = record(createMemoryDb(tables));
   H.db = rec.client;
   return rec;
@@ -70,7 +70,7 @@ const req = (url: string, init?: ConstructorParameters<typeof NextRequest>[1]) =
 describe('loadStagingDesignatedChannel', () => {
   it('reads the designated row by its pinned id only (no country or type search)', async () => {
     const { loadStagingDesignatedChannel } = await import('@/lib/channels/staging-whatsapp-routing');
-    const rec = useDb({ whatsapp_channels: allShared() });
+    const rec = seedDb({ whatsapp_channels: allShared() });
     const row = await loadStagingDesignatedChannel(rec.client as never);
     expect(row?.id).toBe(DESIGNATED_ID);
     const chains = channelChains(rec);
@@ -81,7 +81,7 @@ describe('loadStagingDesignatedChannel', () => {
 
   it('adds the token columns only when credentials are asked for', async () => {
     const { loadStagingDesignatedChannel } = await import('@/lib/channels/staging-whatsapp-routing');
-    const rec = useDb({ whatsapp_channels: allShared() });
+    const rec = seedDb({ whatsapp_channels: allShared() });
     const row = await loadStagingDesignatedChannel(rec.client as never, { credentials: true });
     expect(row?.meta_access_token).toBe('tok-staging');
     expect(String(channelChains(rec)[0][0][1])).toContain('meta_access_token');
@@ -89,7 +89,7 @@ describe('loadStagingDesignatedChannel', () => {
 
   it.each(BROKEN_DESIGNATED)('designated row %s → null', async (_label, rows) => {
     const { loadStagingDesignatedChannel } = await import('@/lib/channels/staging-whatsapp-routing');
-    const rec = useDb({ whatsapp_channels: rows });
+    const rec = seedDb({ whatsapp_channels: rows });
     expect(await loadStagingDesignatedChannel(rec.client as never)).toBeNull();
   });
 
@@ -109,7 +109,7 @@ describe('ChannelResolver.resolveByChannelIdForBusiness', () => {
   });
   async function resolve(channelId: string, rows: Row[]) {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
-    const rec = useDb({ whatsapp_channels: rows, businesses: [{ id: BIZ, assigned_channel_id: null, whatsapp_channel_id: null }] });
+    const rec = seedDb({ whatsapp_channels: rows, businesses: [{ id: BIZ, assigned_channel_id: null, whatsapp_channel_id: null }] });
     return new ChannelResolver(rec.client as never).resolveByChannelIdForBusiness(channelId, BIZ);
   }
 
@@ -140,7 +140,7 @@ describe('ChannelResolver.resolveByChannelIdForBusiness', () => {
 describe('launch delivery: resolveChannelCredentials', () => {
   async function creds(receiving: string, rows: Row[]) {
     const { resolveChannelCredentials } = await import('@/lib/launch/delivery');
-    const rec = useDb({ whatsapp_channels: rows });
+    const rec = seedDb({ whatsapp_channels: rows });
     return { result: await resolveChannelCredentials(rec.client as never, receiving), rec };
   }
   const STAGING_CREDS = { phone_number_id: 'pnid-staging', meta_access_token: 'tok-staging', waba_id: 'waba-staging', phone_number: '12404712139' };
@@ -181,7 +181,7 @@ describe('launch delivery: resolveChannelCredentials', () => {
 describe('merchant notifications: sharedChannel', () => {
   async function pick(biz: Row, rows: Row[]) {
     const { sharedChannel } = await import('@/lib/merchant-notifications/enrollment');
-    const rec = useDb({ businesses: [{ id: BIZ, ...biz }], whatsapp_channels: rows });
+    const rec = seedDb({ businesses: [{ id: BIZ, ...biz }], whatsapp_channels: rows });
     return { result: await sharedChannel(rec.client as never, BIZ), rec };
   }
   const DESIGNATED_PICK = { id: DESIGNATED_ID, phone_number: '12404712139', phone_number_id: 'pnid-staging' };
@@ -278,7 +278,7 @@ const routes: Array<{ name: string; call: (rows: Row[]) => Promise<{ phone: stri
     name: 'public form',
     call: async (rows) => {
       const { GET } = await import('@/app/api/forms/public/[token]/route');
-      const rec = useDb({
+      const rec = seedDb({
         forms: [{ id: 'f1', token: 'ftok', title: 'T', description: null, fields: [], is_active: true, business_id: BIZ, settings: null }],
         businesses: [linkBusiness()], whatsapp_channels: rows,
       });
@@ -290,7 +290,7 @@ const routes: Array<{ name: string; call: (rows: Row[]) => Promise<{ phone: stri
     name: 'public invoice',
     call: async (rows) => {
       const { GET } = await import('@/app/api/invoices/public/[token]/route');
-      const rec = useDb({
+      const rec = seedDb({
         invoices: [{ id: 'i1', token: 'itok', business_id: BIZ, status: 'paid', invoice_items: [] }],
         businesses: [linkBusiness()], whatsapp_channels: rows,
       });
@@ -302,7 +302,7 @@ const routes: Array<{ name: string; call: (rows: Row[]) => Promise<{ phone: stri
     name: 'check-in',
     call: async (rows) => {
       const { POST } = await import('@/app/api/checkin/route');
-      const rec = useDb({ businesses: [linkBusiness()], attendance_log: [], whatsapp_channels: rows });
+      const rec = seedDb({ businesses: [linkBusiness()], attendance_log: [], whatsapp_channels: rows });
       const res = await POST(req('/api/checkin', { method: 'POST', body: JSON.stringify({ business_id: BIZ, customer_name: 'Ada' }) }));
       const link = (await res.json()).wa_link as string;
       expect(link).toMatch(/\?text=TESTBIZ$/);
@@ -338,7 +338,7 @@ describe('GET /api/launch/regions', () => {
   ];
   async function regions(rows: Row[]) {
     const { GET } = await import('@/app/api/launch/regions/route');
-    const rec = useDb({ whatsapp_channels: rows, countries });
+    const rec = seedDb({ whatsapp_channels: rows, countries });
     return { body: await (await GET()).json(), rec };
   }
 
@@ -368,7 +368,7 @@ describe('GET /api/launch/regions', () => {
 describe('POST /api/auth/otp/send primary channel', () => {
   async function send(rows: Row[]) {
     const { POST } = await import('@/app/api/auth/otp/send/route');
-    const rec = useDb({ whatsapp_channels: rows, otp_delivery_attempts: [] });
+    const rec = seedDb({ whatsapp_channels: rows, otp_delivery_attempts: [] });
     const res = await POST(req('/api/auth/otp/send', { method: 'POST', body: JSON.stringify({ phone: '+2348012345678' }) }));
     return { status: res.status, rec };
   }
