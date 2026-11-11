@@ -384,12 +384,12 @@ describe('#602 M435 ordering price authority (real PG)', () => {
   it('rejects cross-business order retry', () => {
     const sid = sessionId();
     expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
-    expect(callOrder({sessionId: sid, businessId: OTHER_BIZ_ID, expectedTotal: 2000})._error).toContain('replay_business_mismatch');
+    expect(callOrder({sessionId: sid, businessId: OTHER_BIZ_ID, expectedTotal: 2000})._error).toContain('replay_identity_mismatch');
   });
   it('rejects cross-customer order retry', () => {
     const sid = sessionId();
     expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
-    expect(callOrder({sessionId: sid, userId: USER_B_ID, expectedTotal: 2000})._error).toContain('replay_user_mismatch');
+    expect(callOrder({sessionId: sid, userId: USER_B_ID, expectedTotal: 2000})._error).toContain('replay_identity_mismatch');
   });
   it('rejects replay with altered payable quote', () => {
     const sid = sessionId();
@@ -457,7 +457,7 @@ describe('#602 M435 ordering price authority (real PG)', () => {
     expect(callOrder({sessionId: sid, items, expectedTotal: 1200, addonsTotal: 0})._error).toContain('addons_total_mismatch');
     const r = callOrder({sessionId: sid, items, expectedTotal: 1200, addonsTotal: 200});
     expect(r.created).toBe(true);
-    expect(sql(`SELECT addons_total FROM orders WHERE id = '${r.order_id}';`)).toBe('200');
+    expect(Number(sql(`SELECT addons_total FROM orders WHERE id = '${r.order_id}';`))).toBe(200);
   });
   it('rejects overstacked promo and volume discounts without a free order', () => {
     const sid = sessionId();

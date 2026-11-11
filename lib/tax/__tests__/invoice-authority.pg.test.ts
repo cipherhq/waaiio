@@ -1,5 +1,6 @@
 /** Disposable database proof for M533. Fixture models live column types; not provider/HTTP E2E. */
 import { Client } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 const url = process.env.TAX_INVOICE_TEST_DATABASE_URL;
@@ -40,6 +41,39 @@ describe.skipIf(!url)('M533 atomic invoice and quote authority', () => {
  });
  beforeEach(async () => { await db.query(`RESET ROLE; SET ROLE postgres; UPDATE public.merchant_tax_settings SET rate_bps=1000,enabled=true WHERE business_id='${b}'; SELECT set_config('test.stock_fail','false',false); SELECT set_config('test.uid','${owner}',false); SET ROLE authenticated;`); });
  afterAll(async () => { await db?.end(); });
+ it.each([false, true])('keeps untaxed GHS quotes snapshot-free (itemized=%s)', async itemized => {
+  const businessId = randomUUID(); const quoteId = randomUUID(); const productId = randomUUID();
+  await db.query('RESET ROLE; SET ROLE postgres');
+  await db.query("INSERT INTO public.countries VALUES('GH','GHS') ON CONFLICT DO NOTHING");
+  await db.query("INSERT INTO public.businesses(id,owner_id,country_code) VALUES($1,$2,'GH')", [businessId,owner]);
+  await db.query("INSERT INTO public.products(id,business_id,is_active,name) VALUES($1,$2,true,'Cake')", [productId,businessId]);
+  await db.query("INSERT INTO public.quote_requests(id,business_id,status,customer_phone,cart_snapshot) VALUES($1,$2,'pending','+233123',$3)", [quoteId,businessId,JSON.stringify([{ product_id: productId, name: 'Cake', quantity: 2, price: 10 }])]);
+  await db.query('SET ROLE service_role');
+  const items = itemized ? [{ id: 'item-0', product_id: productId, description: 'Negotiated cake', quantity: 2, unit_price: 12.25 }] : null;
+  const preview = (await db.query('SELECT public.respond_order_quote_tax_980($1,$2,$3,30,null,true) AS r', [businessId,quoteId,items === null ? null : JSON.stringify(items)])).rows[0].r;
+  expect(preview.tax_snapshot).toBeNull();
+  expect(Number(preview.quoted_amount)).toBe(itemized ? 24.5 : 30);
+  const saved = (await db.query('SELECT public.respond_order_quote_tax_980($1,$2,$3,30,null,false,null) AS r', [businessId,quoteId,items === null ? null : JSON.stringify(items)])).rows[0].r;
+  expect(saved.tax_snapshot).toBeNull(); expect(saved.quoted_items).toEqual(items);
+  const accepted = (await db.query("SELECT public.accept_order_quote_atomic($1,'233123',null) AS r", [quoteId])).rows[0].r;
+  expect(accepted.accepted).toBe(true);
+  const order = (await db.query('SELECT total_amount,tax_snapshot FROM public.orders WHERE quote_request_id=$1', [quoteId])).rows[0];
+  expect(Number(order.total_amount)).toBe(itemized ? 24.5 : 30); expect(order.tax_snapshot).toBeNull();
+  const orderItem = (await db.query('SELECT oi.unit_price FROM public.order_items oi JOIN public.orders o ON o.id=oi.order_id WHERE o.quote_request_id=$1', [quoteId])).rows[0];
+  expect(Number(orderItem.unit_price)).toBe(itemized ? 12.25 : 10);
+ });
+ it('rejects GHS quotes with enabled merchant tax before mutation', async () => {
+  const businessId = randomUUID(); const quoteId = randomUUID();
+  await db.query('RESET ROLE; SET ROLE postgres');
+  await db.query("INSERT INTO public.countries VALUES('GH','GHS') ON CONFLICT DO NOTHING");
+  await db.query("INSERT INTO public.businesses(id,owner_id,country_code) VALUES($1,$2,'UK')", [businessId,owner]);
+  await db.query("INSERT INTO public.merchant_tax_settings(business_id,enabled,label,rate_bps) VALUES($1,true,'Tax',1000)", [businessId]);
+  await db.query("UPDATE public.businesses SET country_code='GH' WHERE id=$1", [businessId]);
+  await db.query("INSERT INTO public.quote_requests(id,business_id,status) VALUES($1,$2,'pending')", [quoteId,businessId]);
+  await db.query('SET ROLE service_role');
+  await expect(db.query('SELECT public.respond_order_quote_tax_980($1,$2,$3,30,null,false,null)', [businessId,quoteId,JSON.stringify([{ id: 'custom', description: 'Work', quantity: 1, unit_price: 30 }])])).rejects.toThrow('unsupported_tax_currency');
+  expect((await db.query('SELECT status,tax_snapshot FROM public.quote_requests WHERE id=$1', [quoteId])).rows[0]).toEqual({ status: 'pending', tax_snapshot: null });
+ });
  it('calculates discounted fractional charges and stores item/snapshot atomically', async () => {
   const inv = await save(body({ discount_type: 'percent', discount_value: 10 }));
   expect(inv.tax_snapshot).toMatchObject({ netAmount: 1350, taxAmount: 135, grossAmount: 1485 });

@@ -6,6 +6,7 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { buildReceiptTax } from '@/lib/tax/receipt';
+import { quoteAcceptButtonId } from '@/lib/tax/quote-acceptance';
 
 export async function POST(request: NextRequest) {
   try {
@@ -106,7 +107,7 @@ export async function POST(request: NextRequest) {
           to: phone,
           body: 'Accept or decline this price:',
           buttons: [
-            { id: `accept_quote_${quote_id}`, title: 'Accept' },
+            { id: quoteAcceptButtonId(quote_id, savedQuote.tax_snapshot), title: 'Accept' },
             { id: `reject_quote_${quote_id}`, title: 'Decline' },
           ],
         });

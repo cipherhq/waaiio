@@ -1684,7 +1684,7 @@ BEGIN
   -- Rehydrate catalog identities with the explicitly negotiated unit prices.
   -- Empty-cart custom work stays in the immutable snapshot, not fake inventory.
   v_cart:=COALESCE(v_quote.cart_snapshot,'[]'::jsonb);
-  IF v_tax_snapshot IS NOT NULL THEN
+  IF to_jsonb(v_quote)->'quoted_items' IS NOT NULL AND to_jsonb(v_quote)->'quoted_items'<>'null'::jsonb THEN
     v_cart:='[]'::jsonb;
     FOR v_item,v_index IN SELECT value,(ordinality-1)::integer FROM jsonb_array_elements(COALESCE(v_quote.cart_snapshot,'[]')) WITH ORDINALITY LOOP
       SELECT value INTO v_negotiated FROM jsonb_array_elements(to_jsonb(v_quote)->'quoted_items') WHERE value->>'id'='item-'||v_index;

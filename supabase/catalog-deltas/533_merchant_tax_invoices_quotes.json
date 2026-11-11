@@ -341,7 +341,7 @@
      }
     ],
     "arguments": "p_business_id uuid, p_quote_id uuid, p_items jsonb, p_legacy_amount numeric, p_notes text DEFAULT NULL::text, p_preview boolean DEFAULT false, p_expected_snapshot jsonb DEFAULT NULL::jsonb",
-    "body_sha256": "902197bd4e1910467c90ed797571740d172688ce1c014e5ce0b33ec2c772ed77",
+    "body_sha256": "1fe986255ba822a620598a7a5051b4599608a4455d795efba66dc8cf0799eaf7",
     "config": [
      "search_path=pg_catalog"
     ],
@@ -355,7 +355,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "b018623ee5018cce0a9d88e933fcd62956f68e45b4ed20a6bb874444c7a72351",
+   "after_sha256": "ac7930cdea3fa49996825b95072e7c2c72de6eb78ed3517b3deda99d58b8387d",
    "identity": "function:public.respond_order_quote_tax_980(p_business_id uuid, p_quote_id uuid, p_items jsonb, p_legacy_amount numeric, p_notes text, p_preview boolean, p_expected_snapshot jsonb)",
    "operation": "add"
   },
@@ -445,7 +445,7 @@
   }
  ],
  "migration": "533_merchant_tax_invoices_quotes.sql",
- "migration_sha256": "8e638c89fd50667a3714ac804307c2e2034540836cb0a22443ef98f8a15ce4de",
+ "migration_sha256": "de1572705f7e07ef7da7f2386bf1d0d44b04406df1b10be06e66fea938c85e7d",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

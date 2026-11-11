@@ -14,3 +14,8 @@
 - Supabase MCP read-only catalogs in staging and production confirm integer major-unit payment/order/booking/fee columns. Exact decimal persistence and corresponding RPC arguments, locals and return types are prerequisites for fractional tax totals. Independent review confirmed this feature-integration constraint, not an active-payment-defect claim.
 - Verification includes disposable PostgreSQL17 migration replay and generated catalog deltas, SQL authority tests, rendered merchant/admin forms, HTTP handlers with mocked providers, and independent draft reviews. Final revision evidence is maintained in `docs/contracts/980-merchant-tax-phase-a.md`; earlier test counts above are historical foundation checkpoints, not cumulative unique coverage or CI claims.
 - No deployment, staging/production migration, notification or real provider transaction occurred. Required CI and final release approval remain separate gates.
+
+### CI and quote compatibility follow-up
+- Scope: RefundModal type adapter, legacy reseller/ordering fixture compatibility, actual quote button/parser/handler snapshot binding, and draft M531/M533 untaxed negotiated-price compatibility with regenerated catalogs.
+- Verification: scoped independent review; 31 reseller SQL tests plus four concurrency scenarios, 42 ordering SQL tests, 35 quote/route/logging tests, 18 invoice SQL tests and five refund UI tests passed locally with zero targeted skips. Groups are not a unique combined count. Fresh remote CI remains required.
+- Risk: quote messages with non-null snapshots need the new terms-bound button; old snapshot-null quote behavior is preserved. Existing tax-unsupported currencies remain untaxed. Both payment custody routes and production deployment configuration remain unchanged.

@@ -241,7 +241,7 @@
      }
     ],
     "arguments": "p_quote_id uuid, p_customer_phone text, p_expected_tax_snapshot jsonb DEFAULT NULL::jsonb",
-    "body_sha256": "0c8cbe732b7e9e20001bc9a98232382998debc2fa8acb30b593a9fee59bd2297",
+    "body_sha256": "dc3c914cd5d2ddde6e03a700607dba9e169b4debbde92511bf89d2857704a141",
     "config": [
      "search_path=public"
     ],
@@ -255,7 +255,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "2726d18c3fd602b26abdee7c2c92d8641d0095887a509c12e283abb61930af25",
+   "after_sha256": "0353f9e50f7d27f796e4a6cd674efda85b52f22094034a888830502e82763ca6",
    "identity": "function:public.accept_order_quote_atomic(p_quote_id uuid, p_customer_phone text, p_expected_tax_snapshot jsonb)",
    "operation": "add"
   },
@@ -629,7 +629,7 @@
   }
  ],
  "migration": "531_merchant_tax_purchase_authority.sql",
- "migration_sha256": "ef48c5a475530812ae47b618085afba48f5c033b6bc103607b18881636709565",
+ "migration_sha256": "92bf81fd32566bd50369c78ce564e21172d40a27c23d1e458d3431d5a9986d22",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

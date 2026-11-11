@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateTaxQuote } from '../calculation';
+import { quoteAcceptButtonId } from '../quote-acceptance';
 const h = vi.hoisted(() => ({ user: true, owned: true, allowed: true, fail: false, preview: false, filters: [] as unknown[], rpc: vi.fn(), send: vi.fn(), snapshot: {} as unknown }));
 const db = vi.hoisted(() => ({
   auth: { getUser: async () => ({ data: { user: h.user ? { id: 'owner' } : null } }) },
@@ -84,4 +85,15 @@ it.each(['GHS', 'EUR'])('forwards legacy %s single-rate create and update terms 
  expect(h.rpc.mock.calls[0][1].p_body).not.toHaveProperty('tax_config');
  expect((await updateInvoice(req(legacy), { params: Promise.resolve({ id: 'invoice' }) })).status).toBe(200);
  expect(h.rpc.mock.calls[1][1].p_body).toMatchObject({ currency, tax_rate: 20 });
+});
+
+it('customer accept button binds the exact committed quote snapshot, not the request preview', async () => {
+ const quoteId = '00000000-0000-4000-8000-000000000980';
+ expect((await respondQuote(req({ business_id: 'business', quote_id: quoteId, quoted_items: [{}], expected_tax_snapshot: { stale: true } }))).status).toBe(200);
+ const buttons = h.send.mock.calls.find(([payload]) => payload.buttons)?.[0].buttons;
+ expect(buttons).toEqual([
+   { id: quoteAcceptButtonId(quoteId, h.snapshot), title: 'Accept' },
+   { id: `reject_quote_${quoteId}`, title: 'Decline' },
+ ]);
+ expect(buttons[0].id.length).toBeLessThanOrEqual(200);
 });

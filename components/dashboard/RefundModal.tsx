@@ -56,7 +56,10 @@ export function RefundModal({
     if(!open) return;
     let active=true;setTaxLoading(true);setTaxReadError('');setPartialTax(false);setZeroReturn(false);setLineAmounts({});requestRef.current=null;
     setAmount(String(paymentAmount-existingRefundAmount));setResultState(null);
-    loadTaxRefundLines(createClient(),paymentId,businessId).then(lines=>{if(active)setTaxLines(lines);})
+    // Keep the SDK's recursive generic query types at this read-only boundary,
+    // matching the admin adapter; the helper validates the returned display data.
+    const refundReadClient = createClient() as unknown as Parameters<typeof loadTaxRefundLines>[0];
+    loadTaxRefundLines(refundReadClient,paymentId,businessId).then(lines=>{if(active)setTaxLines(lines);})
       .catch(()=>{if(active)setTaxReadError('Refund details could not be loaded. Close and try again.');})
       .finally(()=>{if(active)setTaxLoading(false);});
     return ()=>{active=false;};

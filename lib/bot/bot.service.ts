@@ -43,6 +43,7 @@ import { isFinancialDenial } from './financial-denial';
 import { getActiveSession as _getActiveSession, deactivateSession as _deactivateSession, sendBotText, forwardToBusinessOwner as _forwardToBusinessOwner } from './bot-helpers';
 import { getFirstStep as _getFirstStep, getFirstStepFromCapabilities as _getFirstStepFromCapabilities, capabilityToFirstStep as _capabilityToFirstStep } from './handlers/flow-routing';
 import { handleQuoteResponse as _handleQuoteResponse } from './handlers/quote-response';
+import { parseQuoteResponseButton } from '@/lib/tax/quote-acceptance';
 import { handleTicketCheckin as _handleTicketCheckin } from './handlers/ticket-checkin';
 import { handleTransactionDocument as _handleTransactionDocument } from './handlers/transaction-docs';
 import { handleMyOrders as _handleMyOrders, handleOrderDetail as _handleOrderDetail, handleOrderDetailAction as _handleOrderDetailAction } from './handlers/my-orders';
@@ -303,13 +304,12 @@ export class BotService {
     }
 
     // Handle quote response button postbacks (accept_quote_{id} / reject_quote_{id})
-    const quoteResponseMatch = text.match(/^(accept|reject)_quote_([0-9a-f-]{36})$/i);
+    const quoteResponseMatch = parseQuoteResponseButton(text);
     if (quoteResponseMatch) {
-      const qAction = quoteResponseMatch[1].toLowerCase() as 'accept' | 'reject';
-      const quoteId = quoteResponseMatch[2];
+      const { action: qAction, quoteId, digest } = quoteResponseMatch;
       const existingSession = await this.getActiveSession(from);
       if (existingSession) await this.deactivateSession(existingSession.id);
-      await this.handleQuoteResponse(from, quoteId, qAction);
+      await this.handleQuoteResponse(from, quoteId, qAction, digest);
       return;
     }
 
@@ -4727,8 +4727,8 @@ export class BotService {
 
   // ── Quote Response Handler ──────────────────────────────
 
-  private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject'): Promise<void> {
-    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action);
+  private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject', digest?: string): Promise<void> {
+    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action, digest);
   }
 
   // ── Ticket Check-in via WhatsApp ──────────────────────

@@ -72,11 +72,14 @@ BEGIN
    END LOOP;
    snap:=public.calculate_merchant_tax_quote_980(cfg,currency,lines,0);
    amount:=(snap->>'grossAmount')::numeric/100;
+   -- Disabled-tax legacy currencies still use validated negotiated arithmetic,
+   -- but must not persist a snapshot unsupported by tax receipts/payment authority.
+   IF currency NOT IN ('NGN','USD','GBP','CAD') THEN snap:=NULL; END IF;
  END IF;
  IF amount<=0 THEN RAISE EXCEPTION 'positive_quote_amount_required'; END IF;
  IF p_preview THEN RETURN jsonb_build_object('quoted_amount',amount,'tax_snapshot',snap,'quoted_items',saved_items); END IF;
  IF snap IS DISTINCT FROM p_expected_snapshot THEN RAISE EXCEPTION 'quote_tax_terms_changed'; END IF;
- UPDATE public.quote_requests SET status='quoted',quoted_amount=amount,quoted_items=CASE WHEN snap IS NULL THEN NULL ELSE saved_items END,
+ UPDATE public.quote_requests SET status='quoted',quoted_amount=amount,quoted_items=CASE WHEN saved_items='[]'::jsonb THEN NULL ELSE saved_items END,
  tax_snapshot=snap,quote_notes=NULLIF(trim(p_notes),''),quoted_at=now(),expires_at=now()+interval '24 hours'
  WHERE id=q.id RETURNING * INTO q;
  RETURN to_jsonb(q);
