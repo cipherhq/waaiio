@@ -1,3 +1,4 @@
+import { buildReceiptTax, type ReceiptTaxSource } from '@/lib/tax/receipt';
 import { hasMerchantNotificationIntent } from '@/lib/merchant-notifications/compatibility';
 import { transactionNextSteps } from '@/lib/bot/flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -1055,6 +1056,20 @@ export async function sendProactiveConfirmation(
         if (isAmbiguousPayment) {
           logger.warn(`${logPrefix} Ambiguous payment classification: flow_type=payment, service_type=${bookingServiceType ?? 'null'}, booking_id=${payment.booking_id}`);
         }
+        let receiptTax: ReceiptTaxSource | undefined;
+        const taxTable = payment.order_id ? 'orders' : payment.booking_id ? 'bookings' : payment.invoice_id ? 'invoices' : null;
+        if (taxTable) {
+          const { data: original, error: taxError } = await supabase.from(taxTable).select('tax_snapshot')
+            .eq('id', payment.order_id || payment.booking_id || payment.invoice_id).eq('business_id', businessId).single();
+          if (taxError) throw new Error('Receipt original tax terms unavailable');
+          if (original?.tax_snapshot) {
+            const { data: paid, error: allocationError } = await supabase.from('payments').select('tax_allocation')
+              .eq('id', payment.id).eq('business_id', businessId).single();
+            if (allocationError || !paid?.tax_allocation) throw new Error('Receipt payment tax allocation unavailable');
+            receiptTax = { snapshot: original.tax_snapshot, allocations: [paid.tax_allocation] };
+            buildReceiptTax(receiptTax, payment.amount);
+          }
+        }
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
           paymentId: payment.id,
@@ -1075,6 +1090,7 @@ export async function sendProactiveConfirmation(
           currencyCode: paymentCurrencyCode,
           receiptCustomerName: receiptBuyerName,
           receiptItems,
+          receiptTax,
           receiptTotalDue,
           receiptBalanceDue,
           translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [businessName, serviceName, referenceCode].filter(Boolean))) : undefined,

@@ -6,11 +6,11 @@ CREATE TABLE public.merchant_tax_settings (
   business_id uuid PRIMARY KEY REFERENCES public.businesses(id) ON DELETE CASCADE,
   enabled boolean NOT NULL DEFAULT false,
   label text NOT NULL DEFAULT 'Tax' CHECK (length(btrim(label)) BETWEEN 1 AND 60),
-  rate_bps integer NOT NULL DEFAULT 0 CHECK (rate_bps BETWEEN 0 AND 10000),
+  rate_bps numeric(7,2) NOT NULL DEFAULT 0 CHECK (rate_bps BETWEEN 0 AND 10000),
   price_mode text NOT NULL DEFAULT 'exclusive' CHECK (price_mode IN ('inclusive','exclusive')),
   delivery_treatment text NOT NULL DEFAULT 'exempt' CHECK (delivery_treatment IN ('override','exempt')),
   delivery_label text NOT NULL DEFAULT 'Delivery tax' CHECK (length(btrim(delivery_label)) BETWEEN 1 AND 60),
-  delivery_rate_bps integer NOT NULL DEFAULT 0 CHECK (delivery_rate_bps BETWEEN 0 AND 10000),
+  delivery_rate_bps numeric(7,2) NOT NULL DEFAULT 0 CHECK (delivery_rate_bps BETWEEN 0 AND 10000),
   delivery_price_mode text NOT NULL DEFAULT 'exclusive' CHECK (delivery_price_mode IN ('inclusive','exclusive')),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -30,7 +30,7 @@ WITH CHECK (EXISTS (SELECT 1 FROM public.businesses b WHERE b.id=merchant_tax_se
 ALTER TABLE public.products
   ADD COLUMN tax_treatment text NOT NULL DEFAULT 'inherit',
   ADD COLUMN tax_label text,
-  ADD COLUMN tax_rate_bps integer,
+  ADD COLUMN tax_rate_bps numeric(7,2),
   ADD COLUMN tax_price_mode text,
   ADD CONSTRAINT products_tax_treatment_valid CHECK (
     (tax_treatment IN ('inherit','exempt') AND tax_label IS NULL AND tax_rate_bps IS NULL AND tax_price_mode IS NULL)
@@ -40,7 +40,7 @@ ALTER TABLE public.products
 ALTER TABLE public.services
   ADD COLUMN tax_treatment text NOT NULL DEFAULT 'inherit',
   ADD COLUMN tax_label text,
-  ADD COLUMN tax_rate_bps integer,
+  ADD COLUMN tax_rate_bps numeric(7,2),
   ADD COLUMN tax_price_mode text,
   ADD CONSTRAINT services_tax_treatment_valid CHECK (
     (tax_treatment IN ('inherit','exempt') AND tax_label IS NULL AND tax_rate_bps IS NULL AND tax_price_mode IS NULL)

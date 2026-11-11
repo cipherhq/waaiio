@@ -613,6 +613,7 @@ export const ticketingFlow: FlowDefinition = {
             });
 
           if (rpcErr) {
+            if (rpcErr.message?.includes('unsupported_tax_purchase')) return [{ type: 'text', text: 'This purchase needs an itemized invoice from the business so tax can be shown correctly. Please contact the business to continue.' }];
             // Tier paused or all-paused between selection and booking
             if (rpcErr.message?.includes('tier_paused') || rpcErr.message?.includes('all_tiers_paused')) {
               return [{ type: 'text' as const, text: await ctx.t('Sorry, this ticket type is no longer available. Send *Hi* to start over.') }];

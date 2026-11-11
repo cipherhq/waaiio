@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { TaxRateInput } from './TaxRateInput';
 import type { TaxTreatment, PriceMode } from '@/lib/tax/calculation';
 
 export interface ItemTaxFieldsValue {
@@ -36,8 +37,8 @@ export function ItemTaxFields({ value, onChange, disabled = false }: {
         <input id={`${id}-name`} className={inputClass} maxLength={60} value={value.tax_label ?? ''} onChange={event => onChange({ ...value, tax_label: event.target.value })} />
       </label>
       <label htmlFor={`${id}-rate`} className="block text-sm text-gray-700 dark:text-gray-300">Tax rate (%)
-        <input id={`${id}-rate`} className={inputClass} type="number" min={0} max={100} step="0.01" value={value.tax_rate_bps == null ? '' : value.tax_rate_bps / 100}
-          onChange={event => onChange({ ...value, tax_rate_bps: event.target.value === '' ? null : Math.round(Number(event.target.value) * 100) })} />
+        <TaxRateInput id={`${id}-rate`} className={inputClass} rateBps={value.tax_rate_bps ?? null}
+          onRateChange={rate => onChange({ ...value, tax_rate_bps: rate })} />
       </label>
       <label htmlFor={`${id}-mode`} className="block text-sm text-gray-700 dark:text-gray-300">Listed price
         <select id={`${id}-mode`} className={inputClass} value={value.tax_price_mode || 'exclusive'} onChange={event => onChange({ ...value, tax_price_mode: event.target.value as PriceMode })}>

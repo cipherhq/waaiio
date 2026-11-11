@@ -1,3 +1,4 @@
+import { confirmTaxPaymentFailure } from '@/lib/payments/tax-authority';
 import { NextResponse, type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
   //    but NOT not_deliverable (terminal — no contact info to retry with)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at, fee_policy_version, provider_init_state')
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at, fee_policy_version, provider_init_state, tax_allocation')
     .or(`status.eq.pending,and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.is.null),and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.not.is.null,confirmation_sent_at.is.null,confirmation_terminal_reason.is.null)`)
     .lt('created_at', twoHoursAgo.toISOString())
     .limit(50);
@@ -69,8 +70,8 @@ export async function GET(request: NextRequest) {
   // ambiguous → no action (quarantine after 24h).
   const { data: dispatchedPayments, error: dispatchQueryErr } = await supabase
     .from('payments')
-    .select('id, gateway, gateway_reference, metadata, provider_init_state, fee_policy_version, created_at, amount, currency')
-    .eq('fee_policy_version', 1)
+    .select('id, gateway, gateway_reference, metadata, provider_init_state, fee_policy_version, created_at, amount, currency, tax_allocation')
+    .or('fee_policy_version.eq.1,tax_allocation.not.is.null')
     .eq('provider_init_state', 'dispatched')
     .eq('status', 'pending')
     .neq('gateway_status', 'dispatched_quarantine')
@@ -98,6 +99,10 @@ export async function GET(request: NextRequest) {
 
         // Helper: checked terminal transition for provider-proven failure
         const checkedTerminal = async (reason: string): Promise<boolean> => {
+          if(dp.tax_allocation){
+            if(!['failed','abandoned','expired'].includes(reason))return false;
+            return confirmTaxPaymentFailure(supabase,dp.id,dp.gateway,dp.gateway_reference,reason as 'failed'|'abandoned'|'expired');
+          }
           const { data: rows, error: err } = await supabase.from('payments')
             .update({ status: 'failed', gateway_status: `provider_terminal_${reason}` })
             .eq('id', dp.id).eq('provider_init_state', 'dispatched').eq('status', 'pending')
@@ -284,7 +289,7 @@ export async function GET(request: NextRequest) {
     // #264: Skip v1 dispatched rows — the dedicated dispatched-recovery block owns them.
     // They must not enter ordinary reconciliation until the exact checked transition succeeds.
     const sp = payment as Record<string, unknown>;
-    if (sp.fee_policy_version === 1 && sp.provider_init_state === 'dispatched') {
+    if ((sp.fee_policy_version === 1 || sp.tax_allocation) && sp.provider_init_state === 'dispatched') {
       continue;
     }
 

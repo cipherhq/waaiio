@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { TaxRateInput } from '../TaxRateInput';
 import { DEFAULT_TAX_SETTINGS, parseTaxSettings } from '@/lib/tax/settings';
 
 type Settings = ReturnType<typeof parseTaxSettings>;
@@ -50,9 +51,10 @@ export function MerchantTaxSettings({ businessId }: { businessId: string }) {
     {loading ? <p role="status" className="mt-4 text-sm">Loading tax settings…</p> : <>
       <fieldset disabled={saving || !loaded} className="mt-4 space-y-4">
         <label className="flex items-center gap-2"><input type="checkbox" checked={settings.enabled} onChange={e => change({ enabled: e.target.checked })} />Charge sales tax</label>
+        <p className="text-sm text-gray-600">Tax is supported for itemized invoices, orders and supported service bookings. While tax is enabled, standalone payment links and unsupported paid table or event purchases are unavailable. Use an itemized invoice or order for those charges.</p>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="text-sm">Tax name<input className={inputClass} maxLength={60} value={settings.label} onChange={e => change({ label: e.target.value })} /></label>
-          <label className="text-sm">Default rate (%)<input className={inputClass} type="number" min="0" max="100" step="0.01" value={settings.rate_bps / 100} onChange={e => change({ rate_bps: Math.round(Number(e.target.value) * 100) })} /></label>
+          <label className="text-sm">Default rate (%)<TaxRateInput className={inputClass} rateBps={settings.rate_bps} onRateChange={rate => change({ rate_bps: rate ?? Number.NaN })} /></label>
         </div>
         <label className="block text-sm">Product and service prices<select className={inputClass} value={settings.price_mode} onChange={e => change({ price_mode: e.target.value as Settings['price_mode'] })}>
           <option value="exclusive">Add tax to the listed price</option><option value="inclusive">Listed price already includes tax</option>
@@ -62,7 +64,7 @@ export function MerchantTaxSettings({ businessId }: { businessId: string }) {
         </select></label>
         {settings.delivery_treatment === 'override' && <div className="space-y-4">
           <label className="block text-sm">Delivery tax name<input className={inputClass} maxLength={60} value={settings.delivery_label} onChange={e => change({ delivery_label: e.target.value })} /></label>
-          <label className="block text-sm">Delivery rate (%)<input className={inputClass} type="number" min="0" max="100" step="0.01" value={settings.delivery_rate_bps / 100} onChange={e => change({ delivery_rate_bps: Math.round(Number(e.target.value) * 100) })} /></label>
+          <label className="block text-sm">Delivery rate (%)<TaxRateInput className={inputClass} rateBps={settings.delivery_rate_bps} onRateChange={rate => change({ delivery_rate_bps: rate ?? Number.NaN })} /></label>
           <label className="block text-sm">Delivery price<select className={inputClass} value={settings.delivery_price_mode} onChange={e => change({ delivery_price_mode: e.target.value as Settings['delivery_price_mode'] })}><option value="exclusive">Add tax</option><option value="inclusive">Includes tax</option></select></label>
         </div>}
       </fieldset>

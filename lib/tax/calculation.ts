@@ -38,9 +38,24 @@ function rounded(n: bigint, d: bigint): number {
   return checked((n * BigInt(2) + d) / (BigInt(2) * d));
 }
 function sum(values: number[]): number { return checked(values.reduce((a, n) => a + BigInt(n), BigInt(0))); }
+/** Exact scale conversion avoids binary floating-point multiplication of rates. */
+export function taxRateUnits(rateBps: number): bigint {
+  if (typeof rateBps !== 'number' || !Number.isFinite(rateBps) || rateBps < 0 || rateBps > 10000) throw new Error('Invalid tax rate');
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(String(rateBps));
+  if (!match) throw new Error('Tax rate supports at most four decimal percentage places');
+  return BigInt(match[1]) * BigInt(100) + BigInt((match[2] ?? '').padEnd(2, '0'));
+}
+/** Converts a merchant-entered percentage to basis points without rounding. */
+export function parseTaxPercent(value: string): number {
+  const match = /^(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
+  if (!match) throw new Error('Enter a tax percentage with at most four decimal places');
+  const units = BigInt(match[1]) * BigInt(10000) + BigInt((match[2] ?? '').padEnd(4, '0'));
+  if (units > BigInt(1000000)) throw new Error('Tax rate must be between 0 and 100 percent');
+  return Number(units) / 100;
+}
 export function validateTaxRule(rule: TaxRule): void {
   if (!rule || typeof rule.label !== 'string' || !rule.label.trim() || rule.label.length > 60) throw new Error('Invalid tax label');
-  integer(rule.rateBps, 'tax rate');
+  taxRateUnits(rule.rateBps);
   if (rule.rateBps > 10000) throw new Error('Tax rate must be between 0 and 100 percent');
   if (rule.priceMode !== 'inclusive' && rule.priceMode !== 'exclusive') throw new Error('Invalid tax price mode');
 }
@@ -94,9 +109,9 @@ export function calculateTaxQuote(config: MerchantTaxConfig, currency: string, i
     const rateBps = treatment === 'taxable' ? rule.rateBps : 0;
     const discounted = amounts[i] - discounts[i];
     const netAmount = rule.priceMode === 'inclusive' && rateBps
-      ? rounded(BigInt(discounted) * BigInt(10000), BigInt(10000 + rateBps)) : discounted;
+      ? rounded(BigInt(discounted) * BigInt(1000000), BigInt(1000000) + taxRateUnits(rateBps)) : discounted;
     const taxAmount = rule.priceMode === 'inclusive' ? discounted - netAmount
-      : rounded(BigInt(netAmount) * BigInt(rateBps), BigInt(10000));
+      : rounded(BigInt(netAmount) * taxRateUnits(rateBps), BigInt(1000000));
     return { id: line.id, description: line.description, quantity: line.quantity, unitAmount: line.unitAmount,
       treatment, label: rule.label.trim(), rateBps, priceMode: rule.priceMode,
       lineDiscountAmount: directDiscounts[i], discountAmount: discounts[i], netAmount, taxAmount, grossAmount: sum([netAmount, taxAmount]) };
@@ -159,8 +174,8 @@ export function validateTaxSnapshot(snapshot: TaxSnapshot): void {
     const discounted = quoted - l.discountAmount;
     if (l.treatment !== 'taxable' && (l.rateBps !== 0 || l.taxAmount !== 0)) throw new Error('Untaxed snapshot carries tax');
     if (l.treatment === 'taxable' && l.rateBps === 0) throw new Error('Taxable snapshot has zero rate');
-    const net = l.priceMode === 'inclusive' ? rounded(BigInt(discounted) * BigInt(10000), BigInt(10000 + l.rateBps)) : discounted;
-    const tax = l.priceMode === 'inclusive' ? discounted - net : rounded(BigInt(net) * BigInt(l.rateBps), BigInt(10000));
+    const net = l.priceMode === 'inclusive' ? rounded(BigInt(discounted) * BigInt(1000000), BigInt(1000000) + taxRateUnits(l.rateBps)) : discounted;
+    const tax = l.priceMode === 'inclusive' ? discounted - net : rounded(BigInt(net) * taxRateUnits(l.rateBps), BigInt(1000000));
     if (net !== l.netAmount || tax !== l.taxAmount) throw new Error('Snapshot tax calculation does not reconcile');
   }
   for (const key of ['discountAmount', 'netAmount', 'taxAmount', 'grossAmount'] as const) {

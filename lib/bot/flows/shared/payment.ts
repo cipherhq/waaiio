@@ -1,3 +1,4 @@
+import { reserveTaxPayment } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 
@@ -360,7 +361,7 @@ export async function initializePayment(
           feePolicyVersion = 1;
 
           // Create pre-provider payment row with full v1 binding
-          const { data: preRow, error: preErr } = await supabase.from('payments').insert({
+          const taxPayload = {
             booking_id: opts.bookingId || null,
             invoice_id: opts.invoiceId || null,
             campaign_id: opts.campaignId || null,
@@ -383,11 +384,18 @@ export async function initializePayment(
               reference_code: opts.referenceCode,
               channel: 'whatsapp',
               payment_origin: paymentRouting,
+              ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
+              ...(payoutAccountId && !providerConnectionId && { provider_connection_id: payoutAccountId }),
               ...(opts.orderId && { order_id: opts.orderId }),
               ...(isByo && { byo: true, byo_business_id: byoBusinessId }),
               ...(connectAccountId && { connect: true, connect_account_id: connectAccountId }),
             },
-          }).select('id').single();
+          };
+          const taxReservation = await reserveTaxPayment(supabase, taxPayload);
+          if (taxReservation) platformFeeAmount = taxReservation.fee.feeTotal;
+          const { data: preRow, error: preErr } = taxReservation
+            ? { data: taxReservation.payment, error: null }
+            : await supabase.from('payments').insert(taxPayload).select('id').single();
 
           if (preErr || !preRow) {
             logger.error('[PAYMENT] V1 pre-provider row creation failed — NOT calling provider', preErr);
@@ -412,6 +420,35 @@ export async function initializePayment(
         // Fail closed: do NOT silently create a v0 payment when the gate state is unknown.
         logger.error('[PAYMENT] Fee policy resolution error — fail closed, no provider dispatch', feePolicyErr);
         return null;
+      }
+    }
+
+    // Taxable v0 intents need the same pre-dispatch authority as v1. The DB
+    // returns false for untaxed historical sources, preserving their legacy path.
+    if (!v1PaymentId && opts.businessId && (opts.orderId || opts.bookingId || opts.invoiceId)) {
+      const reservation = await reserveTaxPayment(supabase, {
+        business_id: opts.businessId, user_id: opts.userId, order_id: opts.orderId ?? null,
+        booking_id: opts.bookingId ?? null, invoice_id: opts.invoiceId ?? null,
+        amount: opts.amount, currency: currencyCode, gateway: gateway.name,
+        gateway_reference: opts.referenceCode, fee_policy_version: 0,
+        transaction_category: opts.transactionCategory ?? null,
+        metadata: {
+          reference_code: opts.referenceCode, channel: 'whatsapp',
+          payment_origin: isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform'),
+          ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
+          ...(payoutAccountId && !providerConnectionId && { provider_connection_id: payoutAccountId }),
+          ...(opts.orderId && { order_id: opts.orderId }),
+          ...(isByo && { byo: true, byo_business_id: byoBusinessId }),
+          ...(connectAccountId && { connect: true, connect_account_id: connectAccountId }),
+        },
+      });
+      if (reservation) {
+        v1PaymentId = String(reservation.payment.id);
+        platformFeeAmount = reservation.fee.feeTotal;
+        const { data: claimed, error } = await supabase.from('payments')
+          .update({ provider_init_state: 'dispatched' }).eq('id', v1PaymentId)
+          .eq('provider_init_state', 'pre_dispatch').select('id');
+        if (error || claimed?.length !== 1) return null;
       }
     }
 

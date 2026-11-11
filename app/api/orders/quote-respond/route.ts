@@ -5,6 +5,7 @@ import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { buildReceiptTax } from '@/lib/tax/receipt';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,9 +16,9 @@ export async function POST(request: NextRequest) {
     const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body, businessIdKey: 'business_id' });
     if (auth instanceof NextResponse) return auth;
 
-    const { quote_id, business_id, quoted_amount, quote_notes } = body;
+    const { quote_id, business_id, quoted_amount, quoted_items, quote_notes, preview } = body;
 
-    if (!quote_id || !business_id || quoted_amount == null) {
+    if (!quote_id || !business_id || (quoted_amount == null && !quoted_items?.length)) {
       return NextResponse.json({ error: 'quote_id, business_id, and quoted_amount required' }, { status: 400 });
     }
 
@@ -39,18 +40,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Quote is already ${quote.status}` }, { status: 400 });
     }
 
-    // Update quote
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    await supabase
-      .from('quote_requests')
-      .update({
-        status: 'quoted',
-        quoted_amount: Number(quoted_amount),
-        quote_notes: quote_notes || null,
-        quoted_at: new Date().toISOString(),
-        expires_at: expiresAt,
-      })
-      .eq('id', quote_id);
+    // One transaction validates prices, applies current merchant rules and pins the
+    // itemized customer terms before any notification can be sent.
+    const { data: savedQuote, error: saveError } = await supabase.rpc('respond_order_quote_tax_980', {
+      p_business_id: business_id, p_quote_id: quote_id, p_items: quoted_items || null,
+      p_legacy_amount: quoted_amount ?? null, p_notes: quote_notes || null, p_preview: preview === true,
+      p_expected_snapshot: body.expected_tax_snapshot ?? null,
+    });
+    if (saveError || !savedQuote) {
+      return NextResponse.json({ error: 'Unable to save quote. Check itemized prices and refresh the request.' }, { status: 400 });
+    }
+    if (preview === true) return NextResponse.json(savedQuote);
+    const savedTax = savedQuote.tax_snapshot
+      ? buildReceiptTax({ snapshot: savedQuote.tax_snapshot }, 0) : undefined;
 
     // Get business info for formatting
     const { data: biz } = await supabase
@@ -68,7 +70,7 @@ export async function POST(request: NextRequest) {
         const resolved = await resolver.resolveByBusinessId(business_id);
         if (!resolved?.sender) {
           logger.warn('[QUOTE-RESPOND] No messaging channel configured for business', business_id);
-          return NextResponse.json({ success: true });
+          return NextResponse.json({ success: true, quote: savedQuote });
         }
         const sender = resolved.sender;
 
@@ -79,9 +81,14 @@ export async function POST(request: NextRequest) {
         const lines = [
           `📋 *Price from ${biz?.name || 'Business'}*`,
           '',
-          `💰 Price: *${formatCurrency(Number(quoted_amount), cc)}*`,
+          `💰 Price: *${formatCurrency(Number(savedQuote.quoted_amount), cc)}*`,
         ];
 
+        if (savedTax) {
+          for (const item of savedTax.items) lines.push(`${item.name} × ${item.quantity}: ${formatCurrency(item.lineTotal, cc)}`);
+          lines.push(`Before tax: ${formatCurrency(savedTax.netAmount, cc)}`);
+          for (const group of savedTax.groups) lines.push(`${group.label}: ${formatCurrency(group.taxAmount, cc)}`);
+        }
         if (quote_notes) {
           lines.push(`📝 Note: ${quote_notes}`);
         }
@@ -108,7 +115,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, quote: savedQuote });
   } catch (error) {
     logger.error('[QUOTE-RESPOND] Error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

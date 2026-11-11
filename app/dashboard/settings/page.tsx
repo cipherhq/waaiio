@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { MerchantTaxSettings } from '@/components/dashboard/settings/MerchantTaxSettings';
+import { loadCountries } from '@/lib/countries';
+import { getCurrencyCode } from '@/lib/constants';
 import { useSearchParams } from 'next/navigation';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -14,6 +17,15 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 
 export default function SettingsPage() {
   const business = useBusiness();
+  const [taxSettingsAvailable, setTaxSettingsAvailable] = useState(false);
+  useEffect(() => {
+    let active = true; setTaxSettingsAvailable(false);
+    const expected: Record<string, string> = { NG: 'NGN', UK: 'GBP', US: 'USD', CA: 'CAD' };
+    if (business.country_code && expected[business.country_code]) {
+      loadCountries().then(() => { if (active) setTaxSettingsAvailable(getCurrencyCode(business.country_code as CountryCode) === expected[business.country_code!]); }).catch(() => {});
+    }
+    return () => { active = false; };
+  }, [business.country_code]);
   const country = (business.country_code || 'NG') as CountryCode;
   const { capabilities } = useCapabilities();
   const curr = formatCurrency(0, country).charAt(0);
@@ -134,7 +146,9 @@ export default function SettingsPage() {
 
       {/* ═══ PAYMENTS TAB ═══ */}
       {activeTab === 'payments' && (
-        <PaymentsTab {...tabProps} />
+        <><PaymentsTab {...tabProps} />
+          {taxSettingsAvailable && <MerchantTaxSettings businessId={business.id} />}
+        </>
       )}
 
       {/* ═══ FEATURES TAB ═══ */}

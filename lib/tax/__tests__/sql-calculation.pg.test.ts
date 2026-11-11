@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 import { readFileSync } from 'node:fs';
-import { calculateTaxQuote, type MerchantTaxConfig, type TaxInputLine } from '../calculation';
+import { calculateTaxQuote, parseTaxPercent, validateTaxSnapshot, type MerchantTaxConfig, type TaxInputLine } from '../calculation';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url && process.env.REQUIRE_PG_TESTS === 'true') throw new Error('TEST_DATABASE_URL required for tax SQL parity');
@@ -58,6 +58,26 @@ suite('SQL merchant tax calculator parity', () => {
     const lines: TaxInputLine[] = [{ ...item('a', 123), tax: { treatment: 'override', rule: { label: 'Other', rateBps: 9999, priceMode: 'inclusive' } } }];
     expect(await sqlQuote(config, lines)).toEqual(calculateTaxQuote(config, 'USD', lines));
   });
+  it.each(['exclusive','inclusive'] as const)('preserves a merchant-entered 8.875 percent %s rate',async priceMode=>{
+    const config={...base,rateBps:parseTaxPercent('8.875'),priceMode};
+    expect(config.rateBps).toBe(887.5);
+    const lines=[item('a',10000)];
+    const result=calculateTaxQuote(config,'USD',lines);
+    expect(await sqlQuote(config,lines)).toEqual(result);
+    expect(result.taxAmount).toBe(priceMode==='exclusive'?888:815);
+    validateTaxSnapshot(result);
+    expect(()=>parseTaxPercent('8.87501')).toThrow();
+    await expect(sqlQuote({...config,rateBps:887.501},lines)).rejects.toThrow();
+  });
+  it('matches UTF-16 emoji label and description boundaries',async()=>{
+    const config={...base,label:'😀'.repeat(30)};
+    const lines=[{...item('a',100),description:'😀'.repeat(250)}];
+    expect(await sqlQuote(config,lines)).toEqual(calculateTaxQuote(config,'USD',lines));
+    for(const [c,l] of [[{...config,label:config.label+'x'},lines],[config,[{...lines[0],description:lines[0].description+'x'}]]] as [MerchantTaxConfig,TaxInputLine[]][]){
+      expect(()=>calculateTaxQuote(c,'USD',l)).toThrow();
+      await expect(sqlQuote(c,l)).rejects.toThrow();
+    }
+  });
   it('keeps direct volume discounts on their own lines, then allocates basket discounts', async () => {
     const lines: TaxInputLine[] = [{ ...item('taxed', 1000), lineDiscountAmount: 500 },
       { ...item('exempt', 1000), tax: { treatment: 'exempt' } }];
@@ -98,7 +118,7 @@ suite('SQL merchant tax calculator parity', () => {
     await expect(sqlQuote(base, lines)).rejects.toThrow();
   });
   it('rejects bad configuration, discount and currency', async () => {
-    for (const config of [{ ...base, enabled: 'true' }, { ...base, rateBps: 10001 }, { ...base, rateBps: 1.1 }, { ...base, label: '' }, { ...base, priceMode: 'wrong' }]) {
+    for (const config of [{ ...base, enabled: 'true' }, { ...base, rateBps: 10001 }, { ...base, rateBps: 1.111 }, { ...base, label: '' }, { ...base, priceMode: 'wrong' }]) {
       expect(() => calculateTaxQuote(config as MerchantTaxConfig, 'USD', [item('a', 1)])).toThrow();
       await expect(sqlQuote(config, [item('a', 1)])).rejects.toThrow();
     }

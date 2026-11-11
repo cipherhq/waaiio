@@ -36,6 +36,7 @@ export async function PUT(request: NextRequest, context: Context) {
   const { error } = await access.db!.from('merchant_tax_settings').upsert({
     ...settings, business_id: access.businessId!, updated_at: new Date().toISOString(),
   }, { onConflict: 'business_id' });
+  if (error?.message?.includes('unsupported_tax_currency')) return NextResponse.json({ error: 'Merchant tax is currently supported only for NGN, USD, GBP and CAD businesses.' }, { status: 400 });
   if (error) return NextResponse.json({ error: 'Unable to save tax settings' }, { status: 503 });
   return NextResponse.json({ settings });
 }

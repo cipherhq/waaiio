@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { loadTaxRefundLines, refundLineSelection, zeroValueReturnSelection, type RefundLineChoice } from '@/lib/tax/refund-ui';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 interface RefundModalProps {
@@ -43,11 +45,37 @@ export function RefundModal({
     | null
   >(null);
 
+  const [taxLines,setTaxLines]=useState<RefundLineChoice[]|null>(null);
+  const [taxLoading,setTaxLoading]=useState(true);
+  const [taxReadError,setTaxReadError]=useState('');
+  const [partialTax,setPartialTax]=useState(false);
+  const [zeroReturn,setZeroReturn]=useState(false);
+  const [lineAmounts,setLineAmounts]=useState<Record<string,string>>({});
+  const requestRef=useRef<{key:string;id:string}|null>(null);
+  useEffect(()=>{
+    if(!open) return;
+    let active=true;setTaxLoading(true);setTaxReadError('');setPartialTax(false);setZeroReturn(false);setLineAmounts({});requestRef.current=null;
+    setAmount(String(paymentAmount-existingRefundAmount));setResultState(null);
+    loadTaxRefundLines(createClient(),paymentId,businessId).then(lines=>{if(active)setTaxLines(lines);})
+      .catch(()=>{if(active)setTaxReadError('Refund details could not be loaded. Close and try again.');})
+      .finally(()=>{if(active)setTaxLoading(false);});
+    return ()=>{active=false;};
+  },[open,paymentId,businessId,paymentAmount,existingRefundAmount]);
+
   if (!open) return null;
 
   async function handleSubmit() {
-    const refundAmount = parseFloat(amount);
-    if (isNaN(refundAmount) || refundAmount <= 0) {
+    if(taxLoading||taxReadError)return;
+    let refundAmount = taxLines&&!partialTax ? maxRefund : parseFloat(amount);
+    let taxSelection:ReturnType<typeof refundLineSelection>['taxSelection']|undefined; let requestId:string|undefined;
+    if(taxLines&&(partialTax||zeroReturn)){
+      try { const selected=zeroReturn?zeroValueReturnSelection(taxLines,lineAmounts):refundLineSelection(taxLines,lineAmounts);refundAmount=selected.amount;taxSelection=selected.taxSelection; }
+      catch(err){setError(err instanceof Error?err.message:'Select items to refund');return;}
+      const key=JSON.stringify([paymentId,taxSelection,refundAmount,reason.trim()]);
+      if(requestRef.current?.key!==key)requestRef.current={key,id:crypto.randomUUID()};
+      requestId=requestRef.current.id;
+    }
+    if (isNaN(refundAmount) || refundAmount < 0 || (refundAmount === 0 && !zeroReturn)) {
       setError('Enter a valid amount');
       return;
     }
@@ -69,6 +97,7 @@ export function RefundModal({
           businessId,
           amount: refundAmount,
           reason: reason.trim() || undefined,
+          ...(taxSelection?{taxSelection,requestId}:{}),
         }),
       });
 
@@ -141,8 +170,27 @@ export function RefundModal({
             </div>
           )}
 
+          {taxReadError&&<p role="alert" className="text-sm text-red-600">{taxReadError}</p>}
+          {taxLoading&&<p className="text-sm text-gray-500">Loading refundable items…</p>}
+          {taxLines&&<fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Refund selection</legend>
+            <label className="block text-sm"><input type="radio" checked={!partialTax&&!zeroReturn} onChange={()=>{setPartialTax(false);setZeroReturn(false);}}/> Full remaining payment</label>
+            <label className="block text-sm"><input type="radio" checked={partialTax} onChange={()=>{setPartialTax(true);setZeroReturn(false);}}/> Choose item amounts</label>
+            {taxLines.some(line=>line.zeroValue)&&<label className="block text-sm"><input type="radio" checked={zeroReturn} onChange={()=>{setPartialTax(false);setZeroReturn(true);}}/> Record a no-value item return</label>}
+            {zeroReturn&&taxLines.filter(line=>line.zeroValue).map(line=><label key={line.id} className="block text-sm">{line.label} — no money refunded
+              <input aria-label={`Return quantity for ${line.label}`} type="number" min="0" step="1" max={line.quantity}
+                value={lineAmounts[line.id]||''} onChange={e=>setLineAmounts({...lineAmounts,[line.id]:e.target.value})}
+                className="mt-1 w-full rounded border px-3 py-2"/>
+            </label>)}
+            {partialTax&&taxLines.map(line=><label key={line.id} className="block text-sm">{line.label} — available {(line.remainingMinor/100).toFixed(2)} {currency}
+              <input aria-label={`Refund for ${line.label}`} type="number" min="0" step="0.01" max={line.remainingMinor/100}
+                value={lineAmounts[line.id]||''} onChange={e=>setLineAmounts({...lineAmounts,[line.id]:e.target.value})}
+                className="mt-1 w-full rounded-lg border px-3 py-2"/>
+            </label>)}
+            <p className="text-xs text-gray-500">Item amounts include tax. The original tax will be returned with each item.</p>
+          </fieldset>}
           {/* Amount input */}
-          <div>
+          {!taxLines&&<div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Refund Amount ({currency})</label>
             <input
               type="number"
@@ -171,6 +219,7 @@ export function RefundModal({
             </div>
           </div>
 
+          }
           {/* Reason */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Reason (optional)</label>
@@ -186,7 +235,7 @@ export function RefundModal({
           {/* Result state feedback */}
           {resultState?.type === 'success' && (
             <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-              <p className="font-medium">Refund processed successfully</p>
+              <p className="font-medium">{zeroReturn?'Item return recorded — no money refunded':'Refund processed successfully'}</p>
             </div>
           )}
           {resultState?.type === 'pending' && (
@@ -237,7 +286,7 @@ export function RefundModal({
             {!resultState && (
               <button
                 onClick={handleSubmit}
-                disabled={loading}
+                disabled={loading||taxLoading||!!taxReadError}
                 className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {loading ? 'Processing...' : 'Confirm Refund'}

@@ -432,6 +432,7 @@ describe('POST /api/pay-link/pay — actual route', () => {
     const paymentInserts: Record<string,unknown>[] = [];
     const factoryCalls: string[] = [];
     mockServiceFrom.mockImplementation((t: string) => {
+      if (t==='merchant_tax_settings') return {select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:null,error:null})})})};
       if (t==='payment_links') return{select:()=>({eq:()=>({eq:()=>({single:()=>Promise.resolve({data:{id:'pl-1',title:'T',amount:5000,currency:null,uses_count:0,expires_at:null,max_uses:null,business_id:'biz-1',is_active:true,businesses:{name:'B',country_code:country,payment_gateway:null,status:bizStatus}},error:null})})})})};
       if (t==='payments') return {
         insert: (data: Record<string, unknown>) => {

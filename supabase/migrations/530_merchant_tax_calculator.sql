@@ -24,7 +24,7 @@ BEGIN
     RAISE EXCEPTION 'Invalid tax label' USING ERRCODE='22023';
   END IF;
   v_rate := (p_rule->>'rateBps')::numeric;
-  IF v_rate < 0 OR v_rate > 10000 OR trunc(v_rate) <> v_rate THEN
+  IF v_rate < 0 OR v_rate > 10000 OR trunc(v_rate*100) <> v_rate*100 THEN
     RAISE EXCEPTION 'Invalid tax rate' USING ERRCODE='22023';
   END IF;
 END $$;
@@ -181,8 +181,8 @@ BEGIN
     v_mode := v_rule->>'priceMode';
     v_discounted := v_amounts[v_index] - v_discounts[v_index];
     v_net := CASE WHEN v_mode='inclusive' AND v_rate<>0
-      THEN div(v_discounted*20000+10000+v_rate,2*(10000+v_rate)) ELSE v_discounted END;
-    v_tax := CASE WHEN v_mode='inclusive' THEN v_discounted-v_net ELSE div(v_net*v_rate*2+10000,20000) END;
+      THEN div(v_discounted*2000000+1000000+v_rate*100,2*(1000000+v_rate*100)) ELSE v_discounted END;
+    v_tax := CASE WHEN v_mode='inclusive' THEN v_discounted-v_net ELSE div(v_net*(v_rate*100)*2+1000000,2000000) END;
     v_gross := v_net+v_tax;
     v_total_net := v_total_net+v_net;
     v_total_tax := v_total_tax+v_tax;
