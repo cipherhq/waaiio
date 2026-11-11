@@ -24,6 +24,8 @@ function chain() {
   return c;
 }
 
+vi.mock('@/lib/payments/transaction-followup', () => ({ finishTransactionCardStep: vi.fn().mockResolvedValue(undefined) }));
+
 vi.mock('@/lib/payments/saved-payment-adapter', () => ({
   savedPaymentAdapter: { verifyPin: vi.fn() },
 }));
@@ -243,5 +245,36 @@ describe('Global Saved Card', () => {
 
     // F2 PROOF: Business A was never used
     expect(isSharedPlatformPaystackCompatible).not.toHaveBeenCalledWith(expect.anything(), 'biz-A');
+  });
+});
+
+describe('transaction card setup cancellation', () => {
+  it.each(['save', 'replace'])('%s atomically cancels before acknowledgment and continuation', async kind => {
+    const { handleCardPinStep, handleReplacementPinStep } = await import('../saved-cards');
+    const { finishTransactionCardStep } = await import('@/lib/payments/transaction-followup');
+    vi.mocked(finishTransactionCardStep).mockClear();
+    const events: string[] = [];
+    const rpc = vi.fn(async () => { events.push('cancel'); return { data: { success: true, version: 8 }, error: null }; });
+    const send = vi.fn(async (_to: string, _message: string) => { events.push('ack'); });
+    vi.mocked(finishTransactionCardStep).mockImplementationOnce(async () => { events.push('continue'); });
+    const session = { id: 'session', version: 7, business_id: 'biz', session_data: {
+      _save_card_payment_id: PAY_ID, _replace_payment_id: PAY_ID, _save_card_auth: { secret: 'fixture' },
+    } } as any;
+    await (kind === 'save' ? handleCardPinStep : handleReplacementPinStep)({ rpc } as any, send, PHONE, session, 'cancel');
+    expect(rpc).toHaveBeenCalledWith('cancel_transaction_card_setup', expect.objectContaining({
+      p_session_id: 'session', p_expected_version: 7, p_payment_id: PAY_ID, p_customer_phone: PHONE, p_business_id: 'biz',
+    }));
+    expect(events).toEqual(['cancel', 'ack', 'continue']);
+  });
+  it.each(['save', 'replace'])('%s does not advance after rejected cancellation', async kind => {
+    const { handleCardPinStep, handleReplacementPinStep } = await import('../saved-cards');
+    const { finishTransactionCardStep } = await import('@/lib/payments/transaction-followup');
+    vi.mocked(finishTransactionCardStep).mockClear();
+    const rpc = vi.fn(async () => ({ data: { success: false, reason: 'version_conflict' } }));
+    const send = vi.fn(async (_to: string, _message: string) => {});
+    const session = { id: 'session', version: 7, business_id: 'biz', session_data: { _save_card_payment_id: PAY_ID, _replace_payment_id: PAY_ID } } as any;
+    await (kind === 'save' ? handleCardPinStep : handleReplacementPinStep)({ rpc } as any, send, PHONE, session, 'cancel');
+    expect(finishTransactionCardStep).not.toHaveBeenCalled();
+    expect(send.mock.calls[0][1]).not.toMatch(/cancelled/i);
   });
 });

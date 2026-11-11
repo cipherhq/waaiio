@@ -566,7 +566,7 @@ describe('B4: Slice 5A translation + claim fencing', () => {
     expect(renewAfterTranslate).toBeGreaterThan(translateIdx);
   });
 
-  it('translate() receives FULL message including balance, guidance, and calendar content', async () => {
+  it('translate() receives full confirmation including balance, receipt guidance and calendar, without premature navigation', async () => {
     let capturedText = '';
     const { resolveProactiveLocalization } = await import('../payments/proactive-localization');
     (resolveProactiveLocalization as any).mockResolvedValueOnce({
@@ -586,9 +586,10 @@ describe('B4: Slice 5A translation + claim fencing', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
 
-    // Translator must receive the full message including guidance + calendar
+    // Confirmation retains receipt/calendar details; navigation belongs after card/consent.
     expect(capturedText).toContain('receipt');
-    expect(capturedText).toContain('my bookings');
+    expect(capturedText).toContain('Remaining balance');
+    expect(capturedText).not.toContain('my bookings');
     expect(capturedText).toContain('calendar.google.com');
   });
 

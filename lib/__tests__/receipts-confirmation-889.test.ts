@@ -42,6 +42,8 @@ vi.mock('@/lib/bot/flows/shared/post-completion', () => ({ handlePostCompletion:
 vi.mock('@/lib/bot/flows/shared/send-tickets', () => ({ sendTicketsAfterPurchase: vi.fn(), ensureCanonicalTicketRows: vi.fn().mockResolvedValue({ success: true, tickets: [] }), deliverTicketsWhatsApp: vi.fn(), deliverTicketsEmail: vi.fn() }));
 vi.mock('@/lib/payments/saved-card-compat', () => ({ canonicalSavedCardPhone: vi.fn(() => null), isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: false }) }));
 vi.mock('@/lib/payments/saved-card-offer', () => ({ checkAndOfferSavedCard: vi.fn().mockResolvedValue(undefined), retryPendingSavedCardOffer: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/bot/transaction-followups', () => ({ startTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/payments/transaction-followup', () => ({ resumePaidTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/payments/terminal-effects', () => ({
   initializeManifest: (...a: unknown[]) => mockInitManifest(...a),
   computeApplicableEffects: vi.fn().mockReturnValue([]),

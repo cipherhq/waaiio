@@ -132,10 +132,12 @@ GRANT SELECT,INSERT,UPDATE,DELETE ON payments,refunds,platform_fees,business_pay
    await b.query('SELECT id FROM platform_fees WHERE id=$1 FOR UPDATE',[f.fee]);
    const waiting=b.query('UPDATE platform_fees SET fee_total=8 WHERE id=$1',[f.fee]).then(()=>null,e=>e);
    const competing=q('UPDATE platform_fees SET fee_total=7 WHERE id=$1',[f.fee]).then(()=>null,e=>e);
-   const first=await Promise.race([waiting.then(error=>({side:'b',error})),competing.then(error=>({side:'a',error}))]);
-   expect(first.error?.code).toBe('40P01');
-   if(first.side==='a')await q('ROLLBACK');else await b.query('ROLLBACK');
-   await Promise.all([waiting,competing]);
+   // PostgreSQL releases the victim's locks when aborting it, so the surviving
+   // query can reach the client before the victim's error does. Arrival order
+   // does not identify the victim: assert both transaction outcomes instead.
+   const outcomes=await Promise.all([waiting,competing]);
+   expect(outcomes.filter(error=>error?.code==='40P01')).toHaveLength(1);
+   expect(outcomes.filter(error=>error===null)).toHaveLength(1);
   }finally{await q('ROLLBACK');await b.query('ROLLBACK');}
   expect(await snapshot()).toEqual(before);
  },15000);

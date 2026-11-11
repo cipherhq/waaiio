@@ -1,6 +1,5 @@
 /**
- * Customer updates opt-in on the Stage 3 payment next-steps menu (Owner decision
- * 2026-11-06). Drives the real sendProactiveConfirmation (harness copied from
+ * Explicit customer updates opt-in after Stage 3 and card resolution. Drives the real sendProactiveConfirmation (harness copied from
  * link-payment-next-steps-menu.test.ts); consent tables are an in-memory database.
  */
 import { createMemoryDb, type MemoryDb } from './helpers/memory-db';
@@ -13,6 +12,7 @@ const mockButtons = vi.fn().mockResolvedValue({ success: true, messageId: 'wamid
 const mockList = vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-list' });
 const BIZ = '11111111-1111-4111-8111-111111111111';
 let consentDb: MemoryDb;
+let lifecycleEvents: string[] = [];
 let channelType = 'dedicated';
 const mockCalLinks = vi.fn().mockReturnValue('');
 const mockProactiveResolve = vi.fn<any[], Promise<any>>();
@@ -35,7 +35,7 @@ vi.mock('@/lib/payments/proactive-localization', () => ({
 }));
 vi.mock('@/lib/channels/channel-resolver', () => {
   class MockResolver {
-    async resolveByChannelIdForBusiness() { return null; }
+    async resolveByChannelIdForBusiness() { return this.resolveByBusinessId(); }
     async resolveByBusinessId() {
       return { channel: { id: 'ch-1', channel_type: channelType }, channelId: 'ch-1', sender: { sendText: (...a: unknown[]) => mockTransportSend(...a), sendButtons: (...a: unknown[]) => mockButtons(...a), sendList: (...a: unknown[]) => mockList(...a), sendDocument: vi.fn().mockResolvedValue({}), sendImage: vi.fn().mockResolvedValue({}) } };
     }
@@ -45,8 +45,19 @@ vi.mock('@/lib/channels/channel-resolver', () => {
 // Prevent post-completion and other dynamic imports from throwing
 vi.mock('@/lib/bot/flows/shared/post-completion', () => ({ handlePostCompletion: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/bot/flows/shared/send-tickets', () => ({ sendTicketsAfterPurchase: vi.fn(), ensureCanonicalTicketRows: vi.fn(), deliverTicketsWhatsApp: vi.fn(), deliverTicketsEmail: vi.fn() }));
-vi.mock('@/lib/payments/saved-card-compat', () => ({ canonicalSavedCardPhone: vi.fn(() => null), isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: false }) }));
+vi.mock('@/lib/payments/saved-card-compat', () => ({ canonicalSavedCardPhone: (phone: string) => phone.startsWith('+') ? phone : `+${phone}`, isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: false }) }));
 vi.mock('@/lib/payments/saved-card-offer', () => ({ checkAndOfferSavedCard: vi.fn().mockResolvedValue(undefined), retryPendingSavedCardOffer: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/payments/saved-card-delivery', () => ({ isProvenPreEmission: () => false }));
+vi.mock('@/lib/payments/recurring-offer', () => ({ prepareRecurringOffer: vi.fn().mockResolvedValue(undefined) }));
+// Card eligibility/resolution is tested separately. This seam releases only after
+// sendProactiveConfirmation has persisted and finalized the paid continuation.
+vi.mock('@/lib/payments/transaction-followup', () => ({
+  resumePaidTransactionFollowup: async (db: any, paymentId: string) => {
+    lifecycleEvents.push('card_resolved');
+    const { resumeTransactionFollowupForPayment } = await import('@/lib/bot/transaction-followups');
+    await resumeTransactionFollowupForPayment(db, paymentId, { cardResolved: true });
+  },
+}));
 vi.mock('@/lib/payments/terminal-effects', () => ({
   initializeManifest: vi.fn().mockResolvedValue({ ok: true }),
   computeApplicableEffects: vi.fn().mockReturnValue([]),
@@ -75,6 +86,7 @@ const FIN_OK = { data: { finalized: true }, error: null };
 const pay = { id: 'p1', amount: 50, booking_id: 'bk1', invoice_id: null, campaign_id: null };
 
 function setupRpc(eventLog: string[], opts: { failPreDelivery?: boolean; deliveryClaim?: Record<string, unknown> } = {}) {
+  lifecycleEvents = eventLog;
   let renewCount = 0;
   mockRpc.mockImplementation((name: string) => {
     eventLog.push(name);
@@ -96,9 +108,18 @@ function setupDb(tier = 'growth', isWhitelabel: boolean | null = false, nameKnow
   mockFrom.mockImplementation((table: string) => {
     const c = chain();
     if (table === 'bookings') c.single = vi.fn().mockResolvedValue({ data: { guest_phone: '+234123', guest_email: null, business_id: BIZ, reference_code: 'X1', date: '2026-08-10', time: '14:00', flow_type: 'scheduling', total_amount: 100, deposit_amount: 50, businesses: { name: 'Biz', country_code: 'NG', address: '1 Main' }, services: { name: 'S', duration_minutes: 30, service_type: 'booking' } }, error: null });
-    if (['customer_consents', 'messaging_opt_outs', 'launch_subscribers', 'bot_sessions', 'customer_profiles'].includes(table)) return consentDb.from(table);
-    if (table === 'businesses') { c.single = vi.fn().mockResolvedValue({ data: { name: nameKnown ? 'Mama Put Kitchen' : null, subscription_tier: tier, is_whitelabel: isWhitelabel, owner_id: 'o1' }, error: null }); c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null }); }
-    if (table === 'payments') c.single = vi.fn().mockResolvedValue({ data: { currency: 'NGN', gateway: 'paystack', metadata: {} }, error: null });
+    if (table === 'transaction_followups') {
+      const q = consentDb.from(table);
+      q.upsert = async (row: Record<string, unknown>) => {
+        const exists = consentDb.tables[table]?.some(r => r.business_id === row.business_id && r.completion_key === row.completion_key);
+        if (!exists) await consentDb.from(table).insert(row);
+        return { error: null };
+      };
+      return q;
+    }
+    if (['payment_saved_card_offers', 'customer_consents', 'messaging_opt_outs', 'launch_subscribers', 'bot_sessions', 'customer_profiles'].includes(table)) return consentDb.from(table);
+    if (table === 'businesses') { c.single = vi.fn().mockResolvedValue({ data: { name: nameKnown ? 'Mama Put Kitchen' : null, subscription_tier: tier, is_whitelabel: isWhitelabel, owner_id: 'o1' }, error: null }); c.maybeSingle = vi.fn().mockResolvedValue({ data: { id: BIZ, name: nameKnown ? 'Mama Put Kitchen' : null, subscription_tier: tier, is_whitelabel: isWhitelabel }, error: null }); }
+    if (table === 'payments') { c.single = vi.fn().mockResolvedValue({ data: { currency: 'NGN', gateway: 'paystack', metadata: {} }, error: null }); c.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'p1', amount: 50, booking_id: null }, error: null }); }
     if (table === 'profiles') { c.single = vi.fn().mockResolvedValue({ data: { email: 'o@t.com', phone: '+234' }, error: null }); c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null }); }
     return c;
   });
@@ -133,19 +154,26 @@ describe('Stage 3 payment menu: updates opt-in', () => {
 
   beforeEach(() => { mockList.mockResolvedValue({ success: true, messageId: 'wamid-list' }); seedConsents(); });
 
-  it('not yet agreed → one list menu: opt-in first, then the same options, footer kept, after the accepted confirmation', async () => {
+  it('not yet agreed → standalone opt-in after finalization and card resolution, then menu only after No', async () => {
     const eventLog: string[] = [];
-    mockList.mockImplementation(async () => { eventLog.push('sendList'); return { success: true, messageId: 'wamid-list' }; });
+    mockButtons.mockImplementation(async () => { eventLog.push('sendButtons'); return { success: true, messageId: 'wamid-button' }; });
     setupDb(); setupRpc(eventLog);
     const result = await confirm(eventLog);
     expect(result.status).toBe('completed');
-    expect(mockButtons).not.toHaveBeenCalled();
-    expect(mockList).toHaveBeenCalledTimes(1);
-    const menu = mockList.mock.calls[0][0];
-    expect(menu).toMatchObject({ to: '234123', body: 'What would you like to do next?', footer: 'Powered by Waaiio.com', messageCategory: 'service' });
-    expect(menu.items[0]).toEqual({ title: '🎁 Get first dibs', description: 'Offers & updates from Mama Put Kitchen and Waaiio. Stop anytime.', postbackText: `updates_yes:menu:${BIZ}` });
-    expect(menu.items.slice(1)).toEqual([{ title: 'My Bookings', postbackText: 'my bookings' }, { title: 'View Options', postbackText: 'menu' }]);
-    expect(eventLog.indexOf('complete_confirmation_send')).toBeLessThan(eventLog.indexOf('sendList'));
+    expect(mockList).not.toHaveBeenCalled();
+    expect(mockButtons).toHaveBeenCalledTimes(1);
+    const prompt = mockButtons.mock.calls[0][0];
+    expect(prompt).toMatchObject({ to: '+234123', body: 'Get offers and updates from Mama Put Kitchen and Waaiio on WhatsApp? You can reply STOP any time.', footer: 'Powered by Waaiio.com', messageCategory: 'service', noRetry: true });
+    expect(prompt.buttons.map((b: { id: string }) => b.id.split(':')[0])).toEqual(['txupdates_yes', 'txupdates_no']);
+    expect(eventLog.indexOf('finalize_payment_confirmation')).toBeLessThan(eventLog.indexOf('card_resolved'));
+    expect(eventLog.indexOf('card_resolved')).toBeLessThan(eventLog.indexOf('sendButtons'));
+    const { handleTransactionFollowupTap } = await import('@/lib/bot/transaction-followups');
+    await handleTransactionFollowupTap({ from: mockFrom } as any, {
+      from: '+234123', text: prompt.buttons[1].id, messageType: 'button', channelId: 'ch-1',
+    });
+    expect(mockButtons).toHaveBeenCalledTimes(2);
+    expect(mockButtons.mock.calls[1][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', 'menu']);
+    expect(consentDb.tables.customer_consents).toEqual([]);
   });
 
   it('already agreed → the usual buttons, unchanged', async () => {
@@ -164,24 +192,24 @@ describe('Stage 3 payment menu: updates opt-in', () => {
     expect(mockButtons).toHaveBeenCalledTimes(1);
   });
 
-  it('business branding unknown (lookup returned no name) → no opt-in, so Waaiio is never named for a white-label business by mistake', async () => {
+  it('business branding unknown → defer the follow-up without guessing the opt-in brand', async () => {
     setupDb('growth', false, false); setupRpc([]);
     await confirm();
     expect(mockList).not.toHaveBeenCalled();
-    expect(mockButtons).toHaveBeenCalledTimes(1);
+    expect(mockButtons).not.toHaveBeenCalled();
   });
 
   it('white-label business → opt-in names only the business, no footer', async () => {
     setupDb('growth', true); setupRpc([]);
     await confirm();
-    const menu = mockList.mock.calls[0][0];
-    expect(menu.items[0].description).toBe('Offers, reminders & updates from Mama Put Kitchen. Stop anytime.');
-    expect(menu.footer).toBeUndefined();
+    const prompt = mockButtons.mock.calls[0][0];
+    expect(prompt.body).toBe('Get offers and updates from Mama Put Kitchen on WhatsApp? You can reply STOP any time.');
+    expect(prompt.footer).toBeUndefined();
   });
 
-  it('a list send failure does not mark the accepted confirmation as failed', async () => {
+  it('a follow-up send failure does not mark the accepted confirmation as failed', async () => {
     const eventLog: string[] = [];
-    mockList.mockRejectedValue(new Error('meta 500'));
+    mockButtons.mockRejectedValue(new Error('meta 500'));
     setupDb(); setupRpc(eventLog);
     const result = await confirm(eventLog);
     expect(result.status).toBe('completed');

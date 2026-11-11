@@ -365,3 +365,11 @@ Checked current main and all 15 open PR migration file lists on 2026-11-02; no c
 | 525 | feature_trial_clock_and_no_trial_fee_waiver | claude/m525-feature-trial-clock | Reserved; not applied |
 
 Adds `businesses.feature_trial_ends_at` with server-only sign-up and update triggers, and rewrites only the `v_is_in_trial` assignment of the live recurring fee functions to `false`. Checked main, open PRs #939/#945/#957 and local worktrees on 2026-11-08; no collision.
+
+### Reservation — transaction completion follow-ups
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 534 | transaction_followups | codex/transaction-followups | Reserved; not applied |
+
+Checked main at `0a5b2d4798ca8d1c99aa45c7a291c0434f804483`, registry and both open PRs (#939/#945) on 2026-11-11; local merchant-tax drafts occupy 528–533, so 534 is reserved here. Adds service-only completion sequencing and scoped card-setup cancellation.

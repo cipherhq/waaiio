@@ -7,15 +7,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Track observable effects ──
+const completion = vi.hoisted(() => ({ rows: new Map<string, Record<string, unknown>>(), resume: vi.fn(), eligibility: vi.fn() }));
 const effects = { notifications: [] as any[], ownerWaSent: false, savedCardOffered: false };
 function resetEffects() { effects.notifications = []; effects.ownerWaSent = false; effects.savedCardOffered = false; }
 
 // ── Distinct sender mocks ──
-const sharedSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
-const dedicatedSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
-const embeddedSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
-const senderA = { sendText: vi.fn().mockResolvedValue({ success: true }) };
-const senderB = { sendText: vi.fn().mockResolvedValue({ success: true }) };
+const sharedSender = { sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-confirmation' }) };
+const dedicatedSender = { sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-confirmation' }) };
+const embeddedSender = { sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-confirmation' }) };
+const senderA = { sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-confirmation' }) };
+const senderB = { sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-confirmation' }) };
 const mockResolveByChForBiz = vi.fn();
 const mockResolveByBiz = vi.fn();
 const mockSendEmail = vi.fn();
@@ -38,7 +39,26 @@ vi.mock('@/lib/email/templates', () => ({ businessNotificationEmail: () => ({ su
 vi.mock('@/lib/bot/flows/shared/notifications', () => ({ createNotification: vi.fn(async (_s: any, o: any) => { effects.notifications.push(o); }) }));
 vi.mock('@/lib/bot/flows/shared/notify-owner', () => ({ notifyOwnerNewOrder: vi.fn(async () => { effects.ownerWaSent = true; }), notifyOwnerNewPayment: vi.fn(async () => { effects.ownerWaSent = true; }), notifyOwnerNewBooking: vi.fn(async () => { effects.ownerWaSent = true; }), notifyOwnerNewInvoicePayment: vi.fn(), notifyOwnerNewDonation: vi.fn() }));
 vi.mock('@/lib/bot/flows/shared/post-completion', () => ({ handlePostCompletion: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('@/lib/payments/saved-card-offer', () => ({ checkAndOfferSavedCard: vi.fn(async () => { effects.savedCardOffered = true; }), retryPendingSavedCardOffer: vi.fn() }));
+// Keep the real paid continuation gateway dispatch; isolate only its durable coordinator and provider-offer boundary.
+vi.mock('@/lib/bot/transaction-followups', () => ({
+  startTransactionFollowup: vi.fn(async (_db, input) => {
+    completion.rows.set(input.paymentId, { business_id: input.businessId, phone: input.phone,
+      channel_id: input.channelId, state: 'waiting_card' });
+  }),
+  claimTransactionCardStep: vi.fn(async (_db, paymentId) => {
+    const row = completion.rows.get(paymentId);
+    if (!row) return false;
+    row.state = 'card_active';
+    return true;
+  }),
+  resumeTransactionFollowupForPayment: completion.resume,
+}));
+vi.mock('@/lib/payments/saved-card-offer', () => ({
+  checkAndOfferSavedCard: vi.fn(async () => { effects.savedCardOffered = true; }),
+  checkSavedCardOfferEligibility: completion.eligibility,
+  checkStripeConsentAndOffer: vi.fn().mockResolvedValue('skipped'),
+  retryPendingSavedCardOffer: vi.fn(),
+}));
 vi.mock('@/lib/payments/recurring-offer', () => ({ checkAndOfferRecurring: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/capabilities/service', () => ({ getEnabledCapabilities: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/lib/observability', () => ({ observe: (_n: string, fn: () => unknown) => fn(), observeProvider: vi.fn() }));
@@ -64,10 +84,15 @@ function mockSb(
   const authorityVersion = opts.authorityVersion === undefined ? 1 : opts.authorityVersion;
   // Track initialized effects so reserve_terminal_effect can return effect_not_in_manifest
   let initializedEffects: string[] = [];
+  let confirmationFinalized = false;
+  let confirmationAccepted = false;
 
   return {
     from: vi.fn((t: string) => {
-      if (t === 'payments') return chain({ id: payId, gateway, metadata, payment_authority_version: authorityVersion });
+      if (t === 'payments') return chain({ id: payId, business_id: 'b1', status: 'success', gateway, metadata,
+        confirmation_sent_at: confirmationFinalized ? '2026-11-11T12:00:00Z' : null, payment_authority_version: authorityVersion });
+      if (t === 'transaction_followups') return chain(completion.rows.get(payId) || null);
+      if (t === 'payment_confirmation_deliveries') return chain(confirmationAccepted ? { id: 'accepted-confirmation' } : null);
       if (t === 'orders') return chain({ delivery_phone: '+234900', reference_code: 'ORD-T', business_id: 'b1', delivery_name: 'Cust', businesses: { name: 'Biz', country_code: 'NG' } });
       if (t === 'businesses') return chain({ id: 'b1', name: 'Biz', country_code: 'NG', owner_id: 'own-1', metadata: {} });
       if (t === 'profiles') return chain({ email: 'own@t.com' });
@@ -96,11 +121,11 @@ function mockSb(
       if (name === 'mark_effect_indeterminate') return { data: { marked: true }, error: null };
       if (name === 'skip_optional_effect') return { data: { skipped: true }, error: null };
       if (name === 'seal_terminal_manifest') return { data: { sealed: true }, error: null };
-      if (name === 'finalize_payment_confirmation') return { data: { finalized: true }, error: null };
+      if (name === 'finalize_payment_confirmation') { confirmationFinalized = true; return { data: { finalized: true }, error: null }; }
       if (name === 'renew_confirmation_claim' || name === 'renew_payment_confirmation_claim') return { data: { renewed: true }, error: null };
       if (name === 'claim_confirmation_delivery') return { data: { claimed: true, attempt_id: 'att-1', claim_token: 'dct-1' }, error: null };
       if (name === 'begin_confirmation_send') return { data: { authorized: true }, error: null };
-      if (name === 'complete_confirmation_send') return { data: { completed: true }, error: null };
+      if (name === 'complete_confirmation_send') { confirmationAccepted = true; return { data: { completed: true }, error: null }; }
       if (name === 'recover_wamid_attachment') return { data: null, error: null };
       if (name === 'terminate_payment_confirmation') return { data: { terminated: true }, error: null };
       return { data: null, error: null };
@@ -110,6 +135,9 @@ function mockSb(
 
 beforeEach(() => {
   resetEffects();
+  completion.rows.clear();
+  completion.resume.mockReset();
+  completion.eligibility.mockReset().mockResolvedValue({ eligible: true, offerType: 'save' });
   // Clear call counts but preserve implementations
   [sharedSender.sendText, dedicatedSender.sendText, embeddedSender.sendText, senderA.sendText, senderB.sendText].forEach(s => s.mockClear());
   mockResolveByChForBiz.mockClear();
@@ -325,6 +353,7 @@ describe('Stage3 direct transfer effect suppression', () => {
 
     // ZERO SaveCard
     expect(effects.savedCardOffered).toBe(false);
+    expect(completion.eligibility).not.toHaveBeenCalled();
 
     // Manifest verification: no receipt/loyalty/owner
     const initCall = (sb.rpc as any).mock.calls.find((c: any) => c[0] === 'initialize_terminal_effects');
@@ -360,5 +389,7 @@ describe('Stage3 direct transfer effect suppression', () => {
 
     expect(result.status).toBe('completed');
     expect(effects.savedCardOffered).toBe(true);
+    expect(completion.eligibility).toHaveBeenCalledWith(sb, 'p-pay', '+234900', 'b1');
+    expect((sb.rpc as any).mock.calls.some((c: any) => c[0] === 'finalize_payment_confirmation')).toBe(true);
   });
 });

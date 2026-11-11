@@ -15,6 +15,20 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Isolate durable follow-up delivery from this confirmation/recipient contract.
+const completionFollowup = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  release: vi.fn().mockResolvedValue(undefined),
+  resume: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/bot/transaction-followups', () => ({
+  startTransactionFollowup: completionFollowup.start,
+  releaseTransactionFollowupAfterConfirmation: completionFollowup.release,
+}));
+vi.mock('@/lib/payments/transaction-followup', () => ({
+  resumePaidTransactionFollowup: completionFollowup.resume,
+}));
+
 // ── Static dependency mocks ──
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 
@@ -291,6 +305,11 @@ describe('#167 GIVING-LOYALTY-GAP: skipLoyalty classifier', () => {
     const result = await sendProactiveConfirmation(supabase as never, BOOKING_PAYMENT);
 
     expect(result.status).toBe('completed');
+    expect(completionFollowup.start).toHaveBeenCalledWith(supabase, expect.objectContaining({
+      completionKey: 'payment:p1', paymentId: 'p1', businessId: 'biz-1', phone: '+2341234567890',
+      channelId: 'ch-dedicated', waitForCard: true,
+    }));
+    expect(completionFollowup.resume).toHaveBeenCalledWith(supabase, 'p1');
     const args = await getPostCompletionArgs();
     expect(args).toBeDefined();
     expect(args.skipLoyalty).toBe(false);

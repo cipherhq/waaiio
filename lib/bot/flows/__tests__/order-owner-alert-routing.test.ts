@@ -13,6 +13,20 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Isolate durable follow-up delivery from this confirmation/recipient contract.
+const completionFollowup = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  release: vi.fn().mockResolvedValue(undefined),
+  resume: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/bot/transaction-followups', () => ({
+  startTransactionFollowup: completionFollowup.start,
+  releaseTransactionFollowupAfterConfirmation: completionFollowup.release,
+}));
+vi.mock('@/lib/payments/transaction-followup', () => ({
+  resumePaidTransactionFollowup: completionFollowup.resume,
+}));
+
 // ── Boundary mocks ──
 
 const mockGetSavedMethods = vi.fn().mockResolvedValue([]);
@@ -291,6 +305,7 @@ describe('Owner new-order alert — online orders alert only after payment (Owne
 
     // Customer got the online payment link
     expect(JSON.stringify(msgs)).toContain('https://pay.test/xyz');
+    expect(completionFollowup.start).not.toHaveBeenCalled();
     expect(mockNotifyOwnerNewOrder).not.toHaveBeenCalled();
 
     // Payment succeeds → the existing post-payment confirmation sends the alert
@@ -300,6 +315,8 @@ describe('Owner new-order alert — online orders alert only after payment (Owne
       { id: 'p1', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null, order_id: ORDER_ID },
     );
     expect(result.status).toBe('completed');
+    expect(completionFollowup.start).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ completionKey: 'payment:p1', paymentId: 'p1', waitForCard: true }));
+    expect(completionFollowup.resume).toHaveBeenCalledWith(expect.anything(), 'p1');
     expect(mockNotifyOwnerNewOrder).toHaveBeenCalledTimes(1);
     expect(mockNotifyOwnerNewOrder.mock.calls[0][0]).toMatchObject({ referenceCode: ORDER_REF, totalAmount: 5000 });
     expect(mockNotifyOwnerNewOrder.mock.calls[0][0].paymentPending).toBeFalsy();
@@ -345,7 +362,17 @@ describe('Owner new-order alert — online orders alert only after payment (Owne
   it('zero-total order: alert at creation, not awaiting payment', async () => {
     onlineOnly();
     const sd = newOrderSession(0);
-    await step.prompt(flowCtx(orderingSupabase(), sd));
+    const db = orderingSupabase();
+    const messages = await step.prompt(flowCtx(db, sd));
+    expect(completionFollowup.start).toHaveBeenCalledWith(db, expect.objectContaining({
+      completionKey: `order:${ORDER_ID}`, businessId: 'biz-1', phone: '+2348012345678',
+      channelId: 'channel-test', awaitingConfirmation: true,
+    }));
+    expect(completionFollowup.release).not.toHaveBeenCalled();
+    const callback = (messages.at(-1) as { _afterSend?: () => Promise<void> })._afterSend;
+    expect(callback).toEqual(expect.any(Function));
+    await callback!();
+    expect(completionFollowup.release).toHaveBeenCalledWith(db, 'biz-1', `order:${ORDER_ID}`);
 
     expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockNotifyOwnerNewOrder).toHaveBeenCalledTimes(1);
