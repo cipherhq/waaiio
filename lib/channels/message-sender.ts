@@ -179,6 +179,7 @@ export interface MessageSender {
     }>;
     footer?: string;
     messageCategory?: string;
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendButtons(msg: {
     to: string;
@@ -579,6 +580,7 @@ export class MetaCloudSender implements MessageSender {
     }>;
     footer?: string;
     messageCategory?: string;
+    noRetry?: boolean;
   }) {
     // Enforce WhatsApp API limits: title 24 chars, body 1024 chars, buttonLabel 20 chars, item title 24 chars, item description 72 chars
     const truncatedTitle = msg.title.length > 24 ? msg.title.slice(0, 21) + '...' : msg.title;
@@ -603,14 +605,15 @@ export class MetaCloudSender implements MessageSender {
           })),
         }];
 
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendList({
+    const listCall = () => this.withAttemptAndGuard(() => this.cloud.sendList({
       to: msg.to,
       headerText: truncatedTitle,
       bodyText: truncatedBody,
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttonText: truncatedButtonLabel,
       sections,
-    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory });
+    const result = msg.noRetry ? await listCall() : await withRetry(listCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 

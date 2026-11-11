@@ -6,7 +6,6 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
-import { updatesOptInRowFor } from '@/lib/bot/customer-updates-optin';
 import { paymentNextStepsMenuSent } from '@/lib/payments/next-steps-menu';
 import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
@@ -896,7 +895,8 @@ export class FlowExecutor {
       // Check if successful completion (not cancellation) — show "What's next?" menu
       const sd = session.session_data;
       const isCancellation = sd._action === 'cancel' || sd._action === 'cancelled'
-        || sd.cancelled === true || sd._action === 'cart_empty';
+        || sd.cancelled === true || sd._action === 'cart_empty'
+        || sd._queue_cancelled === true || sd.waitlist_action === 'decline';
       // ACC-008: Payment-pending sessions must not trigger post-completion menu.
       // A session with an initialized payment reference that hasn't been confirmed
       // is still awaiting payment — it has not successfully completed.
@@ -906,12 +906,9 @@ export class FlowExecutor {
       const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
-        // The payment confirmation (Stage 3) sends its own next-steps menu once it
-        // is accepted. When that happened during this request (an "I've Paid" tap
-        // ran Stage 3 synchronously), end the session instead of sending a second
-        // menu. A confirmation sent earlier by the webhook does not count: this tap
-        // still gets the chat menu.
-        if (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd, new Date(_ft0).toISOString())) {
+        // Explicit successful completion hooks own card/opt-in/menu sequencing.
+        // Do not produce another menu while that durable chain waits for input.
+        if (sd._transaction_followup_key || (isPaymentConfirmed && await paymentNextStepsMenuSent(this.supabase, session.business_id, sd, new Date(_ft0).toISOString()))) {
           // Version-checked like the menu path: if another message already moved
           // this session on (e.g. the save-card PIN step), leave it alone.
           if (await this.casUpdateSession(session, { current_step: 'complete', session_data: sd })) {
@@ -1356,24 +1353,14 @@ export class FlowExecutor {
       buttons = [{ id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
         { id: 'history', title: 'Payment history' }];
     }
-    // Owner decision 2026-11-06: one tap to get offers and updates from this
-    // business (and Waaiio), shown only until the customer agrees and never
-    // after they unsubscribed. WhatsApp allows 3 buttons and buttons have no
-    // description, so when offered the menu is a list with the opt-in on top.
-    const optInRow = await updatesOptInRowFor(this.supabase, {
-      phone: from, lang: cl, source: 'menu', business: ctx.business,
-    });
     const listItems = [
-      ...(optInRow ? [optInRow] : []),
       ...[...buttons, ...(shared ? [DIRECTORY_ACTION] : [])].map(b => ({ title: b.title, postbackText: b.id })),
     ];
-    const postCompletionMsg: PromptMessage = shared || optInRow
+    const postCompletionMsg: PromptMessage = shared
       ? { type: 'list', title: getFlowCopy(cl, 'menu.title'), body: bodyText,
         buttonLabel: getFlowCopy(cl, 'nav.view_options'),
         items: listItems,
-        // The opt-in line must keep naming the business and Waaiio after translation.
-        // When the list replaces the buttons, its option titles are Waaiio's own labels and translate like the buttons did.
-        ...(optInRow && ctx.business?.name ? { _localization: { protectedValues: [ctx.business.name, 'Waaiio'], waaiioOwnedItemTitles: !shared } } : {}) }
+      }
       : { type: 'buttons', body: bodyText, buttons };
     const shouldTranslate = lang && lang !== 'en';
     const localizedMsg = shouldTranslate

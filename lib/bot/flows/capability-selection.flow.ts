@@ -462,6 +462,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // Handle "My Account" selection
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
       ctx.session.session_data.active_capability = 'my_account';
+      delete ctx.session.session_data._transaction_followup_key;
       // Clean up pagination state — My Account exits the paginated menu
       delete ctx.session.session_data._cap_menu_page;
       delete ctx.session.session_data._cap_menu_total_pages;
@@ -560,6 +561,12 @@ const selectCapabilityStep: FlowStepConfig = {
 
       return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
+
+    // A genuine new selection starts a new interaction, even when the customer
+    // selects the same capability again. Prior completion ownership must not
+    // suppress this interaction's terminal navigation. Pagination/rejections
+    // return above and keep their existing ownership.
+    delete ctx.session.session_data._transaction_followup_key;
 
     // Clear stale transactional state BEFORE entity extraction (P2-3).
     // Must run first so cleanup removes the PREVIOUS capability's data,

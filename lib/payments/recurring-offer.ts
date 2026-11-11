@@ -24,18 +24,24 @@ interface PaymentForRecurring {
   booking_id: string | null;
 }
 
-/**
- * Check eligibility and offer recurring setup after payment finalization.
- * ALL errors are caught — this NEVER affects the caller's return value.
- */
-export async function checkAndOfferRecurring(
+export interface PreparedRecurringOffer {
+  id: string;
+  title: string;
+  description: string;
+  intentId: string;
+  amount: number;
+  countryCode: CountryCode;
+  businessName: string;
+}
+
+/** Prepare the existing eligible offer without sending a competing prompt. */
+export async function prepareRecurringOffer(
   supabase: SupabaseClient,
   payment: PaymentForRecurring,
   businessId: string | null,
-  sender: MessageSender | null,
   customerPhone: string | null,
   logPrefix: string,
-): Promise<void> {
+): Promise<PreparedRecurringOffer | undefined> {
   if (!businessId || !customerPhone || !payment.booking_id) {
     return;
   }
@@ -207,33 +213,41 @@ export async function checkAndOfferRecurring(
 
     const result = offerResult as Record<string, unknown>;
 
-    if (result.created) {
-      // New intent created — send CTA
-      const intentId = result.intent_id as string;
-      await sendRecurringOfferCTA(
-        supabase, sender, customerPhone, intentId,
-        payment.amount, countryCode, business.name, logPrefix,
-      );
-    } else if (result.reason === 'already_exists') {
-      // Existing intent — check if re-sendable
-      const status = result.status as string;
-      const expired = result.expired as boolean;
-      const intentId = result.intent_id as string;
-
-      if (status === 'offered' && !expired && intentId) {
-        // Re-send CTA for non-expired offered intent
-        await sendRecurringOfferCTA(
-          supabase, sender, customerPhone, intentId,
-          payment.amount, countryCode, business.name, logPrefix,
-        );
-      }
-      // Terminal statuses (active, declined, expired, setup_failed) — skip silently
+    const intentId = result.intent_id as string | undefined;
+    const offerable = result.created || (result.reason === 'already_exists'
+      && result.status === 'offered' && !result.expired);
+    if (offerable && intentId) {
+      return {
+        id: `recurring_setup:${intentId}`,
+        title: 'Set Up Recurring',
+        description: `${formatCurrency(payment.amount, countryCode)} · ${business.name}`.slice(0, 72),
+        intentId,
+        amount: payment.amount,
+        countryCode,
+        businessName: business.name,
+      };
     }
+    // Terminal statuses (active, declined, expired, setup_failed) stay silent.
   } catch (err) {
     // NEVER affects payment finalization
     logger.withContext({ op: 'recurring-offer.check' })
       .error(`${logPrefix} recurring offer error: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** Legacy entry point retained for callers outside transaction follow-ups. */
+export async function checkAndOfferRecurring(
+  supabase: SupabaseClient,
+  payment: PaymentForRecurring,
+  businessId: string | null,
+  sender: MessageSender | null,
+  customerPhone: string | null,
+  logPrefix: string,
+): Promise<void> {
+  const offer = await prepareRecurringOffer(supabase, payment, businessId, customerPhone, logPrefix);
+  if (!offer || !customerPhone) return;
+  await sendRecurringOfferCTA(supabase, sender, customerPhone, offer.intentId,
+    offer.amount, offer.countryCode, offer.businessName, logPrefix);
 }
 
 /** Send the WhatsApp CTA buttons for recurring setup. */

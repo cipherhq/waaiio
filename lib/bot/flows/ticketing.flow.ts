@@ -1,3 +1,4 @@
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
@@ -869,6 +870,7 @@ export const ticketingFlow: FlowDefinition = {
 
         return [{
           type: 'text',
+          _afterSend: await prepareFreeCompletion(ctx, { completionKey: `booking:${booking.id}`, kind: 'ticketing' }),
           text: getTicketConfirmationMessage({
             eventName: d.event_name as string,
             dateLabel,

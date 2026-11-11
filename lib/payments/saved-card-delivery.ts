@@ -235,6 +235,12 @@ export async function processSavedCardConfirmationRecovery(
       });
 
       if (confirmOutcome === 'delivered') {
+        const { data: offer } = await supabase.from('payment_saved_card_offers')
+          .select('payment_id').eq('id', offerId).eq('business_id', businessId).maybeSingle();
+        if (offer?.payment_id) {
+          const { finishTransactionCardStep } = await import('./transaction-followup');
+          await finishTransactionCardStep(supabase, offer.payment_id, canonPhone, businessId);
+        }
         recovered++;
         logger.info('[CONFIRMATION-RECOVERY] Confirmation delivered', { offerId, customerPhone });
       } else {

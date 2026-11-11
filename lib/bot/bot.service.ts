@@ -207,6 +207,19 @@ export class BotService {
     );
     if (launchHandled) return;
 
+    // Transaction continuation IDs carry durable business/phone/channel authority.
+    if (text.startsWith('txupdates_')) {
+      const { handleTransactionFollowupTap } = await import('@/lib/bot/transaction-followups');
+      if (await handleTransactionFollowupTap(this.supabase, {
+        from, text, messageType, destinationPhone, channelBusinessId: preResolvedBusinessId,
+      })) return;
+    }
+
+    if (/^(hi|hello|menu|directory)$/i.test(text.trim())) {
+      const { dismissTransactionFollowups } = await import('@/lib/bot/transaction-followups');
+      await dismissTransactionFollowups(this.supabase, { from, destinationPhone });
+    }
+
     // Customer updates opt-in tap (Owner decision 2026-11-06). Handled here so the
     // tap works whatever state the chat is in; it never touches the session, so
     // the menu the customer is on keeps working.
@@ -3607,7 +3620,7 @@ export class BotService {
     // ── #165: Recurring setup/decline button interceptor ──
     // Handles recurring_setup:{intentId}, recurring_decline:{intentId},
     // recurring_freq:{frequency}:{intentId}, recurring_consent:{action}:{intentId}
-    if (messageType === 'button' && session.business_id && (
+    if ((messageType === 'button' || (messageType === 'list' && text.startsWith('recurring_setup:'))) && session.business_id && (
       text.startsWith('recurring_setup:') || text.startsWith('recurring_decline:') ||
       text.startsWith('recurring_freq:') || text.startsWith('recurring_consent:')
     )) {

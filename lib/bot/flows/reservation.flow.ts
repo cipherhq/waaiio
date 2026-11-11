@@ -1,3 +1,4 @@
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
@@ -1215,7 +1216,7 @@ export const reservationFlow: FlowDefinition = {
             amount: payableAmount > 0 ? payableAmount : undefined,
           }).catch(err => logger.withContext({ op: 'reservation.free-notify', ...safeLogErrorContext(err) }).error('[RESERVATION] Notify error'));
 
-          handlePostCompletion({
+          await handlePostCompletion({
             supabase: ctx.supabase,
             businessId: ctx.business.id,
             customerPhone: ctx.from,
@@ -1238,6 +1239,7 @@ export const reservationFlow: FlowDefinition = {
 
         return [{
           type: 'text',
+          _afterSend: await prepareFreeCompletion(ctx, { completionKey: `reservation:${reservation.id}`, kind: 'reservation' }),
           text: [
             `✅ *Reservation Confirmed!*`,
             '',
@@ -1250,11 +1252,6 @@ export const reservationFlow: FlowDefinition = {
             'See you soon!',
             resCalLinks ? resCalLinks : null,
             '',
-            '💡 *What you can do:*',
-            '• Type *my bookings* to view your reservations',
-            '• Type *reschedule* to change dates',
-            '• Type *cancel* to cancel this reservation',
-            '• Type *receipt* to get your receipt',
             ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
           ].filter(Boolean).join('\n'),
         }];

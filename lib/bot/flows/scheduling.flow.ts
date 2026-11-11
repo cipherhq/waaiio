@@ -1,5 +1,5 @@
 import { quoteBookingTax, isTaxTermsChanged, isSafePurchaseAmount } from '@/lib/tax/server-quote';
-import { isSharedConversation, transactionNextSteps } from './shared/navigation';
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, getStaffDaySchedule, isStaffAvailable, type CountryCode } from '@/lib/constants';
@@ -3694,9 +3694,10 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         // Use persisted authority on create, response-loss recovery and payment retry.
+        let confirmedBooking = false;
         if (!d._is_table_reservation) {
           const { data: committed, error: committedError } = await ctx.supabase.from('bookings')
-            .select('id, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id, tax_snapshot')
+            .select('id, status, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id, tax_snapshot')
             .eq('id', booking.id).eq('business_id', ctx.business!.id)
             .eq('user_id', userId).eq('bot_session_id', ctx.session.id)
             .in('status', ['pending', 'confirmed', 'in_progress']).single();
@@ -3715,6 +3716,7 @@ export const schedulingFlow: FlowDefinition = {
           totalDeposit = committedDeposit;
           bookingTotalAmount = committedTotal;
           d._tax_snapshot = committed.tax_snapshot ?? null;
+          confirmedBooking = committed.status === 'confirmed';
         }
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
@@ -3738,7 +3740,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (isNewBooking) {
-          // ── Fire booking_created rules + sequences (non-blocking) ──
+          // Await immediate customer rule messages before completion follow-ups.
           if (ctx.business) {
             const ruleCtx = {
               customer_phone: ctx.from,
@@ -3755,7 +3757,7 @@ export const schedulingFlow: FlowDefinition = {
             const sendMsg = async (to: string, txt: string) => {
               await ctx.sender.sendText({ to, text: txt });
             };
-            evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
+            await evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
               .catch(err => logger.withContext({ op: 'scheduling.booking-rule', ...safeLogErrorContext(err) }).error('[SCHEDULING] booking_created rule error'));
             triggerSequences(ctx.supabase, ctx.business.id, 'after_booking', ctx.from, ruleCtx)
               .catch(err => logger.withContext({ op: 'scheduling.after-booking-sequence', ...safeLogErrorContext(err) }).error('[SCHEDULING] after_booking sequence error'));
@@ -4095,7 +4097,7 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           // Post-completion: loyalty, feedback, referral, auto-receipt
-          handlePostCompletion({
+          await handlePostCompletion({
             supabase: ctx.supabase,
             businessId: ctx.business.id,
             customerPhone: ctx.from,
@@ -4108,23 +4110,6 @@ export const schedulingFlow: FlowDefinition = {
             referenceCode: booking.reference_code,
           }).catch(err => logger.withContext({ op: 'scheduling.post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] Post-completion error'));
         }
-
-        // Add helpful tips about what customer can do next
-        const tips = [
-          'Type *my bookings* to view your appointments',
-          'Type *reschedule* to change the date/time',
-          'Type *cancel* to cancel this booking',
-        ];
-        if (ctx.business) {
-          try {
-            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
-            const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
-            if (caps.includes('loyalty')) tips.push('Type *my points* to check your loyalty balance');
-            if (caps.includes('referral')) tips.push('Type *refer* to invite friends and earn rewards');
-            if (caps.includes('ordering')) tips.push('Type *order* to place an order');
-          } catch (err) { logger.withContext({ op: 'scheduling.capabilities-tips', ...safeLogErrorContext(err) }).warn('[SCHEDULING] Failed to load capabilities for tips'); }
-        }
-        const helpText = `\n\n💡 *What you can do:*\n${tips.map(t => `• ${t}`).join('\n')}`;
 
         // Sync to Google Calendar (non-blocking)
         if (ctx.business) {
@@ -4155,19 +4140,29 @@ export const schedulingFlow: FlowDefinition = {
           durationMinutes: (d.service_duration as number) || 60,
         }) : '';
 
-        const navigation = transactionNextSteps('appointment', await isSharedConversation(ctx.supabase, d));
         // After-booking intake (#963): only for a confirmed booking (pending ones wait for
         // approval). It goes before the next-steps menu, which must stay last.
         const intake = await deliverAfterBookingIntake(ctx.supabase, booking.id, { prepareOnly: true });
         const intakeBlock = intake.status === 'prepared' ? '\n\n' + intake.text : '';
+        // Read the table booking too: only durable confirmed state may trigger
+        // follow-ups, never pending approval or stale session configuration.
+        if (d._is_table_reservation) {
+          const { data: tableBooking, error: statusError } = await ctx.supabase.from('bookings')
+            .select('status').eq('id', booking.id).eq('business_id', ctx.business!.id)
+            .eq('bot_session_id', ctx.session.id).single();
+          confirmedBooking = !statusError && tableBooking?.status === 'confirmed';
+        }
+        const finalizeIntake = intake.status === 'prepared' ? intake.finalize : undefined;
+        const completion = confirmedBooking ? await prepareFreeCompletion(ctx, {
+          completionKey: `booking:${booking.id}`, kind: 'appointment', afterSend: finalizeIntake,
+        }) : undefined;
         return [{
           type: 'text',
-          text: message + calendarLinks + helpText + intakeBlock + '\n\n' + navigation,
+          text: message + calendarLinks + intakeBlock,
+          _afterSend: completion ?? finalizeIntake,
           ...(intake.status === 'prepared'
             ? {
                 _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) },
-                // The intake is saved only once this reply reaches WhatsApp.
-                _afterSend: intake.finalize,
               }
             : {}),
         }];

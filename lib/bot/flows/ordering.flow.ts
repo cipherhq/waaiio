@@ -1,6 +1,6 @@
 import { quoteOrderTax, isTaxTermsChanged } from '@/lib/tax/server-quote';
 import type { TaxSnapshot } from '@/lib/tax/calculation';
-import { isSharedConversation, transactionNextSteps } from './shared/navigation';
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
@@ -3033,7 +3033,7 @@ export const orderingFlow: FlowDefinition = {
             .eq('id', d.referral_id as string);
         }
 
-        // ── Fire order_created rules + sequences (non-blocking) ──
+        // Await immediate rule replies before presenting completion follow-ups.
         if (ctx.business) {
           const orderRuleCtx = {
             customer_phone: ctx.from,
@@ -3050,7 +3050,7 @@ export const orderingFlow: FlowDefinition = {
           };
           // R2 Blocker 3: Guard creation-only side effects with authoritative freshlyCreated
           if (freshlyCreated) {
-            evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
+            await evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
               .catch(err => logger.error('[ORDERING] order_created rule error:', err));
             triggerSequences(ctx.supabase, ctx.business.id, 'after_order', ctx.from, orderRuleCtx)
               .catch(err => logger.error('[ORDERING] after_order sequence error:', err));
@@ -3337,7 +3337,7 @@ export const orderingFlow: FlowDefinition = {
 
         // Post-completion: loyalty, feedback, referral
         if (ctx.business) {
-          handlePostCompletion({
+          await handlePostCompletion({
             supabase: ctx.supabase,
             businessId: ctx.business.id,
             customerPhone: ctx.from,
@@ -3351,12 +3351,11 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
         }
 
-        const orderTips = getFlowCopy(ctx.copyLang, 'ordering.free_order_tips');
-        const navigation = transactionNextSteps('ordering', await isSharedConversation(ctx.supabase, d));
 
         return [
           {
             type: 'text',
+            _afterSend: freeStockErr ? undefined : await prepareFreeCompletion(ctx, { completionKey: `order:${order.id}`, kind: 'ordering' }),
             text: getOrderConfirmationMessage({
               countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
               businessName: ctx.business?.name || 'Shop',
@@ -3371,14 +3370,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               subscriptionTier: ctx.business?.subscription_tier,
               lang: ctx.copyLang,
-            }) + orderTips + '\n\n' + navigation,
-          },
-          {
-            type: 'buttons',
-            body: getFlowCopy(ctx.copyLang, 'ordering.track_prompt'),
-            buttons: [
-              { id: 'track_my_order', title: getFlowCopy(ctx.copyLang, 'ordering.track_order') },
-            ],
+            }),
           },
         ];
       },

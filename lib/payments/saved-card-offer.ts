@@ -369,6 +369,16 @@ export async function handleSavedCardOfferAction(
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
 
+  const { data: followup, error: followupError } = await supabase.from('transaction_followups')
+    .select('business_id,state').eq('payment_id', paymentId).eq('phone', canonPhone).maybeSingle();
+  if (followupError) return;
+  if (followup && session?.business_id && followup.business_id !== session.business_id) return;
+  if (followup && !['waiting_card', 'card_active'].includes(followup.state)) {
+    const { resumePaidTransactionFollowup } = await import('./transaction-followup');
+    await resumePaidTransactionFollowup(supabase, paymentId);
+    return;
+  }
+
   if (action === 'save_decline' || action === 'replace_decline') {
     // D4: Atomic decline via RPC with expected offer type binding
     const expectedDeclineType = action === 'save_decline' ? 'save' : 'replace';
@@ -384,7 +394,11 @@ export async function handleSavedCardOfferAction(
       case 'transitioned':
       case 'already_declined':
         // Send decline confirmation with navigation buttons
-        await sendDeclineConfirmation(supabase, sendText, sendButtons, from, session, action, paymentId, canonPhone, bindBusiness);
+        await sendDeclineConfirmation(supabase, sendText, followup ? undefined : sendButtons, from, session, action, paymentId, canonPhone, bindBusiness);
+        if (followup) {
+          const { finishTransactionCardStep } = await import('./transaction-followup');
+          await finishTransactionCardStep(supabase, paymentId, from, followup.business_id);
+        }
         return;
       case 'wrong_customer':
         await sendText(from, 'This offer is not for your account.');
@@ -504,6 +518,14 @@ export async function startSavedCardFromPaymentId(
   }
 
   const existing = existingMethods?.[0] || null;
+  // Preserve the exact accepted offer so the existing durable card acknowledgment
+  // and recovery path can release this transaction's continuation after delivery.
+  const { data: sourceOffer, error: sourceOfferError } = await supabase.from('payment_saved_card_offers')
+    .select('id,channel_id,state').eq('payment_id', paymentId).eq('business_id', businessId)
+    .eq('customer_phone', canonPhone).maybeSingle();
+  if (sourceOfferError) { await sendText(from, 'Could not check card setup. Please try again.'); return; }
+  const acceptedOffer = sourceOffer?.state === 'accepted' ? sourceOffer : null;
+
 
   if (!existing) {
     // K3: Directly establish save_card_pin using THIS payment ID
@@ -513,6 +535,9 @@ export async function startSavedCardFromPaymentId(
       _save_card_gateway: 'paystack',
       _save_card_auth: auth,
       _save_card_payment_id: paymentId,
+      _save_card_offer_id: acceptedOffer?.id || null,
+      _replace_offer_id: null,
+      _saved_card_channel_id: acceptedOffer?.channel_id || null,
     };
 
     // D3: Establish session for PIN creation — rebind to exact source-payment business
@@ -547,6 +572,8 @@ export async function startSavedCardFromPaymentId(
 
   if (existing.authorization_code === (auth.authorization_code as string)) {
     await sendText(from, 'Your saved card is already up to date.');
+    const { finishTransactionCardStep } = await import('./transaction-followup');
+    await finishTransactionCardStep(supabase, paymentId, from, businessId);
     return;
   }
 
@@ -559,6 +586,9 @@ export async function startSavedCardFromPaymentId(
   const replaceData = {
     _replace_method_id: existing.id,
     _replace_payment_id: paymentId,
+    _replace_offer_id: acceptedOffer?.id || null,
+    _save_card_offer_id: null,
+    _saved_card_channel_id: acceptedOffer?.channel_id || null,
     _replace_expected_state_hash: stateHash,
   };
 
@@ -606,11 +636,11 @@ export async function checkStripeConsentAndOffer(
   customerPhone: string,
   businessId: string,
   sender: { sendText: (opts: { to: string; text: string; messageCategory?: string }) => Promise<unknown> } | null,
-): Promise<void> {
+): Promise<'skipped' | 'pending' | 'retryable'> {
   const logPrefix = '[STRIPE-SAVED-CARD-OFFER]';
 
   const canonPhone = canonicalSavedCardPhone(customerPhone);
-  if (!canonPhone) return;
+  if (!canonPhone) return 'retryable';
 
   // K7: fail-closed payment read
   const { data: payment, error: payErr } = await supabase.from('payments')
@@ -618,28 +648,33 @@ export async function checkStripeConsentAndOffer(
     .eq('id', paymentId).single();
   if (payErr || !payment) {
     logger.error(`${logPrefix} Payment read failed`, { payErr });
-    return;
+    return 'retryable';
   }
-  if (payment.status !== 'success' || payment.gateway !== 'stripe') return;
-  if (payment.business_id !== businessId) return;
+  if (payment.status !== 'success' || payment.gateway !== 'stripe') return 'skipped';
+  if (payment.business_id !== businessId) return 'retryable';
 
   const meta = (payment.metadata || {}) as Record<string, unknown>;
-  if (meta.payment_origin === 'byo' || meta.payment_origin === 'connect') return;
+  if (meta.payment_origin === 'byo' || meta.payment_origin === 'connect') return 'skipped';
+
+  // The saved-payment adapter marks reuse on the canonical payment before
+  // dispatch. Its PaymentIntent has no Checkout save-card consent to extract:
+  // the card is already saved, so this completed payment needs no card setup.
+  if (meta.saved_method === true) return 'skipped';
 
   // Compatibility check
   const { isCompatibleForSavedCard } = await import('./saved-card-compat');
   const compat = await isCompatibleForSavedCard(supabase, businessId, 'stripe');
-  if (!compat.compatible) return;
+  if (!compat.compatible) return ['gateway_mismatch', 'stripe_connect_not_supported', 'stripe_byo_not_supported'].includes(compat.reason || '') ? 'skipped' : 'retryable';
 
   // Extract Stripe evidence
   const { extractStripeSavedCardEvidence } = await import('./stripe-saved-card');
   const evidence = await extractStripeSavedCardEvidence(payment.gateway_reference);
-  if (!evidence) return;
+  if (!evidence) return 'retryable';
 
   // Check consent: allow_redisplay=always means customer checked Save Card
   if (!evidence.consented) {
     logger.info(`${logPrefix} Customer did not consent to save card`, { paymentId });
-    return;
+    return 'skipped';
   }
 
   const cardLabel = `${(evidence.cardBrand || 'Card').toUpperCase()} ****${evidence.cardLast4}`;
@@ -658,29 +693,30 @@ export async function checkStripeConsentAndOffer(
 
   if (consentWriteErr) {
     logger.error(`${logPrefix} Consent evidence write failed — cannot proceed`, { consentWriteErr });
-    return;
+    return 'retryable';
   }
 
   // Step 2: Check for existing saved method
   const phoneN = canonPhone.slice(1);
-  const { data: existing } = await supabase.from('saved_payment_methods')
+  const { data: existing, error: existingError } = await supabase.from('saved_payment_methods')
     .select('id, stripe_payment_method_id')
     .in('customer_phone', [canonPhone, phoneN])
     .eq('is_active', true).eq('gateway', 'stripe').maybeSingle();
 
+  if (existingError) return 'retryable';
   const offerType = existing ? 'replace' : 'save';
   const isExactSameMethod = existing?.stripe_payment_method_id === evidence.paymentMethodId;
 
   if (isExactSameMethod) {
     logger.info(`${logPrefix} Same Stripe PM already saved — no action`, { paymentId });
-    return;
+    return 'skipped';
   }
 
   // Step 3: Exact originating channel from payment metadata (no business-current fallback)
   const channelId = (meta._inbound_channel_id as string) || null;
   if (!channelId) {
     logger.error(`${logPrefix} No _inbound_channel_id in payment metadata — fail closed`, { paymentId });
-    return;
+    return 'retryable';
   }
 
   // Step 4: Create provider-consented offer FIRST (before redisplay mutation)
@@ -696,9 +732,10 @@ export async function checkStripeConsentAndOffer(
     p_channel_id: channelId,
   });
 
-  if (!offerResult || (offerResult as Record<string, unknown>).already_exists) {
+  if (!offerResult) return 'retryable';
+  if ((offerResult as Record<string, unknown>).already_exists) {
     logger.info(`${logPrefix} Offer already exists for payment`, { paymentId });
-    return;
+    return 'pending';
   }
 
   const offerId = (offerResult as Record<string, unknown>).offer_id as string;
@@ -720,7 +757,7 @@ export async function checkStripeConsentAndOffer(
       source_offer_id: offerId,
     }).select().maybeSingle();
     // Do NOT proceed to PIN activation — fence not proven
-    return;
+    return 'retryable';
   }
 
   // Step 6: Establish bot session for PIN entry using normalized digits-only phone
@@ -753,11 +790,11 @@ export async function checkStripeConsentAndOffer(
     if (sessionErr || !sessionResult) {
       logger.error(`${logPrefix} establish_saved_card_session failed`, { sessionErr });
       // Offer stays 'accepted' — can be retried
-      return;
+      return 'retryable';
     }
   } catch (sessionErr) {
     logger.error(`${logPrefix} Session creation for PIN activation failed`, { sessionErr });
-    return;
+    return 'retryable';
   }
 
   // Step 7: Fenced activation delivery — claim then send via shared helper
@@ -768,12 +805,12 @@ export async function checkStripeConsentAndOffer(
 
     if (claimActivationErr) {
       logger.error(`${logPrefix} claim_exact_activation_delivery RPC error`, { offerId, claimActivationErr: claimActivationErr.message });
-      return;
+      return 'retryable';
     }
 
     if (!claimed) {
       logger.info(`${logPrefix} Activation claim failed — may already be claimed/sent`, { offerId });
-      return;
+      return 'retryable';
     }
 
     const activationClaimToken = (claimed as Record<string, unknown>).claim_token as string;
@@ -805,4 +842,5 @@ export async function checkStripeConsentAndOffer(
   } catch (sendErr) {
     logger.error(`${logPrefix} Activation delivery failed — offer stays accepted for recovery`, { sendErr, offerId, channelId });
   }
+  return 'pending';
 }
