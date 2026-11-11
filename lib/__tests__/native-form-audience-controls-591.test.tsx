@@ -33,7 +33,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe.each([['polls', PollsPage], ['surveys', SurveysPage]] as const)('%s consent audience', (resource, Page) => {
   it('offers consent-only numbers without a bot session or profile and sends only the selected API recipients', async () => {
     render(<Page />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
     expect(await screen.findByLabelText(phone)).toBeTruthy();
     expect(state.client).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledWith('/api/broadcasts/recipients?businessId=business-a', expect.objectContaining({ cache: 'no-store' }));
@@ -46,7 +46,7 @@ describe.each([['polls', PollsPage], ['surveys', SurveysPage]] as const)('%s con
   it('leaves sending disabled when contacts cannot be loaded', async () => {
     recipients = async () => Response.json({ error: 'Unavailable' }, { status: 503 });
     render(<Page />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Could not load opted-in contacts. Reopen Send to try again.');
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     expect((screen.getByRole('button', { name: 'Send to 0 contacts' }) as HTMLButtonElement).disabled).toBe(true);
@@ -55,7 +55,7 @@ describe.each([['polls', PollsPage], ['surveys', SurveysPage]] as const)('%s con
   it('does not invent recipients when nobody has eligible consent', async () => {
     recipients = async () => Response.json({ recipients: [], truncated: false });
     render(<Page />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
     expect(await screen.findByText(/No opted-in contacts yet/)).toBeTruthy();
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
@@ -65,14 +65,14 @@ describe.each([['polls', PollsPage], ['surveys', SurveysPage]] as const)('%s con
     recipients = url => url.endsWith('business-a') ? new Promise(resolve => { resolveOld = resolve; })
       : Promise.resolve(Response.json({ recipients: [], truncated: false }));
     const view = render(<Page />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
     await screen.findByText('Loading opted-in contacts…');
     const oldCall = request.mock.calls.find(([url]) => url.includes('broadcasts/recipients'))!;
     state.business = { ...state.business, id: 'business-b' };
     view.rerender(<Page />);
     await act(async () => { resolveOld(Response.json({ recipients: [{ phone, name: null }] })); });
     expect(oldCall[1].signal.aborted).toBe(true);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
     await screen.findByText(/No opted-in contacts yet/);
     expect(screen.queryByLabelText(phone)).toBeNull();
     expect((screen.getByRole('button', { name: 'Send to 0 contacts' }) as HTMLButtonElement).disabled).toBe(true);
@@ -82,7 +82,7 @@ describe.each([['polls', PollsPage], ['surveys', SurveysPage]] as const)('%s con
     const many = Array.from({ length: 501 }, (_, index) => ({ phone: `+1202555${String(index).padStart(4, '0')}`, name: null }));
     recipients = async () => Response.json({ recipients: many, truncated: true });
     render(<Page />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
     await screen.findByText(/This list is incomplete/);
     expect(screen.getAllByRole('checkbox')).toHaveLength(500);
     fireEvent.click(screen.getByRole('button', { name: 'Send to 500 contacts' }));
