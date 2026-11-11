@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createMemoryDb } from '../../__tests__/helpers/memory-db';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -16,7 +17,7 @@ vi.mock('@/lib/bot/customer-updates-optin', () => ({
 vi.mock('@/lib/payments/saved-card-delivery', () => ({ isProvenPreEmission: (e: { name: string }) => e?.name === 'GateBlockError' }));
 vi.mock('@/lib/payments/transaction-followup', () => ({ resumePaidTransactionFollowup: mocks.paid }));
 vi.mock('@/lib/payments/recurring-offer', () => ({ prepareRecurringOffer: mocks.recurring }));
-vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { claimTransactionCardStep, dismissTransactionFollowups, handleTransactionFollowupTap, paymentHasTransactionFollowup,
   recoverTransactionFollowups, releaseTransactionFollowupAfterConfirmation, resumeTransactionFollowupForPayment, startTransactionFollowup } from '../transaction-followups';
@@ -120,6 +121,41 @@ beforeEach(() => {
 });
 
 describe('durable transaction follow-up sequence', () => {
+  it('canonical completion consent creates the transport subscriber key that real STOP discovers and revokes', async () => {
+    const actual = await vi.importActual<typeof import('../customer-updates-optin')>('../customer-updates-optin');
+    mocks.record.mockImplementation(actual.recordUpdatesOptIn);
+    const state = database();
+    const transportPhone = phone.slice(1);
+    const consent = createMemoryDb({
+      businesses: [{ id: biz, name: 'Test business', subscription_tier: 'growth', is_whitelabel: false, country_code: 'NG' }],
+      bot_sessions: [{ id: 'contact', business_id: biz, whatsapp_number: transportPhone }],
+      customer_profiles: [], customer_consents: [], messaging_opt_outs: [], launch_subscribers: [],
+      whatsapp_channels: [{ id: channel, phone_number_id: 'pnid', channel_type: 'shared', is_active: true, country_code: 'NG' }],
+    });
+    const db = { from: (table: string) => table === 'transaction_followups'
+      ? state.db.from(table) : consent.from(table), rpc: state.rpc } as unknown as SupabaseClient;
+    await startTransactionFollowup(db, start());
+    const row = state.tables.transaction_followups[0];
+    expect(row.phone).toBe(phone);
+    await handleTransactionFollowupTap(db, tap(row.id, true, { from: transportPhone }));
+    expect(row.state).toBe('done');
+    expect(row.phone).toBe(phone);
+    expect(consent.tables.customer_consents).toHaveLength(2);
+    expect(consent.tables.customer_consents.every(r => r.phone === phone)).toBe(true);
+    expect(consent.tables.launch_subscribers).toEqual([expect.objectContaining({ wa_number: transportPhone, opt_in_status: 'active' })]);
+
+    // Use the actual STOP discovery and revocation methods; only unrelated merchant
+    // candidate discovery and outbound confirmation are isolated here.
+    const { BotService } = await import('../bot.service');
+    const bot = Object.create(BotService.prototype) as any;
+    bot.supabase = db;
+    bot._resolveStopCandidates = vi.fn().mockResolvedValue({ candidates: [], channelVerified: true });
+    bot.sendPlatformText = vi.fn().mockResolvedValue(undefined);
+    expect(await bot._handleStopRequest(transportPhone, undefined, 'pnid')).toBe(true);
+    expect(consent.tables.launch_subscribers[0]).toMatchObject({ wa_number: transportPhone, opt_in_status: 'opted_out', notification_status: 'skipped' });
+    expect(bot.sendPlatformText).toHaveBeenCalledWith(transportPhone, expect.stringContaining('unsubscribed'));
+  }, 60_000);
+
   it('persists free completion before its confirmation and does not advance before the after-send proof', async () => {
     const { db, tables } = database();
     await startTransactionFollowup(db, start({ awaitingConfirmation: true }));

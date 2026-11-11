@@ -656,6 +656,11 @@ export async function checkStripeConsentAndOffer(
   const meta = (payment.metadata || {}) as Record<string, unknown>;
   if (meta.payment_origin === 'byo' || meta.payment_origin === 'connect') return 'skipped';
 
+  // The saved-payment adapter marks reuse on the canonical payment before
+  // dispatch. Its PaymentIntent has no Checkout save-card consent to extract:
+  // the card is already saved, so this completed payment needs no card setup.
+  if (meta.saved_method === true) return 'skipped';
+
   // Compatibility check
   const { isCompatibleForSavedCard } = await import('./saved-card-compat');
   const compat = await isCompatibleForSavedCard(supabase, businessId, 'stripe');

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { canonicalSavedCardPhone } from '@/lib/payments/saved-card-compat';
+import { canonicalSavedCardPhone, savedCardSessionPhone } from '@/lib/payments/saved-card-compat';
 import { isProvenPreEmission } from '@/lib/payments/saved-card-delivery';
 import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
 import { prepareRecurringOffer } from '@/lib/payments/recurring-offer';
@@ -235,7 +235,7 @@ async function recordDecision(db: SupabaseClient, row: TransactionFollowupRow): 
     const resolved = await new ChannelResolver(db).resolveByChannelIdForBusiness(row.channel_id, row.business_id);
     if (!resolved) return;
     const result = await recordUpdatesOptIn(db, {
-      phone: row.phone, businessId: row.business_id, source: 'menu',
+      phone: savedCardSessionPhone(row.phone), businessId: row.business_id, source: 'menu',
       destinationPhone: resolved.channel.phone_number_id || undefined,
       channelBusinessId: resolved.channel.channel_type === 'dedicated' ? row.business_id : undefined,
       includesWaaiio: row.includes_waaiio === true,
