@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } from '@/lib/pdf/receipt-generator';
-import type { HistoryRow } from '@/lib/pdf/receipt-generator';
+import type { HistoryRow, ReceiptData } from '@/lib/pdf/receipt-generator';
+import { loadEntityReceiptTax } from '@/lib/receipts/line-items';
+import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { buildReceiptTax, type ReceiptTaxSource } from '@/lib/tax/receipt';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -70,7 +73,7 @@ async function handleReceipt(
   // Fetch most recent booking
   const { data: recentBooking } = await supabase
     .from('bookings')
-    .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier)')
+    .select('id, business_id, tax_snapshot, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier)')
     .eq('user_id', userId)
     .in('status', ['completed', 'confirmed', 'pending'])
     .order('created_at', { ascending: false })
@@ -90,7 +93,7 @@ async function handleReceipt(
   // Fetch most recent payment (covers event tickets, general payments, etc.)
   const { data: recentPayment } = await supabase
     .from('payments')
-    .select('id, gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code, subscription_tier)')
+    .select('id, business_id, tax_allocation, currency, gateway_reference, amount, status, created_at, booking_id, order_id, invoice_id, businesses:business_id(name, country_code, subscription_tier)')
     .eq('user_id', userId)
     .eq('status', 'success')
     .order('created_at', { ascending: false })
@@ -100,7 +103,7 @@ async function handleReceipt(
   // Fetch most recent paid invoice
   const { data: recentInvoice } = await supabase
     .from('invoices')
-    .select('id, invoice_number, total_amount, status, paid_at, created_at, customer_name, customer_phone, business_id, businesses:business_id(name, country_code, subscription_tier)')
+    .select('id, tax_snapshot, currency, invoice_number, total_amount, status, paid_at, created_at, customer_name, customer_phone, business_id, businesses:business_id(name, country_code, subscription_tier)')
     .eq('customer_phone', customerPhone)
     .eq('status', 'paid')
     .order('paid_at', { ascending: false })
@@ -138,7 +141,7 @@ async function handleReceipt(
     return NextResponse.json({ error: 'No transactions found' }, { status: 404 });
   }
 
-  let receiptData;
+  let receiptData: ReceiptData;
   if (source === 'booking' && recentBooking) {
     const biz = recentBooking.businesses as unknown as { name: string; country_code?: string; subscription_tier?: string } | null;
     const svc = recentBooking.services as unknown as { name: string } | null;
@@ -240,6 +243,39 @@ async function handleReceipt(
     return NextResponse.json({ error: 'No transactions found' }, { status: 404 });
   }
 
+  if (source === 'booking' && recentBooking?.tax_snapshot != null) {
+    const total = Number(recentBooking.total_amount || 0);
+    const balance = await getEntityBalance(supabase, { bookingId: recentBooking.id, totalAmount: total });
+    if (balance && balance.balanceDue > 0 && balance.netPaid > 0) {
+      receiptData.amount = balance.netPaid; receiptData.totalDue = total; receiptData.balanceDue = balance.balanceDue;
+    }
+    receiptData.tax = await loadEntityReceiptTax(supabase, { snapshot: recentBooking.tax_snapshot, businessId: recentBooking.business_id,
+      entityId: recentBooking.id, entityColumn: 'booking_id', paidAmount: receiptData.amount });
+  } else if (source === 'invoice' && recentInvoice?.tax_snapshot != null) {
+    receiptData.currencyCode = recentInvoice.currency || undefined;
+    receiptData.tax = await loadEntityReceiptTax(supabase, { snapshot: recentInvoice.tax_snapshot, businessId: recentInvoice.business_id,
+      entityId: recentInvoice.id, entityColumn: 'invoice_id', paidAmount: receiptData.amount });
+  } else if (source === 'payment' && recentPayment) {
+    receiptData.currencyCode = recentPayment.currency || undefined;
+    const table = recentPayment.booking_id ? 'bookings' : recentPayment.order_id ? 'orders' : recentPayment.invoice_id ? 'invoices' : null;
+    if (table && recentPayment.business_id) {
+      const { data: linked, error } = await supabase.from(table).select('tax_snapshot')
+        .eq('id', recentPayment.booking_id || recentPayment.order_id || recentPayment.invoice_id).eq('business_id', recentPayment.business_id).single();
+      if (error && recentPayment.tax_allocation != null) throw new Error('Unable to load original payment tax terms');
+      if (linked?.tax_snapshot != null) receiptData.tax = {
+        snapshot: linked.tax_snapshot as ReceiptTaxSource['snapshot'],
+        ...(recentPayment.tax_allocation == null ? {} : { allocations: [recentPayment.tax_allocation] }),
+      };
+    }
+    if (recentPayment.tax_allocation != null && !receiptData.tax) throw new Error('Original sale tax snapshot is missing');
+  }
+  if (receiptData.tax) {
+    const tax = buildReceiptTax(receiptData.tax, receiptData.amount);
+    if (receiptData.currencyCode && receiptData.currencyCode !== tax.currency) throw new Error('Receipt currency does not match original tax snapshot');
+    receiptData.items = tax.items;
+    receiptData.serviceName = tax.items.length === 1 ? tax.items[0].name : 'Purchase';
+    receiptData.currencyCode = tax.currency;
+  }
   const pdfBuffer = await generateReceiptPdf(receiptData);
   return await uploadAndSign(supabase, pdfBuffer, userId, 'receipt');
 }

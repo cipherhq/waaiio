@@ -21,7 +21,7 @@
  * @see RELEASE_GATE_V2.md §8.4
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { writeFileSync, readFileSync } from 'fs';
 import { resolve, basename } from 'path';
 import { captureBaseline, runSQL } from './baseline-capture';
@@ -174,12 +174,24 @@ function applySQL(dbUrl: string, sql: string, label: string): void {
   }
 }
 
-function applyBaseMigrations(dbUrl: string, baseSha: string, migrations: string[]): number {
+/** Reproduce the approved operational M501 install in the disposable replay.
+ * Use the exact blob just applied (base or candidate SHA), never checkout SQL. */
+function restoreAccountingReplay(dbUrl: string, file: string, content: string): void {
+  if (file !== '501_accounting_cutover_installer.sql') return;
+  execFileSync(process.execPath, [
+    resolve(__dirname, '../../scripts/ci-restore-accounting-entrypoints.mjs'),
+    dbUrl,
+    '--migration-stdin',
+  ], { input: content, encoding: 'utf-8', timeout: 60000 });
+}
+
+export function applyBaseMigrations(dbUrl: string, baseSha: string, migrations: string[]): number {
   let applied = 0;
   for (const path of migrations) {
     const content = getBaseMigrationContent(baseSha, path);
     const file = basename(path);
     applySQL(dbUrl, content, file);
+    restoreAccountingReplay(dbUrl, file, content);
     applied++;
   }
   return applied;
@@ -197,11 +209,12 @@ function getCandidateMigrationContent(headSha: string, file: string): string {
   }
 }
 
-function applyCandidateMigrations(dbUrl: string, headSha: string, migrationFiles: string[]): number {
+export function applyCandidateMigrations(dbUrl: string, headSha: string, migrationFiles: string[]): number {
   let applied = 0;
   for (const file of migrationFiles) {
     const content = getCandidateMigrationContent(headSha, file);
     applySQL(dbUrl, content, file);
+    restoreAccountingReplay(dbUrl, file, content);
     applied++;
   }
   return applied;

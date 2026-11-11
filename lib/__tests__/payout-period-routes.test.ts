@@ -93,7 +93,9 @@ describe('payouts/generate: merchant-local period', () => {
       else if (table === 'business_payouts') { c.insert = vi.fn().mockImplementation(() => { insertCalled = true; return c; }); }
       return c;
     };
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
     generateModule = await import('@/app/api/admin/payouts/generate/route');
     const res = await generateModule.POST(makePostRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }));
     expect(res.status).toBe(207);
@@ -137,7 +139,9 @@ describe('payouts/generate: merchant-local period', () => {
       }
       return c;
     };
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
 
     generateModule = await import('@/app/api/admin/payouts/generate/route');
     const res = await generateModule.POST(makePostRequest('/api/admin/payouts/generate', { stepUpId: 'su-1' }));
@@ -195,7 +199,9 @@ describe('payouts/generate: merchant-local period', () => {
       }
       return c;
     };
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
     return seen;
   }
 
@@ -300,7 +306,9 @@ describe('cron/auto-payout: merchant-local period', () => {
       else if (table === 'business_payouts') { c.eq = vi.fn().mockResolvedValue({ data: [], error: null }); }
       return c;
     };
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));
     expect(res.status).toBe(200);
@@ -406,7 +414,9 @@ describe('cron/auto-payout: merchant-local period', () => {
       return c;
     };
 
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
 
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));
@@ -468,7 +478,9 @@ describe('cron/auto-payout: merchant-local period', () => {
 
   it('ENABLE_PAYOUTS=false returns 503', async () => {
     process.env.ENABLE_PAYOUTS = 'false';
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: () => chainMock(), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: () => chainMock(), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));
     expect(res.status).toBe(503);
@@ -534,7 +546,9 @@ describe('cron/auto-payout: merchant-local period', () => {
       }
       return c;
     };
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
 
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));
@@ -634,7 +648,9 @@ describe('cron/auto-payout: merchant-local period', () => {
       return c;
     };
 
-    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) })) }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => ({ from: (t: string) => mockFromImpl(t), rpc: vi.fn().mockImplementation((name: string) => Promise.resolve({
+          data: name === 'tax_refund_payout_currencies_980' ? [] : name === 'tax_refund_payout_projection_980' ? { affected: false } : null, error: null,
+        })) })) }));
 
     cronModule = await import('@/app/api/cron/auto-payout/route');
     const res = await cronModule.GET(makeGetRequest('/api/cron/auto-payout'));

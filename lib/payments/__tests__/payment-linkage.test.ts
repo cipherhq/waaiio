@@ -497,7 +497,7 @@ describe('Shared payment wrapper forwarding', () => {
       q.insert = vi.fn().mockResolvedValue({ data: null, error: null });
       return q;
     };
-    const wrapperSupabase = { from: vi.fn((t: string) => {
+    const wrapperSupabase = { rpc: vi.fn(async (name: string) => ({ data: name === 'reserve_merchant_tax_payment_980' ? { taxable: false } : null, error: null })), from: vi.fn((t: string) => {
       if (t === 'countries') {
         const cq: Record<string, unknown> = {};
         for (const m of ['select', 'eq', 'not', 'order', 'limit', 'in', 'neq', 'is', 'like']) cq[m] = vi.fn(() => cq);

@@ -1,4 +1,5 @@
 import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
+import { quoteBookingTax, isTaxTermsChanged, isSafePurchaseAmount } from '@/lib/tax/server-quote';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
@@ -642,6 +643,7 @@ function schedulingExpectedTerms604(d: Record<string, unknown>, country: string)
     classSession: d._class_session_id ?? null, location: d.location_id ?? null,
     date: d.date ?? null, time: String(d.time ?? '').slice(0, 5),
     quantity: Number(d.party_size ?? 1), addons: d._selected_addons ?? [],
+    tax_snapshot: d._tax_snapshot ?? null,
   };
 }
 
@@ -2876,8 +2878,27 @@ export const schedulingFlow: FlowDefinition = {
 
         // Show price in confirmation
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const servicePrice = (d.service_price as number || 0) + deliveryPrice;
-        const deposit = d.service_deposit as number || 0;
+        let servicePrice = (d.service_price as number || 0) + deliveryPrice;
+        let deposit = d.service_deposit as number || 0;
+        if (!d._is_table_reservation) {
+          try {
+            const quote = await quoteBookingTax(ctx.supabase, {
+              businessId: ctx.business!.id,
+              serviceId: d._is_appointment ? null : (d.service_id as string) || null,
+              appointmentId: d._is_appointment ? (d.service_id as string) || null : null,
+              partySize: Number(d.party_size ?? 1), addons: (d._selected_addons as unknown[]) ?? [],
+              promoCodeId: (d._promo_id as string) || null,
+              expectedTerms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'), botClaim: true,
+              packageRedemption: !!d._package_enrollment_id,
+            });
+            d._tax_snapshot = quote.tax_snapshot; d._tax_booking_total = quote.total; d._tax_booking_deposit = quote.deposit;
+            servicePrice = quote.total; deposit = quote.deposit;
+            if (quote.tax_snapshot) lines.push(`Before tax: ${formatCurrency(quote.tax_snapshot.netAmount / 100, cc)}`, `Tax: ${formatCurrency(quote.tax_snapshot.taxAmount / 100, cc)}`);
+          } catch (error) {
+            logger.warn('[SCHEDULING] Authoritative tax preview unavailable', safeLogErrorContext(error));
+            return [{ type: 'text', text: 'Your booking details changed or could not be checked. Please review the service again before confirming.' }];
+          }
+        }
         if (servicePrice > 0) {
           if (deposit > 0 && deposit < servicePrice) {
             lines.push(`💰 Total: ${formatCurrency(servicePrice, cc)} (Deposit: ${formatCurrency(deposit, cc)})`);
@@ -3105,6 +3126,7 @@ export const schedulingFlow: FlowDefinition = {
       id: 'create_booking',
       nextAfterPrompt(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        if (d._tax_reconfirm) { delete d._tax_reconfirm; return 'confirmation'; }
         // The time was just taken: the time (or date) list was sent, wait for a new pick (#919)
         if (d._slot_taken_return) return d.date ? 'select_time' : 'select_date';
         // Saved-card offer presented (separate step handles the button taps)
@@ -3318,6 +3340,9 @@ export const schedulingFlow: FlowDefinition = {
             ? Math.max(baseTransactionTotal, totalDeposit)
             : (servicePrice > 0 || serviceDeposit > 0 ? baseTransactionTotal : totalDeposit));
 
+        if (!d._is_table_reservation && !packageEnrollmentId && d._tax_snapshot) {
+          bookingTotalAmount = Number(d._tax_booking_total); totalDeposit = Number(d._tax_booking_deposit);
+        }
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
           return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
@@ -3436,6 +3461,7 @@ export const schedulingFlow: FlowDefinition = {
 
             if (tableError || !tableResult) {
               const pgError = tableError as { code?: string; message?: string } | null;
+              if (pgError?.message?.includes('unsupported_tax_purchase')) return [{ type: 'text', text: 'This purchase needs an itemized invoice from the business so tax can be shown correctly. Please contact the business to continue.' }];
               if (pgError?.message?.includes('party_too_small') || pgError?.message?.includes('party_too_large')) {
                 return [{ type: 'text', text: await ctx.t(`Sorry, that table doesn't accommodate a party of ${partySize}. Send *Hi* to start over.`) }];
               }
@@ -3565,6 +3591,10 @@ export const schedulingFlow: FlowDefinition = {
               r => !r.error && r.data?.slot_available === true);
 
             if (slotError || !slotResult) {
+              if (isTaxTermsChanged(slotError)) {
+                d._tax_reconfirm = true; delete d._terms_accepted;
+                return [{ type: 'text', text: 'Your booking price or tax details changed. Please review and confirm the updated summary.' }];
+              }
               // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
               const pgError = slotError as { code?: string; message?: string } | null;
               if (pgError?.code === '23505' && pgError?.message?.includes('bot_session_id')) {
@@ -3671,7 +3701,7 @@ export const schedulingFlow: FlowDefinition = {
         let confirmedBooking = false;
         if (!d._is_table_reservation) {
           const { data: committed, error: committedError } = await ctx.supabase.from('bookings')
-            .select('id, status, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id')
+            .select('id, status, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id, tax_snapshot')
             .eq('id', booking.id).eq('business_id', ctx.business!.id)
             .eq('user_id', userId).eq('bot_session_id', ctx.session.id)
             .in('status', ['pending', 'confirmed', 'in_progress']).single();
@@ -3684,12 +3714,12 @@ export const schedulingFlow: FlowDefinition = {
             && committed.staff_id === (d.staff_id || null);
           const committedTotal = Number(committed?.total_amount);
           const committedDeposit = Number(committed?.deposit_amount);
-          if (committedError || !sameSelection || !Number.isSafeInteger(committedTotal)
-              || !Number.isSafeInteger(committedDeposit) || committedDeposit < 0 || committedTotal < committedDeposit) {
+          if (committedError || !sameSelection || !isSafePurchaseAmount(committedTotal) || !isSafePurchaseAmount(committedDeposit) || committedTotal < committedDeposit) {
             return [{ type: 'text', text: await ctx.t('Your booking terms could not be verified. Please contact the business before retrying payment.') }];
           }
           totalDeposit = committedDeposit;
           bookingTotalAmount = committedTotal;
+          d._tax_snapshot = committed.tax_snapshot ?? null;
           confirmedBooking = committed.status === 'confirmed';
         }
         d.booking_id = booking.id;

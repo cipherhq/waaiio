@@ -91,6 +91,7 @@ class Fixture {
   client = {
     from: (table: string) => new Query(this, table),
     rpc: async (name: string) => {
+      if(name==='reserve_merchant_tax_payment_980') return {data:{taxable:false},error:null};
       if (name === 'provision_stripe_customer_cas') {
         return { data: { current_state: 'provider_confirmed', provider_customer_id: 'cus_synthetic' }, error: null };
       }

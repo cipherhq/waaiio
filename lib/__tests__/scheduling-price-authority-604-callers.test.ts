@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { calculateTaxQuote } from '@/lib/tax/calculation';
 const h=vi.hoisted(()=>({ payment:vi.fn(), rpc:vi.fn(), result:{data:null,error:null} as {data:unknown;error:unknown} }));
 function chain(data: unknown) {
   const c: Record<string, unknown>={};
@@ -33,13 +34,13 @@ describe('core604 actual public booking handler',()=>{
  beforeEach(()=>{
    vi.clearAllMocks();
    h.result={data:{booking_id:'booking',reference_code:'REF',slot_available:true,committed_total:1000,committed_deposit:200},error:null};
-   h.rpc.mockImplementation(()=>({single:async()=>h.result}));
+   h.rpc.mockImplementation((name:string)=>name==='quote_booking_tax_980' ? Promise.resolve({data:{total:1000,deposit:200,tax_snapshot:null},error:null}) : {single:async()=>h.result});
    h.payment.mockResolvedValue({url:'https://checkout.example.test',reference:'payment'});
  });
  it('passes expected terms but uses the committed payment amount',async()=>{
    expect((await submit()).status).toBe(200);
    expect(h.rpc).toHaveBeenCalledWith('book_slot_authoritative_604',expect.objectContaining({
-     p_total_amount:1000,p_deposit_amount:200,p_expected_terms:{...body.expectedTerms,discount:0,source:'public'}
+     p_total_amount:1000,p_deposit_amount:200,p_expected_terms:{...body.expectedTerms,discount:0,source:'public',tax_snapshot:null}
    }));
    expect(h.payment).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({bookingId:'booking',amount:200}));
  });
@@ -57,7 +58,7 @@ describe('core604 actual public booking handler',()=>{
    const response=await submit({expectedTerms});
    expect(response.status).toBe(409);
    expect(await response.json()).toMatchObject({code:'terms_changed',currentTerms:body.expectedTerms});
-   expect(h.rpc).not.toHaveBeenCalled();expect(h.payment).not.toHaveBeenCalled();
+   expect(h.rpc).not.toHaveBeenCalledWith('book_slot_authoritative_604',expect.anything());expect(h.payment).not.toHaveBeenCalled();
  });
  it('does not initialize a provider after an atomic terms rejection',async()=>{
    h.result={data:null,error:{message:'terms_changed'}};
@@ -70,6 +71,26 @@ describe('core604 actual public booking handler',()=>{
  it('does not call a provider for a zero-upfront committed booking',async()=>{
    h.result={data:{booking_id:'booking',reference_code:'REF',slot_available:true,committed_total:1000,committed_deposit:0},error:null};
    expect((await submit()).status).toBe(200);expect(h.payment).not.toHaveBeenCalled();
+ });
+ it('returns a read-only tax preview without creating a booking or payment',async()=>{
+   const response=await submit({preview:true,expectedTerms:undefined});
+   expect(response.status).toBe(200);
+   expect(await response.json()).toMatchObject({total:1000,deposit:200,tax_snapshot:null});
+   expect(h.rpc).toHaveBeenCalledWith('quote_booking_tax_980',expect.anything());
+   expect(h.rpc).not.toHaveBeenCalledWith('book_slot_authoritative_604',expect.anything());
+   expect(h.payment).not.toHaveBeenCalled();
+ });
+ it('requires the displayed full tax snapshot and charges the committed rounded deposit',async()=>{
+   const tax=calculateTaxQuote({enabled:true,label:'Tax',rateBps:887.5,priceMode:'exclusive'},'NGN',[
+     {id:'service',description:'Service',quantity:1,unitAmount:100000}]);
+   h.result={data:{booking_id:'booking',reference_code:'REF',slot_available:true,committed_total:1088.75,committed_deposit:217.75},error:null};
+   h.rpc.mockImplementation((name:string)=>name==='quote_booking_tax_980'
+     ? Promise.resolve({data:{total:1088.75,deposit:217.75,tax_snapshot:tax},error:null}) : {single:async()=>h.result});
+   expect((await submit()).status).toBe(409);
+   expect(h.payment).not.toHaveBeenCalled();
+   expect((await submit({expectedTerms:{...body.expectedTerms,tax_snapshot:tax}})).status).toBe(200);
+   expect(h.rpc).toHaveBeenCalledWith('book_slot_authoritative_604',expect.objectContaining({p_total_amount:1088.75,p_deposit_amount:217.75,p_expected_terms:expect.objectContaining({tax_snapshot:tax})}));
+   expect(h.payment).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({amount:217.75}));
  });
 });
 
@@ -87,7 +108,11 @@ describe('core604 rendered public form reconfirmation',()=>{
      if(url.includes('/slots')) return {ok:true,json:async()=>({slots:[{time:'10:00',available:1}]})};
      if(url.includes('action=verify')) return {ok:true,json:async()=>({verified:true,otpToken:'verified'})};
      if(url.includes('/email-otp')) return {ok:true,json:async()=>({challengeId:'challenge'})};
-     submitted.push(JSON.parse(String(init?.body)));
+     const payload=JSON.parse(String(init?.body));
+     if (payload.preview) return {ok:true,json:async()=>({total:submitted.length?1200:1000,deposit:submitted.length?300:200,tax_snapshot:null,
+       currentTerms:{price:submitted.length?1200:1000,deposit:submitted.length?300:200,country:'NG',quantity:1}})};
+     if(url.includes('/intake')) return {ok:true,json:async()=>({required:false})};
+     submitted.push(payload);
      return {ok:false,json:async()=>({code:'terms_changed',error:'Review the updated terms',
        currentTerms:{price:1200,deposit:300,country:'NG',quantity:1}})};
    }));
@@ -106,16 +131,18 @@ describe('core604 rendered public form reconfirmation',()=>{
    fireEvent.click(screen.getByRole('button',{name:'Verify'}));
    await screen.findByRole('button',{name:'Change'});
    fireEvent.click(screen.getByRole('button',{name:'Continue'}));
-   fireEvent.click(screen.getByRole('checkbox'));
+   fireEvent.click(await screen.findByRole('checkbox'));
    fireEvent.click(screen.getByRole('button',{name:/Pay.*200/}));
    await screen.findByText('Review the updated terms');
-   expect(submitted[0].expectedTerms).toEqual({price:1000,deposit:200,country:'NG',quantity:1});
-   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+   expect(submitted[0].expectedTerms).toEqual({price:1000,deposit:200,country:'NG',quantity:1,tax_snapshot:null});
+   expect(screen.queryByRole('checkbox')).toBeNull();
+   fireEvent.click(screen.getByRole('button',{name:'Continue'}));
+   expect((await screen.findByRole('checkbox') as HTMLInputElement).checked).toBe(false);
    expect((screen.getByRole('button',{name:/Pay.*300/}) as HTMLButtonElement).disabled).toBe(true);
    expect(submitted).toHaveLength(1);
    fireEvent.click(screen.getByRole('checkbox'));
    fireEvent.click(screen.getByRole('button',{name:/Pay.*300/}));
    await waitFor(()=>expect(submitted).toHaveLength(2));
-   expect(submitted[1].expectedTerms).toEqual({price:1200,deposit:300,country:'NG',quantity:1});
+   expect(submitted[1].expectedTerms).toEqual({price:1200,deposit:300,country:'NG',quantity:1,tax_snapshot:null});
  });
 });

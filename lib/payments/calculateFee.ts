@@ -65,7 +65,12 @@ export function calculateFee(
   basis: FeeBasis,
   category: string | null,
   configSnapshot: FeeConfigSnapshot | null,
+  /** Optional immutable pre-tax amount; gross amount still controls the flat-fee threshold. */
+  percentageAmount: number = amount,
 ): FeeResult {
+  if (percentageAmount !== amount && (!Number.isFinite(percentageAmount) || percentageAmount < 0 || percentageAmount > amount)) {
+    throw new Error('Invalid pre-tax percentage fee amount');
+  }
   // Resolve percentage: custom override > category rate > tier default.
   // No routing or trial waiver (Owner 2026-11-08).
   let feePercentage: number;
@@ -106,7 +111,7 @@ export function calculateFee(
   const effectiveFeeFlat = (feeFlat > 0 && amount > 0 && feeFlat / amount > 0.10) ? 0 : feeFlat;
 
   // 4. Calculate total with two-decimal precision
-  const pctComponent = Math.round(amount * feePercentage * 100) / 10000;
+  const pctComponent = Math.round(percentageAmount * feePercentage * 100) / 10000;
   const rawTotal = pctComponent + effectiveFeeFlat;
   const feeTotal = Math.round(rawTotal * 100) / 100;
 

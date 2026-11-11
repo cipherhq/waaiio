@@ -1,3 +1,4 @@
+import { taxPayoutCurrencies, taxPayoutProjection } from '@/lib/payments/tax-payout';
 import { getMerchantAccountingHold } from '@/lib/payouts/accounting-hold';
 import { NextResponse } from 'next/server';
 import { type NextRequest } from 'next/server';
@@ -446,12 +447,15 @@ export async function GET(request: NextRequest) {
       }
 
       // M466: Generate one payout per currency
-      const currencies = getEligibleCurrencies(fees);
+      const currencies = [...new Set([...getEligibleCurrencies(fees), ...await taxPayoutCurrencies(supabase, biz.id)])];
       for (const currency of currencies) {
       if (alreadyHasPayout.has(`${biz.id}:${currency}`)) continue;
       const currencyAdjustments = adjustments.filter(row => row.currency === currency);
-      const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable } =
-        computePlatformHeldTotals(fees, currency, currencyAdjustments);
+      const taxProjection = await taxPayoutProjection(supabase, biz.id, currency);
+      const legacyTotals = computePlatformHeldTotals(fees, currency, currencyAdjustments);
+      const { gross, totalFees, gatewayFees: totalGatewayFees, netAvailable } = taxProjection
+        ? { gross: taxProjection.gross, totalFees: taxProjection.platformFee, gatewayFees: taxProjection.gatewayFee, netAvailable: taxProjection.netAvailable }
+        : legacyTotals;
       let netAmount = netAvailable;
 
       if (netAmount <= 0) continue;
@@ -526,6 +530,25 @@ export async function GET(request: NextRequest) {
         decision.structuredFlags.push(currencyFlag);
         decision.flags.push(currencyFlag);
         status = 'held';
+      }
+
+      if (taxProjection) {
+        const { data: payout, error } = await supabase.rpc('create_tax_refund_payout_980', { p: {
+          business_id: biz.id, payout_account_id: payoutAccount?.id || null,
+          period_start: periodStartStr, period_end: periodEndStr, covered_from: coveredFrom, covered_to: coveredTo,
+          gross_amount: gross, platform_fee: totalFees, gateway_fee: totalGatewayFees, net_amount: net,
+          currency, status, flags: decision.structuredFlags, auto_generated: true,
+        } });
+        if (error || !payout) continue;
+        generated++;
+        if (status === 'approved') {
+          autoApproved++;
+          if (hasEligibleProvider && payoutAccount) {
+            const result = await executeAutoTransfer(supabase, payout.id, net, biz, payoutAccount, periodStartStr, periodEndStr);
+            if (result === 'transferred') transferred++; else held++;
+          }
+        } else held++;
+        continue;
       }
 
       // ── Create payout record ──

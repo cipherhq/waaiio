@@ -1,3 +1,4 @@
+import { reserveTaxPayment, validatePinnedTaxFee, confirmTaxPaymentFailure } from './tax-authority';
 /**
  * Provider-neutral saved payment adapter.
  *
@@ -465,7 +466,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
     }
 
     const amountCents = Math.round(opts.amount * 100);
-    const appFeeCents = routing.platformFeeAmount ? Math.round(routing.platformFeeAmount * 100) : 0;
+    let appFeeCents = routing.platformFeeAmount ? Math.round(routing.platformFeeAmount * 100) : 0;
 
     // Build exact PI params for durable storage + exact replay
     const { buildSavedCardPIParams, chargeStripeSavedCard } = await import('./stripe-saved-card');
@@ -487,7 +488,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
 
     if (entityCol && entityId) {
       const { data: existingPay } = await supabase.from('payments')
-        .select('id, status, gateway_reference, provider_init_state')
+        .select('id, status, gateway_reference, provider_init_state, tax_allocation, tax_fee_basis, metadata, amount, currency')
         .eq(entityCol, entityId)
         .eq('business_id', opts.businessId)
         .eq('gateway', 'stripe')
@@ -528,6 +529,21 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         }
 
         if (existingPay.provider_init_state === 'pre_dispatch') {
+          if (existingPay.tax_allocation) {
+            const { data: basis, error: bindError } = await supabase.rpc('bind_merchant_tax_fee_980', {p_payment_id: existingPay.id});
+            if (bindError) return { status:'indeterminate',paymentId:existingPay.id,message:'Tax fee binding unavailable' };
+            const fee = validatePinnedTaxFee(basis, Number(existingPay.amount), existingPay.currency);
+            const meta = existingPay.metadata as Record<string, any>;
+            if (!meta?.pi_params) return { status:'indeterminate',paymentId:existingPay.id,message:'Stored payment parameters unavailable' };
+            const exact = { ...meta.pi_params };
+            delete exact.application_fee_amount;
+            const pinnedAppFee = exact['transfer_data[destination]'] ? fee.totalMinor : 0;
+            if (pinnedAppFee > 0) exact.application_fee_amount=String(pinnedAppFee);
+            const {error: paramsError} = await supabase.from('payments').update({metadata:{...meta,pi_params:exact,application_fee_amount:pinnedAppFee}})
+              .eq('id',existingPay.id).eq('provider_init_state','pre_dispatch');
+            if (paramsError) return { status:'indeterminate',paymentId:existingPay.id,message:'Stored tax fee parameters unavailable' };
+          }
+
           // Safe resume: pre_dispatch proves Stripe was never called. Move the
           // same canonical row to dispatched, then use the existing exact-row
           // recovery path which replays stored pi_params with sc_charge_<paymentId>.
@@ -560,7 +576,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
     }
 
     // Create canonical payment row BEFORE provider dispatch
-    const { data: payRow, error: payErr } = await supabase.from('payments').insert({
+    const paymentPayload = {
       business_id: opts.businessId,
       booking_id: opts.bookingId || null,
       order_id: opts.orderId || null,
@@ -589,7 +605,22 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         ...(appFeeCents > 0 && { application_fee_amount: appFeeCents }),
         pi_params: piParams,
       },
-    }).select('id').single();
+    };
+    let taxReservation: Awaited<ReturnType<typeof reserveTaxPayment>>;
+    try {taxReservation=await reserveTaxPayment(supabase,paymentPayload);}
+    catch {return {status:'declined',message:'Payment reservation unavailable',shouldDeactivate:false};}
+    const { data: payRow, error: payErr } = taxReservation
+      ? { data: taxReservation.payment, error: null }
+      : await supabase.from('payments').insert(paymentPayload).select('id').single();
+    if (taxReservation) {
+      appFeeCents = routing.stripeAccountId ? taxReservation.fee.totalMinor : 0;
+      delete piParams.application_fee_amount;
+      if (appFeeCents > 0) piParams.application_fee_amount = String(appFeeCents);
+      const { error: paramsError } = await supabase.from('payments').update({
+        metadata: { ...paymentPayload.metadata, application_fee_amount: appFeeCents, pi_params: piParams },
+      }).eq('id', taxReservation.payment.id).eq('provider_init_state','pre_dispatch');
+      if (paramsError) return { status:'indeterminate', paymentId:String(taxReservation.payment.id),message:'Tax fee parameters unavailable' };
+    }
 
     if (payErr || !payRow) {
       return { status: 'declined', message: 'Payment creation failed', shouldDeactivate: false };
@@ -695,6 +726,12 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
     }
 
     if (result.status === 'declined') {
+      if(taxReservation){
+        const released=await confirmTaxPaymentFailure(supabase,payRow.id,'stripe',paymentPayload.gateway_reference,'failed');
+        return released ? {status:'declined',message:result.errorMessage||'Card declined',shouldDeactivate:false}
+          : {status:'indeterminate',paymentId:payRow.id,message:'Decline allocation needs reconciliation'};
+      }
+
       await supabase.from('payments')
         .update({ status: 'failed', gateway_status: result.errorMessage || 'declined' })
         .eq('id', payRow.id)

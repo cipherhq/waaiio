@@ -117,8 +117,8 @@ describe('Saved-card convergence through Payment Authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
     // Must be a top-level column in the payments INSERT, not inside metadata
-    const afterInsert = src.split("from('payments').insert")[1] || '';
-    const insertSection = afterInsert.split("select('id')")[0] || afterInsert.split('.select(')[0] || '';
+    const insertSection = src.split('const paymentPayload = {')[1]?.split('let taxReservation')[0] || '';
+    expect(src).toContain("from('payments').insert(paymentPayload)");
     expect(insertSection).toContain('payment_authority_version: 1');
     expect(insertSection).toContain("payment_origin: 'platform'");
   });

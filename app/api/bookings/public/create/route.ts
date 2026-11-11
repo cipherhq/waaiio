@@ -1,3 +1,4 @@
+import { quoteBookingTax, isSafePurchaseAmount } from '@/lib/tax/server-quote';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
       quantity,
       otpToken,
       classSessionId,
-      expectedTerms,
+      expectedTerms, preview,
       intakeId,
     } = body as {
       businessSlug: string;
@@ -45,7 +46,8 @@ export async function POST(request: NextRequest) {
       quantity?: number;
       otpToken?: string;
       classSessionId?: string;
-      expectedTerms?: { price: number; deposit: number; country: string; quantity: number };
+      preview?: boolean;
+      expectedTerms?: { price: number; deposit: number; country: string; quantity: number; tax_snapshot?: unknown };
       intakeId?: string;
     };
 
@@ -178,9 +180,14 @@ export async function POST(request: NextRequest) {
     }
 
     const currentTerms = { price: itemPrice, deposit: configuredDeposit, country: business.country_code, quantity: partySize };
-    if (!expectedTerms || expectedTerms.price !== currentTerms.price || expectedTerms.deposit !== currentTerms.deposit
+    const taxQuote = await quoteBookingTax(supabase, { businessId: business.id,
+      serviceId: isAppointmentBooking ? null : itemId, appointmentId: isAppointmentBooking ? itemId : null,
+      partySize, addons: [], expectedTerms: { ...currentTerms, discount: 0, source: 'public' } });
+    if (preview === true) return NextResponse.json({ ...taxQuote, currentTerms });
+    if (!expectedTerms || JSON.stringify(expectedTerms.tax_snapshot ?? null) !== JSON.stringify(taxQuote.tax_snapshot)
+        || expectedTerms.price !== currentTerms.price || expectedTerms.deposit !== currentTerms.deposit
         || expectedTerms.country !== currentTerms.country || expectedTerms.quantity !== partySize) {
-      return NextResponse.json({ code: 'terms_changed', error: 'Booking terms changed. Review the current price and confirm again.', currentTerms }, { status: 409 });
+      return NextResponse.json({ code: 'terms_changed', error: 'Booking terms changed. Review the current price and confirm again.', currentTerms, taxQuote }, { status: 409 });
     }
 
     // Class XOR validation
@@ -335,7 +342,7 @@ export async function POST(request: NextRequest) {
     // Determine pricing
     const isDropoff = itemMetadata?.is_dropoff === true;
     const maxCapacity = isDropoff ? 9999 : (itemMaxCapacity || 1);
-    const totalDeposit = itemDeposit * partySize;
+    const totalDeposit = taxQuote.deposit;
 
     // Use atomic booking RPC to prevent race conditions
     const { data: slotResult, error: slotError } = await supabase
@@ -362,13 +369,13 @@ export async function POST(request: NextRequest) {
         p_promo_code_id: null,
         // "Price varies" items may carry a deposit above the starting price;
         // the total is then the deposit, as M518 commits it.
-        p_total_amount: Math.max(itemPrice * partySize, totalDeposit),
+        p_total_amount: taxQuote.total,
         p_staff_name: autoStaffName,
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,
         p_duration: itemDuration,
         p_class_session_id: classSessionId || null,
-        p_expected_terms: { ...currentTerms, discount: 0, source: 'public' },
+        p_expected_terms: { ...currentTerms, discount: 0, source: 'public', tax_snapshot: taxQuote.tax_snapshot },
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean; committed_total: number; committed_deposit: number } | null;
@@ -390,8 +397,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!Number.isSafeInteger(slotResult.committed_deposit) || slotResult.committed_deposit < 0
-        || !Number.isSafeInteger(slotResult.committed_total) || slotResult.committed_total < slotResult.committed_deposit) {
+    if (!isSafePurchaseAmount(slotResult.committed_deposit) || !isSafePurchaseAmount(slotResult.committed_total) || slotResult.committed_total < slotResult.committed_deposit) {
       return NextResponse.json({ error: 'Committed booking terms unavailable' }, { status: 503 });
     }
 

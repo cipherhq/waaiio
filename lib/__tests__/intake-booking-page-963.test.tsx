@@ -39,7 +39,7 @@ function stubNetwork(routes: { intake: unknown; create: unknown }) {
     if (url.startsWith('/api/auth/email-otp?action=verify')) return ok({ verified: true, otpToken: 'otp' });
     if (url === '/api/bookings/public/intake') return ok(routes.intake);
     if (url.startsWith('/api/intake/')) return ok(init?.method === 'POST' ? { status: 'submitted' } : FORM);
-    if (url === '/api/bookings/public/create') return ok(routes.create);
+    if (url === '/api/bookings/public/create') return ok(body?.preview ? { total: 0, deposit: 0, tax_snapshot: null } : routes.create);
     return new Response('{}', { status: 404 });
   }));
   return calls;
@@ -88,7 +88,7 @@ describe('public booking page with an intake form', () => {
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByText('Book Now'));
     await waitFor(() => expect(screen.getByText('Booking Confirmed!')).toBeTruthy());
-    expect(calls.find(c => c.url === '/api/bookings/public/create')?.body).toMatchObject({ intakeId: 'in-1', guestPhone: '+2348012345678' });
+    expect(calls.find(c => c.url === '/api/bookings/public/create' && !(c.body as { preview?: boolean })?.preview)?.body).toMatchObject({ intakeId: 'in-1', guestPhone: '+2348012345678' });
     expect(screen.queryByText('Fill in your form')).toBeNull();
   });
 

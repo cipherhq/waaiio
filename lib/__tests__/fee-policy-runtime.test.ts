@@ -1238,3 +1238,25 @@ describe('PayPal webhook — CAS path + event boundary', () => {
     expect(sb.processedEventWrites.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// #980: tax allocations use the same recovery authority even when fee policy is v0.
+describe('taxable v0 dispatched recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); vi.resetModules(); process.env.PAYSTACK_SECRET_KEY='synthetic-tax-test'; setupCronMocks();
+  });
+  it('atomically terminalizes and releases a provider-confirmed decline', async () => {
+    const sb=buildCronSb({dispatched:[{...DISPATCHED_PAYSTACK,fee_policy_version:0,tax_allocation:{version:1}}]});
+    sb.client.rpc.mockResolvedValue({data:true,error:null});
+    await callCron(sb,[{ok:true,body:{status:true,data:{status:'failed'}}}]);
+    expect(sb.client.rpc).toHaveBeenCalledWith('confirm_merchant_tax_payment_failure_980',{
+      p_payment_id:DISPATCHED_PAYSTACK.id,p_gateway:'paystack',p_reference:DISPATCHED_PAYSTACK.gateway_reference,p_status:'failed',
+    });
+    expect(sb.terminalWrites).toHaveLength(0); // no separate status write that can strand a hold
+  });
+  it('retains the reservation when provider verification is ambiguous', async () => {
+    const sb=buildCronSb({dispatched:[{...DISPATCHED_PAYSTACK,fee_policy_version:0,tax_allocation:{version:1}}]});
+    await callCron(sb,[{ok:false,body:{message:'temporary error'}}]);
+    expect(sb.client.rpc.mock.calls.some(([name])=>name==='confirm_merchant_tax_payment_failure_980')).toBe(false);
+    expect(sb.terminalWrites).toHaveLength(0);
+  });
+});

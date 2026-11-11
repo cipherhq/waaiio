@@ -299,3 +299,44 @@ describe('processRefund', () => {
     });
   });
 });
+
+// #980: exercise the real refund handler; only DB/provider boundaries are mocked.
+describe('tax refund reservation before dispatch', () => {
+  const taxed = { id: 'pay-tax', amount: 12, currency: 'USD', refund_amount: 0, status: 'success', gateway: 'stripe',
+    gateway_reference: 'ref-tax', business_id: 'biz-1', metadata: {}, tax_allocation: { version: 1 } };
+  const selection = { mode: 'items' as const, items: [{ id: 'item', quantity: 1 }] };
+  const requestId = '20000000-0000-4000-8000-000000000001';
+  it('reserves selected items before the existing idempotent provider dispatch', async () => {
+    const { supabase } = setupMocks({ payment: taxed,
+      refundRow: { id:'refund-tax',amount:6,gateway:'stripe',refund_type:'partial',is_direct_split:false },
+      rpcResults: { reserve_merchant_tax_refund_980: { taxable:true,refund_id:'refund-tax',reused:false } } });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:6,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result.success).toBe(true);
+    expect(providerCallCount).toBe(1);
+    const calls = (mockServiceClient.rpc as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]).toEqual(['reserve_merchant_tax_refund_980', expect.objectContaining({p_selection:selection,p_request_id:requestId,p_amount:6})]);
+    expect(calls.findIndex(call=>call[0]==='claim_refund_dispatch')).toBeGreaterThan(0);
+  });
+  it('records zero-value returns without contacting a provider', async () => {
+    const { supabase } = setupMocks({ payment: taxed,
+      rpcResults: { reserve_merchant_tax_refund_980: { taxable:true,zero_value:true,return_id:'return-tax' } } });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:0,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result).toMatchObject({success:true,zeroValueReturn:true,returnId:'return-tax',state:'success'});
+    expect(providerCallCount).toBe(0);
+  });
+  it('never dispatches when SQL denies the requested allocation', async () => {
+    const { supabase } = setupMocks({ payment: taxed });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:6,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result.success).toBe(false);expect(providerCallCount).toBe(0);
+  });
+  it('replays a completed request without another provider refund', async () => {
+    const { supabase } = setupMocks({ payment: taxed,
+      rpcResults: { reserve_merchant_tax_refund_980: { taxable:true,reused:true,refund_id:'refund-tax',status:'success' } } });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:6,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result).toMatchObject({success:true,refundId:'refund-tax'});expect(providerCallCount).toBe(0);
+  });
+});

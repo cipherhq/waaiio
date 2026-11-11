@@ -1,3 +1,4 @@
+import { reserveTaxPayment, confirmTaxPaymentFailure } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -515,6 +516,7 @@ async function chargePaystackAuthorization(
     const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
     if (splitResult.mode === 'split') {
       // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
+      splitSubaccount = splitResult.subaccount;
       splitParams = paystackMerchantSplit(splitResult.subaccount, splitResult.transactionChargeKobo);
     } else if (splitResult.mode === 'split_required_but_missing') {
       logger.error('[SAVED-CARD] Direct split config missing, blocking charge', { businessId: opts.businessId, reason: splitResult.reason });
@@ -522,7 +524,7 @@ async function chargePaystackAuthorization(
     }
   }
 
-  const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
+  const paymentPayload = {
     business_id: opts.businessId,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
@@ -547,7 +549,20 @@ async function chargePaystackAuthorization(
       ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
     },
     ...v1Fields,
-  }).select('id').single();
+  };
+  let taxReservation: Awaited<ReturnType<typeof reserveTaxPayment>> = null;
+  try {
+    taxReservation = await reserveTaxPayment(supabase, paymentPayload);
+  } catch (error) {
+    logger.error('[SAVED-CARD] Tax payment reservation failed', error);
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment reservation failed' };
+  }
+  if (taxReservation && splitSubaccount) {
+    splitParams = paystackMerchantSplit(splitSubaccount, taxReservation.fee.totalMinor);
+  }
+  const { data: payRow, error: insertErr } = taxReservation
+    ? { data: taxReservation.payment, error: null }
+    : await supabase.from('payments').insert(paymentPayload).select('id').single();
 
   if (insertErr || !payRow) {
     logger.error('[SAVED-CARD] Payment row creation failed — NOT calling provider', insertErr);
@@ -576,7 +591,7 @@ async function chargePaystackAuthorization(
   const amountInKobo = Math.round(opts.amount * 100);
 
   // ── Step 2b: Provider-init state machine for v1 ──
-  if (v1Fields.fee_policy_version === 1) {
+  if (v1Fields.fee_policy_version === 1 || taxReservation) {
     // CAS: pre_dispatch → dispatched
     const { data: casRows } = await supabase.from('payments')
       .update({ provider_init_state: 'dispatched' })
@@ -623,7 +638,7 @@ async function chargePaystackAuthorization(
 
     if (data.status && data.data?.status === 'success') {
       // CAS: dispatched → provider_confirmed (for v1) — exact row check
-      if (v1Fields.fee_policy_version === 1) {
+      if (v1Fields.fee_policy_version === 1 || taxReservation) {
         const { data: confirmRows, error: confirmErr } = await supabase.from('payments')
           .update({ provider_init_state: 'provider_confirmed' })
           .eq('id', paymentId)
@@ -655,6 +670,13 @@ async function chargePaystackAuthorization(
       // Non-terminal/unknown provider state — leave payment pending for reconciliation
       logger.warn('[SAVED-CARD] Non-terminal provider response:', providerStatus, gatewayResponse);
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: gatewayResponse };
+    }
+
+    if (taxReservation) {
+      if (!['failed','abandoned','expired'].includes(providerStatus)) return {outcome:'indeterminate',paymentId,reference:opts.reference,message:'Provider outcome needs verification'};
+      const released=await confirmTaxPaymentFailure(supabase,paymentId,'paystack',opts.reference,providerStatus as 'failed'|'abandoned'|'expired');
+      return released ? {outcome:'declined',reference:opts.reference,message:gatewayResponse}
+        : {outcome:'indeterminate',paymentId,reference:opts.reference,message:'Decline allocation needs reconciliation'};
     }
 
     // Definitive provider decline — mark payment row terminal and prove the write occurred.

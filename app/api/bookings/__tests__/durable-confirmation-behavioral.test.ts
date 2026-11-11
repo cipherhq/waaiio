@@ -92,7 +92,9 @@ function buildChain(result: { data: any; error?: any }) {
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: vi.fn(() => ({
     from: (...args: unknown[]) => mockServiceFrom(...args),
-    rpc: (...args: unknown[]) => mockRpc(...args),
+    rpc: (name: string, args: Record<string, any>) => name === 'quote_booking_tax_980'
+      ? { data: { total: Number(args.p_expected.price || 0) * args.p_party, deposit: Number(args.p_expected.deposit || 0), tax_snapshot: null }, error: null }
+      : mockRpc(name, args),
   })),
 }));
 
