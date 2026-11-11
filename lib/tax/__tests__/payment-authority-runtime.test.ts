@@ -43,7 +43,7 @@ describe('tax checkout provider dispatch (real initializer, mocked boundaries)',
     state.gate=gate;
     expect(await initializePayment(client(),opts),JSON.stringify(state.errors)).toEqual({url:'https://checkout.test',reference:'session-tax'});
     expect(state.events).toEqual(['reserve_merchant_tax_payment_980','bind_merchant_tax_fee_980','dispatched','provider','provider_confirmed']);
-    expect(state.provider).toHaveBeenCalledWith(expect.objectContaining({amount:120,platformFeeAmount:3,existingPaymentId:'payment-tax',stripeAccountId:'acct_merchant'}));
+    expect(state.provider).toHaveBeenCalledWith(expect.objectContaining({amount:120,platformFeeAmount:3,existingPaymentId:'payment-tax',taxAttemptId:'payment-tax',stripeAccountId:'acct_merchant'}));
   });
   it('does not contact the provider when reservation fails',async()=>{
     state.failReservation=true;expect(await initializePayment(client(),opts)).toBeNull();expect(state.provider).not.toHaveBeenCalled();

@@ -144,17 +144,19 @@ describe('#718 BalaShop — Stripe optional save validation fallback', () => {
     expect(key2).toBe(key1 + '_without_save_options');
   });
 
-  it('gives each pre-created payment attempt its own Stripe key (#980 retry after expiry)', async () => {
-    const keyFor = async (existingPaymentId?: string) => {
+  it('gives each taxed attempt its own Stripe key, and leaves untaxed keys unchanged (#980)', async () => {
+    const keyFor = async (extra: Record<string, string>) => {
       mockFetch.mockReset();
       mockFetch.mockResolvedValueOnce(providerSuccess);
-      await new StripeGateway().initializePayment({ ...checkoutInput, ...(existingPaymentId && { existingPaymentId }) });
+      await new StripeGateway().initializePayment({ ...checkoutInput, ...extra });
       return mockFetch.mock.calls[0][1].headers['Idempotency-Key'];
     };
-    expect(await keyFor()).toBe('checkout_WA-TK-1940');
-    expect(await keyFor('pay_attempt_1')).toBe('checkout_WA-TK-1940_pay_attempt_1');
-    expect(await keyFor('pay_attempt_1')).toBe('checkout_WA-TK-1940_pay_attempt_1');
-    expect(await keyFor('pay_attempt_2')).not.toBe(await keyFor('pay_attempt_1'));
+    expect(await keyFor({})).toBe('checkout_WA-TK-1940');
+    // Untaxed pre-created rows keep the per-sale key so Stripe never opens a second live session.
+    expect(await keyFor({ existingPaymentId: 'pay_untaxed' })).toBe('checkout_WA-TK-1940');
+    expect(await keyFor({ existingPaymentId: 'pay_attempt_1', taxAttemptId: 'pay_attempt_1' })).toBe('checkout_WA-TK-1940_pay_attempt_1');
+    expect(await keyFor({ existingPaymentId: 'pay_attempt_1', taxAttemptId: 'pay_attempt_1' })).toBe('checkout_WA-TK-1940_pay_attempt_1');
+    expect(await keyFor({ existingPaymentId: 'pay_attempt_2', taxAttemptId: 'pay_attempt_2' })).toBe('checkout_WA-TK-1940_pay_attempt_2');
   });
 
   it('never retries other invalid_request_error fields or security/routing failures', async () => {

@@ -42,6 +42,11 @@ export interface InitPaymentOpts {
   /** #264: Pre-created payment row ID — skip INSERT when v1 fee-policy row already exists */
   existingPaymentId?: string;
   /**
+   * Taxed sales only (#980): the DB reservation allows one open attempt per sale, so
+   * Stripe may give this attempt its own idempotency key. Never set for untaxed payments.
+   */
+  taxAttemptId?: string;
+  /**
    * #381: Keep the entity's existing canonical payment_id unchanged.
    * Used for follow-on balance payments so a new pending balance checkout does
    * not replace the successful deposit payment that confirmed the booking.

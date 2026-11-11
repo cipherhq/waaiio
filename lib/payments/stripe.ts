@@ -55,11 +55,11 @@ export class StripeGateway implements PaymentGateway {
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     // Stable idempotency key derived from the authoritative referenceCode.
     // Same logical payment retry → same Stripe key. Different payment → different key.
-    // A pre-created payment row is its own attempt: a replay of that row keeps its key,
-    // while a new attempt after an expired checkout (#980 taxed retry) gets a new session
-    // instead of Stripe's cached expired one.
-    const idempotencyKey = opts.existingPaymentId
-      ? `checkout_${opts.referenceCode}_${opts.existingPaymentId}`
+    // Taxed sale (#980): the DB allows one open attempt per sale, so each attempt gets its
+    // own key. A replay of that attempt keeps its key; a new attempt after an expired
+    // checkout gets a new session instead of Stripe's cached expired one.
+    const idempotencyKey = opts.taxAttemptId
+      ? `checkout_${opts.referenceCode}_${opts.taxAttemptId}`
       : `checkout_${opts.referenceCode}`;
 
     try {

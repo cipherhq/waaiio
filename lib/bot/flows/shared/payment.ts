@@ -291,6 +291,7 @@ export async function initializePayment(
     // BEFORE any provider API call. When OFF, the gateway initializer creates the row
     // post-provider as usual (v0 legacy path).
     let v1PaymentId: string | null = null;
+    let taxAttemptId: string | undefined;
     let feePolicyVersion = 0;
 
     if (opts.businessId && opts.transactionCategory) {
@@ -394,7 +395,7 @@ export async function initializePayment(
           const taxReservation = await reserveTaxPayment(supabase, taxPayload);
           // Retry while the earlier checkout is still open: same link, no new charge.
           if (taxReservation?.reused) return openTaxCheckout(taxReservation.payment);
-          if (taxReservation) platformFeeAmount = taxReservation.fee.feeTotal;
+          if (taxReservation) { platformFeeAmount = taxReservation.fee.feeTotal; taxAttemptId = String(taxReservation.payment.id); }
           const { data: preRow, error: preErr } = taxReservation
             ? { data: taxReservation.payment, error: null }
             : await supabase.from('payments').insert(taxPayload).select('id').single();
@@ -448,6 +449,7 @@ export async function initializePayment(
       if (reservation?.reused) return openTaxCheckout(reservation.payment);
       if (reservation) {
         v1PaymentId = String(reservation.payment.id);
+        taxAttemptId = v1PaymentId;
         platformFeeAmount = reservation.fee.feeTotal;
         const { data: claimed, error } = await supabase.from('payments')
           .update({ provider_init_state: 'dispatched' }).eq('id', v1PaymentId)
@@ -490,6 +492,7 @@ export async function initializePayment(
       businessId: opts.businessId,
       channels,
       existingPaymentId: v1PaymentId || undefined,
+      taxAttemptId,
       preserveEntityPaymentLink: opts.preserveEntityPaymentLink,
     }));
 
