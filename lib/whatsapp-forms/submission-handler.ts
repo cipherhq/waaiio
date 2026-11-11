@@ -21,6 +21,8 @@ import type { WaaiioFormField } from './native-flow';
 // ── Types ──
 
 export interface NfmReplyMessage {
+  id?: string;
+  timestamp?: string;
   /** The nfm_reply body containing flow_token and response_json. */
   interactive?: {
     type?: string;
@@ -70,7 +72,7 @@ const MAX_TOTAL_ANSWERS_BYTES = 100 * 1024; // 100KB
  * Returns normalized answers where compiler option IDs are resolved to
  * meaningful display titles, preserving historical query integrity.
  */
-function validateAndNormalizeAnswers(
+export function validateAndNormalizeAnswers(
   answers: Record<string, unknown>,
   fields: WaaiioFormField[],
 ): { valid: boolean; error?: string; normalized?: Record<string, unknown> } {
@@ -101,13 +103,13 @@ function validateAndNormalizeAnswers(
 
     // Check required fields
     if (field.required) {
-      if (value === undefined || value === null || value === '') {
+      if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) {
         return { valid: false, error: `Required field missing: ${field.id}` };
       }
     }
 
     // Skip further checks if value is absent (optional field)
-    if (value === undefined || value === null) continue;
+    if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) continue;
 
     // Reject object/array values for scalar fields before any string conversion.
     // String({}) → "[object Object]", String([1,2]) → "1,2" — both nonsensical.
@@ -125,7 +127,7 @@ function validateAndNormalizeAnswers(
 
     // Type-specific validation
     if (field.type === 'number') {
-      if (isNaN(Number(strValue))) {
+      if (!strValue.trim() || !Number.isFinite(Number(strValue))) {
         return { valid: false, error: `Field ${field.id} must be a numeric value.` };
       }
     }

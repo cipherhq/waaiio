@@ -17,11 +17,16 @@ export async function hasRecipientPermission(
       .eq('channel', channel).is('resubscribed_at', null);
     if (blockedError || count !== 0) return false;
     // Latest record across both historical phone formats wins, including revocation.
-    const { data, error } = await db.from('customer_consents')
+    let query = db.from('customer_consents')
       .select('status, expires_at').eq('business_id', businessId)
       .in('phone', variants).eq('channel', channel).eq('purpose', purpose)
       .order('created_at', { ascending: false }).order('id', { ascending: false })
-      .limit(1).maybeSingle();
+      .limit(1);
+    // This legacy helper has no destination email. Address-bound grants must
+    // never authorize a different address found elsewhere on the same phone.
+    if (channel === 'whatsapp' && purpose === 'marketing') query = query.neq('status', 'pending');
+    if (channel === 'email') query = query.is('email_address', null);
+    const { data, error } = await query.maybeSingle();
     if (error || data?.status !== 'granted') return false;
     return !data.expires_at || new Date(data.expires_at).getTime() > Date.now();
   } catch { return false; }

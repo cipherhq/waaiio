@@ -386,3 +386,13 @@ Checked main at `0a5b2d4798ca8d1c99aa45c7a291c0434f804483`, registry and both op
 | 533 | merchant_tax_invoices_quotes | codex/merchant-tax-phase-a | Reserved; not applied |
 
 These numbers were held for the tax drafts before 534 was reserved (see the 534 note above), so they land after 534 on main by design. Release admission has no ordering check today, and the lock bootstrap (508) is below 528. They must be released before any release lock advances past 527. M529 widens money columns on `payments`, `orders`, `bookings` and `platform_fees` under exclusive locks, so it needs a deployment window. Checked main at `f15d56d9c` and the registry on 2026-11-11; no collision.
+
+### Reservation — native form lifecycle (#591)
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 535 | native_form_lifecycle | codex/native-forms-591 | Reserved; not applied |
+
+Reserved 2026-11-11 after checking main through M534 and open issue reservations.
+Core architecture agreement: issue #591 comment-6807100601. Server-only immutable
+publication bindings and atomic native response persistence, registration association and exact-address email consent. Extension architecture agreed in independent Claude session (correction review); no hosted application authorized.

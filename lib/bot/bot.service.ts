@@ -84,6 +84,7 @@ export class BotService {
     private readonly messageSender: MessageSender,
     private readonly standaloneService: StandaloneService,
     private readonly intelligence: BotIntelligenceService,
+    private readonly guardNativeSender: (sender: MessageSender) => MessageSender = sender => sender,
   ) {
     this.flowExecutor = new FlowExecutor(supabase, messageSender, standaloneService, intelligence);
     this.ctx = { supabase, messageSender, standaloneService, intelligence, flowExecutor: this.flowExecutor };
@@ -234,6 +235,16 @@ export class BotService {
     const timeoutCheck = this.intelligence.isTimedOut(from);
     if (timeoutCheck.timedOut && !_preResolvedPendingStop) {
       await this.sendPlatformText(from, `You can message again in ${timeoutCheck.remaining} minute${timeoutCheck.remaining !== 1 ? 's' : ''}. 🙏`);
+      return;
+    }
+
+    // Response-bound native registration has its own narrow session authority.
+    // It never passes a form's business through the ordinary shared-number router.
+    if (text.startsWith('native_register:')) {
+      const { continueNativeRegistration } = await import('@/lib/whatsapp-forms/registration');
+      await continueNativeRegistration({ db: this.supabase, from, text, messageType,
+        phoneNumberId: destinationPhone, channelBusinessId: preResolvedBusinessId,
+        standalone: this.standaloneService, intelligence: this.intelligence, guardSender: this.guardNativeSender });
       return;
     }
 

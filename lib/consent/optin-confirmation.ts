@@ -19,7 +19,7 @@ import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver, type ResolvedChannel } from '@/lib/channels/channel-resolver';
 import type { MessageSender } from '@/lib/channels/message-sender';
-import { businessChatWindowState } from '@/lib/forms/form-send';
+import { businessChatWindowState, serviceWindowState } from '@/lib/forms/form-send';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -116,7 +116,7 @@ export type ConfirmationSendOutcome =
  */
 export async function sendOptInConfirmationRequest(
   db: SupabaseClient,
-  request: { businessId: string; phone: string; requestId: string; nonce: string; evidenceReference: string },
+  request: { businessId: string; phone: string; requestId: string; nonce: string; evidenceReference: string; nativeResponseId?: string; sender?: MessageSender },
   now = Date.now(),
 ): Promise<ConfirmationSendOutcome> {
   const outcome = await deliverConfirmationRequest(db, request, now);
@@ -133,7 +133,7 @@ export async function sendOptInConfirmationRequest(
 
 async function deliverConfirmationRequest(
   db: SupabaseClient,
-  request: { businessId: string; phone: string; requestId: string; nonce: string },
+  request: { businessId: string; phone: string; requestId: string; nonce: string; nativeResponseId?: string; sender?: MessageSender },
   now: number,
 ): Promise<ConfirmationSendOutcome> {
   const { businessId, requestId, nonce } = request;
@@ -172,11 +172,24 @@ async function deliverConfirmationRequest(
     const no = `optin_no:${nonce}`;
     // Free-form only inside THIS business's own window: on a shared number a receipt
     // alone may come from a chat with another business. Unreadable evidence: skip.
-    const window = await businessChatWindowState(db, businessId, resolved.channel, request.phone, now);
+    let window = await businessChatWindowState(db, businessId, resolved.channel, request.phone, now);
+    if (request.nativeResponseId) {
+      // Only a saved, token-bound native submission plus its original Meta
+      // timestamp can establish this business's window on a shared channel.
+      const { data: native, error: nativeError } = await db.from('form_responses').select('metadata')
+        .eq('id', request.nativeResponseId).eq('business_id', businessId).eq('customer_phone', digits)
+        .eq('submission_source', 'native').eq('consent_given', true).maybeSingle();
+      const at = Date.parse(native?.metadata?.native_inbound_at || '');
+      if (nativeError || native?.metadata?.channel_id !== resolved.channel.id || !Number.isFinite(at)
+        || at <= now - DAY_MS || at > now) return 'skipped_window_unknown';
+      window = await serviceWindowState(db, resolved.channel.id, digits, now);
+    }
+    const sender = request.sender || resolved.sender;
+    sender.bindBusiness?.(businessId);
     if (window === 'unknown') return 'skipped_window_unknown';
     if (window === 'open') {
       // Single attempt: an ambiguous retry could deliver the request twice.
-      const result = await resolved.sender.sendButtons({
+      const result = await sender.sendButtons({
         to: digits, body: requestText(biz.name),
         buttons: [{ id: yes, title: YES_TITLE }, { id: no, title: NO_TITLE }],
         footer: getPoweredByInteractiveFooter(biz.subscription_tier, biz.is_whitelabel),
@@ -190,7 +203,7 @@ async function deliverConfirmationRequest(
     const template = await loadOptInTemplate(resolved);
     if (!template) return 'skipped_no_template';
     // Single attempt: an ambiguous retry could deliver the request twice.
-    const result = await resolved.sender.sendTemplate!({
+    const result = await sender.sendTemplate!({
       to: digits, templateName: OPTIN_TEMPLATE_NAME, languageCode: OPTIN_TEMPLATE_LANGUAGE,
       templateParams: [oneLine(biz.name)], quickReplyPayloads: [yes, no],
       messageCategory: template.category, noRetry: true,

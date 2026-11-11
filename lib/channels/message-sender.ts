@@ -227,6 +227,7 @@ export interface MessageSender {
     messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendFlow?(msg: {
+    noRetry?: boolean;
     to: string;
     bodyText: string;
     flowId: string;
@@ -698,8 +699,9 @@ export class MetaCloudSender implements MessageSender {
     return { success: true, messageId: result.messageId };
   }
 
-  async sendFlow(msg: { to: string; bodyText: string; flowId: string; flowCta: string; screen: string; flowToken?: string; data?: Record<string, unknown>; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+  async sendFlow(msg: { noRetry?: boolean; to: string; bodyText: string; flowId: string; flowCta: string; screen: string; flowToken?: string; data?: Record<string, unknown>; messageCategory?: string }) {
+    const attempt = () => this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory });
+    const result = msg.noRetry ? await attempt() : await withRetry(attempt, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 

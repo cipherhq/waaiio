@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { createMemoryDb } from '@/lib/__tests__/helpers/memory-db';
 import {
   validateAudienceExpression,
   MAX_DEPTH,
@@ -503,25 +504,9 @@ describe('Audience Eligibility — Binding A', () => {
    * select('*', { count, head }) returns count. select(columns) returns data via range().
    */
   function mockService(consents: unknown[], optOuts: unknown[]) {
-    const mockFrom = vi.fn().mockImplementation((table: string) => {
-      const rows = table === 'customer_consents' ? consents : optOuts;
-      const chain: Record<string, any> = {};
-      const chainMethods = ['eq', 'in', 'is', 'or', 'order', 'range'];
-      for (const m of chainMethods) chain[m] = vi.fn().mockReturnValue(chain);
-
-      chain.select = vi.fn().mockImplementation((_cols: string, opts?: { count?: string; head?: boolean }) => {
-        if (opts?.head) {
-          return makeThenable({ count: rows.length, error: null, data: null });
-        }
-        return chain;
-      });
-      chain.range = vi.fn().mockImplementation((from: number, to: number) => {
-        const sliced = (rows as any[]).slice(from, to + 1);
-        return makeThenable({ data: sliced, error: null });
-      });
-      return chain;
-    });
-    return { from: mockFrom } as unknown;
+    // Real filter/count semantics cover both legacy phone and exact-address reads.
+    const seed = (rows: unknown[]) => rows.map((row, i) => ({ id: String(i), business_id: 'biz-1', ...(row as object) }));
+    return createMemoryDb({ customer_consents: seed(consents), messaging_opt_outs: seed(optOuts) });
   }
 
   it('T-A1: email-only → included in total', async () => {

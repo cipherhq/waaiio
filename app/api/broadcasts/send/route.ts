@@ -1,3 +1,5 @@
+import { hasEmailMarketingPermission } from '@/lib/whatsapp-forms/email-consent';
+import { dispatchNativeFormEmails, existingNativeEmailBatch } from '@/lib/whatsapp-forms/email-broadcast';
 import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -29,12 +31,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { business_id, message, phones, template_name } = body as {
+    const { business_id, message, template_name } = body as {
       business_id: string;
       message: string;
       phones: string[];
       template_name?: string;
     };
+
+    const emailMode = body.channel === 'email';
+    const responseIds = emailMode && Array.isArray(body.response_ids) ? [...new Set(body.response_ids)] as string[] : [];
+    const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+    if (emailMode && (!uuid.test(body.request_id) || !responseIds.length || responseIds.length > 100
+      || responseIds.some(id => typeof id !== 'string' || !uuid.test(id)) || typeof message !== 'string' || !message.trim() || message.length > 5000)) {
+      return NextResponse.json({ message: 'Select up to 100 form responses and enter a message of up to 5,000 characters.' }, { status: 400 });
+    }
+    const phones: string[] = emailMode ? responseIds : body.phones;
 
     if (!business_id || !message || !phones?.length) {
       return NextResponse.json(
@@ -74,6 +85,11 @@ export async function POST(request: NextRequest) {
 
     if (!business) {
       return NextResponse.json({ message: 'Business not found' }, { status: 404 });
+    }
+
+    if (emailMode) {
+      const existing = await existingNativeEmailBatch(service, business_id, body.request_id, responseIds, message);
+      if (existing) return NextResponse.json({ ...existing, channel: 'email', success: existing.accepted === existing.total });
     }
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
@@ -119,6 +135,12 @@ export async function POST(request: NextRequest) {
         { message: `Recipient limit would be exceeded. You can send to ${remaining} more recipients this month (${limits.maxRecipients} total).` },
         { status: 429 },
       );
+    }
+
+    if (emailMode) {
+      const result = await dispatchNativeFormEmails({ db: service, businessId: business_id, businessName: business.name,
+        responseIds, requestId: body.request_id, message });
+      return NextResponse.json({ ...result, channel: 'email', success: result.accepted === result.total });
     }
 
     // Resolve the sender for this business
@@ -202,7 +224,7 @@ export async function POST(request: NextRequest) {
         if (!sent) {
           const customerEmail = await findCustomerEmail(service, phone, business_id);
           let emailOpt: { address: string; subject: string; html: string } | null = null;
-          if (customerEmail && await hasRecipientPermission(service, business_id, phone, 'marketing', 'email')) {
+          if (customerEmail && await hasEmailMarketingPermission(service, business_id, customerEmail, phone, true)) {
             const tmpl = businessNotificationEmail({
               businessName: business.name,
               title: 'Broadcast Message',

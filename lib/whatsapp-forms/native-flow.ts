@@ -1,7 +1,7 @@
 /**
  * #591 — Compile existing Waaiio Forms fields into a single-screen WhatsApp Flow.
  *
- * Pure compiler for preview only. Does NOT publish, send, or accept submissions.
+ * Pure compiler shared by preview and immutable publication. No side effects.
  * Unsupported field types fail closed instead of silently losing customer data.
  *
  * Meta WhatsApp Flows spec: https://developers.facebook.com/docs/whatsapp/flows/
@@ -24,7 +24,7 @@ export interface WaaiioFormDefinition {
   fields: unknown;
   /** If present in form settings, appends a marketing consent OptIn.
    *  consent_label comes from schema-less jsonb — runtime type validation is required. */
-  settings?: { consent_label?: unknown } | null;
+  settings?: { consent_label?: unknown; native_whatsapp_opt_in?: unknown; email_marketing_opt_in?: unknown; registration_event_id?: unknown; [key: string]: unknown } | null;
 }
 
 export class NativeFlowValidationError extends Error {
@@ -166,7 +166,9 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
   // Optional marketing consent checkbox — appended after fields, before footer.
   // Uses OptIn component per Meta spec. Only included when settings.consent_label is set.
   // Fail-closed: reject non-string, overlong, or control-character consent labels explicitly.
-  const rawConsentLabel = form.settings?.consent_label;
+  const rawConsentLabel = form.settings?.native_whatsapp_opt_in === true
+    ? 'Request WhatsApp news and offers from this business. Confirm with Yes in chat.'
+    : form.settings?.consent_label;
   if (rawConsentLabel !== undefined && rawConsentLabel !== null) {
     if (typeof rawConsentLabel !== 'string') {
       throw new NativeFlowValidationError(
@@ -193,6 +195,20 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
       required: false,
     });
     payload[CONSENT_FIELD_ID] = '$' + '{form.' + CONSENT_FIELD_ID + '}';
+  }
+
+  if (form.settings?.email_marketing_opt_in === true) {
+    if (!(form.fields as WaaiioFormField[]).some(field => field.type === 'email')) {
+      throw new NativeFlowValidationError('Add an email field before offering email updates.');
+    }
+    children.push({ type: 'OptIn', name: '_email_consent', required: false,
+      label: 'Email me news and offers from this business. I can unsubscribe at any time.' });
+    payload._email_consent = '${form._email_consent}';
+  }
+  const eventId = form.settings?.registration_event_id;
+  if (eventId !== undefined && eventId !== null && eventId !== '' &&
+    (typeof eventId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(eventId))) {
+    throw new NativeFlowValidationError('Choose a valid registration event.');
   }
 
   children.push({

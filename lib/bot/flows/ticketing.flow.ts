@@ -1,3 +1,4 @@
+import { nativeRegistrationEvent } from '@/lib/whatsapp-forms/registration-binding';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy } from './flow-localization';
@@ -30,7 +31,10 @@ export const ticketingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
-        const { data: events } = await ctx.supabase
+        const boundEvent = await nativeRegistrationEvent(ctx.supabase, { registrationId: ctx.session.session_data._native_registration_id,
+          businessId: ctx.business.id, sessionId: ctx.session.id, phone: ctx.from });
+        if (boundEvent === false) return [{ type: 'text', text: 'This registration is unavailable. Please contact the business.' }];
+        let eventQuery = ctx.supabase
           .from('events')
           .select('id, name, date, time, venue, price, total_tickets, tickets_sold, image_url, event_ticket_types(price)')
           .eq('business_id', ctx.business.id)
@@ -38,6 +42,8 @@ export const ticketingFlow: FlowDefinition = {
           .gte('date', new Date().toISOString().split('T')[0])
           .order('date')
           .limit(10);
+        if (boundEvent) eventQuery = eventQuery.eq('id', boundEvent);
+        const { data: events } = await eventQuery;
 
         // Filter out past events (today but time already passed) and sold-out events
         const now = new Date();
@@ -123,6 +129,11 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
+        const boundEvent = await nativeRegistrationEvent(ctx.supabase, { registrationId: ctx.session.session_data._native_registration_id,
+          businessId: ctx.business!.id, sessionId: ctx.session.id, phone: ctx.from });
+        if (boundEvent === false || (boundEvent && matched?.id !== boundEvent)) {
+          return { valid: false, errorMessage: 'This form is for a different event. Choose its registration event or cancel to leave.' };
+        }
         if (!matched) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ticketing.event_not_found') };
 
         const available = matched.total_tickets - matched.tickets_sold;
@@ -538,6 +549,13 @@ export const ticketingFlow: FlowDefinition = {
           { const meta = (ctx.business?.metadata || {}) as Record<string, unknown>; return getTermsPrompt(ctx.business?.name || 'Events', meta.terms_text as string | undefined, ctx.business?.slug, meta.terms_url as string | undefined); }
         }
 
+        // Validate the native association before user/booking/payment mutation.
+        const boundEvent = await nativeRegistrationEvent(ctx.supabase, { registrationId: d._native_registration_id,
+          businessId: ctx.business!.id, sessionId: ctx.session.id, phone: ctx.from });
+        if (boundEvent === false || (boundEvent && boundEvent !== d.event_id)) {
+          return [{ type: 'text', text: 'This registration no longer matches the selected event. Please contact the business.' }];
+        }
+
         // Ensure user exists
         let userId = ctx.session.user_id;
         if (!userId) {
@@ -639,6 +657,10 @@ export const ticketingFlow: FlowDefinition = {
 
           d.booking_id = booking.id;
           d.reference_code = booking.reference_code;
+        }
+        if (typeof d._native_registration_id === 'string') {
+          const { attachNativeRegistration } = await import('@/lib/whatsapp-forms/registration');
+          await attachNativeRegistration(ctx.supabase, d._native_registration_id, booking.id, ctx.session.id);
         }
         // Platform fee is recorded after payment is verified in await_ticket_payment
 
