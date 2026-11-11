@@ -19,3 +19,8 @@
 - Scope: RefundModal type adapter, legacy reseller/ordering fixture compatibility, actual quote button/parser/handler snapshot binding, and draft M531/M533 untaxed negotiated-price compatibility with regenerated catalogs.
 - Verification: scoped independent review; 31 reseller SQL tests plus four concurrency scenarios, 42 ordering SQL tests, 35 quote/route/logging tests, 18 invoice SQL tests and five refund UI tests passed locally with zero targeted skips. Groups are not a unique combined count. Fresh remote CI remains required.
 - Risk: quote messages with non-null snapshots need the new terms-bound button; old snapshot-null quote behavior is preserved. Existing tax-unsupported currencies remain untaxed. Both payment custody routes and production deployment configuration remain unchanged.
+
+### Later migration-fixture compatibility
+- Updated only refund convergence and recurring finalization test fixtures to preserve immutable accounting provenance. All original assertions and runtime guards remain intact.
+- Restored the historical M356 projection signatures only within its existing migration replay fixture; current tax migrations are unchanged.
+- Disposable PG17 evidence: refund convergence 30 passed/zero skipped; recurring finalization 34 passed/zero skipped. Independent reviewer verified fixture boundaries. Existing dedicated CI teardown disposes retained rows; recurring suite requires a fresh database.
