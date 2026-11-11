@@ -126,6 +126,7 @@ export async function GET(request: NextRequest) {
           _save_card_payment_id: paymentId,
           _save_card_offer_id: offerId,
           _saved_card_channel_id: channelId,
+          _inbound_channel_id: channelId,
         };
 
         if (payment?.metadata) {
