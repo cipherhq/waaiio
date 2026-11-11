@@ -119,5 +119,41 @@ describe('R3 Blocker 1: Real handlePostCompletion receipt caller', () => {
     // Basic sanity: amount and business name passed correctly
     expect(receiptData.amount).toBe(15000);
     expect(receiptData.businessName).toBe('Citadel of Grace');
+    // #889: no extra receipt details given → none printed, and the profile name is used.
+    expect(receiptData.customerName).toBe('Adebayo Olumide');
+    expect(receiptData.items).toBeUndefined();
+    expect(receiptData.balanceDue).toBeUndefined();
+  });
+
+  it('#889: prints the buyer name, items and deposit lines; the CRM profile keeps the account name', async () => {
+    const supabase = createReceiptSupabase();
+    const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
+    const items = [{ name: 'VIP', quantity: 2, unitPrice: 10000, lineTotal: 20000 }];
+    await handlePostCompletion({
+      supabase: supabase as any,
+      businessId: BIZ_ID,
+      customerPhone: '+2348012345678',
+      customerName: 'Account Name',
+      receiptCustomerName: 'Guest Name',
+      receiptItems: items,
+      receiptTotalDue: 50000,
+      receiptBalanceDue: 30000,
+      amountPaid: 20000,
+      serviceName: 'Praise Night',
+      referenceCode: 'WAA-TK-1',
+      // No paymentId: the profile is then written directly with the name, which this test checks.
+      currencyCode: 'NGN',
+    });
+
+    const receiptData = mockGenerateReceiptPdf.mock.calls[0][0];
+    expect(receiptData).toMatchObject({ customerName: 'Guest Name', items, totalDue: 50000, balanceDue: 30000, amount: 20000 });
+    // The customer profile insert still uses the account name, not the receipt name.
+    const profileCalls = (supabase.from as any).mock.results
+      .map((r: any, i: number) => ({ table: (supabase.from as any).mock.calls[i][0], chain: r.value }))
+      .filter((x: any) => x.table === 'customer_profiles');
+    const written = profileCalls.flatMap((x: any) => [...x.chain.insert.mock.calls, ...x.chain.update.mock.calls]).map((c: any) => c[0]);
+    expect(written.length).toBeGreaterThan(0);
+    expect(JSON.stringify(written)).toContain('Account Name');
+    expect(JSON.stringify(written)).not.toContain('Guest Name');
   });
 });
