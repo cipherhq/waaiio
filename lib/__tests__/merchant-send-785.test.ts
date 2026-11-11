@@ -40,7 +40,7 @@ beforeEach(() => {
       : null;
     const result = { data, count: 0, error: null };
     const chain: Record<string, unknown> = {};
-    for (const method of ['select', 'eq', 'is', 'in', 'or', 'upsert', 'update', 'order', 'limit']) chain[method] = (row: Record<string, unknown>) => { if (method === 'update') m.writes.push({ table, row }); return chain; };
+    for (const method of ['select', 'eq', 'neq', 'is', 'in', 'or', 'upsert', 'update', 'order', 'limit']) chain[method] = (row: Record<string, unknown>) => { if (method === 'update') m.writes.push({ table, row }); return chain; };
     chain.insert = (row: Record<string, unknown>) => { m.writes.push({ table, row }); return chain; };
     chain.single = chain.maybeSingle = async () => result;
     chain.then = (resolve: (x: unknown) => unknown) => Promise.resolve(result).then(resolve);
