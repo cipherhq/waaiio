@@ -18,6 +18,7 @@
  * Requires TEST_DATABASE_URL. Runs in CI migration shards.
  * Locally, skips when TEST_DATABASE_URL is not set.
  */
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync, execFile } from 'child_process';
 
@@ -81,40 +82,40 @@ function psqlAsync(sql: string): Promise<{ ok: boolean; stdout: string; stderr: 
 }
 
 // ═══════════════════════════════════════════════════════════
-// Deterministic fixture IDs
+// Unique fixture IDs; immutable provenance is retained until disposable DB disposal.
 // ═══════════════════════════════════════════════════════════
 
-const TEST_USER_ID   = '00000000-0000-0000-0440-000000000001';
-const TEST_BIZ_ID    = '00000000-0000-0000-0440-000000000010';
+const TEST_USER_ID   = randomUUID();
+const TEST_BIZ_ID    = randomUUID();
 
-// Payout IDs — each test cleans its own; these are deterministic so afterAll can sweep
-const PAYOUT_R1A     = '00000000-0000-0000-0440-a00000000001';
-const PAYOUT_R1B     = '00000000-0000-0000-0440-a00000000002';
-const PAYOUT_R1C     = '00000000-0000-0000-0440-a00000000003';
-const PAYOUT_R1D     = '00000000-0000-0000-0440-a00000000004';
-const PAYOUT_R2A     = '00000000-0000-0000-0440-b00000000001';
-const PAYOUT_R2B     = '00000000-0000-0000-0440-b00000000002';
-const PAYOUT_R3      = '00000000-0000-0000-0440-c00000000001';
-const PAYOUT_R4A     = '00000000-0000-0000-0440-d00000000001';
-const PAYOUT_R4B     = '00000000-0000-0000-0440-d00000000002';
-const PAYOUT_R4C     = '00000000-0000-0000-0440-d00000000003';
-const PAYOUT_R4D     = '00000000-0000-0000-0440-d00000000004';
-const PAYOUT_R5      = '00000000-0000-0000-0440-e00000000001';
-const PAYOUT_BYPASS  = '00000000-0000-0000-0440-f00000000001';
-const PAYOUT_MIXED   = '00000000-0000-0000-0440-f00000000002';
-const PAYOUT_EMPTY   = '00000000-0000-0000-0440-f00000000003';
-const PAYOUT_MALFORM = '00000000-0000-0000-0440-f00000000004';
-const PAYOUT_CONC_A  = '00000000-0000-0000-0440-cc0000000001';
-const PAYOUT_CONC_B  = '00000000-0000-0000-0440-cc0000000002';
-const PAYOUT_BAD_UUID = '00000000-0000-0000-0440-dd0000000001';
+// Payout IDs — each test owns its targets; the source payout is retained.
+const PAYOUT_R1A     = randomUUID();
+const PAYOUT_R1B     = randomUUID();
+const PAYOUT_R1C     = randomUUID();
+const PAYOUT_R1D     = randomUUID();
+const PAYOUT_R2A     = randomUUID();
+const PAYOUT_R2B     = randomUUID();
+const PAYOUT_R3      = randomUUID();
+const PAYOUT_R4A     = randomUUID();
+const PAYOUT_R4B     = randomUUID();
+const PAYOUT_R4C     = randomUUID();
+const PAYOUT_R4D     = randomUUID();
+const PAYOUT_R5      = randomUUID();
+const PAYOUT_BYPASS  = randomUUID();
+const PAYOUT_MIXED   = randomUUID();
+const PAYOUT_EMPTY   = randomUUID();
+const PAYOUT_MALFORM = randomUUID();
+const PAYOUT_CONC_A  = randomUUID();
+const PAYOUT_CONC_B  = randomUUID();
+const PAYOUT_BAD_UUID = randomUUID();
 
 // Adjustment IDs
-const ADJ_1          = '00000000-0000-0000-0440-ad0000000001';
-const ADJ_2          = '00000000-0000-0000-0440-ad0000000002';
-const ADJ_3          = '00000000-0000-0000-0440-ad0000000003';
+const ADJ_1          = randomUUID();
+const ADJ_2          = randomUUID();
+const ADJ_3          = randomUUID();
 
 // A "different" payout for the cross-link test (R4B)
-const PAYOUT_OTHER   = '00000000-0000-0000-0440-dd0000000099';
+const PAYOUT_OTHER   = randomUUID();
 
 // All payout IDs for cleanup
 const ALL_PAYOUTS = [
@@ -145,16 +146,16 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
 
       -- Create a payout that adjustments reference (payout_id FK on payout_adjustments is NOT NULL)
       -- We use PAYOUT_OTHER as the "source payout" that created the adjustments
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
-      VALUES ('${PAYOUT_OTHER}', '${TEST_BIZ_ID}', '2025-01-01', '2025-01-07', 10000, 1000, 200, 8800, 'paid')
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
+      VALUES ('${PAYOUT_OTHER}', '${TEST_BIZ_ID}', 'NGN', '2025-01-01', '2025-01-07', 10000, 1000, 200, 8800, 'paid')
       ON CONFLICT (id) DO NOTHING;
 
       -- Create test adjustments (all unapplied initially)
-      INSERT INTO payout_adjustments (id, business_id, payout_id, amount, reason, applied_to_payout_id)
+      INSERT INTO payout_adjustments (id, business_id, currency, payout_id, amount, reason, applied_to_payout_id)
       VALUES
-        ('${ADJ_1}', '${TEST_BIZ_ID}', '${PAYOUT_OTHER}', -500, 'Refund A', NULL),
-        ('${ADJ_2}', '${TEST_BIZ_ID}', '${PAYOUT_OTHER}', -300, 'Refund B', NULL),
-        ('${ADJ_3}', '${TEST_BIZ_ID}', '${PAYOUT_OTHER}', -200, 'Refund C', NULL)
+        ('${ADJ_1}', '${TEST_BIZ_ID}', 'NGN', '${PAYOUT_OTHER}', -500, 'Refund A', NULL),
+        ('${ADJ_2}', '${TEST_BIZ_ID}', 'NGN', '${PAYOUT_OTHER}', -300, 'Refund B', NULL),
+        ('${ADJ_3}', '${TEST_BIZ_ID}', 'NGN', '${PAYOUT_OTHER}', -200, 'Refund C', NULL)
       ON CONFLICT (id) DO NOTHING;
     `;
     const result = psqlMayFail(seed);
@@ -164,15 +165,11 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
   });
 
   afterAll(() => {
-    // Clean up all test data
-    const payoutList = ALL_PAYOUTS.map(id => `'${id}'`).join(',');
-    psqlMayFail(`
-      DELETE FROM payout_adjustments WHERE id IN ('${ADJ_1}', '${ADJ_2}', '${ADJ_3}');
-      DELETE FROM business_payouts WHERE id IN (${payoutList});
-      DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
-      DELETE FROM profiles WHERE id = '${TEST_USER_ID}';
-      DELETE FROM auth.users WHERE id = '${TEST_USER_ID}';
-    `);
+    // Accounting provenance is immutable. Release only target links and retain
+    // adjustments, their source payout, and tenant until disposable DB disposal.
+    resetAdjustments();
+    const payoutList = ALL_PAYOUTS.filter(id => id !== PAYOUT_OTHER).map(id => `'${id}'`).join(',');
+    psql(`DELETE FROM business_payouts WHERE id IN (${payoutList});`);
   });
 
   // Helper: delete a payout unconditionally (for per-test cleanup)
@@ -199,8 +196,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1] },
     ]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R1A}', '${TEST_BIZ_ID}', '2026-02-01', '2026-02-07', 5000, 500, 100, 4400, 'approved', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R1A}', '${TEST_BIZ_ID}', 'NGN', '2026-02-01', '2026-02-07', 5000, 500, 100, 4400, 'approved', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(false);
     expect(r.output).toContain('linkage_guard_r1');
@@ -212,8 +209,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_failed', message: 'link timed out' },
     ]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R1B}', '${TEST_BIZ_ID}', '2026-02-08', '2026-02-14', 5000, 500, 100, 4400, 'processing', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R1B}', '${TEST_BIZ_ID}', 'NGN', '2026-02-08', '2026-02-14', 5000, 500, 100, 4400, 'processing', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(false);
     expect(r.output).toContain('linkage_guard_r1');
@@ -225,8 +222,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1] },
     ]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R1C}', '${TEST_BIZ_ID}', '2026-02-15', '2026-02-21', 5000, 500, 100, 4400, 'paid', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R1C}', '${TEST_BIZ_ID}', 'NGN', '2026-02-15', '2026-02-21', 5000, 500, 100, 4400, 'paid', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(false);
     expect(r.output).toContain('linkage_guard_r1');
@@ -240,8 +237,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1] },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R1D}', '${TEST_BIZ_ID}', '2026-02-22', '2026-02-28', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R1D}', '${TEST_BIZ_ID}', 'NGN', '2026-02-22', '2026-02-28', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -276,8 +273,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending' },
     ]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R2A}', '${TEST_BIZ_ID}', '2026-03-01', '2026-03-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R2A}', '${TEST_BIZ_ID}', 'NGN', '2026-03-01', '2026-03-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(false);
     expect(r.output).toContain('linkage_guard_r2');
@@ -289,8 +286,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [] },
     ]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R2B}', '${TEST_BIZ_ID}', '2026-03-08', '2026-03-14', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R2B}', '${TEST_BIZ_ID}', 'NGN', '2026-03-08', '2026-03-14', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(false);
     expect(r.output).toContain('linkage_guard_r2');
@@ -307,8 +304,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_failed', message: 'link timed out' },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R3}', '${TEST_BIZ_ID}', '2026-04-01', '2026-04-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R3}', '${TEST_BIZ_ID}', 'NGN', '2026-04-01', '2026-04-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -332,8 +329,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1, ADJ_2] },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R4A}', '${TEST_BIZ_ID}', '2026-05-01', '2026-05-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R4A}', '${TEST_BIZ_ID}', 'NGN', '2026-05-01', '2026-05-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -356,8 +353,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
 
     // Insert payout A with pending flag
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R4B}', '${TEST_BIZ_ID}', '2026-05-08', '2026-05-14', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R4B}', '${TEST_BIZ_ID}', 'NGN', '2026-05-08', '2026-05-14', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -384,8 +381,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1] },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R4C}', '${TEST_BIZ_ID}', '2026-05-15', '2026-05-21', 5000, 500, 100, 4400, 'held', '${pendingFlags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R4C}', '${TEST_BIZ_ID}', 'NGN', '2026-05-15', '2026-05-21', 5000, 500, 100, 4400, 'held', '${pendingFlags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -408,8 +405,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1, ADJ_2] },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R4D}', '${TEST_BIZ_ID}', '2026-05-22', '2026-05-28', 5000, 500, 100, 4400, 'held', '${pendingFlags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R4D}', '${TEST_BIZ_ID}', 'NGN', '2026-05-22', '2026-05-28', 5000, 500, 100, 4400, 'held', '${pendingFlags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -440,8 +437,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1, ADJ_2] },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_R5}', '${TEST_BIZ_ID}', '2026-06-01', '2026-06-07', 5000, 500, 100, 4400, 'held', '${originalFlags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_R5}', '${TEST_BIZ_ID}', 'NGN', '2026-06-01', '2026-06-07', 5000, 500, 100, 4400, 'held', '${originalFlags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -469,8 +466,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'adjustment_link_pending', adjustment_ids: [ADJ_1] },
     ]);
     const insertR = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_BYPASS}', '${TEST_BIZ_ID}', '2026-07-01', '2026-07-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_BYPASS}', '${TEST_BIZ_ID}', 'NGN', '2026-07-01', '2026-07-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(insertR.ok).toBe(true);
 
@@ -503,8 +500,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       { type: 'compliance_hold', message: 'pending review' },
     ]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_MIXED}', '${TEST_BIZ_ID}', '2026-08-01', '2026-08-07', 5000, 500, 100, 4400, 'pending', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_MIXED}', '${TEST_BIZ_ID}', 'NGN', '2026-08-01', '2026-08-07', 5000, 500, 100, 4400, 'pending', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(true);
 
@@ -527,8 +524,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
   it('Empty arrays and malformed entries do not block', () => {
     // Empty array
     const r1 = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_EMPTY}', '${TEST_BIZ_ID}', '2026-09-01', '2026-09-07', 5000, 500, 100, 4400, 'pending', '[]'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_EMPTY}', '${TEST_BIZ_ID}', 'NGN', '2026-09-01', '2026-09-07', 5000, 500, 100, 4400, 'pending', '[]'::jsonb);
     `);
     expect(r1.ok).toBe(true);
     cleanPayout(PAYOUT_EMPTY);
@@ -540,8 +537,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       42,
     ]);
     const r2 = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_MALFORM}', '${TEST_BIZ_ID}', '2026-09-08', '2026-09-14', 5000, 500, 100, 4400, 'pending', '${malformed}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_MALFORM}', '${TEST_BIZ_ID}', 'NGN', '2026-09-08', '2026-09-14', 5000, 500, 100, 4400, 'pending', '${malformed}'::jsonb);
     `);
     expect(r2.ok).toBe(true);
     cleanPayout(PAYOUT_MALFORM);
@@ -559,8 +556,8 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
       adjustment_ids: [ADJ_1, 'not-a-uuid'],
     }]);
     const r = psqlMayFail(`
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
-      VALUES ('${PAYOUT_BAD_UUID}', '${TEST_BIZ_ID}', '2026-11-01', '2026-11-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, flags)
+      VALUES ('${PAYOUT_BAD_UUID}', '${TEST_BIZ_ID}', 'NGN', '2026-11-01', '2026-11-07', 5000, 500, 100, 4400, 'held', '${flags}'::jsonb);
     `);
     expect(r.ok).toBe(false);
     expect(r.output).toContain('linkage_guard_r2');
@@ -580,15 +577,15 @@ describe('Payout linkage guard (real PostgreSQL)', () => {
 
     const sqlA = `
       BEGIN;
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
-      VALUES ('${PAYOUT_CONC_A}', '${TEST_BIZ_ID}', '2026-10-01', '2026-10-07', 5000, 500, 100, 4400, 'pending');
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
+      VALUES ('${PAYOUT_CONC_A}', '${TEST_BIZ_ID}', 'NGN', '2026-10-01', '2026-10-07', 5000, 500, 100, 4400, 'pending');
       SELECT pg_sleep(2);
       COMMIT;
     `;
 
     const sqlB = `
-      INSERT INTO business_payouts (id, business_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
-      VALUES ('${PAYOUT_CONC_B}', '${TEST_BIZ_ID}', '2026-10-01', '2026-10-07', 5000, 500, 100, 4400, 'pending');
+      INSERT INTO business_payouts (id, business_id, currency, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
+      VALUES ('${PAYOUT_CONC_B}', '${TEST_BIZ_ID}', 'NGN', '2026-10-01', '2026-10-07', 5000, 500, 100, 4400, 'pending');
     `;
 
     // Custom psqlAsync with VERBOSITY=verbose for SQLSTATE in stderr

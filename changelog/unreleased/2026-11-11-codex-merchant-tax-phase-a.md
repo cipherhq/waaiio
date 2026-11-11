@@ -28,3 +28,11 @@
 ### Payment identity test fixtures
 - Three existing database suites now seed payments with their owning business; entity ACL checks use exact current M531 signatures. Runtime code, accounting guards and assertion expectations remain unchanged.
 - Fresh disposable PG17: saved-card session 11, saved-card ACL 1, entity commit 70 passed, all zero skips. Historical replay tests require fresh databases; contaminated same-database reruns are excluded from evidence.
+
+### Offline approval fixture
+- M479 database test keeps its exact 5000 amount assertion numeric after money precision changes and leaves immutable accounting rows for existing dedicated database teardown.
+- Fresh disposable PG17: 21 passed, zero skipped; independently reviewed. Runtime payment behavior and guards unchanged.
+
+### Payout fixture currency compatibility
+- M440/M444 test fixtures now supply consistent NGN business/payout/adjustment identity and retain immutable provenance with isolated IDs. Assertions and runtime code are unchanged.
+- Fresh disposable PG17: M440 18 and M444 5 tests passed, zero skipped. Bounded later database suites also passed; remote verification remains required.
