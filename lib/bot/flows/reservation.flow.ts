@@ -1,10 +1,11 @@
+import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
-import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
+import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { createNotification } from './shared/notifications';
@@ -768,7 +769,6 @@ export const reservationFlow: FlowDefinition = {
           if (user?.first_name) {
             ctx.session.session_data.first_name = user.first_name;
             ctx.session.session_data.last_name = user.last_name;
-            ctx.session.session_data.email = user.email || '';
             return true;
           }
         }
@@ -785,7 +785,7 @@ export const reservationFlow: FlowDefinition = {
           text: `Thanks, ${ctx.session.session_data.first_name}! 📧 What's your email address?\n\nType your email or *skip*:`,
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input.toLowerCase() === 'skip') {
           return { valid: true };
         }
@@ -793,12 +793,17 @@ export const reservationFlow: FlowDefinition = {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           return { valid: false, errorMessage: "That doesn't look like a valid email. Try again or type *skip*:" };
         }
+        const businessId = ctx.business?.id || ctx.session.business_id;
+        if (businessId && (!ctx.business?.id || !ctx.session.business_id || ctx.business.id === ctx.session.business_id)) {
+          const d = ctx.session.session_data;
+          await persistStoreCustomerEmail(ctx.supabase, businessId, ctx.from, email,
+            `${d.first_name || ''} ${d.last_name || ''}`.trim() || null);
+        }
         return { valid: true, data: { email } };
       },
       async next() { return 'create_reservation'; },
       async skipIf(ctx: FlowContext) {
-        // Do not confuse "known user" with "known email".
-        return isReusableCustomerEmail(ctx.session.session_data.email);
+        return reuseStoreCustomerEmail(ctx);
       },
     },
 

@@ -1,9 +1,10 @@
+import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
 import { quoteOrderTax, isTaxTermsChanged } from '@/lib/tax/server-quote';
 import type { TaxSnapshot } from '@/lib/tax/calculation';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
-import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
+import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { truncTitle } from '../utils/truncate';
@@ -2004,12 +2005,6 @@ export const orderingFlow: FlowDefinition = {
           if (user?.first_name) {
             ctx.session.session_data.first_name = user.first_name;
             ctx.session.session_data.last_name = user.last_name;
-            ctx.session.session_data.email = user.email || '';
-            if (isReusableCustomerEmail(user.email)) {
-              // Ordering historically reads customer_email downstream. Keep both
-              // keys aligned so a known real email is not requested again.
-              ctx.session.session_data.customer_email = user.email.trim().toLowerCase();
-            }
             return true;
           }
         }
@@ -2122,16 +2117,17 @@ export const orderingFlow: FlowDefinition = {
         if (!emailRegex.test(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_email') };
         }
+        const businessId = ctx.business?.id || ctx.session.business_id;
+        if (businessId && (!ctx.business?.id || !ctx.session.business_id || ctx.business.id === ctx.session.business_id)) {
+          const d = ctx.session.session_data;
+          await persistStoreCustomerEmail(ctx.supabase, businessId, ctx.from, email,
+            `${d.first_name || ''} ${d.last_name || ''}`.trim() || null);
+        }
         return { valid: true, data: { customer_email: email, email } };
       },
       async next() { return 'review_order_summary'; },
       async skipIf(ctx: FlowContext) {
-        const known = ctx.session.session_data.customer_email || ctx.session.session_data.email;
-        if (!isReusableCustomerEmail(known)) return false;
-        const normalized = known.trim().toLowerCase();
-        ctx.session.session_data.customer_email = normalized;
-        ctx.session.session_data.email = normalized;
-        return true;
+        return reuseStoreCustomerEmail(ctx, true);
       },
     },
 
