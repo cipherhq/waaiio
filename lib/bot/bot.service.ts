@@ -4299,6 +4299,8 @@ export class BotService {
           }
         }
       } catch (err) {
+        // #976: a refused flow reply goes to the #682 notice below, not on to more routing.
+        if (isFinancialDenial(err)) throw err;
         logger.error('[BOT] Welcome button handler error (non-fatal):', err);
       }
     }

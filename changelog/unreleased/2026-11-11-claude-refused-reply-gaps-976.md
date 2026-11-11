@@ -11,13 +11,18 @@
 **What changed**
 - **`lib/bot/flows/executor.ts`:**
   - **Refusal:** `sendMessages` stops the batch at a financial refusal and passes it up as `RefusedSendError`. The message is unchanged, so the #682 branch in `BotService.handleMessage` sends its notice. Other send errors (Meta 4xx/5xx and the rest) are still logged and the next message is still sent.
-  - **Transcript:** `execute()` removes the refused replies' entries from `conversation_log` with one extra session save, only on refusal. The save before sending is unchanged. A stale save writes nothing. Entries are matched by the object that was logged, so a resent prompt that was never logged cannot remove an older delivered line. Custom step-override prompts are covered too.
+  - **Plain text sends:** the executor's own text sends (validation errors, cancel/restart, back, step-not-found, media hints, custom step-override prompts and the rest) also carry a refusal up.
+  - **Transcript:** on a refusal, `execute()` removes the refused reply's line from `conversation_log`, together with every later bot line written in the same execution. It takes one extra session save, only on refusal; the save before sending is unchanged and a stale save writes nothing. Each bot line is written just before it is sent, and sends go in the same order, so none of the later lines reached the customer either. The refused line is found by the logged message object, or by its text among this execution's new bot lines. Lines that were already in the transcript when the execution started are never removed.
   - **Usage tracking:** outbound usage is counted only when at least one message was sent. Usage tracking and the spend-threshold check are now kept alive with `after()`, like the #974 low-balance check.
 - **`lib/bot/financial-denial.ts` (new):** `isFinancialDenial` (the same three conditions as before) and `RefusedSendError`.
-- **`lib/bot/bot.service.ts`:** the #682 catch uses `isFinancialDenial`. Same behaviour.
+- **`lib/bot/bot.service.ts`:** the #682 catch uses `isFinancialDenial`, same behaviour as before. The welcome-button catch now passes a refusal on instead of treating it as a non-fatal error.
+- **`lib/bot/handlers/keyword-actions.ts`:** same change for the keyword-action catch. Before this, these two catches would have swallowed the now-surfaced refusal, and the same message would have been routed a second time (reviewer finding on `4772109`).
 - **`lib/channels/attempt-recording.ts`:** comment only. It documents that `pending_authorization` with no `sent_at` and disposition `pending_authorization` means "blocked before sending".
 - **Tests:** `lib/__tests__/refused-reply-executor-976.test.ts` and `lib/__tests__/refused-reply-botservice-976.test.ts` (real BotService → executor → MetaCloudSender, with only the financial RPC faked). In `messaging-low-balance-executor-hook.test.ts`, the refused case now expects the refusal to be passed up.
 
 **What it affects:** customers of a business with no messaging balance (or at its spend cap) now get the #682 notice on platform scope, which Waaiio pays for. Admin Chat History no longer shows the undelivered replies. Billing, pricing, the financial gate and the attempt rows are unchanged.
 
-**What could break:** a caller of `FlowExecutor.execute` outside `BotService.handleMessage` would now receive the refusal as a thrown error. Graphify shows none: the three production callers all run inside `handleMessage`'s try. The session still moves to the step the customer never saw, as before.
+**What could break:**
+- **Callers:** there are 25 production `flowExecutor.execute` call sites, all under `lib/bot` and all inside `BotService.handleMessage`. Graphify indexed only 3–4 of them, so the list came from grep and an AST scan. The two catches that swallowed errors around them now pass a refusal on. No payment, webhook or cron path calls `FlowExecutor`.
+- **Sends outside `execute`:** catches that wrap plain business sends rather than `execute` (the conversational-AI layer, the default reply, action-dispatcher handlers) still treat a refusal as non-fatal, as before this change. A follow-up will look at them.
+- **Session step:** the session still moves to the step the customer never saw, as before.

@@ -45,6 +45,18 @@ type ConversationLogEntry = { role: 'bot' | 'user'; content: string; timestamp: 
 /** #976: prompt message → the conversation_log entry written for it (for refused-reply cleanup). */
 const logEntryFor = new WeakMap<PromptMessage, ConversationLogEntry>();
 
+/** The text a prompt message is saved under in conversation_log (before #963 redaction). */
+function promptLogText(msg: PromptMessage): string {
+  switch (msg.type) {
+    case 'text': return msg.text;
+    case 'buttons': return msg.body;
+    case 'list': return msg.body;
+    case 'image': return msg.caption || '[Image]';
+    case 'document': return msg.caption || msg.filename || '[Document]';
+    default: return '';
+  }
+}
+
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
 
@@ -97,6 +109,8 @@ export class FlowExecutor {
       ? this.capabilityToFlowType(activeCap)
       : (business?.flow_type || 'scheduling');
     const stepId = session.current_step;
+    // #976: lines already in the transcript when this execution started are never removed on a refusal.
+    const logAtStart = new Set(session.conversation_log ?? []);
 
     // #267: Per-execution instrumentation collector (in-memory, no DB I/O yet)
     // Test seam: _skipInstrumentation bypasses collector/scoped-sender/flush for benchmark comparison
@@ -290,11 +304,10 @@ export class FlowExecutor {
       if (!session.conversation_log) session.conversation_log = [];
       if (override?.action === 'custom' && override.customPrompt) {
         this.trackStepHistory(session, stepId);
-        const customEntry: ConversationLogEntry = { role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() };
-        session.conversation_log.push(customEntry);
+        session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
         _fmark('cas_persist');
-        await this.sendLoggedText(from, override.customPrompt, customEntry, scopedSender);
+        await this.sendText(from, override.customPrompt, scopedSender);
         _fmark('meta_send');
       } else {
         const messages = await step.prompt(ctx);
@@ -921,7 +934,7 @@ export class FlowExecutor {
     } catch (err) {
       // #976: a refused reply was never delivered; remove it from the saved transcript,
       // then let BotService answer the refusal with the #682 notice.
-      if (err instanceof RefusedSendError) await this.dropUnsentLogEntries(session, err.unsentLogEntries);
+      if (err instanceof RefusedSendError) await this.dropUnsentLogEntries(session, logAtStart, err);
       throw err;
     } finally { // #267: Instrumentation flush — off critical path, never throws
       // No sender restoration needed — scopedSender is execution-local,
@@ -1009,10 +1022,9 @@ export class FlowExecutor {
       if (!session.conversation_log) session.conversation_log = [];
       this.trackStepHistory(session, nextStepId);
       const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session, tCtx);
-      const customEntry: ConversationLogEntry = { role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() };
-      session.conversation_log.push(customEntry);
+      session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
-      await this.sendLoggedText(from, translatedCustom, customEntry, sender);
+      await this.sendText(from, translatedCustom, sender);
     } else {
       const messages = await nextStep.prompt(ctx);
       if (messages.length > 0) {
@@ -1100,23 +1112,39 @@ export class FlowExecutor {
       keepAlive(checkLowBalanceAlerts(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Low-balance check failed (non-critical):', err)));
     }
     if (refusedAt >= 0) {
-      throw new RefusedSendError(refusal, messages.slice(refusedAt).flatMap(m => logEntryFor.get(m) ?? []));
+      const unsent = messages.slice(refusedAt);
+      throw new RefusedSendError(refusal, promptLogText(unsent[0]), unsent.map(m => logEntryFor.get(m)).find(Boolean));
     }
   }
 
   /**
-   * #976: a refused reply was never delivered, so remove its bot entries from conversation_log.
-   * One extra session save, only on refusal. A stale save writes nothing (another worker owns
-   * the session). Never throws: the refusal itself must still reach BotService.
+   * #976: a refused reply was never delivered, so remove it from conversation_log, together with
+   * every later bot entry written in this execution: each bot line is written just before it is
+   * sent, sends go in the same order, and the execution stops at the refusal, so none of them
+   * reached the customer. The refused line is found by the logged message object or, for plain
+   * text sends, by its text among this execution's new bot entries. Nothing found = nothing removed.
+   * One extra session save, only on refusal; a stale save writes nothing. Never throws.
    */
   private async dropUnsentLogEntries(
     session: { id: string; version: number; current_step: string; session_data: Record<string, unknown>; conversation_log?: ConversationLogEntry[] },
-    entries: ConversationLogEntry[],
+    logAtStart: Set<ConversationLogEntry>,
+    refusal: RefusedSendError,
   ): Promise<void> {
     const log = session.conversation_log;
-    if (!log || entries.length === 0) return;
-    const kept = log.filter(e => !entries.includes(e));
-    if (kept.length === log.length) return;
+    if (!log) return;
+    const isNewBotLine = (e: ConversationLogEntry) => e.role === 'bot' && !logAtStart.has(e);
+    let from = refusal.refusedEntry ? log.indexOf(refusal.refusedEntry) : -1;
+    if (from < 0 || !isNewBotLine(log[from])) {
+      const text = refusal.refusedText;
+      from = -1;
+      if (text) {
+        for (let i = log.length - 1; i >= 0; i--) {
+          if (isNewBotLine(log[i]) && (log[i].content === text || log[i].content === redactPrivateLinkPath(text))) { from = i; break; }
+        }
+      }
+    }
+    if (from < 0) return;
+    const kept = log.filter((e, i) => i < from || !isNewBotLine(e));
     session.conversation_log = kept;
     try {
       if (!await this.persistConversationLog(session, kept)) {
@@ -1124,15 +1152,6 @@ export class FlowExecutor {
       }
     } catch (err) {
       logger.warn('[EXECUTOR] Refused-reply log cleanup failed (non-critical):', (err as Error).message);
-    }
-  }
-
-  /** #976: send a custom prompt already written to conversation_log; a refusal carries its log entry. */
-  private async sendLoggedText(to: string, text: string, entry: ConversationLogEntry, sender?: MessageSender): Promise<void> {
-    try {
-      await this.sendText(to, text, sender);
-    } catch (err) {
-      throw isFinancialDenial(err) ? new RefusedSendError(err, [entry]) : err;
     }
   }
 
@@ -1181,7 +1200,12 @@ export class FlowExecutor {
 
   private async sendText(to: string, text: string, sender?: MessageSender): Promise<void> {
     const s = sender || this.sender;
-    await s.sendText({ to, text });
+    try {
+      await s.sendText({ to, text });
+    } catch (err) {
+      // #976: carry the refused text so execute() can remove its conversation_log line.
+      throw isFinancialDenial(err) ? new RefusedSendError(err, text) : err;
+    }
   }
 
   /** Translate text if session has a detected non-English language */
@@ -1230,14 +1254,7 @@ export class FlowExecutor {
     if (!session.conversation_log) session.conversation_log = [];
     const ts = new Date().toISOString();
     for (const msg of messages) {
-      let text = '';
-      switch (msg.type) {
-        case 'text': text = msg.text; break;
-        case 'buttons': text = msg.body; break;
-        case 'list': text = msg.body; break;
-        case 'image': text = msg.caption || '[Image]'; break;
-        case 'document': text = msg.caption || msg.filename || '[Document]'; break;
-      }
+      const text = promptLogText(msg);
       if (text) {
         // #963: private intake links are single-use secrets; the saved transcript
         // keeps "[token]" while the client still receives the full link.

@@ -186,6 +186,57 @@ describe('#976 refused flow reply — FlowExecutor.execute (prompt path)', () =>
   });
 });
 
+describe('#976 refused flow reply — FlowExecutor.execute (input path, plain text sends)', () => {
+  function validatingStep() {
+    mockGetFlowStep.mockImplementation((_f: string, id: string) => id === 'welcome' ? {
+      id: 'welcome',
+      async prompt() { return [{ type: 'buttons', body: 'Pick a service', buttons: [{ id: 'a', title: 'A' }] }]; },
+      async validate() { return { valid: false, errorMessage: 'Please pick one of the options.' }; },
+      async next() { return null; },
+    } : null);
+  }
+
+  it('a refused validation-error reply and the re-shown prompt after it are removed; the customer line stays', async () => {
+    validatingStep();
+    const cas: Cas[] = [];
+    const ex = new FlowExecutor(supabaseWithCas(cas) as never, senderWith({ 1: 'deny' }) as never, {} as never, {} as never);
+
+    const err = await ex.execute('+2348000000001', 'xyz', session(), business).catch(e => e);
+
+    expect(err).toBeInstanceOf(RefusedSendError);
+    expect(botLines(cas[0])).toEqual([expect.stringContaining('Please pick one of the options.'), 'Pick a service']);
+    const last = cas[cas.length - 1];
+    expect(botLines(last)).toEqual([]);
+    expect(last.p_conversation_log.map(e => e.content)).toEqual(['Hi', 'xyz']);
+  });
+
+  it('an identical bot line delivered in an earlier message is never removed', async () => {
+    validatingStep();
+    const cas: Cas[] = [];
+    const s = session();
+    const earlier = { role: 'bot' as const, content: 'Pick a service', timestamp: '2026-11-11T00:50:00.000Z' };
+    s.conversation_log.push(earlier as never);
+    const ex = new FlowExecutor(supabaseWithCas(cas) as never, senderWith({ 1: 'deny' }) as never, {} as never, {} as never);
+
+    await ex.execute('+2348000000001', 'xyz', s, business).catch(() => undefined);
+
+    expect(botLines(cas[cas.length - 1])).toEqual(['Pick a service']); // the earlier, delivered one
+    expect(s.conversation_log).toContain(earlier);
+  });
+
+  it('error text delivered, re-shown prompt refused: only the prompt line is removed', async () => {
+    validatingStep();
+    const cas: Cas[] = [];
+    const sender = senderWith({});
+    sender.sendButtons = vi.fn(async () => { throw new Error(DENIAL); }) as never;
+    const ex = new FlowExecutor(supabaseWithCas(cas) as never, sender as never, {} as never, {} as never);
+
+    await ex.execute('+2348000000001', 'xyz', session(), business).catch(() => undefined);
+
+    expect(botLines(cas[cas.length - 1])).toEqual([expect.stringContaining('Please pick one of the options.')]);
+  });
+});
+
 describe('#976 FlowExecutor.sendMessages — usage tracking and after()', () => {
   function bare(sender: unknown) {
     const ex = new FlowExecutor({} as never, sender as never, {} as never, {} as never);
@@ -205,10 +256,11 @@ describe('#976 FlowExecutor.sendMessages — usage tracking and after()', () => 
     expect(trackOutboundMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('a refused message that was never logged carries no log entries (nothing else can be removed)', async () => {
+  it('a refused message that was never logged carries its text but no log entry', async () => {
     const err = await bare(senderWith({ 1: 'deny' })).sendMessages('+1', [{ type: 'text', text: 'a' }], undefined, {}).catch(e => e);
     expect(err).toBeInstanceOf(RefusedSendError);
-    expect((err as InstanceType<typeof RefusedSendError>).unsentLogEntries).toEqual([]);
+    expect((err as InstanceType<typeof RefusedSendError>).refusedText).toBe('a');
+    expect((err as InstanceType<typeof RefusedSendError>).refusedEntry).toBeUndefined();
   });
 
   it('inside a request, tracking and both checks are kept alive with after()', async () => {

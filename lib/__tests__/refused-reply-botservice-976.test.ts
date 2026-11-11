@@ -6,7 +6,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { rateLimit, authorizeRpc } = vi.hoisted(() => ({
+const { rateLimit, authorizeRpc, customConfig, keywordMatch } = vi.hoisted(() => ({
+  customConfig: vi.fn(async () => ({ welcome_buttons: [] as unknown[], quick_replies: [], default_reply: null })),
+  keywordMatch: vi.fn((): unknown => null),
   rateLimit: vi.fn(async () => ({ allowed: true, remaining: 1 })),
   authorizeRpc: vi.fn(async () => ({ data: { authorized: false, reason: 'insufficient_allowance_balance' }, error: null })),
 }));
@@ -19,7 +21,11 @@ vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi
 vi.mock('@/lib/bot/translate', () => ({ translateBotResponse: vi.fn(async (t: string) => t), detectLanguage: vi.fn(async () => 'en'), getLanguageName: vi.fn(() => 'English') }));
 vi.mock('@/lib/bot/handlers/global-queries', () => ({ handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })), isOrdersQuery: vi.fn(() => false) }));
 vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^home$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }), safeFlowCleanup: vi.fn() }));
-vi.mock('@/lib/bot/keyword-service', () => ({ loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }), matchQuickReply: vi.fn(() => null), loadUnifiedKeywords: vi.fn().mockResolvedValue([]), matchUnifiedKeyword: vi.fn(() => null) }));
+vi.mock('@/lib/bot/keyword-service', async (orig) => ({
+  ...(await orig<typeof import('@/lib/bot/keyword-service')>()),
+  loadBotCustomConfig: customConfig, matchQuickReply: vi.fn(() => null),
+  loadUnifiedKeywords: vi.fn().mockResolvedValue([]), matchUnifiedKeyword: keywordMatch,
+}));
 vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 vi.mock('@/lib/bot/customer-intelligence', () => ({
   getCustomerHistory: vi.fn().mockResolvedValue({ isReturning: false, totalVisits: 0, ltvTier: 'new', lastServiceId: null, lastServiceName: null, lastFlowType: null, favoriteServiceId: null, favoriteServiceName: null }),
@@ -97,7 +103,18 @@ function botDb() {
       }
       return chain(null);
     }),
-    rpc: vi.fn(async () => ({ data: { success: true, version: 1 }, error: null })),
+    // The bot loads an existing session through get_bot_context (tenant-scoped when the business is pre-resolved).
+    rpc: vi.fn(async (fn: string) => fn === 'get_bot_context'
+      ? ({ data: {
+          has_session: true, session,
+          business: { ...business, flow_type: 'scheduling', slug: 'testbiz' },
+          capabilities: [
+            { capability: 'scheduling', is_enabled: true, sort_order: 0 },
+            { capability: 'ordering', is_enabled: true, sort_order: 1 },
+          ],
+          capability_overrides: [],
+        }, error: null })
+      : ({ data: { success: true, version: 1 }, error: null })),
   };
 }
 
@@ -137,6 +154,8 @@ describe('#976 refused reply → customer gets the #682 notice (real BotService,
     rateLimit.mockClear();
     rateLimit.mockImplementation(async () => ({ allowed: true, remaining: 1 }));
     authorizeRpc.mockClear();
+    customConfig.mockImplementation(async () => ({ welcome_buttons: [], quick_replies: [], default_reply: null }));
+    keywordMatch.mockImplementation(() => null);
   });
 
   it('flow reply refused for insufficient balance: one platform notice, nothing business-scoped reaches Meta', async () => {
@@ -157,5 +176,31 @@ describe('#976 refused reply → customer gets the #682 notice (real BotService,
     await bot.handleMessage('+2348000000001', 'menu', 'text', 'pnid-1');
 
     expect([...c.sendText.mock.calls, ...c.sendButtons.mock.calls, ...c.sendList.mock.calls]).toHaveLength(0);
+  });
+
+  // Reviewer finding on 4772109: these two paths caught the refusal as "non-fatal" and routed the
+  // same message again (a second execute with the tap/keyword as input, an extra refused attempt).
+  it('welcome button "start flow" refused: one execute, one authorization, then the notice', async () => {
+    customConfig.mockImplementation(async () => ({ welcome_buttons: [{ label: 'Book', action: 'start_flow' }], quick_replies: [], default_reply: null }));
+    const { c, bot, execute } = setup();
+    await bot.handleMessage('+2348000000001', 'wb_0', 'button', 'pnid-1', 'biz-T');
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][1]).toBe(''); // the prompt only; the tap/keyword is not routed again as input
+    expect(authorizeRpc).toHaveBeenCalledTimes(1);
+    expect(c.sendText).toHaveBeenCalledTimes(1);
+    expect(c.sendText).toHaveBeenCalledWith({ to: '+2348000000001', text: NOTICE });
+  });
+
+  it('keyword "start capability" refused: one execute, one authorization, then the notice', async () => {
+    keywordMatch.mockImplementation(() => ({ keyword: 'see specials', action_type: 'start_capability', payload: JSON.stringify({ capability: 'scheduling' }) }));
+    const { c, bot, execute } = setup();
+    await bot.handleMessage('+2348000000001', 'see specials', 'text', 'pnid-1', 'biz-T');
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][1]).toBe(''); // the prompt only; the tap/keyword is not routed again as input
+    expect(authorizeRpc).toHaveBeenCalledTimes(1);
+    expect(c.sendText).toHaveBeenCalledTimes(1);
+    expect(c.sendText).toHaveBeenCalledWith({ to: '+2348000000001', text: NOTICE });
   });
 });
