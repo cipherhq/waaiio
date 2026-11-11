@@ -247,12 +247,15 @@ jobs:
   # ── Admin Application ──
   admin-app:
     name: Admin App (install, build)
-    # Pin to ubuntu-24.04: Playwright 1.59.1 cannot install Chromium on ubuntu-latest (26.04).
-    # Remove this pin after upgrading Playwright to a version that supports 26.04.
     runs-on: ubuntu-24.04
+    # Match admin/package-lock.json; browsers and OS dependencies are preinstalled.
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --ipc=host
 
     defaults:
       run:
+        shell: bash
         working-directory: admin
 
     steps:
@@ -269,8 +272,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium --with-deps
+      - name: Verify preinstalled Playwright Chromium
+        run: |
+          node -e "const assert = require('node:assert/strict'); assert.equal(require('playwright/package.json').version, '1.59.1', 'Update the Playwright container to match the lockfile'); assert.ok(require('node:fs').existsSync(require('playwright').chromium.executablePath()), 'Preinstalled Chromium is missing')"
 
       - name: Run tests
         run: npm test
@@ -4571,8 +4575,15 @@ jobs:
   # ── Playwright Smoke Tests ──
   playwright:
     name: Playwright smoke tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: main-app
+    # Match package-lock.json; avoid runtime apt downloads during browser setup.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
 
     env:
       # Dummy Supabase URL matching CSP connect-src pattern (*.supabase.co).
@@ -4608,8 +4619,9 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npx next build
 
-      - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
+      - name: Verify preinstalled Playwright Chromium
+        run: |
+          node -e "const assert = require('node:assert/strict'); assert.equal(require('playwright/package.json').version, '1.61.1', 'Update the Playwright container to match the lockfile'); assert.ok(require('node:fs').existsSync(require('playwright').chromium.executablePath()), 'Preinstalled Chromium is missing')"
 
       - name: Guard — no dangerous secrets in Playwright environment
         run: |
