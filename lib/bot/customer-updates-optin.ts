@@ -32,6 +32,7 @@ import { fillFlowCopy, getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { logger } from '@/lib/logger';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 
 /**
  * Where the customer's "yes" came from. 'menu' and 'welcome' are one-tap rows
@@ -259,8 +260,12 @@ export async function updatesOptInRowFor(
  * from an active shared Waaiio number. A tap on a shared number uses that
  * number; a tap on a business's own number uses Waaiio's shared number for the
  * business's country. Null when there is none (Waaiio is then not added).
+ * Staging: always the designated shared number, whatever the tap or country.
  */
 async function waaiioSenderFor(supabase: SupabaseClient, destinationPhone: string | undefined, countryCode: string | null): Promise<string | null> {
+  if (isStagingWhatsAppRouting()) {
+    return (await loadStagingDesignatedChannel(supabase))?.phone_number_id || null;
+  }
   if (destinationPhone) {
     const { data, error } = await supabase.from('whatsapp_channels').select('phone_number_id')
       .eq('phone_number_id', destinationPhone).eq('channel_type', 'shared').eq('is_active', true)

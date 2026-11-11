@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 
 /**
  * GET /api/launch/regions
@@ -16,12 +17,15 @@ export async function GET() {
     const supabase = createServiceClient();
 
     const [{ data: channels }, { data: countries }] = await Promise.all([
-      supabase
-        .from('whatsapp_channels')
-        .select('phone_number, country_code')
-        .eq('channel_type', 'shared')
-        .eq('is_active', true)
-        .order('country_code'),
+      // Staging: only the designated shared number (its own country, US).
+      isStagingWhatsAppRouting()
+        ? loadStagingDesignatedChannel(supabase).then(row => ({ data: row ? [row] : [] }))
+        : supabase
+          .from('whatsapp_channels')
+          .select('phone_number, country_code')
+          .eq('channel_type', 'shared')
+          .eq('is_active', true)
+          .order('country_code'),
       supabase
         .from('countries')
         .select('code, name, flag')
