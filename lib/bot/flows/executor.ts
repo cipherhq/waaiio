@@ -27,6 +27,7 @@ import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlow
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage, checkSpendThresholds } from '@/lib/bot/conversation-guard';
 import { checkLowBalanceAlerts } from '@/lib/messaging/low-balance-alerts';
+import { isFinancialDenial, RefusedSendError } from '@/lib/bot/financial-denial';
 import { after } from 'next/server';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
@@ -38,6 +39,11 @@ import { flushExecutionAnalytics } from './analytics-flush';
 // Steps where users type arbitrary text (names, addresses, codes, PINs).
 // Navigation words like "back" should NOT be intercepted on these steps.
 const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
+
+type ConversationLogEntry = { role: 'bot' | 'user'; content: string; timestamp: string };
+
+/** #976: prompt message → the conversation_log entry written for it (for refused-reply cleanup). */
+const logEntryFor = new WeakMap<PromptMessage, ConversationLogEntry>();
 
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
@@ -284,10 +290,11 @@ export class FlowExecutor {
       if (!session.conversation_log) session.conversation_log = [];
       if (override?.action === 'custom' && override.customPrompt) {
         this.trackStepHistory(session, stepId);
-        session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
+        const customEntry: ConversationLogEntry = { role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() };
+        session.conversation_log.push(customEntry);
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
         _fmark('cas_persist');
-        await this.sendText(from, override.customPrompt, scopedSender);
+        await this.sendLoggedText(from, override.customPrompt, customEntry, scopedSender);
         _fmark('meta_send');
       } else {
         const messages = await step.prompt(ctx);
@@ -911,6 +918,11 @@ export class FlowExecutor {
       executionReachedTerminal = true; // #267: flow completed or cancelled
     }
 
+    } catch (err) {
+      // #976: a refused reply was never delivered; remove it from the saved transcript,
+      // then let BotService answer the refusal with the #682 notice.
+      if (err instanceof RefusedSendError) await this.dropUnsentLogEntries(session, err.unsentLogEntries);
+      throw err;
     } finally { // #267: Instrumentation flush — off critical path, never throws
       // No sender restoration needed — scopedSender is execution-local,
       // this.sender was never mutated.
@@ -997,9 +1009,10 @@ export class FlowExecutor {
       if (!session.conversation_log) session.conversation_log = [];
       this.trackStepHistory(session, nextStepId);
       const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session, tCtx);
-      session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
+      const customEntry: ConversationLogEntry = { role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() };
+      session.conversation_log.push(customEntry);
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
-      await this.sendText(from, translatedCustom, sender);
+      await this.sendLoggedText(from, translatedCustom, customEntry, sender);
     } else {
       const messages = await nextStep.prompt(ctx);
       if (messages.length > 0) {
@@ -1050,25 +1063,76 @@ export class FlowExecutor {
     const lang = session?.session_data?._detected_language as string | undefined;
     const shouldTranslate = lang && lang !== 'en';
 
+    let sent = 0;
+    let refusedAt = -1;
+    let refusal: unknown;
     for (let i = 0; i < messages.length; i++) {
       try {
         const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!, tCtx) : messages[i];
         await this.sendSingleMessage(to, msg, sender);
+        sent++;
         const afterSend = messages[i]._afterSend;
         if (afterSend) await afterSend().catch(err => logger.warn('[EXECUTOR] After-send step failed:', (err as Error).message));
         // Sequential sends preserve ordering — no artificial delay needed
       } catch (err) {
+        if (isFinancialDenial(err)) {
+          // #976: no balance (or spend cap reached). The rest of the batch would be refused too,
+          // so stop here; BotService sends the customer the #682 notice.
+          refusedAt = i;
+          refusal = err;
+          break;
+        }
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
       }
     }
     if (this.currentBusinessId) {
-      trackOutboundMessage(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Failed to track outbound message:', err));
-      // #682: Non-blocking threshold check after each outbound message
-      checkSpendThresholds(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Threshold check failed (non-critical):', err));
-      // Low messaging-balance alert for the merchant (dashboard + email); also runs when a send was refused.
       // Not awaited (the reply is not delayed), but kept alive after the webhook responds via after().
-      const lowBalance = checkLowBalanceAlerts(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Low-balance check failed (non-critical):', err));
-      try { after(lowBalance); } catch { /* outside a request (cron, tests): the check runs on its own */ }
+      const keepAlive = (p: Promise<unknown>) => {
+        try { after(p); } catch { /* outside a request (cron, tests): the work runs on its own */ }
+      };
+      // #976: count outbound usage only when a message actually went out.
+      if (sent > 0) {
+        keepAlive(trackOutboundMessage(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Failed to track outbound message:', err)));
+      }
+      // #682: Non-blocking threshold check after each outbound message
+      keepAlive(checkSpendThresholds(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Threshold check failed (non-critical):', err)));
+      // Low messaging-balance alert for the merchant (dashboard + email); also runs when a send was refused.
+      keepAlive(checkLowBalanceAlerts(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Low-balance check failed (non-critical):', err)));
+    }
+    if (refusedAt >= 0) {
+      throw new RefusedSendError(refusal, messages.slice(refusedAt).flatMap(m => logEntryFor.get(m) ?? []));
+    }
+  }
+
+  /**
+   * #976: a refused reply was never delivered, so remove its bot entries from conversation_log.
+   * One extra session save, only on refusal. A stale save writes nothing (another worker owns
+   * the session). Never throws: the refusal itself must still reach BotService.
+   */
+  private async dropUnsentLogEntries(
+    session: { id: string; version: number; current_step: string; session_data: Record<string, unknown>; conversation_log?: ConversationLogEntry[] },
+    entries: ConversationLogEntry[],
+  ): Promise<void> {
+    const log = session.conversation_log;
+    if (!log || entries.length === 0) return;
+    const kept = log.filter(e => !entries.includes(e));
+    if (kept.length === log.length) return;
+    session.conversation_log = kept;
+    try {
+      if (!await this.persistConversationLog(session, kept)) {
+        logger.info('[EXECUTOR] Refused-reply log cleanup skipped: session changed meanwhile');
+      }
+    } catch (err) {
+      logger.warn('[EXECUTOR] Refused-reply log cleanup failed (non-critical):', (err as Error).message);
+    }
+  }
+
+  /** #976: send a custom prompt already written to conversation_log; a refusal carries its log entry. */
+  private async sendLoggedText(to: string, text: string, entry: ConversationLogEntry, sender?: MessageSender): Promise<void> {
+    try {
+      await this.sendText(to, text, sender);
+    } catch (err) {
+      throw isFinancialDenial(err) ? new RefusedSendError(err, [entry]) : err;
     }
   }
 
@@ -1177,7 +1241,10 @@ export class FlowExecutor {
       if (text) {
         // #963: private intake links are single-use secrets; the saved transcript
         // keeps "[token]" while the client still receives the full link.
-        session.conversation_log.push({ role: 'bot', content: redactPrivateLinkPath(text), timestamp: ts });
+        const entry: ConversationLogEntry = { role: 'bot', content: redactPrivateLinkPath(text), timestamp: ts };
+        session.conversation_log.push(entry);
+        // #976: remembered so the entry can be removed if this message is refused.
+        logEntryFor.set(msg, entry);
       }
     }
   }

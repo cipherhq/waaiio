@@ -39,6 +39,7 @@ import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import type { BotSession, BusinessRecord, BotContext } from './bot-types';
+import { isFinancialDenial } from './financial-denial';
 import { getActiveSession as _getActiveSession, deactivateSession as _deactivateSession, sendBotText, forwardToBusinessOwner as _forwardToBusinessOwner } from './bot-helpers';
 import { getFirstStep as _getFirstStep, getFirstStepFromCapabilities as _getFirstStepFromCapabilities, capabilityToFirstStep as _capabilityToFirstStep } from './handlers/flow-routing';
 import { handleQuoteResponse as _handleQuoteResponse } from './handlers/quote-response';
@@ -4595,11 +4596,8 @@ export class BotService {
     logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const isFinancialDenial = errMsg.startsWith('Financial authorization denied:')
-        || errMsg.includes('insufficient_allowance_balance')
-        || errMsg.includes('spend_cap_exceeded');
-
-      if (isFinancialDenial) {
+      // #976: same check FlowExecutor uses to pass refused flow replies up to here.
+      if (isFinancialDenial(err)) {
         // #682: Financial exhaustion — rate-limited customer-facing message via platform scope.
         // Platform scope bypasses the business financial gate that caused the denial.
         logger.warn('[BOT] Financial authorization denied for', from.slice(-4), ':', errMsg);
