@@ -525,11 +525,17 @@ export async function startSavedCardFromPaymentId(
     .eq('customer_phone', canonPhone).maybeSingle();
   if (sourceOfferError) { await sendText(from, 'Could not check card setup. Please try again.'); return; }
   const acceptedOffer = sourceOffer?.state === 'accepted' ? sourceOffer : null;
-
+  // Shared conversation lookup requires originating-channel provenance even
+  // when establishment replaces an existing row's entire session_data.
+  const inboundChannelId = [acceptedOffer?.channel_id, meta._inbound_channel_id,
+    session?.session_data?._inbound_channel_id]
+    .find((value): value is string => typeof value === 'string' && value.length > 0);
+  const channelProvenance = inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {};
 
   if (!existing) {
     // K3: Directly establish save_card_pin using THIS payment ID
     const saveData = {
+      ...channelProvenance,
       _save_card_pending: true,
       _save_card_business_id: businessId,
       _save_card_gateway: 'paystack',
@@ -584,6 +590,7 @@ export async function startSavedCardFromPaymentId(
   ).digest('hex');
 
   const replaceData = {
+    ...channelProvenance,
     _replace_method_id: existing.id,
     _replace_payment_id: paymentId,
     _replace_offer_id: acceptedOffer?.id || null,
@@ -762,6 +769,7 @@ export async function checkStripeConsentAndOffer(
 
   // Step 6: Establish bot session for PIN entry using normalized digits-only phone
   const pinSessionData = {
+    _inbound_channel_id: channelId,
     _save_card_pending: true,
     _save_card_business_id: businessId,
     _save_card_gateway: 'stripe',
