@@ -7,6 +7,8 @@ export interface TaxOverride { treatment: TaxTreatment; rule?: TaxRule }
 export interface TaxInputLine {
   id: string; description: string; quantity: number; unitAmount: number;
   tax?: TaxOverride;
+  /** Item-specific reductions (e.g. volume pricing) precede basket discounts. */
+  lineDiscountAmount?: number;
   /** Delivery or other separately configured lines can be excluded from merchandise discounts. */
   discountEligible?: boolean;
 }
@@ -14,6 +16,7 @@ export interface TaxLineSnapshot {
   id: string; description: string; quantity: number; unitAmount: number;
   treatment: 'taxable' | 'zero_rated' | 'exempt' | 'disabled';
   label: string; rateBps: number; priceMode: PriceMode;
+  lineDiscountAmount?: number;
   discountAmount: number; netAmount: number; taxAmount: number; grossAmount: number;
 }
 export interface TaxSnapshot {
@@ -60,26 +63,31 @@ export function allocateMinorUnits(total: number, weights: number[]): number[] {
 export function calculateTaxQuote(config: MerchantTaxConfig, currency: string, inputs: TaxInputLine[], discountAmount = 0): TaxSnapshot {
   if (!config || typeof config.enabled !== 'boolean') throw new Error('Invalid merchant tax configuration');
   validateTaxRule(config);
-  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid tax currency');
-  if (!inputs.length || inputs.length > 200) throw new Error('Tax quote requires 1–200 lines');
+  if (typeof currency !== 'string' || !/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid tax currency');
+  if (!Array.isArray(inputs) || !inputs.length || inputs.length > 200) throw new Error('Tax quote requires 1–200 lines');
   integer(discountAmount, 'discount');
   const seen = new Set<string>();
   const amounts = inputs.map(line => {
-    if (!line.id || seen.has(line.id)) throw new Error('Duplicate or missing tax line identifier');
+    if (!line || typeof line.id !== 'string' || !line.id || seen.has(line.id)) throw new Error('Duplicate or missing tax line identifier');
     seen.add(line.id);
     if (typeof line.description !== 'string' || !line.description.trim() || line.description.length > 500) throw new Error('Invalid tax line description');
     integer(line.quantity, 'quantity'); integer(line.unitAmount, 'unit amount');
     if (!line.quantity) throw new Error('Quantity must be positive');
     return checked(BigInt(line.quantity) * BigInt(line.unitAmount));
   });
-  const weights = amounts.map((a, i) => inputs[i].discountEligible === false ? 0 : a);
+  const directDiscounts = inputs.map((line, i) => {
+    const direct = integer(line.lineDiscountAmount ?? 0, 'line discount');
+    if (direct > amounts[i]) throw new Error('Line discount exceeds line value');
+    return direct;
+  });
+  const weights = amounts.map((a, i) => inputs[i].discountEligible === false ? 0 : a - directDiscounts[i]);
   if (discountAmount > sum(weights)) throw new Error('Discount exceeds eligible line value');
-  const discounts = allocateMinorUnits(discountAmount, weights);
+  const discounts = allocateMinorUnits(discountAmount, weights).map((amount, i) => sum([amount, directDiscounts[i]]));
   const lines = inputs.map((line, i): TaxLineSnapshot => {
     const override = line.tax ?? { treatment: 'inherit' as const };
     if (!['inherit', 'override', 'exempt'].includes(override.treatment)) throw new Error('Invalid tax treatment');
     if (override.treatment === 'override' && !override.rule) throw new Error('Tax override requires a rule');
-    if (override.treatment !== 'override' && override.rule) throw new Error('Unexpected tax override rule');
+    if (override.treatment !== 'override' && override.rule != null) throw new Error('Unexpected tax override rule');
     const rule = override.treatment === 'override' ? override.rule! : config;
     validateTaxRule(rule);
     const treatment = !config.enabled ? 'disabled' : override.treatment === 'exempt' ? 'exempt' : rule.rateBps === 0 ? 'zero_rated' : 'taxable';
@@ -91,11 +99,11 @@ export function calculateTaxQuote(config: MerchantTaxConfig, currency: string, i
       : rounded(BigInt(netAmount) * BigInt(rateBps), BigInt(10000));
     return { id: line.id, description: line.description, quantity: line.quantity, unitAmount: line.unitAmount,
       treatment, label: rule.label.trim(), rateBps, priceMode: rule.priceMode,
-      discountAmount: discounts[i], netAmount, taxAmount, grossAmount: sum([netAmount, taxAmount]) };
+      lineDiscountAmount: directDiscounts[i], discountAmount: discounts[i], netAmount, taxAmount, grossAmount: sum([netAmount, taxAmount]) };
   });
   const netAmount = sum(lines.map(l => l.netAmount));
   const taxAmount = sum(lines.map(l => l.taxAmount));
-  return { version: 1, currency, lines, discountAmount, netAmount, taxAmount,
+  return { version: 1, currency, lines, discountAmount: sum(discounts), netAmount, taxAmount,
     grossAmount: sum([netAmount, taxAmount]), percentageFeeBase: netAmount };
 }
 /** Cumulative allocation reconciles the final payment exactly, even after many small deposits. */
@@ -146,6 +154,8 @@ export function validateTaxSnapshot(snapshot: TaxSnapshot): void {
     if (l.grossAmount !== sum([l.netAmount, l.taxAmount])) throw new Error('Snapshot line does not reconcile');
     const quoted = checked(BigInt(l.unitAmount) * BigInt(l.quantity));
     if (l.discountAmount > quoted) throw new Error('Invalid snapshot discount');
+    integer(l.lineDiscountAmount ?? 0, 'snapshot line discount');
+    if ((l.lineDiscountAmount ?? 0) > l.discountAmount) throw new Error('Invalid snapshot line discount');
     const discounted = quoted - l.discountAmount;
     if (l.treatment !== 'taxable' && (l.rateBps !== 0 || l.taxAmount !== 0)) throw new Error('Untaxed snapshot carries tax');
     if (l.treatment === 'taxable' && l.rateBps === 0) throw new Error('Taxable snapshot has zero rate');
