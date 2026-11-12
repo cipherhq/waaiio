@@ -53,7 +53,7 @@ function makeDb(opts: {
     let payload: Row | null = null;
     const chain: Record<string, unknown> = {};
     for (const m of ['order', 'limit', 'lte']) chain[m] = vi.fn(() => chain);
-    for (const m of ['eq', 'is', 'gte', 'gt']) {
+    for (const m of ['eq', 'is', 'gte', 'gt', 'in']) {
       chain[m] = vi.fn((c: string, v: unknown) => { filters.push([m, c, v]); return chain; });
     }
     chain.select = vi.fn(() => chain);
@@ -86,6 +86,10 @@ function makeDb(opts: {
         });
         if (ok) Object.assign(row!, payload);
         return { data: ok ? [{ id: row!.id }] : [], error: null };
+      }
+      if (table === 'alerts') {
+        const ids = (filters.find(f => f[0] === 'in' && f[1] === 'id')?.[2] || []) as string[];
+        return { data: ids.filter(i => alerts.has(i)).map(i => ({ id: i, metadata: alerts.get(i)!.metadata })), error: null };
       }
       if (table === 'messaging_spend_periods') {
         let rows = opts.periods;
@@ -210,6 +214,18 @@ describe('#992 bot path: checkSpendThresholds', () => {
     expect(mail.html).toContain('Topping up your balance does not raise this limit.');
     expect(mail.html).toContain('/dashboard/billing">View your messaging usage</a>');
     expect((a.metadata as Row).email).toMatchObject({ status: 'provider_accepted', provider_id: 'resend-1', attempts: 1 });
+  });
+
+  it('A5b: usage going down (a reservation released) never raises a lower level after a higher one', async () => {
+    const periods = [ngn(7499700)];
+    const d = makeDb({ periods });
+    await checkSpendThresholds(d.client, BIZ); // limit reached
+    periods[0].spent_minor = 7000000; // room again: highest reached is now 90
+    await checkSpendThresholds(d.client, BIZ);
+    periods[0].spent_minor = 6000000; // now 75
+    await checkSpendThresholds(d.client, BIZ);
+    expect(spendAlerts(d).map(a => (a.metadata as Row).threshold_pct)).toEqual([100]);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 
   it('A5: a jump from 0 to 95% alerts only 90%; all reached levels are audited; 50/75 never sent later', async () => {

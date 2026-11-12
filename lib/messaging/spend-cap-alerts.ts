@@ -175,7 +175,14 @@ async function raiseAlert(
   const text = spendCapAlertText(period, level);
   const wantsEmail = EMAIL_LEVELS.has(level);
 
-  const { data: existing } = await supabase.from('alerts').select('id, metadata').eq('id', id).maybeSingle();
+  // This level's alert and any higher one this month. Usage can go down (a reservation is
+  // released), so a lower level must not be raised after a higher one (Owner decision 3).
+  const ids = SPEND_CAP_LEVELS.filter(l => l >= level).map(l => spendCapAlertId(businessId, period.currency_code, period.period_start, l));
+  const { data: found, error: readErr } = await supabase.from('alerts').select('id, metadata').in('id', ids);
+  if (readErr) { logger.warn('[SPEND-CAP] Alert read failed:', readErr.message); return false; }
+  const rows = (found || []) as Array<{ id: string; metadata?: Record<string, unknown> }>;
+  if (rows.some(r => r.id !== id)) return false;
+  const existing = rows.find(r => r.id === id);
   if (existing) {
     if (!wantsEmail) return false;
     const meta = ((existing as { metadata?: Record<string, unknown> }).metadata || {});
