@@ -218,8 +218,7 @@ export interface InboundMessageKind {
 
 /**
  * True when this inbound message is never limited:
- * - a STOP or START command, or the STOP picker's own buttons (consent
- *   replies are always answered);
+ * - a STOP or START command (consent replies are always answered);
  * - a native catalog order, whose reply is the payment link (a paying
  *   customer is never cut off; a catalog order has no bot session to check).
  * An accepted quote is exempted at its payment-link send instead (see

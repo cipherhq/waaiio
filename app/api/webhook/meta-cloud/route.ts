@@ -585,8 +585,9 @@ export async function POST(request: NextRequest) {
             mark('idempotency_claimed');
             // #536: every business-paid reply to this inbound message (media and
             // voice replies as well as the bot) counts toward the customer's daily
-            // limit; STOP/START, catalog orders and quote acceptances are never
-            // limited. Cleared, and the notice sent, in finally.
+            // limit; STOP/START commands and native catalog orders are never
+            // limited (an accepted quote's payment link is exempted at its own
+            // send). Cleared, and the notice sent, in finally.
             const replyGuard = installCustomerReplyGuard(resolved.sender, supabase, source, {
               text: msg.type === 'text' ? msg.text?.body : (msg.interactive?.button_reply?.id ?? msg.button?.payload ?? null),
               isCatalogOrder: msg.type === 'order',

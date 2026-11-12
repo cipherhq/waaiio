@@ -385,9 +385,9 @@ describe('installCustomerReplyGuard (webhook wiring)', () => {
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
-  it('never limits STOP/START, the STOP picker buttons or catalog orders', async () => {
+  it('never limits STOP/START commands or catalog orders', async () => {
     const quote = 'accept_quote_0b4ac1a2-1111-4222-8333-944455556666';
-    for (const inbound of [{ text: 'STOP' }, { text: ' start ' }, { text: 'opt-out' }, { text: 'stop_merchant' }, { text: 'stop_platform' }, { isCatalogOrder: true }]) {
+    for (const inbound of [{ text: 'STOP' }, { text: ' start ' }, { text: 'opt-out' }, { isCatalogOrder: true }]) {
       const { s, cloud } = realSender();
       const installed = installCustomerReplyGuard(s, overLimit().db, CUSTOMER, inbound);
       expect(s.customerReplyGuard).toBeUndefined();
@@ -395,11 +395,15 @@ describe('installCustomerReplyGuard (webhook wiring)', () => {
       expect(cloud.sendText).toHaveBeenCalledTimes(1);
       await installed.finish(BIZ);
     }
-    // A quote button proves nothing by its text: always guarded at message level.
-    for (const text of [quote, quote.replace('accept', 'reject'), 'biz_1']) {
+    // Button ids prove nothing by their text (they can be typed): always guarded.
+    for (const text of [quote, quote.replace('accept', 'reject'), 'biz_1', 'stop_merchant', 'STOP_PLATFORM']) {
       const guarded = realSender();
       installCustomerReplyGuard(guarded.s, overLimit().db, CUSTOMER, { text });
       expect(guarded.s.customerReplyGuard).toBeTypeOf('function');
+      // Over the limit, the bot's reply to it is refused: no business-paid send.
+      await expect(guarded.s.sendText({ to: CUSTOMER, text: 'Welcome back! Pick an option' })).rejects.toBeInstanceOf(CustomerDailyLimitError);
+      await expect(guarded.s.sendPlatformText!({ to: CUSTOMER, text: 'Which business?' })).rejects.toBeInstanceOf(CustomerDailyLimitError);
+      expect(guarded.cloud.sendText).not.toHaveBeenCalled();
     }
     const chatting = realSender();
     installCustomerReplyGuard(chatting.s, overLimit().db, CUSTOMER, { text: 'stop it please' });
