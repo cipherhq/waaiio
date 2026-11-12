@@ -48,6 +48,7 @@ export default function ChannelChanges() {
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -63,9 +64,13 @@ export default function ChannelChanges() {
       const res = await adminApiGet('/api/admin/channel-changes');
       if (!res.ok) throw new Error('Unable to load requests');
       setRequests((await res.json()).requests || []);
+      setLoadError('');
+    } catch (cause) {
+      setLoadError('Unable to load requests. Please retry.');
+      throw cause;
     } finally { setLoading(false); }
   }, []);
-  useEffect(() => { void refresh().catch(e => setError(e.message)); }, [refresh]);
+  useEffect(() => { void refresh().catch(() => undefined); }, [refresh]);
 
   async function fail(error: unknown) {
     setPreview(null); setReviewed(false); setBusy(false);
@@ -169,7 +174,7 @@ export default function ChannelChanges() {
       <button className={buttonClass} disabled={!reviewed || busy} onClick={authorize}>Confirm with MFA</button>
       <button className={buttonClass} disabled={busy} onClick={() => setPreview(null)}>Dismiss preview</button>
     </section>}
-    {loading ? <p>Loading…</p> : requests.length === 0 ? <p>No channel change requests.</p> : requests.map(req => {
+    {loading ? <p>Loading…</p> : loadError ? <div><p role="alert">{loadError}</p><button className={buttonClass} onClick={() => { setError(''); void refresh().catch(() => undefined); }}>Retry loading requests</button></div> : requests.length === 0 ? <p>No channel change requests.</p> : requests.map(req => {
       const open = ['pending', 'approved'].includes(req.status);
       const stale = Date.now() - new Date(req.requester_step_up_verified_at).getTime() >= 300000 || (req.approver_step_up_verified_at && Date.now() - new Date(req.approver_step_up_verified_at).getTime() >= 300000);
       return <article key={req.id} className="border rounded-lg p-4 space-y-3">

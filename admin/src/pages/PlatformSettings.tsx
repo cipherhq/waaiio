@@ -1,3 +1,4 @@
+import { DirectoryBusinessEditor, SettingSummary } from '@/components/SettingFields';
 import { useEffect, useState, useRef } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
@@ -562,14 +563,65 @@ function TopupPackagesEditor({
   );
 }
 
+const TIER_LIMIT_FIELDS = ['maxBookings', 'maxBroadcasts', 'maxRecipients'];
+const UNLIMITED_LIMIT = 999999999;
+
+function storedTierLimit(stored: unknown, tier: string, field: string): unknown {
+  const tierVal = stored && typeof stored === 'object' ? (stored as Record<string, unknown>)[tier] : undefined;
+  return tierVal && typeof tierVal === 'object' ? (tierVal as Record<string, unknown>)[field] : undefined;
+}
+
+/** Unlimited or a positive whole number. 0 is accepted only where it is already the stored policy (e.g. Starter broadcasts). */
+function isValidTierLimit(value: unknown, storedVal: unknown): boolean {
+  if (value === UNLIMITED_LIMIT) return true;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return true;
+  return value === 0 && storedVal === 0;
+}
+
+export function hasTierLimitErrors(key: string, raw: string, stored: unknown): boolean {
+  if (!['pricing_tiers', 'broadcast_limits'].includes(key)) return false;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return true; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return true;
+  return Object.entries(parsed as Record<string, unknown>).some(([tier, tierVal]) =>
+    !!tierVal && typeof tierVal === 'object' && TIER_LIMIT_FIELDS.some(field =>
+      field in tierVal && !isValidTierLimit((tierVal as Record<string, unknown>)[field], storedTierLimit(stored, tier, field))));
+}
+
+function storedFlatNumber(stored: unknown, field: string): number | undefined {
+  const value = stored && typeof stored === 'object' && !Array.isArray(stored) ? (stored as Record<string, unknown>)[field] : undefined;
+  return typeof value === 'number' ? value : undefined;
+}
+
+/** A flat field stored as a number must stay a number; conversation limits also follow the plan-limit rule. */
+function isValidFlatNumber(key: string, value: unknown, storedVal: unknown): boolean {
+  if (key === 'conversation_limits') return isValidTierLimit(value, storedVal);
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function hasFlatNumberErrors(key: string, raw: string, stored: unknown): boolean {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return false; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  return Object.entries(parsed as Record<string, unknown>).some(([field, value]) => {
+    const storedVal = storedFlatNumber(stored, field);
+    return storedVal !== undefined && !isValidFlatNumber(key, value, storedVal);
+  });
+}
+
 /** Render a friendly editor based on the setting's value type */
-function renderSettingEditor(
+export function renderSettingEditor(
   setting: PlatformSetting,
   currentVal: string,
   changed: boolean,
   onChange: (val: string) => void,
 ) {
   const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+
+  if (setting.key === 'site_announcement') return <a href="/site-announcement" className="text-brand underline">Edit announcement and preview</a>;
+  if (['directory_featured', 'directory_hidden'].includes(setting.key)) {
+    try { const ids = JSON.parse(currentVal); if (Array.isArray(ids) && ids.every(id => typeof id === 'string')) return <DirectoryBusinessEditor value={ids} onChange={ids => onChange(JSON.stringify(ids))} />; } catch { /* Retain advanced fallback for invalid data. */ }
+  }
 
   // Topup packages editor (messaging_topup_packages)
   if (isTopupPackagesKey(setting.key)) {
@@ -625,25 +677,38 @@ function renderSettingEditor(
   const parsed = (() => { try { return JSON.parse(currentVal); } catch { return null; } })();
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const entries = Object.entries(parsed as Record<string, unknown>);
-    const isFlat = entries.every(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
+    // A cleared number field is held as null (never 0) until a valid number is typed.
+    const isNumberField = (k: string, v: unknown) => typeof v === 'number' || (v === null && storedFlatNumber(setting.value, k) !== undefined);
+    const isFlat = entries.every(([k, v]) => typeof v === 'string' || typeof v === 'boolean' || isNumberField(k, v));
 
     if (isFlat) {
       return (
         <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
-          {entries.map(([k, v]) => (
-            <div key={k} className="flex items-center gap-2">
+          {entries.map(([k, v]) => {
+            const numeric = isNumberField(k, v);
+            const storedVal = storedFlatNumber(setting.value, k);
+            const invalid = numeric && storedVal !== undefined && !isValidFlatNumber(setting.key, v, storedVal);
+            return (
+            <div key={k}>
+            <div className="flex items-center gap-2">
               <label className="w-32 text-xs font-medium text-gray-500 capitalize shrink-0">{k.replace(/_/g, ' ')}</label>
               <input
-                type="text"
-                value={String(v)}
+                aria-label={k.replace(/_/g, ' ')}
+                type={typeof v === 'boolean' ? 'checkbox' : numeric ? 'number' : 'text'}
+                checked={typeof v === 'boolean' ? v : undefined}
+                value={numeric ? (v as number | null) ?? '' : String(v)}
                 onChange={e => {
-                  const updated = { ...parsed, [k]: e.target.value };
+                  const newVal = typeof v === 'boolean' ? e.target.checked : numeric ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value;
+                  const updated = { ...parsed, [k]: newVal };
                   onChange(JSON.stringify(updated, null, 2));
                 }}
                 className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
               />
             </div>
-          ))}
+            {invalid && <p role="alert" className="text-xs text-red-600">{setting.key === 'conversation_limits' ? 'Enter a whole number above 0.' : 'Enter a number.'}</p>}
+            </div>
+            );
+          })}
         </div>
       );
     }
@@ -696,6 +761,17 @@ function renderSettingEditor(
                       );
                     }
 
+                    if ((typeof val === 'number' || val === null) && TIER_LIMIT_FIELDS.includes(field)) {
+                      const storedVal = storedTierLimit(setting.value, tier, field);
+                      // Unticking Unlimited restores the stored finite limit, never 0; with none, the admin must type one.
+                      const restore = typeof storedVal === 'number' && storedVal > 0 && storedVal !== UNLIMITED_LIMIT ? storedVal : null;
+                      const setLimit = (limit: number | null) => onChange(JSON.stringify({ ...parsed, [tier]: { ...tierVal, [field]: limit } }, null, 2));
+                      return <div key={field}><label className="text-xs">{label}</label>
+                        <label className="block text-xs"><input type="checkbox" aria-label={`${tier} ${label} unlimited`} checked={val === UNLIMITED_LIMIT} onChange={e => setLimit(e.target.checked ? UNLIMITED_LIMIT : restore)} /> Unlimited</label>
+                        {val !== UNLIMITED_LIMIT && <input type="number" min="0" step="1" aria-label={`${tier} ${label}`} value={val ?? ''} onChange={e => setLimit(e.target.value === '' ? null : Number(e.target.value))} />}
+                        {!isValidTierLimit(val, storedVal) && <p role="alert" className="text-xs text-red-600">Enter a whole number above 0, or tick Unlimited.</p>}
+                      </div>;
+                    }
                     return (
                       <div key={field}>
                         <label className="text-[10px] font-medium text-gray-500 block mb-0.5">{label}</label>
@@ -789,12 +865,13 @@ function renderSettingEditor(
                       </span>
                     ))}
                     <input
-                      type="number"
+                      type={(setting.key === 'booking_defaults' && k === 'reminderHours') || (v.length > 0 && v.every(item => typeof item === 'number')) ? 'number' : 'text'}
+                      aria-label={`Add ${label}`}
                       placeholder="Add..."
                       className="w-16 rounded border border-gray-200 px-1.5 py-0.5 text-xs outline-none focus:border-brand"
                       onKeyDown={e => {
                         if (e.key === 'Enter' && (e.target as HTMLInputElement).value) {
-                          const updated = [...v as (string | number)[], Number((e.target as HTMLInputElement).value)];
+                          const updated = [...v as (string | number)[], (setting.key === 'booking_defaults' && k === 'reminderHours') || (v.length > 0 && v.every(item => typeof item === 'number')) ? Number((e.target as HTMLInputElement).value) : (e.target as HTMLInputElement).value];
                           onChange(JSON.stringify({ ...parsed, [k]: updated }, null, 2));
                           (e.target as HTMLInputElement).value = '';
                         }
@@ -997,6 +1074,15 @@ export default function PlatformSettings() {
     try {
       const raw = edits[key];
       if (raw === undefined) return;
+      const storedValue = settings.find(s => s.key === key)?.value;
+      if (hasTierLimitErrors(key, raw, storedValue)) {
+        alert('Enter a whole number above 0, or tick Unlimited, for every limit before saving.');
+        return;
+      }
+      if (hasFlatNumberErrors(key, raw, storedValue)) {
+        alert('Fill in every number field before saving. Conversation limits need a whole number above 0.');
+        return;
+      }
 
       let parsedValue: unknown;
       try {
@@ -1293,12 +1379,12 @@ export default function PlatformSettings() {
                           <span className="text-sm font-semibold text-gray-900">
                             {setting.key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                           </span>
-                          <span className="ml-2 font-mono text-xs text-gray-400">{setting.key}</span>
+                          <details className="mt-1 text-xs text-gray-400"><summary>Technical key</summary><code>{setting.key}</code></details>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                          {(MESSAGING_BUNDLE_KEYS.has(setting.key) || setting.key === 'site_announcement') ? (
                             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
-                              Managed in Countries config
+                              {setting.key === 'site_announcement' ? 'Managed in Site Announcement' : 'Managed in Countries config'}
                             </span>
                           ) : (
                             <>
@@ -1306,7 +1392,7 @@ export default function PlatformSettings() {
                                 <>
                                   <button
                                     onClick={() => handleSave(setting.key)}
-                                    disabled={isSaving || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
+                                    disabled={isSaving || hasTierLimitErrors(setting.key, val, setting.value) || hasFlatNumberErrors(setting.key, val, setting.value) || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
                                     className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                                   >
                                     {isSaving ? 'Saving...' : 'Save'}
@@ -1337,7 +1423,8 @@ export default function PlatformSettings() {
                       {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
                         /* Bundle-only keys: read-only value display, no editable controls */
                         <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono whitespace-pre-wrap break-all" data-testid={`readonly-value-${setting.key}`}>
-                          {formatValue(setting.value)}
+                          <SettingSummary value={setting.value} />
+                          <a href="/countries" className="block mt-2 text-brand underline">Edit in Countries</a>
                         </div>
                       ) : (
                         /* All other keys: interactive editor */

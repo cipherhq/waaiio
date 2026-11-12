@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminApiGet } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -8,17 +8,14 @@ import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 interface Order {
   id: string;
   business_id: string;
-  customer_id: string;
+  user_id: string;
   status: string;
-  total: number | null;
+  total_amount: number | null;
   currency: string | null;
   items_count: number;
   delivery_address: string | null;
-  delivery_method: string | null;
-  delivery_fee: number | null;
-  delivery_notes: string | null;
-  payment_status: string | null;
-  payment_method: string | null;
+  delivery_phone: string | null;
+  shipping_cost: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string | null;
@@ -34,8 +31,8 @@ interface OrderItem {
   product_name: string | null;
   quantity: number;
   unit_price: number | null;
-  total_price: number | null;
-  notes: string | null;
+  variant_label: string | null;
+  addons: Array<{ name?: string; price?: number; quantity?: number }> | null;
 }
 
 interface BusinessOption {
@@ -56,81 +53,49 @@ export default function Orders() {
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const perPage = 20;
+  const [error, setError] = useState('');
+  const [itemsError, setItemsError] = useState('');
+  const [truncated, setTruncated] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    async function load() {
-      // Load orders
-      const { data: orderData } = await adminDb
-        .from('orders')
-        .select('*')
-        .order('created_at', { ascending: false });
+    let active = true;
+    setLoading(true); setError('');
+    void (async () => {
+      try {
+        const response = await adminApiGet('/api/admin/orders');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Unable to load orders.');
+        if (!active) return;
+        const rows: Order[] = body.data;
+        setOrders(rows); setTruncated(body.truncated === true);
+        setBusinesses([...new Map(rows.map(row => [row.business_id, { id: row.business_id, name: row.business_name || 'Unknown' }])).values()].sort((a, b) => a.name.localeCompare(b.name)));
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : 'Unable to load orders.');
+      } finally { if (active) setLoading(false); }
+    })();
+    return () => { active = false; };
+  }, [reload]);
 
-      const rows = orderData || [];
-
-      // Load business names
-      const bizIds = [...new Set(rows.map(o => o.business_id).filter(Boolean))];
-      const { data: bizData } = bizIds.length > 0
-        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
-        : { data: [] };
-
-      const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
-      setBusinesses(
-        (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
-      );
-
-      // Load customer profiles
-      const customerIds = [...new Set(rows.map(o => o.customer_id).filter(Boolean))];
-      const { data: profileData } = customerIds.length > 0
-        ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', customerIds)
-        : { data: [] };
-
-      const profileMap = new Map(
-        (profileData || []).map(p => [p.id, { name: [p.first_name, p.last_name].filter(Boolean).join(' ') || '—', email: p.email || '—' }])
-      );
-
-      // Count items per order
-      const orderIds = rows.map(o => o.id);
-      const { data: itemCounts } = orderIds.length > 0
-        ? await adminDb.from('order_items').select('order_id')
-            .in('order_id', orderIds)
-        : { data: [] };
-
-      const countMap = new Map<string, number>();
-      for (const item of itemCounts || []) {
-        countMap.set(item.order_id, (countMap.get(item.order_id) || 0) + 1);
-      }
-
-      const enriched: Order[] = rows.map(o => ({
-        ...o,
-        business_name: bizMap.get(o.business_id) || 'Unknown',
-        customer_name: profileMap.get(o.customer_id)?.name || 'Unknown',
-        customer_email: profileMap.get(o.customer_id)?.email || '—',
-        items_count: countMap.get(o.id) || o.items_count || 0,
-      }));
-
-      setOrders(enriched);
-      setLoading(false);
-    }
-    load();
-  }, []);
-
-  // Load order items when detail modal opens
   useEffect(() => {
-    if (!selected) {
-      setOrderItems([]);
-      return;
-    }
+    let active = true;
+    setOrderItems([]); setItemsError('');
+    if (!selected) return;
     setItemsLoading(true);
-    adminDb
-      .from('order_items')
-      .select('id, order_id, product_name, quantity, unit_price, total_price, notes')
-      .eq('order_id', selected.id)
-      .order('created_at', { ascending: true })
-      .then(({ data }) => {
-        setOrderItems(data || []);
-        setItemsLoading(false);
-      });
-  }, [selected]);
+    void (async () => {
+      try {
+        const response = await adminApiGet(`/api/admin/orders?orderId=${encodeURIComponent(selected.id)}`);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Unable to load order items.');
+        if (active) { setOrderItems(body.data.items); setSelected(body.data); }
+      } catch (cause) {
+        if (active) setItemsError(cause instanceof Error ? cause.message : 'Unable to load order items.');
+      } finally { if (active) setItemsLoading(false); }
+    })();
+    return () => { active = false; };
+  }, [selected?.id]);
+
+  const money = (amount: number | null, currency: string | null) => amount == null ? '—' : currency ? fmtCurrency(amount, currency) : `${amount.toLocaleString()} (currency unavailable)`;
 
   const filtered = orders.filter(o => {
     if (statusFilter !== 'all' && o.status !== statusFilter) return false;
@@ -156,6 +121,8 @@ export default function Orders() {
       <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
       <p className="mt-1 text-sm text-gray-500">Manage all customer orders across accounts</p>
 
+      {error && <div role="alert">{error} <button onClick={() => setReload(value => value + 1)}>Retry loading orders</button></div>}
+      {truncated && <p role="status">Showing the latest 500 orders. Filters and totals on this page cover these loaded orders only.</p>}
       {/* Filters */}
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <select
@@ -204,7 +171,7 @@ export default function Orders() {
 
       {/* Table */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        {pageItems.length === 0 ? (
+        {error ? null : pageItems.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-500">No orders found</div>
         ) : (
           <table className="w-full text-sm">
@@ -231,7 +198,7 @@ export default function Orders() {
                   <td className="px-4 py-3 text-gray-600">{o.customer_name}</td>
                   <td className="px-4 py-3 text-right text-gray-600">{o.items_count}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {o.total != null ? fmtCurrency(o.total, o.currency || 'NGN') : '—'}
+                    {money(o.total_amount, o.currency)}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={o.status} />
@@ -275,7 +242,7 @@ export default function Orders() {
               <div className="space-y-2">
                 <DetailRow label="Name" value={selected.customer_name || '—'} />
                 <DetailRow label="Email" value={selected.customer_email || '—'} />
-                <DetailRow label="Customer ID" value={selected.customer_id} />
+                <DetailRow label="Customer ID" value={selected.user_id} />
               </div>
             </div>
 
@@ -288,7 +255,7 @@ export default function Orders() {
                 <div className="flex items-center justify-center py-4">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                 </div>
-              ) : orderItems.length === 0 ? (
+              ) : itemsError ? (<p role="alert">{itemsError}</p>) : orderItems.length === 0 ? (
                 <p className="text-sm text-gray-400">No items found</p>
               ) : (
                 <div className="space-y-2">
@@ -305,18 +272,15 @@ export default function Orders() {
                           Qty: {item.quantity}
                           {item.unit_price != null && (
                             <span className="ml-2">
-                              @ {fmtCurrency(item.unit_price, selected.currency || 'NGN')}
+                              @ {money(item.unit_price, selected.currency)}
                             </span>
                           )}
                         </p>
-                        {item.notes && (
-                          <p className="text-xs text-gray-400 mt-0.5">{item.notes}</p>
-                        )}
+                        {item.variant_label && <p>{item.variant_label}</p>}
+                        {Array.isArray(item.addons) && item.addons.map((addon, index) => <p key={index} className="text-xs text-gray-500">Add-on: {addon.name || 'Unnamed add-on'}{typeof addon.quantity === 'number' ? ` × ${addon.quantity}` : ''}{typeof addon.price === 'number' ? ` · ${money(addon.price, selected.currency)}` : ''}</p>)}
                       </div>
                       <span className="ml-3 font-medium text-gray-900 whitespace-nowrap">
-                        {item.total_price != null
-                          ? fmtCurrency(item.total_price, selected.currency || 'NGN')
-                          : '—'}
+                        Base line: {item.unit_price != null ? money(item.unit_price * item.quantity, selected.currency) : '—'}
                       </span>
                     </div>
                   ))}
@@ -325,42 +289,20 @@ export default function Orders() {
             </div>
 
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Payment</p>
+              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Order amount</p>
               <div className="space-y-2">
-                <DetailRow
-                  label="Subtotal"
-                  value={selected.total != null ? fmtCurrency(selected.total, selected.currency || 'NGN') : '—'}
-                />
-                <DetailRow
-                  label="Delivery Fee"
-                  value={selected.delivery_fee != null ? fmtCurrency(selected.delivery_fee, selected.currency || 'NGN') : '—'}
-                />
-                <DetailRow
-                  label="Total"
-                  value={
-                    selected.total != null
-                      ? fmtCurrency(
-                          selected.total + (selected.delivery_fee || 0),
-                          selected.currency || 'NGN'
-                        )
-                      : '—'
-                  }
-                />
-                <DetailRow label="Currency" value={selected.currency || '—'} />
-                <DetailRow label="Payment Status" value={selected.payment_status || '—'} />
-                <DetailRow label="Payment Method" value={selected.payment_method || '—'} />
+                <DetailRow label="Total" value={money(selected.total_amount, selected.currency)} />
+                <DetailRow label="Shipping / delivery (included)" value={money(selected.shipping_cost, selected.currency)} />
+                <DetailRow label="Currency" value={selected.currency || 'Unavailable'} />
               </div>
             </div>
 
-            {(selected.delivery_address || selected.delivery_method) && (
+            {(selected.delivery_address || selected.delivery_phone) && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Delivery</p>
                 <div className="space-y-2">
-                  <DetailRow label="Method" value={selected.delivery_method || '—'} />
-                  <DetailRow label="Address" value={selected.delivery_address || '—'} />
-                  {selected.delivery_notes && (
-                    <DetailRow label="Notes" value={selected.delivery_notes} />
-                  )}
+                    <DetailRow label="Address" value={selected.delivery_address || '—'} />
+                    <DetailRow label="Phone" value={selected.delivery_phone || '—'} />
                 </div>
               </div>
             )}

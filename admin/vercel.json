@@ -2,7 +2,8 @@
   "git": {
     "deploymentEnabled": {
       "codex/merchant-tax-phase-a": false,
-      "codex/directory-short-links": false
+      "codex/directory-short-links": false,
+      "codex/admin-audit-fixes": false
     }
   },
   "headers": [

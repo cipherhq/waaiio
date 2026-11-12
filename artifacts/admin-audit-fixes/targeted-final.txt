@@ -1,0 +1,8 @@
+
+ RUN  v4.1.11 /Users/bajideace/Documents/ChatGPT/waaiio/.claude/worktrees/codex-admin-audit-fixes/admin
+
+
+ Test Files  6 passed (6)
+      Tests  52 passed (52)
+   Start at  00:00:40
+   Duration  5.97s (transform 1.54s, setup 1.55s, import 2.96s, tests 8.27s, environment 8.61s)
