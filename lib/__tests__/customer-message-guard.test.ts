@@ -42,6 +42,13 @@ vi.mock('@/lib/channels/attempt-recording', () => ({
   WamidPersistenceError: class extends Error {},
 }));
 vi.mock('@/lib/platformSettings', () => ({
+  loadPlatformSettings: async () => ({
+    customer_daily_reply_limit: 50,
+    customer_daily_reply_limit_max: 500,
+    customer_repeat_message_limit: 3,
+    abuse_cooldown_soft_minutes: 5,
+    ...h.settings,
+  }),
   getPlatformSettingsSync: () => ({
     customer_daily_reply_limit: 50,
     customer_daily_reply_limit_max: 500,
@@ -313,12 +320,12 @@ describe('MetaCloudSender with the customer reply guard', () => {
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('never guards platform-intended sends, even with the business bound (STOP/START replies)', async () => {
+  it('guards platform-style replies the business pays for (business bound on a dedicated number)', async () => {
     const guard = vi.fn().mockRejectedValue(new CustomerDailyLimitError());
     const { s, cloud } = sender(guard);
-    await s.sendPlatformText!({ to: CUSTOMER, text: 'You have been unsubscribed.' });
-    expect(guard).not.toHaveBeenCalled();
-    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+    await expect(s.sendPlatformText!({ to: CUSTOMER, text: 'Reply YES to get updates' })).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    expect(guard).toHaveBeenCalledWith(BIZ, CUSTOMER);
+    expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
   it('never guards platform sends (free notices)', async () => {
@@ -366,6 +373,24 @@ describe('installCustomerReplyGuard (webhook wiring)', () => {
     try { throw new Error('bot crashed'); } catch { /* the route's catch */ } finally { await installed.finish(BIZ); }
     expect(s.customerReplyGuard).toBeUndefined();
     expect(cloud.sendText).not.toHaveBeenCalled();
+  });
+
+  it('never limits STOP/START, catalog orders or accepted quotes (their reply is consent or the payment link)', async () => {
+    const quote = 'accept_quote_0b4ac1a2-1111-4222-8333-944455556666';
+    for (const inbound of [{ text: 'STOP' }, { text: ' start ' }, { text: 'opt-out' }, { isCatalogOrder: true }, { text: quote }]) {
+      const { s, cloud } = realSender();
+      const installed = installCustomerReplyGuard(s, overLimit().db, CUSTOMER, inbound);
+      expect(s.customerReplyGuard).toBeUndefined();
+      await s.sendText({ to: CUSTOMER, text: 'Pay here: https://pay.example/x' });
+      expect(cloud.sendText).toHaveBeenCalledTimes(1);
+      await installed.finish(BIZ);
+    }
+    const rejecting = realSender();
+    installCustomerReplyGuard(rejecting.s, overLimit().db, CUSTOMER, { text: quote.replace('accept', 'reject') });
+    expect(rejecting.s.customerReplyGuard).toBeTypeOf('function');
+    const chatting = realSender();
+    installCustomerReplyGuard(chatting.s, overLimit().db, CUSTOMER, { text: 'stop it please' });
+    expect(chatting.s.customerReplyGuard).toBeTypeOf('function');
   });
 
   it('does nothing for a sender that is not a MetaCloudSender', async () => {

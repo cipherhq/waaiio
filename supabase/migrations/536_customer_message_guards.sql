@@ -155,14 +155,16 @@ BEGIN
   INSERT INTO public.customer_message_guard AS g (phone, last_text_hash, last_text_at, repeat_count)
   VALUES (p_phone, v_key, now(), CASE WHEN v_key IS NULL THEN 0 ELSE 1 END)
   ON CONFLICT (phone) DO UPDATE SET
+    -- Messages sent during a pause never build a repeat count, so the "reply
+    -- menu" the pause notice asks for is answered once the pause ends.
     repeat_count = CASE
-      WHEN v_key IS NULL THEN 0
+      WHEN v_key IS NULL OR g.cooldown_until > now() THEN 0
       WHEN g.last_text_hash = v_key
         AND g.last_text_at > now() - make_interval(secs => p_repeat_window_seconds)
         THEN g.repeat_count + 1
       ELSE 1
     END,
-    last_text_hash = v_key,
+    last_text_hash = CASE WHEN g.cooldown_until > now() THEN NULL ELSE v_key END,
     last_text_at = now(),
     updated_at = now()
   RETURNING * INTO v_row;
@@ -210,6 +212,8 @@ BEGIN
     cooldown_notice_sent = COALESCE(p_notice_sent, false),
     invalid_count = 0,
     invalid_step_key = NULL,
+    repeat_count = 0,
+    last_text_hash = NULL,
     updated_at = now();
 
   RETURN v_until;

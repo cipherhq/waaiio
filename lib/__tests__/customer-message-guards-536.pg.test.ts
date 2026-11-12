@@ -245,6 +245,18 @@ suite('M536 customer message guards (real PostgreSQL)', () => {
     expect(await inbound(phone, 'z')).toMatchObject({ paused: false, cooldown_notice_due: false });
   });
 
+  it('messages during a pause never build a repeat count, so "menu" after the pause is answered', async () => {
+    const phone = '2348000000014';
+    expect((await inbound(phone, 'menu')).repeat_count).toBe(1);
+    expect((await inbound(phone, 'menu')).repeat_count).toBe(2);
+    await pause(phone, 300, true);
+    const { rows: reset } = await q('SELECT repeat_count, last_text_hash FROM public.customer_message_guard WHERE phone = $1', [phone]);
+    expect(reset[0]).toEqual({ repeat_count: 0, last_text_hash: null });
+    for (let i = 0; i < 4; i++) expect(await inbound(phone, 'menu')).toMatchObject({ paused: true, repeat_count: 0 });
+    await q(`UPDATE public.customer_message_guard SET cooldown_until = now() - interval '1 second' WHERE phone = $1`, [phone]);
+    expect(await inbound(phone, 'menu')).toMatchObject({ paused: false, repeat_count: 1 });
+  });
+
   it('counts invalid replies at one step, restarts at another step or after the window, and a pause resets it', async () => {
     const phone = '2348000000010';
     for (let i = 1; i <= 4; i++) expect(await invalid(phone, 's1:date')).toBe(i);

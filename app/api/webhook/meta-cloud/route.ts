@@ -583,10 +583,14 @@ export async function POST(request: NextRequest) {
 
             const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
-            // #536: every business-paid reply to this inbound message (catalog,
-            // media and voice replies as well as the bot) counts toward the
-            // customer's daily limit. Cleared, and the notice sent, in finally.
-            const replyGuard = installCustomerReplyGuard(resolved.sender, supabase, source);
+            // #536: every business-paid reply to this inbound message (media and
+            // voice replies as well as the bot) counts toward the customer's daily
+            // limit; STOP/START, catalog orders and quote acceptances are never
+            // limited. Cleared, and the notice sent, in finally.
+            const replyGuard = installCustomerReplyGuard(resolved.sender, supabase, source, {
+              text: msg.type === 'text' ? msg.text?.body : (msg.interactive?.button_reply?.id ?? msg.button?.payload ?? null),
+              isCatalogOrder: msg.type === 'order',
+            });
             // Process the message — wrap in try/catch for state updates
             try {
               // ── Handle WhatsApp Catalog order messages ──

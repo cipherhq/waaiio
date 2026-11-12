@@ -40,6 +40,7 @@ import { evaluateRules } from './automation/rules-engine';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import type { BotSession, BusinessRecord, BotContext } from './bot-types';
 import { isFinancialDenial } from './financial-denial';
+import { STOP_WORDS, START_WORDS } from './consent-words';
 import {
   isCustomerDailyLimitError, pauseCustomer, pausedNotice, recordCustomerInbound,
 } from '@/lib/messaging/customer-message-guard';
@@ -127,8 +128,6 @@ export class BotService {
     }
 
     // ── STOP/START compliance — BEFORE rate limit so opt-out is never throttled ──
-    const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
-    const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
     const normalizedInput = text?.toLowerCase().trim() || '';
 
     if (STOP_WORDS.includes(normalizedInput)) {

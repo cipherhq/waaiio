@@ -18,9 +18,11 @@
 
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getPlatformSettingsSync, type PlatformSettings } from '@/lib/platformSettings';
+import { getPlatformSettingsSync, loadPlatformSettings, type PlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
 import { MetaCloudSender } from '@/lib/channels/message-sender';
+import { isConsentControlText } from '@/lib/bot/consent-words';
+import { parseQuoteResponseButton } from '@/lib/tax/quote-acceptance';
 
 /** Lowest daily limit a business may set for itself. */
 export const MIN_CUSTOMER_DAILY_REPLY_LIMIT = 10;
@@ -144,8 +146,10 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
         .eq('id', businessId)
         .maybeSingle();
       if (error) throw error;
+      // Loaded (cached), not the sync cache: webhook replies can run before the
+      // bot has warmed it on a cold instance.
       limit = resolveCustomerDailyReplyLimit(
-        getPlatformSettingsSync(),
+        await loadPlatformSettings({ useServiceClient: true }),
         (biz as { metadata?: Record<string, unknown> } | null)?.metadata,
       );
     } catch (err) {
@@ -205,6 +209,26 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
   };
 }
 
+/** What the webhook knows about the inbound message before routing it. */
+export interface InboundMessageKind {
+  /** Typed text, or the tapped button's id/payload. */
+  text?: string | null;
+  /** A native WhatsApp catalog order (its reply carries the payment link). */
+  isCatalogOrder?: boolean;
+}
+
+/**
+ * True when this inbound message is never limited:
+ * - a STOP or START command (consent replies are always answered);
+ * - a catalog order or an accepted quote, whose reply is the payment link
+ *   (a paying customer is never cut off; neither has a bot session to check).
+ */
+export function isUnlimitedInbound(kind: InboundMessageKind): boolean {
+  if (kind.isCatalogOrder) return true;
+  if (isConsentControlText(kind.text)) return true;
+  return parseQuoteResponseButton(kind.text?.trim() ?? '')?.action === 'accept';
+}
+
 /**
  * Install the guard on the sender for one inbound message. `finish` must run
  * in a finally block: it clears the guard, sends today's notice once if a
@@ -215,8 +239,9 @@ export function installCustomerReplyGuard(
   sender: unknown,
   db: SupabaseClient,
   phone: string,
+  inbound: InboundMessageKind = {},
 ): { finish(rebindBusinessId?: string | null): Promise<void> } {
-  if (!(sender instanceof MetaCloudSender)) return { finish: async () => {} };
+  if (!(sender instanceof MetaCloudSender) || isUnlimitedInbound(inbound)) return { finish: async () => {} };
   const handle = createCustomerReplyGuard(db, phone);
   sender.customerReplyGuard = handle.guard;
   return {
