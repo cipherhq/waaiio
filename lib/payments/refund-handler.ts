@@ -23,6 +23,7 @@ import type { RefundOutcome } from './types';
 import { parseTaxRefundSelection, parseTaxRefundRequestId, type TaxRefundSelection } from '@/lib/tax/refund-selection';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { decryptToken } from '@/lib/encryption';
 
 // Valid durable refund states stored in the database
 const VALID_REFUND_STATES = new Set<RefundState>([
@@ -275,7 +276,8 @@ async function reconcileAndFinalize(
       if (!cred) {
         return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found for reconciliation', state: 'provider_pending' };
       }
-      if (cred.secret_key) byoSecretKey = cred.secret_key;
+      // Stored encrypted at rest; a decrypt failure throws into the catch below (stays pending).
+      if (cred.secret_key) byoSecretKey = decryptToken(cred.secret_key);
       if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
     }
 
@@ -368,7 +370,18 @@ async function dispatchAndFinalize(
         if (ambErr) logger.error(`[REFUND] Credential missing AND state write failed: ${refundId}`);
         return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found or deactivated — requires reconciliation', state: 'provider_ambiguous' };
       }
-      if (cred.secret_key) byoSecretKey = cred.secret_key;
+      if (cred.secret_key) {
+        // Stored encrypted at rest; the gateway needs the plaintext key.
+        try {
+          byoSecretKey = decryptToken(cred.secret_key);
+        } catch {
+          const { error: ambErr } = await service.from('refunds')
+            .update({ status: 'provider_ambiguous', gateway_response: { error: 'credential_decrypt_failed' } })
+            .eq('id', refundId);
+          if (ambErr) logger.error(`[REFUND] Credential decrypt failed AND state write failed: ${refundId}`);
+          return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential could not be read — requires reconciliation', state: 'provider_ambiguous' };
+        }
+      }
       if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
     }
 
