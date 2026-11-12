@@ -38,6 +38,38 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
   const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
   const businessId = ctx.business?.id;
 
+  // skipIf() and prompt() both prepare the menu within one execute(); reuse that
+  // execute's lookups instead of repeating every count query. A new message gets a
+  // new ctx, so nothing carries over between messages.
+  const cacheKey = `${businessId ?? ''}|${capabilities.join(',')}`;
+  const cached = menuDataByContext.get(ctx);
+  let menuData: Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string> }>;
+  if (cached && cached.key === cacheKey) {
+    menuData = cached.data;
+  } else {
+    menuData = loadCapabilityMenuData(ctx, capabilities, businessId);
+    menuDataByContext.set(ctx, { key: cacheKey, data: menuData });
+    menuData.catch(() => menuDataByContext.delete(ctx));
+  }
+  const { userFacing, customLabels } = await menuData;
+
+  // Write to session_data for downstream validation/diagnostics (not treated as authoritative cache)
+  ctx.session.session_data._filtered_capabilities = userFacing;
+  ctx.session.session_data._capability_custom_labels = customLabels;
+
+  return { userFacing, customLabels };
+}
+
+const menuDataByContext = new WeakMap<FlowContext, {
+  key: string;
+  data: Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string> }>;
+}>();
+
+async function loadCapabilityMenuData(
+  ctx: FlowContext,
+  capabilities: CapabilityId[],
+  businessId: string | undefined,
+): Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string> }> {
   // Canonical user-facing filter — single source of truth
   let userFacing = getUserFacingCapabilities(capabilities);
 
@@ -115,11 +147,13 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
     ? await getCapabilityCustomLabels(ctx.supabase, businessId)
     : {};
 
-  // Write to session_data for downstream validation/diagnostics (not treated as authoritative cache)
-  ctx.session.session_data._filtered_capabilities = userFacing;
-  ctx.session.session_data._capability_custom_labels = customLabels;
-
   return { userFacing, customLabels };
+}
+
+/** A capability postback id or a bare menu number — a selection, not a request with details. */
+export function isMenuSelectionToken(input: string): boolean {
+  const trimmed = input.trim();
+  return trimmed.startsWith('cap_') || /^\d{1,2}$/.test(trimmed);
 }
 
 /** Map capability to the first step of its corresponding flow */
@@ -596,10 +630,11 @@ const selectCapabilityStep: FlowStepConfig = {
             variantKeywords: ents.variantKeywords,
           };
         } else {
-          // Fresh classification for entity extraction
+          // Fresh classification for entity extraction. A menu tap ("cap_ordering")
+          // or menu number carries no request details, so it skips the LLM fallback.
           const { parseSmartIntentHybrid } = await import('@/lib/bot/smart-intent');
           const bizTz = (sd.business_timezone as string) || undefined;
-          parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier);
+          parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz, ctx.business.subscription_tier, { skipLLM: isMenuSelectionToken(input) });
         }
 
         if (parsed.understood) {

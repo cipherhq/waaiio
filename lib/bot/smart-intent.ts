@@ -675,18 +675,11 @@ export async function parseSmartIntentHybrid(
   timezone?: string,
   /** CAS-004: Business subscription tier — gates LLM fallback (free = no LLM) */
   subscriptionTier?: string,
+  /** skipLLM: the caller knows the text is a selection or a typed answer, not a request — regex only. */
+  options?: { skipLLM?: boolean },
 ): Promise<SmartParseResult & { language?: string | null; llmUsed?: boolean; confidence?: number }> {
   // Step 1: Try regex
   const regexResult = parseSmartIntent(text, timezone);
-
-  // Check if LLM is enabled via feature flag (defaults to true if PostHog not configured)
-  const llmEnabled = businessId
-    ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(err => { logger.warn('[SMART-INTENT] Feature flag check failed (defaulting to enabled):', err); return true; })
-    : true;
-
-  // CAS-004: ONE shared tier authority for LLM eligibility
-  const { isTierLLMEligible } = await import('./language-policy');
-  const tierAllowsLLM = isTierLLMEligible(subscriptionTier);
 
   // Step 2: If regex found a confident intent with service keywords, use it
   if (regexResult.intent && regexResult.serviceKeywords.length > 0) {
@@ -707,6 +700,18 @@ export async function parseSmartIntentHybrid(
     });
     return regexResult;
   }
+
+  // Same result the LLM path returns when it finds nothing, without the ~1 s call.
+  if (options?.skipLLM) return regexResult;
+
+  // Check if LLM is enabled via feature flag (defaults to true if PostHog not configured)
+  const llmEnabled = businessId
+    ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(err => { logger.warn('[SMART-INTENT] Feature flag check failed (defaulting to enabled):', err); return true; })
+    : true;
+
+  // CAS-004: ONE shared tier authority for LLM eligibility
+  const { isTierLLMEligible } = await import('./language-policy');
+  const tierAllowsLLM = isTierLLMEligible(subscriptionTier);
 
   // Step 3: Fall back to LLM (if enabled AND tier allows)
   if (!llmEnabled || !tierAllowsLLM) return regexResult;
