@@ -80,6 +80,8 @@ import {
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
+  /** #536: the shared pause/repeat check has run for this inbound message. */
+  private inboundRecorded = false;
   private readonly ctx: BotContext;
 
   constructor(
@@ -236,7 +238,9 @@ export class BotService {
     // Pre-check 1: Pause and repeated messages, shared by every instance (#536).
     // Exempt verified same-channel pending STOP selections. A paused customer
     // is told once; later messages and repeats get no reply.
-    if (!_preResolvedPendingStop) {
+    // Once per inbound message: handleMessage re-dispatches to itself.
+    if (!_preResolvedPendingStop && !this.inboundRecorded) {
+      this.inboundRecorded = true;
       const inbound = await recordCustomerInbound(this.supabase, from, text, messageType);
       if (inbound.ignore) {
         if (inbound.pausedNoticeDue) await this.sendPlatformText(from, pausedNotice(inbound.pausedMinutes));

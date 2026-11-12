@@ -323,7 +323,9 @@ export class MetaCloudSender implements MessageSender {
     }
 
     // Customer daily limit: refuse before any attempt row or reservation exists.
-    if (!isPlatform && this._businessId && this.customerReplyGuard) {
+    // Platform-intended sends (consent acknowledgements, pause notices) are never
+    // limited, even when a dedicated channel has the business bound.
+    if (!isPlatform && !options?.platformScopeAllowed && this._businessId && this.customerReplyGuard) {
       await this.customerReplyGuard(this._businessId, params.recipientPhone);
     }
 

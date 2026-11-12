@@ -53,7 +53,7 @@ vi.mock('@/lib/platformSettings', () => ({
 
 import {
   createCustomerReplyGuard, CustomerDailyLimitError, isCustomerDailyLimitError, recordCustomerInbound,
-  sendCustomerDailyLimitNotice, CUSTOMER_DAILY_LIMIT_MESSAGE,
+  sendCustomerDailyLimitNotice, CUSTOMER_DAILY_LIMIT_MESSAGE, installCustomerReplyGuard,
   recordInvalidInput, resolveCustomerDailyReplyLimit, PAYMENT_STEP_IDS, INVALID_INPUT_PAUSE_THRESHOLD,
 } from '@/lib/messaging/customer-message-guard';
 import { isFinancialDenial, RefusedSendError } from '@/lib/bot/financial-denial';
@@ -68,6 +68,7 @@ type RpcResult = { data: unknown; error: unknown };
 function fakeDb(opts: {
   metadata?: Record<string, unknown> | null;
   step?: string | null;
+  sessionData?: Record<string, unknown>;
   rpc?: (name: string, args: Record<string, unknown>) => RpcResult;
   sessionError?: boolean;
 }) {
@@ -80,7 +81,7 @@ function fakeDb(opts: {
         if (table === 'businesses') return { data: { metadata: opts.metadata ?? {} }, error: null };
         if (table === 'bot_sessions') {
           if (opts.sessionError) return { data: null, error: { message: 'boom' } };
-          return { data: opts.step ? { current_step: opts.step } : null, error: null };
+          return { data: opts.step ? { current_step: opts.step, session_data: opts.sessionData ?? {} } : null, error: null };
         }
         throw new Error(`unexpected table ${table}`);
       });
@@ -94,19 +95,21 @@ function fakeDb(opts: {
   return { db: db as never, rpcCalls };
 }
 
-/** Replays record_customer_daily_reply: count per business, notice once past the limit. */
+/** Replays M536: record_customer_daily_reply counts; claim_customer_daily_limit_notice is true once. */
 function dailyCounter() {
   const counts = new Map<string, number>();
   const told = new Set<string>();
   return (name: string, args: Record<string, unknown>): RpcResult => {
-    if (name !== 'record_customer_daily_reply') return { data: null, error: null };
     const key = `${args.p_business_id}:${args.p_phone}`;
+    if (name === 'claim_customer_daily_limit_notice') {
+      const first = counts.has(key) && !told.has(key);
+      told.add(key);
+      return { data: first, error: null };
+    }
+    if (name !== 'record_customer_daily_reply') return { data: null, error: null };
     const n = (counts.get(key) ?? 0) + 1;
     counts.set(key, n);
-    const over = n > (args.p_limit as number);
-    const due = over && !told.has(key);
-    if (due) told.add(key);
-    return { data: { reply_count: n, over_limit: over, notice_due: due }, error: null };
+    return { data: { reply_count: n, over_limit: n > (args.p_limit as number) }, error: null };
   };
 }
 
@@ -172,20 +175,39 @@ describe('createCustomerReplyGuard', () => {
     expect(after.takeLimitNotice()).toBe(false);
   });
 
-  it('never cuts off a customer at a payment step', async () => {
-    for (const step of ['await_payment', 'select_checkout', 'await_order_payment']) {
+  it('never cuts off a customer at a payment step or with a payment under way', async () => {
+    for (const step of ['await_payment', 'await_order_payment', 'process_order', 'process_tickets', 'create_reservation']) {
       expect(PAYMENT_STEP_IDS.has(step)).toBe(true);
-      const { db } = fakeDb({ step, rpc: () => ({ data: { reply_count: 99, over_limit: true, notice_due: true }, error: null }) });
+      const { db } = fakeDb({ step, rpc: () => ({ data: { reply_count: 99, over_limit: true }, error: null }) });
       await expect(createCustomerReplyGuard(db, CUSTOMER).guard(BIZ, CUSTOMER)).resolves.toBeUndefined();
     }
-    const { db } = fakeDb({ step: 'select_service', rpc: () => ({ data: { reply_count: 99, over_limit: true, notice_due: false }, error: null }) });
-    await expect(createCustomerReplyGuard(db, CUSTOMER).guard(BIZ, CUSTOMER)).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    for (const sessionData of [{ _awaiting_card_pin: true }, { payment_reference: 'ref_1' }, { bank_transfer_reference: 'TRF-1' }]) {
+      const { db } = fakeDb({ step: 'pick_time', sessionData, rpc: () => ({ data: { reply_count: 99, over_limit: true }, error: null }) });
+      await expect(createCustomerReplyGuard(db, CUSTOMER).guard(BIZ, CUSTOMER)).resolves.toBeUndefined();
+    }
+    // The reservation check-out date picker is not a payment step.
+    expect(PAYMENT_STEP_IDS.has('select_checkout')).toBe(false);
+    for (const step of ['select_service', 'select_checkout']) {
+      const { db } = fakeDb({ step, rpc: () => ({ data: { reply_count: 99, over_limit: true }, error: null }) });
+      await expect(createCustomerReplyGuard(db, CUSTOMER).guard(BIZ, CUSTOMER)).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    }
+  });
+
+  it('crossing the limit while paying does not use up the notice', async () => {
+    const counter = dailyCounter();
+    const paying = fakeDb({ step: 'await_payment', metadata: { customer_daily_reply_limit: 10 }, rpc: counter });
+    for (let i = 0; i < 12; i++) await createCustomerReplyGuard(paying.db, CUSTOMER).guard(BIZ, CUSTOMER);
+    expect(paying.rpcCalls.map(c => c[0])).not.toContain('claim_customer_daily_limit_notice');
+    const done = fakeDb({ step: 'select_service', metadata: { customer_daily_reply_limit: 10 }, rpc: counter });
+    const refused = createCustomerReplyGuard(done.db, CUSTOMER);
+    await expect(refused.guard(BIZ, CUSTOMER)).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    expect(refused.takeLimitNotice()).toBe(true);
   });
 
   it('allows the reply when the count or the payment-step check fails', async () => {
     const down = fakeDb({ rpc: () => ({ data: null, error: { message: 'db down' } }) });
     await expect(createCustomerReplyGuard(down.db, CUSTOMER).guard(BIZ, CUSTOMER)).resolves.toBeUndefined();
-    const unsure = fakeDb({ sessionError: true, rpc: () => ({ data: { reply_count: 99, over_limit: true, notice_due: true }, error: null }) });
+    const unsure = fakeDb({ sessionError: true, rpc: () => ({ data: { reply_count: 99, over_limit: true }, error: null }) });
     await expect(createCustomerReplyGuard(unsure.db, CUSTOMER).guard(BIZ, CUSTOMER)).resolves.toBeUndefined();
   });
 
@@ -291,6 +313,14 @@ describe('MetaCloudSender with the customer reply guard', () => {
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
   });
 
+  it('never guards platform-intended sends, even with the business bound (STOP/START replies)', async () => {
+    const guard = vi.fn().mockRejectedValue(new CustomerDailyLimitError());
+    const { s, cloud } = sender(guard);
+    await s.sendPlatformText!({ to: CUSTOMER, text: 'You have been unsubscribed.' });
+    expect(guard).not.toHaveBeenCalled();
+    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+  });
+
   it('never guards platform sends (free notices)', async () => {
     const guard = vi.fn().mockRejectedValue(new CustomerDailyLimitError());
     const cloud = { sendText: vi.fn().mockResolvedValue({ messageId: 'wamid.2' }) };
@@ -299,5 +329,47 @@ describe('MetaCloudSender with the customer reply guard', () => {
     await s.sendPlatformText!({ to: CUSTOMER, text: "You've reached today's limit" });
     expect(guard).not.toHaveBeenCalled();
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('installCustomerReplyGuard (webhook wiring)', () => {
+  function realSender() {
+    const cloud = { sendText: vi.fn().mockResolvedValue({ messageId: 'wamid.n' }) };
+    const s = new MetaCloudSender(cloud as never, {} as never);
+    s.bindBusiness(BIZ);
+    return { s, cloud };
+  }
+  const overLimit = () => fakeDb({ rpc: (name) => name === 'claim_customer_daily_limit_notice'
+    ? { data: true, error: null } : { data: { reply_count: 51, over_limit: true }, error: null } });
+
+  it('guards every paid reply to this customer, then clears, sends one notice and binds the business again', async () => {
+    const { s, cloud } = realSender();
+    const { db } = overLimit();
+    const installed = installCustomerReplyGuard(s, db, CUSTOMER);
+    await expect(s.sendText({ to: CUSTOMER, text: "I can't process images yet" })).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    await expect(s.sendText({ to: CUSTOMER, text: 'menu' })).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    expect(cloud.sendText).not.toHaveBeenCalled();
+    await installed.finish(BIZ);
+    expect(s.customerReplyGuard).toBeUndefined();
+    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+    expect(cloud.sendText.mock.calls[0][0]).toMatchObject({ to: CUSTOMER, text: CUSTOMER_DAILY_LIMIT_MESSAGE });
+    expect(s.boundBusinessId).toBe(BIZ);
+    // The next message in the batch is not affected.
+    await s.sendText({ to: CUSTOMER, text: 'hello' });
+    expect(cloud.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends nothing extra when no reply was refused, and clears even after a throw', async () => {
+    const { s, cloud } = realSender();
+    const { db } = fakeDb({ rpc: () => ({ data: { reply_count: 1, over_limit: false }, error: null }) });
+    const installed = installCustomerReplyGuard(s, db, CUSTOMER);
+    try { throw new Error('bot crashed'); } catch { /* the route's catch */ } finally { await installed.finish(BIZ); }
+    expect(s.customerReplyGuard).toBeUndefined();
+    expect(cloud.sendText).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a sender that is not a MetaCloudSender', async () => {
+    const installed = installCustomerReplyGuard({ sendText: vi.fn() }, overLimit().db, CUSTOMER);
+    await expect(installed.finish(BIZ)).resolves.toBeUndefined();
   });
 });

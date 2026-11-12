@@ -20,6 +20,7 @@ import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getPlatformSettingsSync, type PlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
+import { MetaCloudSender } from '@/lib/channels/message-sender';
 
 /** Lowest daily limit a business may set for itself. */
 export const MIN_CUSTOMER_DAILY_REPLY_LIMIT = 10;
@@ -28,15 +29,26 @@ export const MIN_CUSTOMER_DAILY_REPLY_LIMIT = 10;
 export const REPEAT_WINDOW_SECONDS = 10 * 60;
 
 /**
- * Flow steps where the customer is paying or about to pay. A customer at one
- * of these steps is never stopped by the daily limit.
+ * Flow steps where the customer is paying or about to pay: choosing how to
+ * pay, the saved-card PIN, transfer buttons and proof. A customer at one of
+ * these steps is never stopped by the daily limit or the junk pause.
+ * (`select_checkout` is the reservation check-out date picker, not payment.)
  */
 export const PAYMENT_STEP_IDS: ReadonlySet<string> = new Set([
   'await_payment', 'await_order_payment', 'await_ticket_payment', 'await_invoice_payment',
   'await_donation_payment', 'donation_payment', 'invoice_pay', 'payment', 'process_payment',
-  'reservation_payment', 'select_checkout', 'continue_or_checkout', 'saved_card_prompt',
-  'confirm_amount',
+  'reservation_payment', 'continue_or_checkout', 'saved_card_prompt', 'confirm_amount',
+  'process_order', 'process_tickets', 'create_reservation',
 ]);
+
+/** Session keys that mean a payment is under way, whatever the step. */
+const PAYMENT_SESSION_KEYS = ['_awaiting_card_pin', 'payment_reference', 'bank_transfer_reference'] as const;
+
+/** True when the customer is paying: at a payment step, or with a payment under way. */
+export function isPayingSession(step: string | null | undefined, sessionData: Record<string, unknown> | null | undefined): boolean {
+  if (typeof step === 'string' && PAYMENT_STEP_IDS.has(step)) return true;
+  return PAYMENT_SESSION_KEYS.some(key => Boolean(sessionData?.[key]));
+}
 
 export const CUSTOMER_DAILY_LIMIT_REASON = 'customer_daily_limit';
 
@@ -85,19 +97,19 @@ export function resolveCustomerDailyReplyLimit(
   return Math.min(Math.max(own, MIN_CUSTOMER_DAILY_REPLY_LIMIT), ceiling);
 }
 
-/** True when the customer's active session with this business is at a payment step. */
+/** True when the customer's active session with this business is paying. */
 async function isAtPaymentStep(db: SupabaseClient, phone: string, businessId: string): Promise<boolean> {
   const { data, error } = await db
     .from('bot_sessions')
-    .select('current_step')
+    .select('current_step, session_data')
     .eq('whatsapp_number', phone)
     .eq('business_id', businessId)
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  const step = (data as { current_step?: string } | null)?.current_step;
-  return typeof step === 'string' && PAYMENT_STEP_IDS.has(step);
+  const row = data as { current_step?: string; session_data?: Record<string, unknown> } | null;
+  return isPayingSession(row?.current_step, row?.session_data);
 }
 
 export type CustomerReplyGuard = (businessId: string, recipientPhone: string) => Promise<void>;
@@ -141,7 +153,7 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
       return;
     }
 
-    let usage: { over_limit?: boolean; notice_due?: boolean } | null;
+    let usage: { over_limit?: boolean } | null;
     try {
       const { data, error } = await db.rpc('record_customer_daily_reply', {
         p_business_id: businessId, p_phone: phone, p_limit: limit,
@@ -163,7 +175,14 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
     }
 
     logger.warn(`[MESSAGE-GUARD] customer ...${phone.slice(-4)} over daily limit ${limit} for business ${businessId}`);
-    if (usage.notice_due === true) noticePending = true;
+    // Claim today's notice only now that a reply is really refused.
+    try {
+      const { data, error } = await db.rpc('claim_customer_daily_limit_notice', { p_business_id: businessId, p_phone: phone });
+      if (error) throw error;
+      if (data === true) noticePending = true;
+    } catch (err) {
+      logger.warn('[MESSAGE-GUARD] could not claim the limit notice:', (err as Error).message);
+    }
     throw new CustomerDailyLimitError();
   }
 
@@ -182,6 +201,30 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
       const due = noticePending;
       noticePending = false;
       return due;
+    },
+  };
+}
+
+/**
+ * Install the guard on the sender for one inbound message. `finish` must run
+ * in a finally block: it clears the guard, sends today's notice once if a
+ * reply was refused, and binds the business again (the notice unbinds it), so
+ * the next message in the same webhook batch starts as before.
+ */
+export function installCustomerReplyGuard(
+  sender: unknown,
+  db: SupabaseClient,
+  phone: string,
+): { finish(rebindBusinessId?: string | null): Promise<void> } {
+  if (!(sender instanceof MetaCloudSender)) return { finish: async () => {} };
+  const handle = createCustomerReplyGuard(db, phone);
+  sender.customerReplyGuard = handle.guard;
+  return {
+    async finish(rebindBusinessId) {
+      sender.customerReplyGuard = undefined;
+      if (!handle.takeLimitNotice()) return;
+      await sendCustomerDailyLimitNotice(sender, phone);
+      if (rebindBusinessId) sender.bindBusiness(rebindBusinessId);
     },
   };
 }
@@ -243,6 +286,7 @@ export async function recordCustomerInbound(
       p_phone: phone,
       p_text_hash: isText ? textHash(text) : null,
       p_repeat_window_seconds: REPEAT_WINDOW_SECONDS,
+      p_payment_steps: [...PAYMENT_STEP_IDS],
     });
     if (error) throw error;
     const result = (data ?? {}) as {

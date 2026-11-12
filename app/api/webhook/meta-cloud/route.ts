@@ -4,8 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { MetaCloudSender } from '@/lib/channels/message-sender';
-import { createCustomerReplyGuard, sendCustomerDailyLimitNotice } from '@/lib/messaging/customer-message-guard';
+import { installCustomerReplyGuard } from '@/lib/messaging/customer-message-guard';
 import { recordInboundReceipt } from '@/lib/channels/inbound-receipts';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
@@ -584,6 +583,10 @@ export async function POST(request: NextRequest) {
 
             const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
+            // #536: every business-paid reply to this inbound message (catalog,
+            // media and voice replies as well as the bot) counts toward the
+            // customer's daily limit. Cleared, and the notice sent, in finally.
+            const replyGuard = installCustomerReplyGuard(resolved.sender, supabase, source);
             // Process the message — wrap in try/catch for state updates
             try {
               // ── Handle WhatsApp Catalog order messages ──
@@ -774,16 +777,7 @@ export async function POST(request: NextRequest) {
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
-              // Customer daily limit applies only to replies to this inbound message.
-              const replySender = resolved.sender instanceof MetaCloudSender ? resolved.sender : null;
-              const replyGuard = replySender ? createCustomerReplyGuard(supabase, source) : null;
-              if (replySender && replyGuard) replySender.customerReplyGuard = replyGuard.guard;
-              try {
-                await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl, metaMsgId);
-              } finally {
-                if (replySender) replySender.customerReplyGuard = undefined;
-              }
-              if (replySender && replyGuard?.takeLimitNotice()) await sendCustomerDailyLimitNotice(replySender, source);
+              await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl, metaMsgId);
               mark('bot_complete');
               msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
 
@@ -822,6 +816,8 @@ export async function POST(request: NextRequest) {
                 p_claim_token: claimToken,
               });
               // Don't rethrow — continue processing other messages in the batch
+            } finally {
+              await replyGuard.finish(preResolvedBusinessId);
             }
             continue; // Move to next message
           }

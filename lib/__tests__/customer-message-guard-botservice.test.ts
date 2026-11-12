@@ -178,10 +178,22 @@ describe('#536 customer message guards in BotService', () => {
     await bot.handleMessage(PHONE, '1', 'text', 'phone-number-id-A', undefined);
     expect(sent).toEqual(['You can message again in 3 minutes. 🙏']);
 
+    // The webhook builds a new BotService for every inbound message.
     inboundAnswer = { repeat_count: 1, paused: true, cooldown_until: later(), cooldown_notice_due: false };
-    await bot.handleMessage(PHONE, '2', 'text', 'phone-number-id-A', undefined);
+    const next = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence(false));
+    await next.handleMessage(PHONE, '2', 'text', 'phone-number-id-A', undefined);
+    expect(inboundCalls).toHaveLength(2);
     expect(sent).toHaveLength(1);
     expect(writes.filter(w => w.table === 'bot_sessions')).toEqual([]);
+  });
+
+  it('checks pause and repeats once per inbound message, even when handleMessage re-dispatches', async () => {
+    const { supabase } = createTrackingSupabase({ pendingStopSession: null, channelForPhone: CHANNEL_A });
+    const { sender } = createSender();
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence(false));
+    inboundAnswer = { repeat_count: 1, paused: false, cooldown_until: null, cooldown_notice_due: false };
+    await bot.handleMessage(PHONE, 'go_back_biz', 'button', 'phone-number-id-A', undefined);
+    expect(inboundCalls).toHaveLength(1);
   });
 
   it('ignores the same text after 3 in a row', async () => {
