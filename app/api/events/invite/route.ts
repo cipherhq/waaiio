@@ -9,6 +9,7 @@ import { checkOptInBatch } from '@/lib/security/check-optin';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
+import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 50;
@@ -147,7 +148,7 @@ export async function POST(request: NextRequest) {
   const resolved = await resolver.resolveByBusinessId(businessId);
 
   // Batch check which numbers have opted in (previously interacted with business)
-  const cleanPhones = phones.slice(0, 50).map(p => p.replace(/\D/g, '')).filter(p => p.length >= 7);
+  const cleanPhones = phones.slice(0, 50).map(p => toInviteGuestPhone(p, business?.country_code)).filter(p => p.length >= 7);
   const optInMap = await checkOptInBatch(service, cleanPhones, businessId);
 
   // Build public invite URL for numbers that need opt-in
@@ -156,7 +157,7 @@ export async function POST(request: NextRequest) {
 
   for (let i = 0; i < Math.min(phones.length, 50); i++) {
     const rawPhone = phones[i];
-    const phone = rawPhone.replace(/\D/g, '');
+    const phone = toInviteGuestPhone(rawPhone, business?.country_code);
     const guestName = names?.[i]?.trim() || null;
     if (!phone || phone.length < 7) {
       results.push({ phone: rawPhone, status: 'skipped', error: 'Invalid phone number' });
@@ -181,12 +182,13 @@ export async function POST(request: NextRequest) {
       // Check for existing invite first
       const findQuery = service
         .from('event_invites')
-        .select('id, invite_token, status')
-        .eq('guest_phone', phone)
+        .select('id, invite_token, status, guest_phone')
+        .in('guest_phone', inviteGuestPhoneVariants(phone, rawPhone))
         .eq('business_id', businessId);
       if (partyId) findQuery.eq('party_id', partyId);
       else findQuery.eq('event_id', eventId!);
-      const { data: existing } = await findQuery.maybeSingle();
+      const { data: existingRows } = await findQuery;
+      const existing = await adoptExistingInvite(service, existingRows, phone);
 
       let invite = existing;
       const isResend = !!existing;
@@ -197,7 +199,7 @@ export async function POST(request: NextRequest) {
         const { data: newInvite, error: insertError } = await service
           .from('event_invites')
           .insert(upsertPayload)
-          .select('id, invite_token, status')
+          .select('id, invite_token, status, guest_phone')
           .single();
 
         if (insertError || !newInvite) {
@@ -398,8 +400,8 @@ export async function POST(request: NextRequest) {
         if (!email || !email.includes('@')) continue;
 
         // Find the invite for the first phone (link email to same invite)
-        const firstPhone = phones[0]?.replace(/\D/g, '') || '';
-        const findQ = service.from('event_invites').select('invite_token').eq('business_id', businessId).eq('guest_phone', firstPhone);
+        const firstPhone = phones[0] ? toInviteGuestPhone(phones[0], business?.country_code) : '';
+        const findQ = service.from('event_invites').select('invite_token').eq('business_id', businessId).in('guest_phone', inviteGuestPhoneVariants(firstPhone, phones[0] || '')).limit(1);
         if (partyId) findQ.eq('party_id', partyId);
         else findQ.eq('event_id', eventId!);
         const { data: invForEmail } = await findQ.maybeSingle();

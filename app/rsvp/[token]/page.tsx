@@ -53,6 +53,7 @@ export default function RSVPPage() {
   const [dietary, setDietary] = useState('');
   const [answers, setAnswers] = useState<PartyAnswers>({});
   const [error, setError] = useState('');
+  const [waNumber, setWaNumber] = useState('');
 
   useEffect(() => {
     async function load() {
@@ -63,7 +64,7 @@ export default function RSVPPage() {
           return;
         }
 
-        const { invite: inviteData } = await res.json() as { invite: InviteData };
+        const { invite: inviteData, wa_number } = await res.json() as { invite: InviteData; wa_number?: string };
 
         if (!inviteData || (!inviteData.events && !inviteData.parties)) {
           setState('not_found');
@@ -71,6 +72,7 @@ export default function RSVPPage() {
         }
 
         setInvite(inviteData);
+        setWaNumber(wa_number || '');
         setPlusOnes(inviteData.plus_ones || 0);
         setDietary(inviteData.dietary_notes || '');
         setResponse(inviteData.status === 'pending' ? '' : inviteData.status);
@@ -265,7 +267,6 @@ export default function RSVPPage() {
   // Use party details if available, otherwise event details
   const event = invite.parties || invite.events!;
   const businessName = event.businesses.name;
-  const businessSlug = event.businesses.slug;
   const dateLabel = formatDate(event.date, event.time);
   const dressCode = ('dress_code' in event) ? (event as EventOrPartyDetails).dress_code : null;
 
@@ -419,9 +420,9 @@ export default function RSVPPage() {
           )}
 
           {/* WhatsApp deep link to business bot */}
-          {businessSlug && (
+          {waNumber && (
             <a
-              href={`https://wa.me/?text=${encodeURIComponent(`rsvp ${token}`)}`}
+              href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`RSVP ${token}`)}`}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-4 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
