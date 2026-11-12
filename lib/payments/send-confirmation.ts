@@ -1,5 +1,5 @@
+import { buildReceiptTax, type ReceiptTaxSource } from '@/lib/tax/receipt';
 import { hasMerchantNotificationIntent } from '@/lib/merchant-notifications/compatibility';
-import { transactionNextSteps } from '@/lib/bot/flows/shared/navigation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -11,10 +11,9 @@ import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { loadInvoiceLineItems, loadTicketLine, ORDER_ITEMS_SELECT, toOrderLineItems } from '@/lib/receipts/line-items';
+import type { ReceiptLineItem } from '@/lib/pdf/receipt-generator';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
-import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
-import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
-import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -159,11 +158,10 @@ export async function sendProactiveConfirmation(
     }
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-      // K2/Refinement 1: Retry pending saved-card CTA via stored channel_id
       try {
-        const { retryPendingSavedCardOffer } = await import('@/lib/payments/saved-card-offer');
-        await retryPendingSavedCardOffer(supabase, payment.id);
-      } catch { /* non-blocking */ }
+        const { resumePaidTransactionFollowup } = await import('@/lib/payments/transaction-followup');
+        await resumePaidTransactionFollowup(supabase, payment.id);
+      } catch (followupError) { logSafeError(logPrefix, 'transaction-followup', followupError); }
       return { status: 'already_completed' };
     }
     logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
@@ -219,12 +217,17 @@ export async function sendProactiveConfirmation(
   let balanceRemaining = 0;
   let bookingFlowType: string | undefined;
   let bookingServiceType: string | undefined;
+  // #889: receipt-only details. Never used for the CRM/loyalty name or for any amount charged.
+  let receiptBuyerName: string | null = null;
+  let receiptItems: ReceiptLineItem[] = [];
+  let receiptTotalDue: number | undefined;
+  let receiptBalanceDue: number | undefined;
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, guest_email, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
+      .select('guest_phone, guest_email, guest_name, quantity, event_id, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -265,6 +268,13 @@ export async function sendProactiveConfirmation(
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
+      receiptBuyerName = booking.guest_name || null;
+      if (bookingFlowType === 'ticketing') {
+        // #889: ticket bookings have no service; name the event and list the tickets.
+        const ticket = await loadTicketLine(supabase, { id: payment.booking_id, event_id: booking.event_id, quantity: booking.quantity, total_amount: booking.total_amount });
+        if (ticket.eventName) serviceName = ticket.eventName;
+        receiptItems = ticket.items;
+      }
       if (booking.date && booking.time && booking.flow_type !== 'ordering') {
         bookingDate = booking.date;
         bookingTime = booking.time;
@@ -282,6 +292,8 @@ export async function sendProactiveConfirmation(
         });
         if (balance && balance.balanceDue > 0) {
           balanceRemaining = balance.balanceDue;
+          receiptTotalDue = total;
+          receiptBalanceDue = balance.balanceDue;
         }
       }
     }
@@ -299,6 +311,7 @@ export async function sendProactiveConfirmation(
       customerPhone = reservation.guest_phone;
       businessId = reservation.business_id;
       referenceCode = reservation.reference_code || '';
+      receiptBuyerName = reservation.guest_name || null;
       const biz = reservation.businesses as unknown as { name: string; country_code?: string; payment_gateway?: string } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
@@ -314,6 +327,8 @@ export async function sendProactiveConfirmation(
         });
         if (balance && balance.balanceDue > 0) {
           balanceRemaining = balance.balanceDue;
+          receiptTotalDue = total;
+          receiptBalanceDue = balance.balanceDue;
         }
       }
     }
@@ -323,7 +338,8 @@ export async function sendProactiveConfirmation(
   if (!customerPhone && payment.invoice_id) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('customer_phone, reference_code, description, business_id, businesses:business_id(name, country_code)')
+      // #889: invoices have no description column (it is on invoice_items); selecting it failed the whole lookup.
+      .select('customer_phone, customer_name, reference_code, business_id, businesses:business_id(name, country_code)')
       .eq('id', payment.invoice_id)
       .single();
 
@@ -334,7 +350,9 @@ export async function sendProactiveConfirmation(
       const biz = invoice.businesses as unknown as { name: string; country_code?: string } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
-      serviceName = invoice.description || `Invoice ${referenceCode}`;
+      serviceName = `Invoice ${referenceCode}`;
+      receiptBuyerName = invoice.customer_name || null;
+      receiptItems = await loadInvoiceLineItems(supabase, payment.invoice_id);
     }
   }
 
@@ -396,6 +414,7 @@ export async function sendProactiveConfirmation(
     if (campaign.businesses?.name) businessName = campaign.businesses.name;
     if (campaign.businesses?.country_code) countryCode = campaign.businesses.country_code as CountryCode;
     serviceName = campaign.title || 'Campaign Donation';
+    receiptBuyerName = donation.donor_name || null;
   }
 
   // ── 3. Fallback: orders via payment metadata ──
@@ -412,7 +431,7 @@ export async function sendProactiveConfirmation(
     if (canonicalOrderId) {
       const { data: order } = await supabase
         .from('orders')
-        .select('delivery_phone, reference_code, business_id, businesses(name, country_code)')
+        .select(`delivery_phone, reference_code, business_id, total_amount, businesses(name, country_code), ${ORDER_ITEMS_SELECT}`)
         .eq('id', canonicalOrderId)
         .maybeSingle();
       if (order) {
@@ -423,6 +442,18 @@ export async function sendProactiveConfirmation(
         if (biz?.name) businessName = biz.name;
         if (biz?.country_code) countryCode = biz.country_code as CountryCode;
         serviceName = `Order ${referenceCode}`;
+        receiptItems = toOrderLineItems(order.order_items);
+        const orderTotal = Number(order.total_amount || 0);
+        // #889: an order deposit shows what is still owed, from payment history (#381 rule).
+        // Only for payments linked by payments.order_id: a legacy metadata-only link would be
+        // missing from that history and overstate the balance.
+        if (payment.order_id && orderTotal > Number(payment.amount || 0)) {
+          const balance = await getEntityBalance(supabase, { orderId: payment.order_id, totalAmount: orderTotal }).catch(() => null);
+          if (balance && balance.balanceDue > 0) {
+            receiptTotalDue = orderTotal;
+            receiptBalanceDue = balance.balanceDue;
+          }
+        }
       }
     }
 
@@ -446,11 +477,15 @@ export async function sendProactiveConfirmation(
   let isWl = false;
   let subscriptionTier: string | null = null;
   let businessIsWhitelabel: boolean | null = null;
+  // Set only when this lookup succeeds: the updates opt-in names Waaiio only
+  // when the business's branding is known.
+  let optInBusinessName: string | null = null;
   try {
-    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier, is_whitelabel').eq('id', businessId).single();
+    const { data: bizTier } = await supabase.from('businesses').select('name, subscription_tier, is_whitelabel').eq('id', businessId).single();
     const { isWhiteLabel } = await import('@/lib/whitelabel');
     subscriptionTier = (bizTier?.subscription_tier as string | null | undefined) ?? null;
     businessIsWhitelabel = (bizTier?.is_whitelabel as boolean | null | undefined) ?? null;
+    optInBusinessName = (bizTier?.name as string | null | undefined) ?? null;
     isWl = isWhiteLabel(subscriptionTier);
   } catch { /* non-critical */ }
 
@@ -707,8 +742,7 @@ export async function sendProactiveConfirmation(
   }
 
   const nextStepsKind = payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment';
-  const nextStepsShared = resolved?.channel.channel_type === 'shared';
-  lines.push('', 'Type *receipt* to get your receipt', transactionNextSteps(nextStepsKind, nextStepsShared));
+  lines.push('', 'Type *receipt* to get your receipt');
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {
@@ -892,22 +926,6 @@ export async function sendProactiveConfirmation(
                 }
               }
 
-              // Owner rule 2026-11-05: every completed transaction ends with a
-              // next-steps menu and "Powered by Waaiio.com". Sent only here, after
-              // this payment's one claimed confirmation was accepted, so a Stage-3
-              // retry never repeats it. Its own try/catch: a menu failure must not
-              // mark the already-accepted confirmation as failed.
-              try {
-                await resolved.sender.sendButtons({
-                  to: phone,
-                  body: getFlowCopy(proactiveLanguage, 'menu.what_next'),
-                  buttons: buildPaymentNextStepsButtons(nextStepsKind, nextStepsShared, proactiveLanguage),
-                  footer: getPoweredByInteractiveFooter(subscriptionTier, businessIsWhitelabel),
-                  messageCategory: 'service',
-                });
-              } catch (menuErr) {
-                logSafeError(logPrefix, 'next-steps-menu', menuErr);
-              }
             } else {
               // No WAMID returned but no error thrown — indeterminate
               await supabase.rpc('fail_confirmation_send', {
@@ -974,6 +992,8 @@ export async function sendProactiveConfirmation(
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
+        // #889: the receipt (and the owner's order alert) use the name the buyer gave first.
+        receiptBuyerName = receiptBuyerName || customerName;
         // All entity types: pass real payment.amount so receipts are generated.
         // Stage 2 owns durable spend for bookings/reservations/orders via RPCs;
         // skipCustomerSpend prevents double-counting in post-completion.
@@ -988,6 +1008,20 @@ export async function sendProactiveConfirmation(
         const isAmbiguousPayment = isPaymentFamily && bookingServiceType !== 'booking' && bookingServiceType !== 'giving';
         if (isAmbiguousPayment) {
           logger.warn(`${logPrefix} Ambiguous payment classification: flow_type=payment, service_type=${bookingServiceType ?? 'null'}, booking_id=${payment.booking_id}`);
+        }
+        let receiptTax: ReceiptTaxSource | undefined;
+        const taxTable = payment.order_id ? 'orders' : payment.booking_id ? 'bookings' : payment.invoice_id ? 'invoices' : null;
+        if (taxTable) {
+          const { data: original, error: taxError } = await supabase.from(taxTable).select('tax_snapshot')
+            .eq('id', payment.order_id || payment.booking_id || payment.invoice_id).eq('business_id', businessId).single();
+          if (taxError) throw new Error('Receipt original tax terms unavailable');
+          if (original?.tax_snapshot) {
+            const { data: paid, error: allocationError } = await supabase.from('payments').select('tax_allocation')
+              .eq('id', payment.id).eq('business_id', businessId).single();
+            if (allocationError || !paid?.tax_allocation) throw new Error('Receipt payment tax allocation unavailable');
+            receiptTax = { snapshot: original.tax_snapshot, allocations: [paid.tax_allocation] };
+            buildReceiptTax(receiptTax, payment.amount);
+          }
         }
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
@@ -1007,6 +1041,11 @@ export async function sendProactiveConfirmation(
           skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
           currencyCode: paymentCurrencyCode,
+          receiptCustomerName: receiptBuyerName,
+          receiptItems,
+          receiptTax,
+          receiptTotalDue,
+          receiptBalanceDue,
           translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [businessName, serviceName, referenceCode].filter(Boolean))) : undefined,
         });
       } catch (pcErr) {
@@ -1089,8 +1128,9 @@ export async function sendProactiveConfirmation(
             const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
             await notifyOwnerNewDonation({ paymentId: payment.id, supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: don?.reference_code || referenceCode, donorName: don?.donor_name || null, amount: payment.amount, campaignTitle: ct });
           } else if (payment.order_id) {
-            const { data: ord } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
-            if (ord) { const its = ((ord.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: ord.delivery_name || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
+            // #889: orders have no delivery_name and order_items no product_name; the old select failed.
+            const { data: ord } = await supabase.from('orders').select(`reference_code, delivery_address, ${ORDER_ITEMS_SELECT}`).eq('id', payment.order_id).single();
+            if (ord) { const its = toOrderLineItems(ord.order_items).map(i => ({ name: i.name, quantity: i.quantity, price: i.lineTotal })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: receiptBuyerName || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
           }
           return true;
         });
@@ -1195,10 +1235,11 @@ export async function sendProactiveConfirmation(
         }
         if (payment.order_id && resolved) {
           const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
-          const { data: order } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
+          // #889: same fix as the manifest path above.
+          const { data: order } = await supabase.from('orders').select(`reference_code, delivery_address, ${ORDER_ITEMS_SELECT}`).eq('id', payment.order_id).single();
           if (order) {
-            const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity }));
-            notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: order.reference_code || referenceCode, customerName: order.delivery_name || 'Customer', items, totalAmount: payment.amount, deliveryAddress: order.delivery_address || undefined }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
+            const items = toOrderLineItems(order.order_items).map(i => ({ name: i.name, quantity: i.quantity, price: i.lineTotal }));
+            notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: order.reference_code || referenceCode, customerName: receiptBuyerName || 'Customer', items, totalAmount: payment.amount, deliveryAddress: order.delivery_address || undefined }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
           }
         }
         try {
@@ -1668,38 +1709,41 @@ export async function sendProactiveConfirmation(
       logger.warn(`${logPrefix} Ticket state incomplete — not finalizing confirmation claim`);
       return { status: 'retryable_failed', retryable: true, reason: 'ticket_state_incomplete' };
     }
+    // #963: after-booking client intake form (separate lifecycle, non-blocking).
+    // Sent once, only for a confirmed booking whose service links an after-booking
+    // form, and only inside the client's 24-hour window, on the channel the
+    // confirmation just used. Never affects the confirmation result.
+    if (payment.booking_id) {
+      try {
+        const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
+        const sameChannel = resolved;
+        await deliverAfterBookingIntake(supabase, payment.booking_id, sameChannel
+          ? { resolver: { resolveByBusinessId: async () => sameChannel } }
+          : {});
+      } catch (intakeErr) {
+        logSafeError(logPrefix, 'booking-intake', intakeErr);
+      }
+    }
+
+
+    if (resolved && customerPhone && businessId) {
+      const { startTransactionFollowup } = await import('@/lib/bot/transaction-followups');
+      await startTransactionFollowup(supabase, {
+        completionKey: `payment:${payment.id}`, businessId, phone: customerPhone,
+        channelId: resolved.channel.id, kind: nextStepsKind, lang: proactiveLanguage,
+        paymentId: payment.id, waitForCard: true,
+      });
+    }
+
     const finalizeResult = await finalizeConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!finalizeResult.ok) {
       return { status: 'retryable_failed', retryable: true, reason: 'confirmation_finalize_failed' };
     }
 
-    // #165: Post-finalization recurring offer (separate lifecycle, non-blocking)
     try {
-      const { checkAndOfferRecurring } = await import('@/lib/payments/recurring-offer');
-      await checkAndOfferRecurring(supabase, payment, businessId, resolved?.sender || null, customerPhone || null, logPrefix);
-    } catch (recurringErr) {
-      logSafeError(logPrefix, 'recurring-offer', recurringErr);
-    }
-
-    // Post-finalization saved-card CTA (separate lifecycle, non-blocking)
-    // M394/Phase 2D: Direct bank transfers do NOT get Save Card offer
-    if (!isDirectOrderTransfer) {
-      try {
-        // #353: Dispatch by gateway — Stripe uses native checkout consent, Paystack uses WhatsApp CTA
-        const { data: payGwData } = await supabase.from('payments').select('gateway').eq('id', payment.id).single();
-        const paymentGateway = payGwData?.gateway as string | undefined;
-        if (paymentGateway === 'stripe') {
-          const { checkStripeConsentAndOffer } = await import('@/lib/payments/saved-card-offer');
-          await checkStripeConsentAndOffer(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
-        } else {
-          // Paystack + all other gateways: existing WhatsApp CTA flow (unchanged)
-          const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
-          await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
-        }
-      } catch (savedCardErr) {
-        logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
-      }
-    }
+      const { resumePaidTransactionFollowup } = await import('@/lib/payments/transaction-followup');
+      await resumePaidTransactionFollowup(supabase, payment.id);
+    } catch (followupError) { logSafeError(logPrefix, 'transaction-followup', followupError); }
 
     return { status: 'completed' };
 

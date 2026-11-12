@@ -337,7 +337,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     it('4. anon cannot execute create_order_atomic', () => {
       const r = psql(`
         SELECT has_function_privilege('anon',
-          'create_order_atomic(uuid,uuid,uuid,text,text,text,int,int,int,uuid,text,text,uuid,text,int,int,text,text,text,text,jsonb,uuid,boolean,int)',
+          'create_order_atomic(uuid,uuid,uuid,text,text,text,numeric,numeric,numeric,uuid,text,text,uuid,text,numeric,numeric,text,text,text,text,jsonb,uuid,boolean,numeric,jsonb,boolean)',
           'EXECUTE');
       `);
       expect(r).toBe('f');
@@ -883,7 +883,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       const orderId = createR.order_id as string;
 
       // Add successful payment
-      psql(`INSERT INTO payments (id, order_id, amount, gateway_reference, status) VALUES ('${PAY_1}', '${orderId}', 1000, 'test_ref_31', 'success');`);
+      psql(`INSERT INTO payments (id, business_id, order_id, amount, gateway_reference, status) VALUES ('${PAY_1}', '${BIZ_ID}', '${orderId}', 1000, 'test_ref_31', 'success');`);
 
       const r = psqlJson(`SET ROLE service_role; SELECT cancel_order_immediate('${orderId}');`);
       expect(r.cancelled).toBe(false);
@@ -1835,14 +1835,14 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
   // COMPLETE ACL MATRIX
   // ═══════════════════════════════════════════════════════
   describe('complete ACL matrix', () => {
-    // Exact type signatures from M383 ACL blocks
-    const COA_SIG = 'uuid, uuid, uuid, text, text, text, int, int, int, uuid, text, text, uuid, text, int, int, text, text, text, text, jsonb, uuid, boolean, int';
-    const BSA_SIG = 'uuid,uuid,uuid,uuid,date,text,int,int,text,int,text,text,text,text,text,text,text,date,jsonb,uuid,int,text,uuid,uuid,integer,integer,uuid,uuid,int,int';
+    // Current signatures: M531 extends order/booking/quote authority; other M383 RPCs stay unchanged.
+    const COA_SIG = 'uuid,uuid,uuid,text,text,text,numeric,numeric,numeric,uuid,text,text,uuid,text,numeric,numeric,text,text,text,text,jsonb,uuid,boolean,numeric,jsonb,boolean';
+    const BSA_SIG = 'uuid,uuid,uuid,uuid,date,text,integer,integer,text,numeric,text,text,text,text,text,text,text,date,jsonb,uuid,numeric,text,uuid,uuid,integer,integer,uuid,uuid,numeric,numeric,jsonb,text';
     const PTA_SIG = 'uuid, uuid, uuid, integer, uuid, text, text, text, integer, text, uuid, int';
     const COI_SIG = 'uuid, text';
     const CPBA_SIG = 'uuid, uuid, uuid, uuid, int, text, text, text, int';
     const CRA_SIG = 'uuid, uuid, uuid, uuid, date, date, int, int, int, int, text, text, text';
-    const AOQA_SIG = 'uuid, text';
+    const AOQA_SIG = 'uuid,text,jsonb';
 
     it('60. create_order_atomic: anon denied, authenticated denied, service_role allowed', () => {
       const anonR = psql(`SELECT has_function_privilege('anon', 'create_order_atomic(${COA_SIG})', 'EXECUTE');`);

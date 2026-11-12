@@ -92,16 +92,19 @@ describe('Settlement Lifecycle: Fee Recording', () => {
     expect(result.feeTotal).toBe(150);
   });
 
-  it('BYO routing produces zero fee (invariant)', () => {
+  it('BYO routing pays the same fee as the platform route (Owner decision 2026-11-08)', () => {
     const basis: FeeBasis = { payment_routing: 'byo', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null };
     const result = calculateFee(10000, basis, 'booking', SNAPSHOT);
-    expect(result.feeTotal).toBe(0);
+    const platform = calculateFee(10000, { ...basis, payment_routing: 'platform' }, 'booking', SNAPSHOT);
+    expect(result.feeTotal).toBeGreaterThan(0);
+    expect(result).toEqual(platform);
   });
 
-  it('trial waiver produces zero fee', () => {
-    const basis: FeeBasis = { payment_routing: 'platform', tier: 'free', is_in_trial: true, custom_fee_percentage: null, custom_fee_flat: null };
-    const result = calculateFee(10000, basis, 'booking', SNAPSHOT);
-    expect(result.feeTotal).toBe(0);
+  it('trial does not waive the fee (Owner 2026-11-08)', () => {
+    const inTrial: FeeBasis = { payment_routing: 'platform', tier: 'free', is_in_trial: true, custom_fee_percentage: null, custom_fee_flat: null };
+    const result = calculateFee(10000, inTrial, 'booking', SNAPSHOT);
+    expect(result).toEqual(calculateFee(10000, { ...inTrial, is_in_trial: false }, 'booking', SNAPSHOT));
+    expect(result.feeTotal).toBeGreaterThan(0);
   });
 
   it('custom fee override takes precedence over tier rate', () => {

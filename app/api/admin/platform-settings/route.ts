@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logAdminAudit } from '@/lib/admin-audit';
+import { isFeeBankSettingKey } from '@/lib/fee-bank-setting';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,14 @@ export const dynamic = 'force-dynamic';
  * save_messaging_config + guard_commercial_settings allowlists.
  * Server route is authoritative; client duplicates for display only.
  */
+/** Response for platform_bank_* keys, which have their own step-up protected route. */
+function feeBankProtected() {
+  return NextResponse.json(
+    { error: 'The platform fee bank account is changed from its own protected screen.', code: 'fee_bank_protected' },
+    { status: 403 },
+  );
+}
+
 const COMMERCIAL_KEYS = new Set([
   // save_commercial_config keys (M359/M375/M376/M416)
   'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
@@ -47,6 +56,7 @@ export async function PUT(request: NextRequest) {
   if (typeof key !== 'string' || !key) {
     return NextResponse.json({ error: 'key must be a non-empty string' }, { status: 400 });
   }
+  if (isFeeBankSettingKey(key)) return feeBankProtected();
   if (COMMERCIAL_KEYS.has(key)) {
     return NextResponse.json(
       { error: 'Commercial config keys must be updated via save_commercial_config RPC' },
@@ -107,6 +117,7 @@ export async function POST(request: NextRequest) {
   if (typeof key !== 'string' || !key) {
     return NextResponse.json({ error: 'key must be a non-empty string' }, { status: 400 });
   }
+  if (isFeeBankSettingKey(key)) return feeBankProtected();
   if (COMMERCIAL_KEYS.has(key)) {
     return NextResponse.json(
       { error: 'Commercial config keys must be created via save_commercial_config RPC' },
@@ -167,6 +178,7 @@ export async function DELETE(request: NextRequest) {
   if (typeof key !== 'string' || !key) {
     return NextResponse.json({ error: 'key must be a non-empty string' }, { status: 400 });
   }
+  if (isFeeBankSettingKey(key)) return feeBankProtected();
   if (COMMERCIAL_KEYS.has(key)) {
     return NextResponse.json(
       { error: 'Commercial config keys cannot be deleted' },

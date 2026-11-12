@@ -26,53 +26,49 @@ function makeRows(...caps: Array<[string, boolean]>) {
 
 describe('isTrialActive', () => {
   it('returns true for free tier with future trial_ends_at', () => {
-    expect(isTrialActive('free', futureDate, true)).toBe(true);
+    expect(isTrialActive('free', futureDate)).toBe(true);
   });
 
   it('returns false for free tier with past trial_ends_at', () => {
-    expect(isTrialActive('free', pastDate, true)).toBe(false);
+    expect(isTrialActive('free', pastDate)).toBe(false);
   });
 
   it('returns false for growth tier even with future trial', () => {
-    expect(isTrialActive('growth', futureDate, true)).toBe(false);
+    expect(isTrialActive('growth', futureDate)).toBe(false);
   });
 
   it('returns false for business tier even with future trial', () => {
-    expect(isTrialActive('business', futureDate, true)).toBe(false);
+    expect(isTrialActive('business', futureDate)).toBe(false);
   });
 
   it('returns false for null trial_ends_at', () => {
-    expect(isTrialActive('free', null, true)).toBe(false);
+    expect(isTrialActive('free', null)).toBe(false);
   });
 
   it('returns false for invalid date string', () => {
-    expect(isTrialActive('free', 'not-a-date', true)).toBe(false);
+    expect(isTrialActive('free', 'not-a-date')).toBe(false);
   });
 
   it('returns false for empty string', () => {
-    expect(isTrialActive('free', '', true)).toBe(false);
+    expect(isTrialActive('free', '')).toBe(false);
   });
 
   it('accepts Date objects', () => {
-    expect(isTrialActive('free', new Date(Date.now() + 10000), true)).toBe(true);
-    expect(isTrialActive('free', new Date(Date.now() - 10000), true)).toBe(false);
+    expect(isTrialActive('free', new Date(Date.now() + 10000))).toBe(true);
+    expect(isTrialActive('free', new Date(Date.now() - 10000))).toBe(false);
   });
 
   it('returns false for unknown tier', () => {
-    expect(isTrialActive('premium', futureDate, true)).toBe(false);
+    expect(isTrialActive('premium', futureDate)).toBe(false);
   });
 
-  // ── Dual-condition tests (hasTrialCredit param) ──
-  it('returns false when hasTrialCredit is false even with valid time', () => {
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  // ── M525 (Owner 2026-11-08): the feature trial does not depend on credit ──
+  it('returns true with a valid feature clock and no messaging credit', () => {
+    expect(isTrialActive('free', futureDate)).toBe(true);
   });
 
-  it('returns true when hasTrialCredit is true with valid time', () => {
-    expect(isTrialActive('free', futureDate, true)).toBe(true);
-  });
-
-  it('returns false when both time expired and no credit', () => {
-    expect(isTrialActive('free', pastDate, false)).toBe(false);
+  it('returns false when the feature clock has expired', () => {
+    expect(isTrialActive('free', pastDate)).toBe(false);
   });
 });
 
@@ -93,7 +89,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling', 'appointment']);
@@ -115,7 +110,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: futureDate,
-      hasTrialCredit: true,
     });
 
     expect(result.effective).toEqual(['scheduling', 'reservation', 'staff']);
@@ -133,7 +127,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling']);
@@ -152,7 +145,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling', 'reservation']);
@@ -172,7 +164,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'business',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling', 'reservation', 'staff']);
@@ -189,7 +180,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling']);
@@ -207,7 +197,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: ['reservation'],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling', 'reservation']);
@@ -223,7 +212,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
 
     // Only 'scheduling' — no auto-merged defaults
@@ -243,7 +231,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: futureDate,
-      hasTrialCredit: true,
     });
 
     expect(result.effective).toEqual(['scheduling', 'payment', 'chat', 'feedback']);
@@ -256,7 +243,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual([]);
@@ -271,7 +257,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: futureDate,
-      hasTrialCredit: true,
     });
 
     expect(result.effective).toEqual([]);
@@ -288,7 +273,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling', 'reservation', 'broadcast']);
@@ -302,7 +286,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
 
     expect(result.paused).toBe(result.blocked);
@@ -319,7 +302,6 @@ describe('getEffectiveCapabilities', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
 
     expect(result.effective).toEqual(['scheduling']);
@@ -339,7 +321,6 @@ describe('canModifyCapability', () => {
       tier: 'free',
       trialEndsAt: null,
       overrides: [],
-      hasTrialCredit: false,
     })).toEqual({ allowed: true });
   });
 
@@ -350,7 +331,6 @@ describe('canModifyCapability', () => {
       tier: 'free',
       trialEndsAt: null,
       overrides: [],
-      hasTrialCredit: false,
     })).toEqual({ allowed: true });
   });
 
@@ -361,7 +341,6 @@ describe('canModifyCapability', () => {
       tier: 'free',
       trialEndsAt: pastDate,
       overrides: [],
-      hasTrialCredit: false,
     });
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe('requires_growth_tier');
@@ -374,7 +353,6 @@ describe('canModifyCapability', () => {
       tier: 'free',
       trialEndsAt: futureDate,
       overrides: [],
-      hasTrialCredit: true,
     })).toEqual({ allowed: true });
   });
 
@@ -385,7 +363,6 @@ describe('canModifyCapability', () => {
       tier: 'growth',
       trialEndsAt: null,
       overrides: [],
-      hasTrialCredit: false,
     })).toEqual({ allowed: true });
   });
 
@@ -396,7 +373,6 @@ describe('canModifyCapability', () => {
       tier: 'free',
       trialEndsAt: pastDate,
       overrides: ['staff'],
-      hasTrialCredit: false,
     })).toEqual({ allowed: true });
   });
 
@@ -407,7 +383,6 @@ describe('canModifyCapability', () => {
       tier: 'business',
       trialEndsAt: null,
       overrides: [],
-      hasTrialCredit: false,
     });
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe('unknown_capability');
@@ -420,7 +395,6 @@ describe('canModifyCapability', () => {
       tier: 'growth',
       trialEndsAt: null,
       overrides: [],
-      hasTrialCredit: false,
     });
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe('requires_business_tier');
@@ -491,7 +465,6 @@ describe('legacy zero-row through policy', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
     expect(result.effective).toEqual(['scheduling', 'appointment']);
     expect(result.blocked.map(b => b.capability)).toEqual(['reservation', 'broadcast']);
@@ -504,7 +477,6 @@ describe('legacy zero-row through policy', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: futureDate,
-      hasTrialCredit: true,
     });
     expect(result.effective).toEqual(['scheduling', 'appointment', 'reservation', 'staff']);
     expect(result.blocked).toEqual([]);
@@ -517,7 +489,6 @@ describe('legacy zero-row through policy', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).toEqual(['scheduling', 'reservation']);
     expect(result.blocked).toEqual([{ capability: 'staff', reason: 'tier_required' }]);
@@ -530,7 +501,6 @@ describe('legacy zero-row through policy', () => {
       overrides: [],
       tier: 'business',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).toEqual(['scheduling', 'reservation', 'staff', 'crowdfunding']);
   });
@@ -542,7 +512,6 @@ describe('legacy zero-row through policy', () => {
       overrides: ['reservation'],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.effective).toEqual(['scheduling', 'reservation']);
   });
@@ -598,7 +567,6 @@ describe('downgrade preservation', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(beforeDowngrade.effective).toContain('reservation');
 
@@ -611,7 +579,6 @@ describe('downgrade preservation', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
     expect(afterDowngrade.effective).toEqual(['scheduling']);
     expect(afterDowngrade.configured).toContain('reservation');
@@ -627,7 +594,6 @@ describe('downgrade preservation', () => {
       overrides: [],
       tier: 'growth',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(afterUpgrade.effective).toEqual(['scheduling', 'reservation']);
     expect(afterUpgrade.blocked).toEqual([]);
@@ -650,7 +616,6 @@ describe('selected and disabled fields', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(result.selected).toEqual(['scheduling']);
     expect(result.disabled).toEqual(['appointment']);
@@ -666,7 +631,6 @@ describe('selected and disabled fields', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
     expect(result.selected).toEqual(['scheduling', 'staff']);
     expect(result.effective).toEqual(['scheduling']);
@@ -688,7 +652,6 @@ describe('paused-selection preservation regression', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
     expect(before.selected).toEqual(['scheduling', 'staff']);
     expect(before.effective).toEqual(['scheduling']);
@@ -705,7 +668,6 @@ describe('paused-selection preservation regression', () => {
       overrides: [],
       tier: 'free',
       trialEndsAt: pastDate,
-      hasTrialCredit: false,
     });
     expect(after.selected).toContain('staff');
     expect(after.effective).toEqual(['scheduling', 'chat']);
@@ -721,7 +683,6 @@ describe('paused-selection preservation regression', () => {
       overrides: [],
       tier: 'business',
       trialEndsAt: null,
-      hasTrialCredit: false,
     });
     expect(upgraded.effective).toEqual(['scheduling', 'staff', 'chat']);
     expect(upgraded.paused).toEqual([]);

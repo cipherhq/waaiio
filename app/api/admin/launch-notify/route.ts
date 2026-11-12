@@ -1,3 +1,4 @@
+import { assertLaunchReadiness, assertLaunchTemplate } from '@/lib/launch/template-readiness';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -41,7 +42,13 @@ export async function GET(request: NextRequest) {
   const retryOnly = searchParams.get('retryOnly') === 'true';
   const sendLimit = Math.min(Number(searchParams.get('limit')) || 50, 200);
 
-  const readiness = await getDeliveryReadiness(supabase, config.campaignVersion);
+  let readiness;
+  try {
+    await assertLaunchReadiness(supabase, config, { retryOnly, limit: sendLimit });
+    readiness = await getDeliveryReadiness(supabase, config.campaignVersion, { retryOnly, limit: sendLimit });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof LaunchConfigError ? error.message : 'Unable to verify launch readiness.', configError: true }, { status: 422 });
+  }
 
   // Create DB-backed confirmation token bound to full scope
   const { data: confirmRow, error: insertError } = await supabase
@@ -156,11 +163,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Recheck after confirmation validation, before claiming any subscriber.
+  try {
+    await assertLaunchReadiness(supabase, config, { retryOnly, limit: sendLimit });
+  } catch (error) {
+    return NextResponse.json({ error: `${error instanceof LaunchConfigError ? error.message : 'Unable to verify launch readiness.'} Preview again before sending.`, configError: true }, { status: 422 });
+  }
+
   // Delivery scope comes from the consumed confirmation
   const summary = await deliverLaunchNotifications(
     supabase,
     config,
-    metaCloudSendTemplate,
+    async (credentials, to, templateName, language, params) => {
+      // A sender can change between preview and claim; validate the actual claimed sender.
+      await assertLaunchTemplate(credentials, config);
+      return metaCloudSendTemplate(credentials, to, templateName, language, params);
+    },
     { retryOnly, limit: sendLimit },
   );
 

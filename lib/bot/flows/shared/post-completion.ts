@@ -44,6 +44,15 @@ interface PostCompletionParams {
   translate?: (text: string) => Promise<string>;
   /** Authoritative ISO 4217 currency code from the payment (read-only display) */
   currencyCode?: string | null;
+  /** #889: buyer name for the receipt only (booking guest, invoice customer, donor, else profile).
+   *  `customerName` keeps driving the CRM and loyalty name unchanged. */
+  receiptCustomerName?: string | null;
+  /** #889: what was bought, printed as the receipt's item table. */
+  receiptItems?: import('@/lib/pdf/receipt-generator').ReceiptLineItem[];
+  receiptTax?: import('@/lib/tax/receipt').ReceiptTaxSource;
+  /** #889 deposit: full price and what is still owed (shown only when the balance is above 0). */
+  receiptTotalDue?: number;
+  receiptBalanceDue?: number;
   /** Already-resolved MetaCloudService for the sender's channel (decrypted credentials, correct WABA) */
   cloud?: MetaCloudService;
 }
@@ -192,12 +201,16 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           serviceName: serviceName || 'Service',
           amount: amountPaid,
           paymentStatus: 'paid',
-          customerName: customerName || 'Customer',
+          customerName: params.receiptCustomerName || customerName || 'Customer',
           customerPhone,
           countryCode: (cc as CountryCode) || 'NG',
           whitelabel: isWhitelabel,
           logoUrl: (biz as any)?.logo_url || undefined,
           currencyCode: params.currencyCode || undefined,
+          items: params.receiptItems,
+          tax: params.receiptTax,
+          totalDue: params.receiptTotalDue,
+          balanceDue: params.receiptBalanceDue,
           labels: receiptPdfLabels,
         });
 
@@ -381,7 +394,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
         if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
         else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
-        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated, messageCategory: 'service' })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
+        if (sender) await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg), messageCategory: 'service' });
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 import { sendEmail } from '@/lib/email/client';
 import { MERCHANT_NOTIFICATION_EVENTS, isMerchantNotificationsEnabled } from './types';
 
@@ -62,6 +63,14 @@ export async function sharedChannel(db: Database, businessId: string) {
     if (assigned.data.channel_type === 'shared') assignedSharedId = channelId;
     else if (assigned.data.channel_type !== 'dedicated' || assigned.data.business_id !== businessId) return null;
     // A business-owned dedicated transport does not replace platform alert transport.
+  }
+  // Staging: platform alerts go only through the designated shared number.
+  if (isStagingWhatsAppRouting()) {
+    const designated = await loadStagingDesignatedChannel(db);
+    if (!designated || (assignedSharedId && assignedSharedId !== designated.id)) return null;
+    return designated.provider === 'meta_cloud' && designated.phone_number_id && designated.phone_number
+      ? { id: designated.id, phone_number: designated.phone_number, phone_number_id: designated.phone_number_id }
+      : null;
   }
   let query = db.from('whatsapp_channels').select('id,phone_number,phone_number_id').eq('country_code', business.country_code).eq('channel_type', 'shared').eq('provider','meta_cloud').eq('is_active',true);
   if (assignedSharedId) query = query.eq('id', assignedSharedId);

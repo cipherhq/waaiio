@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// lib/encryption reads the key at import time; set it before refund-handler loads.
+vi.hoisted(() => { process.env.TOKEN_ENCRYPTION_KEY = 'c'.repeat(64); });
+
 vi.mock('../factory', () => ({
   getPaymentGatewayByName: vi.fn(),
 }));
@@ -11,6 +14,7 @@ vi.mock('@/lib/supabase/service', () => ({
 
 import { processRefund } from '../refund-handler';
 import { getPaymentGatewayByName } from '../factory';
+import { encryptToken } from '@/lib/encryption';
 
 const mockGetGateway = getPaymentGatewayByName as ReturnType<typeof vi.fn>;
 
@@ -297,5 +301,97 @@ describe('processRefund', () => {
       byoSecretKey: 'test-byo-key-mock',
       connectAccountId: 'acct_byo',
     });
+  });
+});
+
+// BYO credentials are stored encrypted; the provider must receive the plaintext key.
+describe('BYO refund credential is decrypted before reaching the provider', () => {
+  beforeEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
+
+  it('new dispatch sends the decrypted merchant key', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      refundRow: { id: 'refund-1', amount: 5000, gateway: 'paystack', refund_type: 'full', reason: null, connect_account_id: null, provider_connection_id: 'cred-1', is_direct_split: false },
+      credential: { secret_key: encryptToken('sk_test_merchant_refund'), connect_account_id: null, connection_type: null },
+    });
+    await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockRefundPayment).toHaveBeenCalledTimes(1);
+    expect(mockRefundPayment.mock.calls[0][0].byoSecretKey).toBe('sk_test_merchant_refund');
+  });
+
+  it('reconciliation queries with the decrypted merchant key', async () => {
+    const { supabase, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-byo', status: 'provider_pending', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-byo', provider_connection_id: 'cred-1', connect_account_id: null },
+      credential: { secret_key: encryptToken('sk_test_merchant_refund'), connect_account_id: null },
+    });
+    await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockQueryStatus).toHaveBeenCalledWith('prov-byo', { byoSecretKey: 'sk_test_merchant_refund', connectAccountId: undefined });
+  });
+
+  it('undecryptable key never reaches the provider and parks the refund for reconciliation', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const { supabase, mockRefundPayment } = setupMocks({
+      refundRow: { id: 'refund-1', amount: 5000, gateway: 'paystack', refund_type: 'full', reason: null, connect_account_id: null, provider_connection_id: 'cred-1', is_direct_split: false },
+      credential: { secret_key: 'aa:bb:cc', connect_account_id: null, connection_type: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockRefundPayment).not.toHaveBeenCalled();
+    expect(r.success).toBe(false);
+    expect(r.state).toBe('provider_ambiguous');
+    vi.unstubAllEnvs();
+  });
+
+  it('undecryptable key during reconciliation does not query the provider and stays pending', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const { supabase, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-byo', status: 'provider_pending', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-byo', provider_connection_id: 'cred-1', connect_account_id: null },
+      credential: { secret_key: 'aa:bb:cc', connect_account_id: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockQueryStatus).not.toHaveBeenCalled();
+    expect(r.state).toBe('provider_pending');
+    vi.unstubAllEnvs();
+  });
+});
+
+// #980: exercise the real refund handler; only DB/provider boundaries are mocked.
+describe('tax refund reservation before dispatch', () => {
+  const taxed = { id: 'pay-tax', amount: 12, currency: 'USD', refund_amount: 0, status: 'success', gateway: 'stripe',
+    gateway_reference: 'ref-tax', business_id: 'biz-1', metadata: {}, tax_allocation: { version: 1 } };
+  const selection = { mode: 'items' as const, items: [{ id: 'item', quantity: 1 }] };
+  const requestId = '20000000-0000-4000-8000-000000000001';
+  it('reserves selected items before the existing idempotent provider dispatch', async () => {
+    const { supabase } = setupMocks({ payment: taxed,
+      refundRow: { id:'refund-tax',amount:6,gateway:'stripe',refund_type:'partial',is_direct_split:false },
+      rpcResults: { reserve_merchant_tax_refund_980: { taxable:true,refund_id:'refund-tax',reused:false } } });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:6,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result.success).toBe(true);
+    expect(providerCallCount).toBe(1);
+    const calls = (mockServiceClient.rpc as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]).toEqual(['reserve_merchant_tax_refund_980', expect.objectContaining({p_selection:selection,p_request_id:requestId,p_amount:6})]);
+    expect(calls.findIndex(call=>call[0]==='claim_refund_dispatch')).toBeGreaterThan(0);
+  });
+  it('records zero-value returns without contacting a provider', async () => {
+    const { supabase } = setupMocks({ payment: taxed,
+      rpcResults: { reserve_merchant_tax_refund_980: { taxable:true,zero_value:true,return_id:'return-tax' } } });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:0,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result).toMatchObject({success:true,zeroValueReturn:true,returnId:'return-tax',state:'success'});
+    expect(providerCallCount).toBe(0);
+  });
+  it('never dispatches when SQL denies the requested allocation', async () => {
+    const { supabase } = setupMocks({ payment: taxed });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:6,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result.success).toBe(false);expect(providerCallCount).toBe(0);
+  });
+  it('replays a completed request without another provider refund', async () => {
+    const { supabase } = setupMocks({ payment: taxed,
+      rpcResults: { reserve_merchant_tax_refund_980: { taxable:true,reused:true,refund_id:'refund-tax',status:'success' } } });
+    const result = await processRefund({ supabase: supabase as any,paymentId:'pay-tax',businessId:'biz-1',amount:6,
+      initiatedBy:'owner',initiatedByRole:'business',taxSelection:selection,requestId });
+    expect(result).toMatchObject({success:true,refundId:'refund-tax'});expect(providerCallCount).toBe(0);
   });
 });

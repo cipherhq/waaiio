@@ -45,6 +45,10 @@ vi.mock('@/lib/bot/flows/shared/notify-owner', () => ({
   notifyOwnerNewInvoicePayment: mockNotifyInvoice,
 }));
 vi.mock('@/lib/bot/flows/shared/notifications', () => ({ createNotification: vi.fn().mockResolvedValue(undefined) }));
+// Completion coordination is a separate tested boundary; retain the real Stage 3 notification/claim path.
+vi.mock('@/lib/bot/transaction-followups', () => ({ startTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/payments/transaction-followup', () => ({ resumePaidTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
+
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: mockLogError, withContext: () => ({ error: mockLogError, warn: vi.fn(), info: vi.fn() }) } }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 vi.mock('@/lib/constants', () => ({ formatCurrency: (a: number) => `$${a}` }));

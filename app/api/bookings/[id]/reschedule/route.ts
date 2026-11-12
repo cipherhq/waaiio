@@ -116,6 +116,10 @@ export async function POST(
       return NextResponse.json({ success: true });
     }
 
+    // #963: a pending after-booking form link now lasts until the new start. Never throws.
+    const { syncIntakeExpiry } = await import('@/lib/intake/send');
+    await syncIntakeExpiry(service, businessId, id);
+
     const originalDate = result.old_date;
 
     // Fetch booking details for notifications (post-RPC, booking is already moved)

@@ -1,0 +1,260 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.businesses.feature_trial_ends_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "121111e9861d0517dd1a95859d7dc6f1629d4dbeeebfe9f0428da672af273e3d",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "120557d401ce2a22d801ec4423ec2783062542e518569067b009cbf42239c1b8",
+   "identity": "function:public.end_feature_trial_on_upgrade()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text DEFAULT 'NGN'::text, p_provider_transaction_id text DEFAULT NULL::text, p_provider_invoice_code text DEFAULT NULL::text",
+    "body_sha256": "a7826a51a7e1035182bc728a43e1cbdb4ae6ca567c4759b4aa27527dc6c17445",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f612c6c820f43c758aee718255c7d40c18d30ead87171ef1e4329281e55c093a",
+   "identity": "function:public.finalize_paystack_recurring_charge(p_attempt_id uuid, p_provider_amount_minor integer, p_provider_currency text, p_provider_transaction_id text, p_provider_invoice_code text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text DEFAULT 'USD'::text, p_payment_intent_id text DEFAULT NULL::text",
+    "body_sha256": "cc649c285dd1ec10000eb84a01e0f4b44790f232d700f2a843e30f929027514d",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "3cee42eabb97e879add0c70436da203dab36d856470902c5a1a482653eaf7abe",
+   "identity": "function:public.finalize_stripe_recurring_charge(p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text, p_payment_intent_id text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text DEFAULT 'NGN'::text, p_gateway text DEFAULT 'flutterwave'::text, p_provider_attempt_ref text DEFAULT NULL::text",
+    "body_sha256": "9fb932799ae0830cef5063738f5c56e32e0d7974e2cad3a684e421c8dc900c3f",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "80f69b52d9eb43c2370a7d8be2c99513413495a559c97fc76c229409e47d5390",
+   "identity": "function:public.finalize_token_recurring_charge(p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text, p_gateway text, p_provider_attempt_ref text)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "5a9b8aa0ad5d4eee5b709adf6c7efb171024e792e654ed82aed45a6bc1669c15",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "8d305f8609e1ab677130f4db3e4e0a029cc3ef4b5b96e993eefe0db007c51fe1",
+   "identity": "function:public.guard_feature_trial_clock()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "89423310cde3260d750e863e192d50d184ae76e49318c82f87a7119cf13667a1",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "096325e7727aa8f810a377475ac0e8fde5ade4fdcc77a13bf40c14a9516b6fa3",
+   "identity": "function:public.set_feature_trial_clock()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER trg_end_feature_trial_on_upgrade BEFORE UPDATE OF subscription_tier ON businesses FOR EACH ROW EXECUTE FUNCTION end_feature_trial_on_upgrade()",
+    "enabled": "O"
+   },
+   "after_sha256": "3c9f0735639aaabef5116b3ee13afcb479d3e507ec039621600df94f6b9f8c2a",
+   "identity": "trigger:public.businesses.trg_end_feature_trial_on_upgrade",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER trg_guard_feature_trial_clock BEFORE UPDATE OF feature_trial_ends_at ON businesses FOR EACH ROW EXECUTE FUNCTION guard_feature_trial_clock()",
+    "enabled": "O"
+   },
+   "after_sha256": "0d5590baa3339b65b3b292bbc1881679921d4995e8edfc1c7bb8f67bde13233f",
+   "identity": "trigger:public.businesses.trg_guard_feature_trial_clock",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER trg_set_feature_trial_clock BEFORE INSERT ON businesses FOR EACH ROW EXECUTE FUNCTION set_feature_trial_clock()",
+    "enabled": "O"
+   },
+   "after_sha256": "c153d4e9f1980482165b8ffff6f41228f7c74a2d33d4338b3f0f0c183b802b4b",
+   "identity": "trigger:public.businesses.trg_set_feature_trial_clock",
+   "operation": "add"
+  }
+ ],
+ "migration": "525_feature_trial_clock_and_no_trial_fee_waiver.sql",
+ "migration_sha256": "aca42cc98e8ad9f1c4855eacc205fcac2c0e8f8a0b4ef3eb7ff03a0caf76a0ef",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

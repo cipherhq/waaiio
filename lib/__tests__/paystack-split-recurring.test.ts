@@ -51,8 +51,7 @@ describe('charge-saved.ts split support', () => {
 
   it('passes split params to charge_authorization call', () => {
     expect(chargeSavedCode).toContain('...splitParams');
-    expect(chargeSavedCode).toContain("subaccount: splitResult.subaccount");
-    expect(chargeSavedCode).toContain("transaction_charge: splitResult.transactionChargeKobo");
+    expect(chargeSavedCode).toContain("paystackMerchantSplit(splitResult.subaccount, splitResult.transactionChargeKobo)");
   });
 
   it('BYO saved-card charges fail closed', () => {
@@ -91,12 +90,12 @@ describe('paystack-recurring.ts split support', () => {
   });
 
   it('spreads splitParams into the charge body', () => {
-    expect(recurringCode).toContain('...(splitParams || {})');
+    expect(recurringCode).toContain('...(splitParams ? paystackMerchantSplit(splitParams.subaccount, splitParams.transaction_charge) : {})');
   });
 
   it('preserves existing behavior when splitParams is undefined', () => {
-    // When undefined, ...(undefined || {}) = ...{} = no extra params
-    expect(recurringCode).toContain('splitParams || {}');
+    // When undefined, no split params (and no bearer) are added
+    expect(recurringCode).toContain('splitParams ? paystackMerchantSplit');
   });
 });
 

@@ -3,7 +3,7 @@
  *
  * Real PostgreSQL tests for:
  * - activate_trial_if_eligible RPC
- * - isTrialActive dual-condition
+ * - isTrialActive (feature trial clock only, M525)
  * - Legacy grandfather
  * - Alert dedupe
  *
@@ -194,6 +194,50 @@ describe.skipIf(!canRun)('activate_trial_if_eligible', () => {
     }
   });
 
+  it('M525: the sign-up feature clock neither blocks nor doubles the credit, and the claim leaves it unchanged', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      // Set at sign-up by the M525 insert trigger; the credit clock is still empty.
+      const featureBefore = psql(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
+      expect(featureBefore).not.toBe('');
+      expect(psql(`SELECT trial_ends_at IS NULL FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+
+      const first = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(first).toMatchObject({ activated: true, amount_minor: 50000, currency_code: 'NGN' });
+      const second = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(second).toMatchObject({ activated: true, idempotent: true });
+
+      // Exactly one grant; the credit clock matches the grant; the feature clock is untouched.
+      expect(parseInt(psql(`
+        SELECT count(*) FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `))).toBe(1);
+      expect(psql(`
+        SELECT b.trial_ends_at = ma.expires_at FROM public.businesses b
+        JOIN public.messaging_allowances ma ON ma.business_id = b.id AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2'
+        WHERE b.id = '${bizId}'
+      `)).toBe('t');
+      expect(psql(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = '${bizId}'`)).toBe(featureBefore);
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('M525: upgrading to a paid plan ends the feature trial; a later downgrade does not restore it (Owner 2026-11-09)', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      expect(psql(`SELECT feature_trial_ends_at > now() + interval '1 day' FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+      psql(`UPDATE public.businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'`);
+      expect(psql(`SELECT abs(extract(epoch FROM (now() - feature_trial_ends_at))) < 60 FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+      psql(`UPDATE public.businesses SET subscription_tier = 'free' WHERE id = '${bizId}'`);
+      expect(psql(`SELECT feature_trial_ends_at > now() FROM public.businesses WHERE id = '${bizId}'`)).toBe('f');
+      // The messaging-credit clock is not touched by the upgrade trigger.
+      expect(psql(`SELECT trial_ends_at IS NULL FROM public.businesses WHERE id = '${bizId}'`)).toBe('t');
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
   it('2. replay (same business) is idempotent', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
@@ -315,32 +359,30 @@ describe.skipIf(!canRun)('activate_trial_if_eligible', () => {
 // Test: isTrialActive dual-condition (pure unit — no DB needed)
 // ══════════════════════════════════════════════════════════
 
-describe('isTrialActive dual-condition', () => {
+// Owner decision 2026-11-08 (M525): the Pro/Premium feature trial is the
+// feature_trial_ends_at clock alone. The messaging credit no longer gates it.
+describe('isTrialActive (feature trial, independent of the messaging credit)', () => {
   const futureDate = new Date(Date.now() + 86400000).toISOString();
   const pastDate = new Date(Date.now() - 86400000).toISOString();
 
   it('12. time expired returns false', () => {
-    expect(isTrialActive('free', pastDate, true)).toBe(false);
+    expect(isTrialActive('free', pastDate)).toBe(false);
   });
 
-  it('13. credit depleted returns false', () => {
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  it('13. future feature clock returns true without any credit', () => {
+    expect(isTrialActive('free', futureDate)).toBe(true);
   });
 
-  it('14. both valid returns true', () => {
-    expect(isTrialActive('free', futureDate, true)).toBe(true);
+  it('null clock returns false', () => {
+    expect(isTrialActive('free', null)).toBe(false);
   });
 
-  it('null trial_ends_at returns false even with credit', () => {
-    expect(isTrialActive('free', null, true)).toBe(false);
+  it('non-free tier returns false', () => {
+    expect(isTrialActive('growth', futureDate)).toBe(false);
   });
 
-  it('non-free tier returns false even with both conditions', () => {
-    expect(isTrialActive('growth', futureDate, true)).toBe(false);
-  });
-
-  it('fail closed: hasTrialCredit=false with valid time returns false', () => {
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  it('fail closed: unparseable clock returns false', () => {
+    expect(isTrialActive('free', 'not-a-date')).toBe(false);
   });
 });
 
@@ -970,7 +1012,7 @@ describe.skipIf(!canRun)('upgrade/downgrade preservation', () => {
 });
 
 describe.skipIf(!canRun)('depletion proof', () => {
-  it('depleted grant (remaining_minor=0) means no trial credit', () => {
+  it('a depleted credit leaves no credit but does not end the feature trial (M525)', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
@@ -989,9 +1031,11 @@ describe.skipIf(!canRun)('depletion proof', () => {
       `);
       expect(parseInt(remaining)).toBe(0);
 
-      // isTrialActive with hasTrialCredit=false should return false
-      // This is the authoritative check — credit depleted = trial inactive
-      expect(isTrialActive('free', new Date(Date.now() + 86400000).toISOString(), false)).toBe(false);
+      // The feature trial clock was set at sign-up by the M525 trigger and is
+      // unaffected by the credit.
+      const featureClock = psql(`SELECT feature_trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
+      expect(featureClock).not.toBe('');
+      expect(isTrialActive('free', new Date(featureClock).toISOString())).toBe(true);
     } finally {
       cleanup(bizId);
     }
@@ -999,21 +1043,18 @@ describe.skipIf(!canRun)('depletion proof', () => {
 });
 
 describe.skipIf(!canRun)('entitlement fail-closed proof', () => {
-  it('isTrialActive with hasTrialCredit=false returns false even with valid time', () => {
-    // Pure unit test but included here for completeness with DB context
-    const futureDate = new Date(Date.now() + 86400000).toISOString();
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  it('isTrialActive fails closed without a feature clock', () => {
+    expect(isTrialActive('free', null)).toBe(false);
+    expect(isTrialActive('free', undefined)).toBe(false);
   });
 
-  it('isTrialActive requires all three conditions', () => {
+  it('isTrialActive requires a Starter tier and a future feature clock', () => {
     const futureDate = new Date(Date.now() + 86400000).toISOString();
-    // Missing credit
-    expect(isTrialActive('free', futureDate, false)).toBe(false);
     // Missing time
-    expect(isTrialActive('free', null, true)).toBe(false);
+    expect(isTrialActive('free', null)).toBe(false);
     // Wrong tier
-    expect(isTrialActive('growth', futureDate, true)).toBe(false);
+    expect(isTrialActive('growth', futureDate)).toBe(false);
     // All valid
-    expect(isTrialActive('free', futureDate, true)).toBe(true);
+    expect(isTrialActive('free', futureDate)).toBe(true);
   });
 });

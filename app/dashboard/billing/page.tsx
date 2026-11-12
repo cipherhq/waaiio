@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { getLimitTier } from '@/lib/capabilities/policy';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import {
@@ -307,8 +308,10 @@ export default function BillingPage() {
 
   const tierConfig = PRICING_TIERS[tier];
   const marketingName = TIER_MARKETING_NAMES[tier];
-  const conversationLimit = CONVERSATION_LIMITS[tier];
-  const broadcastLimit = BROADCAST_LIMITS[tier];
+  // During the feature trial a Starter business uses Premium limits.
+  const limitTier = getLimitTier(tier, business.feature_trial_ends_at);
+  const conversationLimit = CONVERSATION_LIMITS[limitTier];
+  const broadcastLimit = BROADCAST_LIMITS[limitTier];
 
   // Determine plan status
   const isActive = subscription?.status === 'active';
@@ -392,9 +395,12 @@ export default function BillingPage() {
 
       {/* Top-up modal */}
       {topUpOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setTopUpOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setTopUpOpen(false)}>
+          {/* Scrolls inside the screen so a long package list never hides "Continue to Payment" on small phones. */}
           <div
-            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+            role="dialog"
+            aria-label="Top Up Messaging Credit"
+            className="max-h-full w-full max-w-md overflow-y-auto rounded-xl bg-white p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">

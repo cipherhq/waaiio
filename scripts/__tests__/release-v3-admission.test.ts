@@ -40,7 +40,7 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
     // Owner decision 2026-11-04 (#813 option A, staging plan S1): the staging entry then leaves out #813's
     // 91 catalog objects and 2 ledger rows (scripts/release-v3/staging-813-teardown.sql removes them).
     expect(lock.environments.staging).toEqual({ project_ref: 'tqjvrzopvtczxfxiwmnz', catalog_map: 'scripts/release-v3/lock-catalog-staging.json',
-      catalog: { count: 6309, sha256: 'feeb53c0fdfa155aa3bf3453925c8c2f67d3c1f03cfb62176710006ece524180' },
+      catalog: { count: 6309, sha256: '567d514762deea655bf2b944d23ee84e26fb506b083c0eedc558ec0f235d9638' },
       ledger: { count: 442, sha256: 'dca1b4e090e9876be8f73d210771c905234c2d473f4b98fa15aa7966e74fe5b6' } });
     expect(lock.observed.staging_813_teardown.previous).toEqual({
       catalog: { count: 6400, sha256: '12ff1745a19c0fda57d11971782d58cca353c0fd9f73b438786de899d69df463' },
@@ -51,6 +51,21 @@ describe('committed lock, oracle outputs and the M508 spike regression', () => {
     expect(() => loadLock(text.replace(CATALOG_QUERY_SHA256, 'f'.repeat(64)))).toThrow('different query');
     const extra = JSON.parse(text); extra.override = true;
     expect(() => loadLock(JSON.stringify(extra))).toThrow('Release lock is invalid or was made with a different query');
+  });
+  it('re-certification (Recovery): the committed entry names release #4 (run 42136027063, 466e0691) and the redeployed merchant; malformed entries fail closed', () => {
+    expect(lock.recertified).toMatchObject({ after_deploy_run: 42136027063, sha: '466e0691459cef44b104b51f0542da52a402129e',
+      merchant_deployment_sha256: 'bc8a500582053572c39dbbfb411e03ae9a5c7d74f5da28574b8ebb741b287881',
+      admin_deployment_sha256: '73dbe116c8dd8e00ee75f76b0e8f99c7af763c61e19113f261d093d59b5308d2' });
+    const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
+    const without = JSON.parse(text); delete without.recertified;
+    expect(loadLock(JSON.stringify(without)).recertified).toBeUndefined();
+    const bad = (patch: Record<string, unknown>) => { const l = JSON.parse(text); l.recertified = { ...l.recertified, ...patch }; return JSON.stringify(l); };
+    for (const patch of [{ after_deploy_run: 0 }, { after_deploy_run: '42136027063' }, { sha: '466e0691' }, { merchant_deployment_sha256: 'x' },
+      { admin_deployment_sha256: null }, { reason: ' ' }, { reason: 'r'.repeat(501) }, { extra: true }]) {
+      expect(() => loadLock(bad(patch))).toThrow('Release lock re-certification is invalid');
+    }
+    const missing = JSON.parse(text); delete missing.recertified.reason;
+    expect(() => loadLock(JSON.stringify(missing))).toThrow('Release lock re-certification is invalid');
   });
   it('the PG17 oracle delta for M508 equals the change measured in production (bot-code-lock contract)', () => {
     const file = readFileSync('supabase/migrations/508_business_control_columns_guard.sql');

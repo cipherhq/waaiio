@@ -58,6 +58,11 @@ vi.mock('@/lib/bot/flows/shared/notify-owner', () => ({ notifyOwnerNewPayment: v
 vi.mock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/email/templates', () => ({ bookingConfirmationEmail: vi.fn(() => ({ subject: '', html: '' })), donationReceiptEmail: vi.fn(() => ({ subject: '', html: '' })), businessNotificationEmail: vi.fn(() => ({ subject: '', html: '' })), paymentReceivedEmail: vi.fn(() => ({ subject: '', html: '' })) }));
 
+const mockEnroll = vi.fn().mockResolvedValue(undefined);
+const mockResume = vi.fn().mockResolvedValue(undefined);
+vi.mock('@/lib/bot/transaction-followups', () => ({ startTransactionFollowup: (...a: unknown[]) => mockEnroll(...a) }));
+vi.mock('@/lib/payments/transaction-followup', () => ({ resumePaidTransactionFollowup: (...a: unknown[]) => mockResume(...a) }));
+
 function chain() {
   const c: Record<string, any> = {};
   ['select','eq','is','in','or','not','order','limit','update','gte','neq','insert','ilike','like','lte'].forEach(m => c[m] = vi.fn().mockReturnValue(c));
@@ -117,70 +122,49 @@ async function confirm(eventLog: string[] = []) {
   return sendProactiveConfirmation(s, pay);
 }
 
-describe('Stage 3 next-steps menu after an accepted confirmation', () => {
-  it('sends one menu right after the accepted confirmation, with the footer', async () => {
+describe('Stage 3 hands off menus after fulfillment and finalization', () => {
+  it('enrolls recovery before finalization, resumes after it, and sends no early options', async () => {
     const eventLog: string[] = [];
-    mockTransportSend.mockImplementation(async () => { eventLog.push('sendText'); return { success: true, messageId: 'wamid-1' }; });
-    mockButtons.mockImplementation(async () => { eventLog.push('sendButtons'); return { success: true, messageId: 'wamid-menu' }; });
-    setupDb(); setupRpc(eventLog);
-    const result = await confirm(eventLog);
-
-    expect(result.status).toBe('completed');
-    expect(mockButtons).toHaveBeenCalledTimes(1);
-    const menu = mockButtons.mock.calls[0][0];
-    expect(menu).toMatchObject({ to: '234123', body: 'What would you like to do next?', footer: 'Powered by Waaiio.com', messageCategory: 'service' });
-    expect(menu.buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', 'menu']);
-    for (const b of menu.buttons) expect(b.title.length).toBeLessThanOrEqual(20);
-    // Order: confirmation accepted (WAMID recorded) before the menu goes out.
-    expect(eventLog.indexOf('complete_confirmation_send')).toBeLessThan(eventLog.indexOf('sendButtons'));
-    expect(eventLog.indexOf('sendText')).toBeLessThan(eventLog.indexOf('sendButtons'));
-  });
-
-  it('shared number adds the directory button', async () => {
-    channelType = 'shared';
-    setupDb(); setupRpc([]);
-    await confirm();
-    expect(mockButtons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', 'menu', 'directory']);
-  });
-
-  it('white-label plan gets the menu without the footer', async () => {
-    setupDb('business', null); setupRpc([]);
-    await confirm();
-    expect(mockButtons).toHaveBeenCalledTimes(1);
-    expect(mockButtons.mock.calls[0][0].footer).toBeUndefined();
-  });
-
-  it('business-level white-label switch hides the footer on any plan', async () => {
-    setupDb('growth', true); setupRpc([]);
-    await confirm();
-    expect(mockButtons).toHaveBeenCalledTimes(1);
-    expect(mockButtons.mock.calls[0][0].footer).toBeUndefined();
-  });
-
-  it('a menu send failure does not mark the accepted confirmation as failed', async () => {
-    const eventLog: string[] = [];
-    mockButtons.mockRejectedValue(new Error('meta 500'));
+    mockEnroll.mockImplementation(async () => { eventLog.push('enroll'); });
+    mockResume.mockImplementation(async () => { eventLog.push('resume'); });
     setupDb(); setupRpc(eventLog);
     const result = await confirm(eventLog);
     expect(result.status).toBe('completed');
-    expect(eventLog).toContain('complete_confirmation_send');
-    expect(eventLog).not.toContain('fail_confirmation_send');
+    expect(mockButtons).not.toHaveBeenCalled();
+    expect(mockEnroll).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      completionKey: 'payment:p1', paymentId: 'p1', businessId: 'b1', channelId: 'ch-1', waitForCard: true,
+    }));
+    expect(eventLog.indexOf('complete_confirmation_send')).toBeLessThan(eventLog.indexOf('enroll'));
+    expect(eventLog.indexOf('enroll')).toBeLessThan(eventLog.indexOf('finalize_payment_confirmation'));
+    expect(eventLog.indexOf('finalize_payment_confirmation')).toBeLessThan(eventLog.indexOf('resume'));
+  });
+
+  it('enrollment failure leaves confirmation retryable instead of losing its continuation', async () => {
+    mockEnroll.mockRejectedValueOnce(new Error('database unavailable'));
+    const events: string[] = [];
+    setupDb(); setupRpc(events);
+    expect((await confirm()).status).toBe('retryable_failed');
+    expect(events).not.toContain('finalize_payment_confirmation');
+    expect(mockResume).not.toHaveBeenCalled();
+    expect(mockButtons).not.toHaveBeenCalled();
   });
 
   it.each([
     ['already delivered', { claimed: false, reason: 'already_delivered' }],
     ['active delivery', { claimed: false, reason: 'active_delivery_sending' }],
-  ])('%s: no resend and no second menu', async (_label, deliveryClaim) => {
+  ])('%s: no duplicate direct message or menu', async (_label, deliveryClaim) => {
     setupDb(); setupRpc([], { deliveryClaim });
     await confirm();
     expect(mockTransportSend).not.toHaveBeenCalled();
     expect(mockButtons).not.toHaveBeenCalled();
   });
 
-  it('no WAMID (indeterminate send): no menu', async () => {
+  it('no WAMID: Stage 3 does not emit a direct follow-up', async () => {
     mockTransportSend.mockResolvedValue({ success: true });
     setupDb(); setupRpc([]);
     await confirm();
     expect(mockButtons).not.toHaveBeenCalled();
+    // The coordinator independently checks durable confirmation acceptance before card setup.
+
   });
 });

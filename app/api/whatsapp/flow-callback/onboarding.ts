@@ -123,10 +123,10 @@ export async function handleOnboardingComplete(
     const GIVING_CATEGORIES = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
     const flowType = GIVING_CATEGORIES.includes(category) ? 'payment' : 'scheduling';
 
-    // 5. Create business
-    const trialEnd = new Date();
-    trialEnd.setDate(trialEnd.getDate() + 30);
-
+    // 5. Create business. No hand-set trial: the free credit starts only
+    // through activate_trial_if_eligible once the owner verifies a phone on
+    // /dashboard/claim-credit (Owner decision 2026-11-07). The number in the
+    // flow token is not treated as verified.
     const { data: biz, error: bizErr } = await supabase
       .from('businesses')
       .insert({
@@ -143,7 +143,6 @@ export async function handleOnboardingComplete(
         wa_method: 'shared',
         subscription_tier: 'free',
         status: 'pending',
-        trial_ends_at: trialEnd.toISOString(),
         verification_level: 'unverified',
       })
       .select('id, name, bot_code')
@@ -246,7 +245,7 @@ export async function handleOnboardingComplete(
             `<p><strong>Dashboard:</strong> <a href="https://www.waaiio.com/dashboard">waaiio.com/dashboard</a></p>`,
             `<p><strong>Bot Code:</strong> ${biz.bot_code}</p>`,
             `<p><strong>Login:</strong> ${email}</p>`,
-            `<p>Your 30-day free trial is active — explore all features!</p>`,
+            `<p>Your 14-day free trial of Pro and Premium features is active — explore them all!</p>`,
             `<p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
           ].join(''),
         });
@@ -282,7 +281,7 @@ export async function handleOnboardingComplete(
               `🔑 *Bot Code:* ${biz.bot_code}`,
               `📧 *Login:* ${email}`,
               '',
-              'Your 30-day free trial includes all features.',
+              'Your 14-day free trial includes all Pro and Premium features.',
               '',
               '_Need help? Type *help* anytime._',
             ].join('\n')
@@ -317,10 +316,10 @@ export async function handleOnboardingComplete(
               body: [
                 `💡 *Unlock more with a paid plan*`,
                 '',
-                `You're on the free plan (30-day trial). Upgrade anytime to get:`,
+                `You're on the free plan with a 14-day trial of Pro and Premium features. Upgrade anytime to get:`,
                 '',
                 `*Pro* — ${growthPrice}/mo`,
-                '• Up to 500 bookings/month',
+                '• Up to 1,000 bookings/month',
                 '• Broadcast messages',
                 '• Reminders & recurring payments',
                 '• Lower transaction fees (1.5%)',

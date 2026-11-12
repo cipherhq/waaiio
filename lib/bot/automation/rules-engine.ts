@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
-import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { enrollInSequence } from './sequence-service';
 
 export interface BotRule {
@@ -148,27 +147,10 @@ export async function executeRuleAction(
       if (!phone) throw new Error('assign_tag_phone_missing');
       const tag = payload.tag as string;
       if (!tag) throw new Error('assign_tag_value_missing');
-      // Preserve the existing rules-engine authority: tags live in profiles.metadata.
-      const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
-      const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, metadata')
-        .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .limit(1)
-        .maybeSingle();
-      if (profileError) throw new Error(`assign_tag_lookup_failed:${profileError.message}`);
-      if (!profile) throw new Error('assign_tag_profile_missing');
-
-      const meta = (profile.metadata || {}) as Record<string, unknown>;
-      const tags = [...((meta.tags as string[]) || [])];
-      if (!tags.includes(tag)) {
-        tags.push(tag);
-        const { error: updateError } = await supabase.from('profiles').update({
-          metadata: { ...meta, tags },
-        }).eq('id', profile.id);
-        if (updateError) throw new Error(`assign_tag_update_failed:${updateError.message}`);
-      }
+      // #887 (Owner decision 2026-11-10): tags live on this business's own
+      // customer record, customer_profiles.tags, which the Customers page and
+      // broadcast audiences already use. profiles.metadata never existed.
+      await assignCustomerTag(supabase, businessId, `+${phone}`, tag);
       break;
     }
 
@@ -224,6 +206,50 @@ export async function executeRuleAction(
     default:
       throw new Error(`unsupported_rule_action:${rule.action_type}`);
   }
+}
+
+/**
+ * Add a tag to this business's customer record for the phone, creating the
+ * record when the customer has none yet (as the bot does when someone chats).
+ * Scoped by business_id, so one merchant's tags never reach another merchant.
+ * Every failure throws, so evaluateRules logs it per rule.
+ */
+async function assignCustomerTag(
+  supabase: SupabaseClient,
+  businessId: string,
+  phoneWithPlus: string,
+  tag: string,
+): Promise<void> {
+  const findRecord = () => supabase
+    .from('customer_profiles')
+    .select('id, tags')
+    .eq('business_id', businessId)
+    .eq('phone', phoneWithPlus)
+    .maybeSingle();
+
+  let { data: record, error: lookupError } = await findRecord();
+  if (lookupError) throw new Error(`assign_tag_lookup_failed:${lookupError.message}`);
+
+  if (!record) {
+    const { error: insertError } = await supabase
+      .from('customer_profiles')
+      .insert({ business_id: businessId, phone: phoneWithPlus, tags: [tag] });
+    if (!insertError) return;
+    // 23505: the record was created at the same moment; tag that one instead.
+    if (insertError.code !== '23505') throw new Error(`assign_tag_create_failed:${insertError.message}`);
+    ({ data: record, error: lookupError } = await findRecord());
+    if (lookupError) throw new Error(`assign_tag_lookup_failed:${lookupError.message}`);
+    if (!record) throw new Error('assign_tag_record_missing');
+  }
+
+  const tags: string[] = Array.isArray(record.tags) ? record.tags : [];
+  if (tags.includes(tag)) return;
+  const { error: updateError } = await supabase
+    .from('customer_profiles')
+    .update({ tags: [...tags, tag] })
+    .eq('id', record.id)
+    .eq('business_id', businessId);
+  if (updateError) throw new Error(`assign_tag_update_failed:${updateError.message}`);
 }
 
 function fillVariables(template: string, vars: Record<string, unknown>): string {

@@ -10,6 +10,10 @@ import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { getUserFacingCapabilities } from '@/lib/bot/handlers/flow-routing';
 import { getFlowCopy } from './flow-localization';
+import { updatesOptInRowFor, updatesAccountRowFor, askUpdatesOptIn, UPDATES_ACCOUNT_POSTBACK } from '@/lib/bot/customer-updates-optin';
+
+/** WhatsApp list messages show at most 10 rows (meta-cloud sendList keeps the first 10). */
+const MY_ACCOUNT_MAX_ROWS = 10;
 
 export { getCapabilityLabel };
 
@@ -243,7 +247,7 @@ const selectCapabilityStep: FlowStepConfig = {
     }
 
     // Build capability items
-    const capItems = userFacing.map(cap => ({
+    const capItems: Array<{ id: string; title: string; postbackText: string; description?: string }> = userFacing.map(cap => ({
       id: `cap_${cap}`,
       title: getCapabilityLabel(cap, category, customLabels[cap], ctx.copyLang),
       postbackText: `cap_${cap}`,
@@ -261,6 +265,21 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // Use greeting as body if available (first-time display), then clear it
     const greeting = ctx.session.session_data._greeting as string | undefined;
+
+    // Owner decision 2026-11-06: on a first-time customer's welcome menu, one
+    // row to get offers and updates from this business (and Waaiio). Only when
+    // it fits on one page, so the capability menu and its paging are unchanged.
+    let optInOffered = false;
+    if (greeting && !ctx.session.session_data._customer_history && capItems.length > 0 && capItems.length < 10) {
+      const optInRow = await updatesOptInRowFor(ctx.supabase, {
+        phone: ctx.from, lang: ctx.copyLang, source: 'welcome', business: ctx.business,
+        firstVisitSessionId: ctx.session.id,
+      });
+      if (optInRow) {
+        capItems.push({ id: optInRow.postbackText, ...optInRow });
+        optInOffered = true;
+      }
+    }
     const bodyText = greeting
       ? `${greeting}\n\n${getFlowCopy(ctx.copyLang, 'menu.what_to_do')}`
       : getFlowCopy(ctx.copyLang, 'menu.what_to_do');
@@ -275,6 +294,7 @@ const selectCapabilityStep: FlowStepConfig = {
     }
     const bizName = ctx.business?.name;
     if (bizName) merchantProtected.push(bizName);
+    if (optInOffered) merchantProtected.push('Waaiio');
     const locMeta = {
       waaiioOwnedItemTitles: true,
       ...(merchantProtected.length ? { protectedValues: merchantProtected } : {}),
@@ -298,8 +318,9 @@ const selectCapabilityStep: FlowStepConfig = {
       }];
     }
 
-    // WhatsApp buttons max 3 — use a list for more options
-    if (capItems.length <= 3) {
+    // WhatsApp buttons max 3 — use a list for more options.
+    // The opt-in row needs its description, which buttons cannot show.
+    if (capItems.length <= 3 && !optInOffered) {
       return [{
         type: 'buttons' as const,
         body: bodyText,
@@ -312,7 +333,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // WhatsApp list body max is 1024 chars — trim greeting if needed
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
 
-    const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText }));
+    const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText, ...(i.description ? { description: i.description } : {}) }));
 
     // If everything fits in one page, no pagination needed
     if (allListItems.length <= META_MAX_ROWS) {
@@ -441,6 +462,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // Handle "My Account" selection
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
       ctx.session.session_data.active_capability = 'my_account';
+      delete ctx.session.session_data._transaction_followup_key;
       // Clean up pagination state — My Account exits the paginated menu
       delete ctx.session.session_data._cap_menu_page;
       delete ctx.session.session_data._cap_menu_total_pages;
@@ -539,6 +561,12 @@ const selectCapabilityStep: FlowStepConfig = {
 
       return { valid: false, errorMessage: recoveryMsg, persistSessionDataOnFailure: true };
     }
+
+    // A genuine new selection starts a new interaction, even when the customer
+    // selects the same capability again. Prior completion ownership must not
+    // suppress this interaction's terminal navigation. Pagination/rejections
+    // return above and keep their existing ownership.
+    delete ctx.session.session_data._transaction_followup_key;
 
     // Clear stale transactional state BEFORE entity extraction (P2-3).
     // Must run first so cleanup removes the PREVIOUS capability's data,
@@ -795,6 +823,19 @@ const myAccountMenuStep: FlowStepConfig = {
       .filter(i => i.show)
       .map(({ title, description, postbackText }) => ({ title, description, postbackText }));
 
+    // Owner decision 2026-11-06 (#591 Q6): "Get updates" last, before Back, for
+    // customers who have not agreed yet and never unsubscribed. WhatsApp shows
+    // at most 10 rows, so it is added only when it fits with Back; it never
+    // pushes an existing row out (typing "updates" still works).
+    let updatesRowShown = false;
+    if (ctx.business && items.length + 2 <= MY_ACCOUNT_MAX_ROWS) {
+      const updatesRow = await updatesAccountRowFor(ctx.supabase, { phone: ctx.from, lang: ctx.copyLang, business: ctx.business });
+      if (updatesRow) {
+        items.push(updatesRow);
+        updatesRowShown = true;
+      }
+    }
+
     items.push({ title: getFlowCopy(ctx.copyLang, 'nav.back'), description: getFlowCopy(ctx.copyLang, 'nav.back_desc'), postbackText: 'acct_back' });
 
     return [{
@@ -803,6 +844,8 @@ const myAccountMenuStep: FlowStepConfig = {
       body: getFlowCopy(ctx.copyLang, 'account.body'),
       buttonLabel: getFlowCopy(ctx.copyLang, 'account.title'),
       items,
+      // The updates line must keep naming the business and Waaiio after translation.
+      ...(updatesRowShown && ctx.business?.name ? { _localization: { protectedValues: [ctx.business.name, 'Waaiio'] } } : {}),
     }];
   },
 
@@ -818,6 +861,23 @@ const myAccountMenuStep: FlowStepConfig = {
     // Handle back to main capability menu
     if (action === 'acct_back') {
       return { valid: true, data: { _my_account_route: 'back_to_capabilities' } };
+    }
+
+    // "Get updates" (#591 Q6): the same confirmation as typing "updates". The
+    // chat stays on this menu without re-sending it, so the confirmation is the
+    // last message; its Yes / No thanks are handled in bot.service.
+    if (action === UPDATES_ACCOUNT_POSTBACK) {
+      const to = ctx.from;
+      if (ctx.business?.id) {
+        await askUpdatesOptIn(ctx.supabase, {
+          phone: ctx.from, lang: ctx.copyLang, source: 'account', businessId: ctx.business.id,
+          sendText: (text) => ctx.sender.sendText({ to, text }),
+          sendButtons: (body, buttons) => ctx.sender.sendButtons({ to, body, buttons }),
+        });
+      } else {
+        await ctx.sender.sendText({ to, text: getFlowCopy(ctx.copyLang, 'updates.expired') });
+      }
+      return { valid: false, abortSilently: true };
     }
 
     // Map selections to built-in bot.service.ts handlers via session step

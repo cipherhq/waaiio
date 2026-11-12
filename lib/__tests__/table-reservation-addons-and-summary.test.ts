@@ -2,7 +2,7 @@
  * Table reservations: add-ons are never offered (they would not be saved or
  * charged by book_table_atomic), and the confirmation summary names the table.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createMockContext, createMockSupabase, getStep } from '@/lib/bot/flows/__tests__/helpers';
 import { schedulingFlow } from '@/lib/bot/flows/scheduling.flow';
 
@@ -50,3 +50,14 @@ describe('table reservation: confirmation summary', () => {
     expect(out).toContain('📌 Haircut');
   });
 });
+
+
+// This suite exercises confirmation UX with an untaxed authoritative quote.
+// RPC validation and quote failures are covered by the merchant-tax suites.
+vi.mock('@/lib/tax/server-quote', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tax/server-quote')>()),
+  quoteBookingTax: vi.fn(async (_db, input) => ({
+    total: Math.max(Number(input.expectedTerms.price || 0) * input.partySize, Number(input.expectedTerms.deposit || 0)),
+    deposit: Number(input.expectedTerms.deposit || 0), tax_snapshot: null,
+  })),
+}));

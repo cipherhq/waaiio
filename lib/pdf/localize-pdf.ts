@@ -23,6 +23,13 @@ export interface ReceiptPdfLabels {
   lblTotal: string;
   lblAmount: string;
   lblStatus: string;
+  /** #889 item table and deposit lines. Each language reuses its invoice wording (makeBundle). */
+  colDescription: string;
+  colQty: string;
+  colUnitPrice: string;
+  colAmount: string;
+  lblAmountPaid: string;
+  lblBalanceDue: string;
   footer: string;
   statusLabels: PdfStatusLabels;
   monthShort: readonly string[];
@@ -159,7 +166,9 @@ function simpleMonths(months: readonly string[]): readonly string[] { return mon
 export const DEFAULT_RECEIPT_LABELS: ReceiptPdfLabels = {
   title: 'RECEIPT', lblReference: 'Reference', lblService: 'Service', lblCustomer: 'Customer', lblPhone: 'Phone',
   lblDate: 'Date', lblPayment: 'Payment', lblSubtotal: 'Subtotal', lblFees: 'Fees', lblTotal: 'Total',
-  lblAmount: 'Amount', lblStatus: 'Status', footer: 'Powered by Waaiio', statusLabels: STATUS_EN, monthShort: MONTH_SHORT_EN,
+  lblAmount: 'Amount', lblStatus: 'Status', colDescription: 'Description', colQty: 'Qty', colUnitPrice: 'Unit Price',
+  colAmount: 'Amount', lblAmountPaid: 'Amount Paid', lblBalanceDue: 'Balance Due',
+  footer: 'Powered by Waaiio', statusLabels: STATUS_EN, monthShort: MONTH_SHORT_EN,
 };
 export const DEFAULT_TICKET_LABELS: TicketPdfLabels = {
   lblDate: 'DATE', lblTime: 'TIME', lblVenue: 'VENUE', lblAttendee: 'ATTENDEE', lblRef: 'REF', lblPrice: 'PRICE',
@@ -196,7 +205,14 @@ function makeBundle(
   annual: Omit<AnnualStatementPdfLabels, 'statusLabels' | 'monthNames' | 'monthShort'>,
 ): PdfLocalizationBundle {
   return {
-    receipt: { ...receipt, statusLabels, monthShort }, ticket, invoice,
+    receipt: {
+      ...receipt,
+      // #889: same words as this language's invoice, so no new translations are needed.
+      colDescription: invoice.colDescription, colQty: invoice.colQty, colUnitPrice: invoice.colUnitPrice,
+      colAmount: invoice.colAmount, lblAmountPaid: invoice.lblAmountPaid, lblBalanceDue: invoice.lblBalanceDue,
+      statusLabels, monthShort,
+    },
+    ticket, invoice,
     history: { ...history, statusLabels, monthShort },
     annual: { ...annual, statusLabels, monthNames, monthShort },
   };

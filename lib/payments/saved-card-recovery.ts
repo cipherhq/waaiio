@@ -1,3 +1,4 @@
+import { confirmTaxPaymentFailure } from './tax-authority';
 /**
  * #375: Canonical saved-card dispatched-payment recovery.
  *
@@ -43,7 +44,7 @@ export async function recoverDispatchedSavedCardPayment(
   // 1. Read the exact payment row by ID
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
-    .select('id, gateway, gateway_reference, metadata, provider_init_state, status, created_at, amount, currency')
+    .select('id, gateway, gateway_reference, metadata, provider_init_state, status, created_at, amount, currency, tax_allocation')
     .eq('id', paymentId)
     .single();
 
@@ -180,7 +181,7 @@ export async function recoverDispatchedSavedCardPayment(
         }
 
         if (['requires_payment_method', 'canceled'].includes(pi.status as string)) {
-          const termOk = await checkedTerminal(supabase, paymentId, `stripe_pi_${pi.status}`);
+          const termOk = await checkedTerminal(supabase, paymentId, `stripe_pi_${pi.status}`, payment);
           if (!termOk) {
             // R1-B2: CAS lost — another authority won. Re-read and converge.
             return convergeAfterCASLoss(supabase, paymentId);
@@ -199,7 +200,7 @@ export async function recoverDispatchedSavedCardPayment(
     const errCode = (error.code as string) || '';
 
     if (errType === 'card_error' || errCode === 'card_declined') {
-      const termOk = await checkedTerminal(supabase, paymentId, `stripe_card_decline:${errCode}`);
+      const termOk = await checkedTerminal(supabase, paymentId, `stripe_card_decline:${errCode}`, payment);
       if (!termOk) {
         return convergeAfterCASLoss(supabase, paymentId);
       }
@@ -214,7 +215,7 @@ export async function recoverDispatchedSavedCardPayment(
     }
 
     if (errType === 'invalid_request_error' && (errCode === 'resource_missing' || errCode === 'payment_method_unattached')) {
-      const termOk = await checkedTerminal(supabase, paymentId, `stripe_invalid:${errCode}`);
+      const termOk = await checkedTerminal(supabase, paymentId, `stripe_invalid:${errCode}`, payment);
       if (!termOk) {
         return convergeAfterCASLoss(supabase, paymentId);
       }
@@ -383,7 +384,9 @@ async function checkedTerminal(
   supabase: SupabaseClient,
   paymentId: string,
   reason: string,
+  payment?: {tax_allocation?:unknown;gateway:string;gateway_reference:string},
 ): Promise<boolean> {
+  if(payment?.tax_allocation) return confirmTaxPaymentFailure(supabase,paymentId,payment.gateway,payment.gateway_reference,'failed');
   const { data: rows, error: err } = await supabase.from('payments')
     .update({ status: 'failed', gateway_status: `provider_terminal_${reason}` })
     .eq('id', paymentId).eq('provider_init_state', 'dispatched').eq('status', 'pending')

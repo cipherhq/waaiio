@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -187,8 +188,11 @@ async function resolveWaLink(
         : Promise.resolve({ data: null }),
       supabase.from('whatsapp_channels').select('phone_number')
         .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
-      supabase.from('whatsapp_channels').select('phone_number')
-        .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle(),
+      // Staging: only the designated shared number.
+      isStagingWhatsAppRouting()
+        ? loadStagingDesignatedChannel(supabase).then(row => ({ data: row }))
+        : supabase.from('whatsapp_channels').select('phone_number')
+          .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle(),
     ]);
 
     const phone = (

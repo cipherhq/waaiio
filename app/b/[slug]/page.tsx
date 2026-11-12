@@ -66,7 +66,7 @@ export default async function PublicBookingPage({ params }: PageProps) {
     supabase
       .from('services')
       .select(
-        'id, name, description, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, image_url, metadata',
+        'id, name, description, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, image_url, metadata, intake_form_id',
       )
       .eq('business_id', business.id)
       .eq('is_active', true)
@@ -85,6 +85,8 @@ export default async function PublicBookingPage({ params }: PageProps) {
     image_url: s.image_url,
     is_dropoff: (s.metadata as Record<string, unknown>)?.is_dropoff === true,
     is_appointment: false,
+    // #963: a linked client intake form makes the phone number required.
+    has_form: !!s.intake_form_id,
   }));
 
   const serializedAppointments = (appointments || []).map((a: Record<string, unknown>) => ({

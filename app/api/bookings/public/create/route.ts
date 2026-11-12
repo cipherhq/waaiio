@@ -1,3 +1,4 @@
+import { quoteBookingTax, isSafePurchaseAmount } from '@/lib/tax/server-quote';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
@@ -5,6 +6,7 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { deliverAfterBookingIntake, findWebIntake, linkIntakeToBooking, toE164, webBeforeBookingForm } from '@/lib/intake/send';
 
 /**
  * POST /api/bookings/public/create
@@ -30,7 +32,8 @@ export async function POST(request: NextRequest) {
       quantity,
       otpToken,
       classSessionId,
-      expectedTerms,
+      expectedTerms, preview,
+      intakeId,
     } = body as {
       businessSlug: string;
       serviceId?: string;
@@ -43,7 +46,9 @@ export async function POST(request: NextRequest) {
       quantity?: number;
       otpToken?: string;
       classSessionId?: string;
-      expectedTerms?: { price: number; deposit: number; country: string; quantity: number };
+      preview?: boolean;
+      expectedTerms?: { price: number; deposit: number; country: string; quantity: number; tax_snapshot?: unknown };
+      intakeId?: string;
     };
 
     // Basic validation — exactly one of serviceId or appointmentId required
@@ -122,6 +127,7 @@ export async function POST(request: NextRequest) {
     let itemMetadata: Record<string, unknown> | null;
     let itemRequiresStaff = false;
     let itemStaffIds: string[] = [];
+    let itemIntakeFormId: string | null = null;
     const isAppointmentBooking = !!appointmentId;
 
     if (appointmentId) {
@@ -150,7 +156,7 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: service, error: svcError } = await supabase
         .from('services')
-        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids')
+        .select('id, name, price, deposit_amount, duration_minutes, buffer_minutes, max_capacity, metadata, requires_staff, staff_ids, intake_form_id')
         .eq('id', serviceId!)
         .eq('business_id', business.id)
         .eq('is_active', true)
@@ -170,12 +176,18 @@ export async function POST(request: NextRequest) {
       itemMetadata = service.metadata as Record<string, unknown> | null;
       itemRequiresStaff = service.requires_staff ?? false;
       itemStaffIds = (service.staff_ids as string[]) || [];
+      itemIntakeFormId = (service.intake_form_id as string | null) || null;
     }
 
     const currentTerms = { price: itemPrice, deposit: configuredDeposit, country: business.country_code, quantity: partySize };
-    if (!expectedTerms || expectedTerms.price !== currentTerms.price || expectedTerms.deposit !== currentTerms.deposit
+    const taxQuote = await quoteBookingTax(supabase, { businessId: business.id,
+      serviceId: isAppointmentBooking ? null : itemId, appointmentId: isAppointmentBooking ? itemId : null,
+      partySize, addons: [], expectedTerms: { ...currentTerms, discount: 0, source: 'public' } });
+    if (preview === true) return NextResponse.json({ ...taxQuote, currentTerms });
+    if (!expectedTerms || JSON.stringify(expectedTerms.tax_snapshot ?? null) !== JSON.stringify(taxQuote.tax_snapshot)
+        || expectedTerms.price !== currentTerms.price || expectedTerms.deposit !== currentTerms.deposit
         || expectedTerms.country !== currentTerms.country || expectedTerms.quantity !== partySize) {
-      return NextResponse.json({ code: 'terms_changed', error: 'Booking terms changed. Review the current price and confirm again.', currentTerms }, { status: 409 });
+      return NextResponse.json({ code: 'terms_changed', error: 'Booking terms changed. Review the current price and confirm again.', currentTerms, taxQuote }, { status: 409 });
     }
 
     // Class XOR validation
@@ -272,6 +284,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // #963 client intake forms (Owner decisions 2026-11-10): a service with a form needs
+    // the client's phone, and a before-booking form must be answered in the page first.
+    let intakeToLink: string | null = null;
+    if (!isAppointmentBooking && itemIntakeFormId) {
+      const intakePhone = toE164(guestPhone);
+      if (!intakePhone) {
+        return NextResponse.json({ code: 'phone_required', error: 'Please add your phone number.' }, { status: 400 });
+      }
+      const beforeForm = await webBeforeBookingForm(supabase, {
+        businessId: business.id, tier: business.subscription_tier, serviceId: itemId, email: guestEmail.toLowerCase().trim(),
+      });
+      if (beforeForm) {
+        const intake = typeof intakeId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(intakeId)
+          ? await findWebIntake(supabase, { businessId: business.id, serviceId: itemId, formId: beforeForm.formId, phone: intakePhone, intakeId })
+          : null;
+        if (intake?.status !== 'submitted') {
+          return NextResponse.json({ code: 'intake_required', error: 'Please fill in the form before booking.' }, { status: 409 });
+        }
+        intakeToLink = intake.id;
+      }
+    }
+
     // Find or create user by email (verified via OTP)
     let userId: string;
     const emailLower = guestEmail.toLowerCase();
@@ -308,7 +342,7 @@ export async function POST(request: NextRequest) {
     // Determine pricing
     const isDropoff = itemMetadata?.is_dropoff === true;
     const maxCapacity = isDropoff ? 9999 : (itemMaxCapacity || 1);
-    const totalDeposit = itemDeposit * partySize;
+    const totalDeposit = taxQuote.deposit;
 
     // Use atomic booking RPC to prevent race conditions
     const { data: slotResult, error: slotError } = await supabase
@@ -335,13 +369,13 @@ export async function POST(request: NextRequest) {
         p_promo_code_id: null,
         // "Price varies" items may carry a deposit above the starting price;
         // the total is then the deposit, as M518 commits it.
-        p_total_amount: Math.max(itemPrice * partySize, totalDeposit),
+        p_total_amount: taxQuote.total,
         p_staff_name: autoStaffName,
         p_appointment_id: isAppointmentBooking ? itemId : null,
         p_buffer_minutes: itemBuffer,
         p_duration: itemDuration,
         p_class_session_id: classSessionId || null,
-        p_expected_terms: { ...currentTerms, discount: 0, source: 'public' },
+        p_expected_terms: { ...currentTerms, discount: 0, source: 'public', tax_snapshot: taxQuote.tax_snapshot },
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean; committed_total: number; committed_deposit: number } | null;
@@ -363,10 +397,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!Number.isSafeInteger(slotResult.committed_deposit) || slotResult.committed_deposit < 0
-        || !Number.isSafeInteger(slotResult.committed_total) || slotResult.committed_total < slotResult.committed_deposit) {
+    if (!isSafePurchaseAmount(slotResult.committed_deposit) || !isSafePurchaseAmount(slotResult.committed_total) || slotResult.committed_total < slotResult.committed_deposit) {
       return NextResponse.json({ error: 'Committed booking terms unavailable' }, { status: 503 });
     }
+
+    if (intakeToLink) await linkIntakeToBooking(supabase, business.id, intakeToLink, slotResult.booking_id, itemId);
 
     // If deposit > 0, initialize payment
     if (slotResult.committed_deposit > 0) {
@@ -400,12 +435,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Free service — booking is confirmed
+    // Free service — booking is confirmed. #963: an after-booking form goes by email and
+    // is also shown on the confirmation screen. Never affects the booking result.
+    let intakeUrl: string | undefined;
+    if (!isAppointmentBooking && itemIntakeFormId) {
+      try {
+        const intake = await deliverAfterBookingIntake(supabase, slotResult.booking_id, { keepIfEmailFails: true });
+        if (intake.status === 'sent') intakeUrl = intake.url;
+      } catch (intakeErr) {
+        logger.warn('[PUBLIC_BOOKING] Intake form not sent (non-critical):', (intakeErr as Error).message);
+      }
+    }
     return NextResponse.json({
       success: true,
       bookingId: slotResult.booking_id,
       referenceCode: slotResult.reference_code,
-    });
+      ...(intakeUrl ? { intakeUrl } : {}),
+    }, intakeUrl ? { headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } } : undefined);
   } catch {
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
   }

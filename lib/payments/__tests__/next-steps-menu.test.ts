@@ -49,16 +49,15 @@ function db(opts: { payment?: unknown; paymentError?: unknown; deliveries?: unkn
 const SINCE = '2026-11-05T12:00:00.000Z';
 
 describe('paymentNextStepsMenuSent', () => {
-  it('saved-card payment with an accepted confirmation → true, payment checked against the business', async () => {
+  it('saved-card payment with durable follow-up ownership → true, payment checked against the business', async () => {
     const { client, calls } = db({ payment: { id: 'pay-1' }, deliveries: [{ id: 'd1' }] });
     expect(await paymentNextStepsMenuSent(client, 'biz-1', { _saved_card_payment_id: 'pay-1', payment_reference: 'ignored' }, SINCE)).toBe(true);
-    expect(calls.map(c => c.table)).toEqual(['payments', 'payment_confirmation_deliveries']);
+    expect(calls.map(c => c.table)).toEqual(['payments', 'transaction_followups']);
     expect(calls[0].filters).toContainEqual(['eq', 'business_id', 'biz-1']);
     expect(calls[0].filters).toContainEqual(['eq', 'id', 'pay-1']);
     expect(calls[1].filters).toContainEqual(['eq', 'payment_id', 'pay-1']);
-    expect(calls[1].filters).toContainEqual(['in', 'delivery_status', ['accepted', 'sent', 'delivered', 'read']]);
-    // Only a confirmation accepted during this request counts.
-    expect(calls[1].filters).toContainEqual(['gte', 'accepted_at', SINCE]);
+    expect(calls[1].filters).toContainEqual(['eq', 'business_id', 'biz-1']);
+    expect(calls[1].filters.some(f => f[0] === 'gte')).toBe(false);
   });
 
   it('saved-card payment from another business → false', async () => {
@@ -79,11 +78,17 @@ describe('paymentNextStepsMenuSent', () => {
     ['no delivery handed to Meta', { payment: { id: 'p' }, deliveries: [] }, { payment_reference: 'r' }],
     ['payment not found', { payment: null }, { payment_reference: 'r' }],
     ['no payment reference at all', {}, {}],
+  ])('%s → false: no payment follow-up owns this flow', async (_label, opts, sessionData) => {
+    const { client } = db(opts as any);
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', sessionData, SINCE)).toBe(false);
+  });
+
+  it.each([
     ['payment lookup error', { paymentError: { code: 'x' } }, { payment_reference: 'r' }],
     ['delivery lookup error', { payment: { id: 'p' }, deliveryError: { code: 'x' } }, { payment_reference: 'r' }],
     ['client throws', { throws: true }, { payment_reference: 'r' }],
-  ])('%s → false, so the chat still shows its menu', async (_label, opts, sessionData) => {
+  ])('%s → suppress competing menu until ownership can be checked', async (_label, opts, sessionData) => {
     const { client } = db(opts as any);
-    expect(await paymentNextStepsMenuSent(client, 'biz-1', sessionData, SINCE)).toBe(false);
+    expect(await paymentNextStepsMenuSent(client, 'biz-1', sessionData, SINCE)).toBe(true);
   });
 });

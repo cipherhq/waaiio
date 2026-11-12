@@ -10,8 +10,9 @@
  *   docker run --rm -d --name stripe-fin-test -p 54324:5432 -e POSTGRES_PASSWORD=test postgres:16
  *   TEST_DATABASE_URL=postgresql://postgres:test@localhost:54324/postgres npx vitest run lib/__tests__/stripe-recurring-finalization-db.test.ts
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
@@ -58,11 +59,11 @@ function runTwoSessions(
   });
 }
 
-// ── Fixed UUIDs ──
-const BIZ_ID   = '77aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+// Fresh tenant/subscription identities keep immutable accounting rows isolated.
+let BIZ_ID = randomUUID();
 const USER_ID  = '77bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-const SUB_ID_A = '77cccccc-cccc-cccc-cccc-cccccccccc01';
-const SUB_ID_B = '77cccccc-cccc-cccc-cccc-cccccccccc02';
+let SUB_ID_A = randomUUID();
+let SUB_ID_B = randomUUID();
 
 // CI enforces zero skips via the workflow step. Local runs without TEST_DATABASE_URL skip gracefully.
 describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database tests (#177)', () => {
@@ -127,40 +128,16 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
         VALUES ('${USER_ID}', 'Test', 'User', 'stripe-fin-test@test.local')
         ON CONFLICT DO NOTHING;
 
-      INSERT INTO businesses (id, owner_id, name, slug, address, city, neighborhood, phone,
-        status, subscription_tier, trial_ends_at, payout_mode, country_code)
-        VALUES ('${BIZ_ID}', '${USER_ID}', 'Stripe Fin Test Biz', 'stripe-fin-test-177',
-          '1 Test St', 'Lagos', 'VI', '+10000000000',
-          'active', 'free', NOW() - INTERVAL '1 day', 'platform', 'US')
-        ON CONFLICT (id) DO NOTHING;
-
       INSERT INTO platform_settings (key, value)
         VALUES ('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0},"growth":{"feePercentage":1.5,"feeFlat":0},"business":{"feePercentage":1.5,"feeFlat":0}}'::jsonb)
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
     `);
 
-    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
-    createSub(SUB_ID_B, { code: 'sub_test_yyy', amount: 50 });
+    freshFinData();
   }, 120000); // Migration application can take 30+ seconds in CI
 
-  afterAll(() => {
-    if (!dbUrl) return;
-    psql(`
-      DELETE FROM stripe_recurring_finalizations;
-      DELETE FROM payment_spend_applications;
-      DELETE FROM platform_fees;
-      DELETE FROM subscription_charges;
-      DELETE FROM payments;
-      DELETE FROM bookings;
-      DELETE FROM customer_subscriptions WHERE business_id = '${BIZ_ID}';
-      DELETE FROM businesses WHERE id = '${BIZ_ID}';
-      DELETE FROM profiles WHERE id = '${USER_ID}';
-      ALTER TABLE auth.users DISABLE TRIGGER ALL;
-      DELETE FROM auth.users WHERE id = '${USER_ID}';
-      ALTER TABLE auth.users ENABLE TRIGGER ALL;
-      DELETE FROM platform_settings WHERE key = 'pricing_tiers';
-    `);
-  });
+  // The dedicated database is dropped by the CI workflow. Do not DELETE ledger
+  // rows here: M500/M501 intentionally make platform fee provenance immutable.
 
   // ── Fixture helpers ──
 
@@ -193,29 +170,28 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
     `);
   }
 
-  function cleanFinData() {
+  function freshFinData() {
+    BIZ_ID = randomUUID();
+    SUB_ID_A = randomUUID();
+    SUB_ID_B = randomUUID();
     psql(`
-      DELETE FROM stripe_recurring_finalizations;
-      DELETE FROM payment_spend_applications;
-      DELETE FROM platform_fees;
-      DELETE FROM subscription_charges;
-      DELETE FROM payments;
-      DELETE FROM bookings WHERE business_id = '${BIZ_ID}';
+      INSERT INTO businesses (id, owner_id, name, slug, address, city, neighborhood, phone,
+        status, subscription_tier, trial_ends_at, payout_mode, country_code)
+        VALUES ('${BIZ_ID}', '${USER_ID}', 'Stripe Fin Test Biz', 'stripe-fin-test-${BIZ_ID}',
+          '1 Test St', 'Lagos', 'VI', '+10000000000',
+          'active', 'free', NOW() - INTERVAL '1 day', 'platform', 'US')
+        ON CONFLICT (id) DO NOTHING;
+
     `);
-    // Reset subscription counters
-    psql(`
-      UPDATE customer_subscriptions SET
-        charge_count = 0, total_charged = 0, failure_count = 0,
-        next_charge_at = NOW() - INTERVAL '1 day'
-      WHERE business_id = '${BIZ_ID}';
-    `);
+    createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
+    createSub(SUB_ID_B, { code: 'sub_test_yyy', amount: 50 });
   }
 
   // ─────────────────────────────────────────────────────────
   // a. Fresh finalization: full write proof
   // ─────────────────────────────────────────────────────────
   it('a. fresh finalization — full write proof', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const result = psqlJson(`
@@ -269,7 +245,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // b. Exact replay: same params → already_finalized=true, zero additional rows
   // ─────────────────────────────────────────────────────────
   it('b. exact replay — already_finalized=true, same canonical IDs, zero additional rows', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const fresh = psqlJson(`
@@ -312,7 +288,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // c. All replay mismatches: each returns success=false with specific reason
   // ─────────────────────────────────────────────────────────
   it('c. replay amount mismatch → success=false, reason=replay_amount_mismatch', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     psqlJson(`
@@ -333,7 +309,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   });
 
   it('c. replay currency mismatch → success=false, reason=replay_currency_mismatch', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     psqlJson(`
@@ -354,7 +330,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   });
 
   it('c. replay subscription mismatch → success=false, reason=replay_subscription_mismatch', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
     createSub(SUB_ID_B, { code: 'sub_test_yyy', amount: 50 });
 
@@ -376,7 +352,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   });
 
   it('c. replay PI ref mismatch → success=false, reason=replay_provider_ref_mismatch', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     psqlJson(`
@@ -404,7 +380,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // d. Same invoice concurrent: advisory lock — one fresh, one replay
   // ─────────────────────────────────────────────────────────
   it('d. same invoice concurrent → one fresh, one replay with canonical IDs', async () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const rpcCall = () => `
@@ -450,7 +426,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // e. Same invoice different subscription: mismatch, zero mutation for wrong sub
   // ─────────────────────────────────────────────────────────
   it('e. same invoice different subscription → one succeeds, one gets replay_subscription_mismatch', async () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_concurrent_a', amount: 50 });
     createSub(SUB_ID_B, { code: 'sub_test_concurrent_b', amount: 50 });
 
@@ -487,7 +463,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // f. Different invoices same subscription: both finalize, charge_count=2, total=100
   // ─────────────────────────────────────────────────────────
   it('f. different invoices same subscription → both finalize, charge_count=2, total_charged=100', async () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const rpcCallA = `
@@ -528,7 +504,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // g. Spend rollback: NULL from apply_payment_spend_once → no finalization marker, no payment
   // ─────────────────────────────────────────────────────────
   it('g. spend rollback — NULL from apply_payment_spend_once rolls back all writes', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     // Temporarily replace apply_payment_spend_once with a stub that returns NULL
@@ -579,7 +555,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // h. Wrong gateway: gateway='paystack' → success=false, reason=wrong_gateway
   // ─────────────────────────────────────────────────────────
   it('h. wrong gateway (paystack) → success=false, reason=wrong_gateway', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50, gateway: 'paystack' });
 
     const result = psqlJson(`
@@ -599,7 +575,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // i. Wrong status: status='cancelled' → success=false, reason=wrong_status
   // ─────────────────────────────────────────────────────────
   it('i. wrong status (cancelled) → success=false, reason=wrong_status', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50, status: 'cancelled' });
 
     const result = psqlJson(`
@@ -619,7 +595,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // j. Subscription code mismatch: pass wrong sub_ code → success=false
   // ─────────────────────────────────────────────────────────
   it('j. subscription code mismatch → success=false, reason=subscription_code_mismatch', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
     const result = psqlJson(`
@@ -636,7 +612,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // k. Amount mismatch: exact equality, NO tolerance
   // ─────────────────────────────────────────────────────────
   it('k. amount mismatch — exact cents equality, no tolerance → success=false', () => {
-    cleanFinData();
+    freshFinData();
     // Subscription has amount=50.00 USD → expects exactly 5000 cents
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
@@ -657,7 +633,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // l. Currency mismatch: pass wrong currency → success=false
   // ─────────────────────────────────────────────────────────
   it('l. currency mismatch → success=false, reason=currency_mismatch', () => {
-    cleanFinData();
+    freshFinData();
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 }); // currency='USD'
 
     const result = psqlJson(`
@@ -830,7 +806,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // RPC is defense-in-depth. This test proves the boundary case where trial_ends_at = NOW()
   // evaluates as "not in trial" (since the check is strict >).
   it('q. trial_ends_at = NOW() (boundary) → finalization succeeds with expected platform_fees row', () => {
-    cleanFinData();
+    freshFinData();
     // Set trial_ends_at to exactly NOW() — strict > comparison means "not in trial"
     psql(`UPDATE businesses SET trial_ends_at = NOW(), payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
@@ -863,7 +839,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
 
   // r. Expired trial → expected fee row (trial_ends_at in the past)
   it('r. expired trial → finalization succeeds with expected platform_fees row', () => {
-    cleanFinData();
+    freshFinData();
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '30 days', payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
@@ -887,9 +863,10 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
   });
 
-  // s. Active trial → zero-fee semantics (trial_ends_at in the future)
-  it('s. active trial → finalization succeeds with zero platform_fees', () => {
-    cleanFinData();
+  // s. Active trial → the plan fee is still charged (Owner 2026-11-08, M525:
+  //    the trial never waives the Waaiio fee; trial_ends_at in the future).
+  it('s. active trial → finalization records the plan fee, not zero (M525)', () => {
+    freshFinData();
     psql(`UPDATE businesses SET trial_ends_at = NOW() + INTERVAL '30 days', payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
@@ -902,13 +879,13 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
 
     expect(result.success).toBe(true);
 
-    // Fee row exists but with zero amounts (active trial = no fees charged)
+    // Same fee as a business outside its trial (case r above: 2.5% of 50 → 1)
     const feeRow = psql(`SELECT fee_percentage, fee_flat, fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
     expect(feeRow).not.toBe('');
     const [feePct, feeFlat, feeTotal] = feeRow.split('|');
-    expect(parseFloat(feePct)).toBe(0);
+    expect(parseFloat(feePct)).toBe(2.5);
     expect(parseFloat(feeFlat)).toBe(0);
-    expect(parseFloat(feeTotal)).toBe(0);
+    expect(parseInt(feeTotal)).toBe(1);
 
     // Restore
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
@@ -916,7 +893,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
 
   // t. direct_split → no platform_fees row
   it('t. direct_split payout_mode → finalization succeeds with NO platform_fees row', () => {
-    cleanFinData();
+    freshFinData();
     psql(`UPDATE businesses SET payout_mode = 'direct_split', trial_ends_at = NOW() - INTERVAL '1 day', subscription_tier = 'free' WHERE id = '${BIZ_ID}'`);
     createSub(SUB_ID_A, { code: 'sub_test_xxx', amount: 50 });
 
@@ -946,7 +923,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
   // The CASCADE trigger lives on the businesses table (not customer_subscriptions), so we
   // must disable triggers on businesses to prevent the cascade from deleting the subscription.
   it('u. missing business → RAISE EXCEPTION, full rollback, no finalization marker', () => {
-    cleanFinData();
+    freshFinData();
     const GHOST_SUB = '77eeeeee-eeee-eeee-eeee-eeeeeeeeee01';
 
     // Insert subscription then orphan it by deleting business with triggers disabled on businesses
@@ -984,7 +961,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
     psql(`
       INSERT INTO businesses (id, owner_id, name, slug, address, city, neighborhood, phone,
         status, subscription_tier, trial_ends_at, payout_mode, country_code)
-        VALUES ('${BIZ_ID}', '${USER_ID}', 'Stripe Fin Test Biz', 'stripe-fin-test-177',
+        VALUES ('${BIZ_ID}', '${USER_ID}', 'Stripe Fin Test Biz', 'stripe-fin-test-${BIZ_ID}',
           '1 Test St', 'Lagos', 'VI', '+10000000000',
           'active', 'free', NOW() - INTERVAL '1 day', 'platform', 'US')
         ON CONFLICT (id) DO NOTHING;

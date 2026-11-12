@@ -1,0 +1,452 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.invoice_items.tax_label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.invoice_items.tax_price_mode",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(7,2)"
+   },
+   "after_sha256": "a5fd6be234c871b78a4f9a8540ef1b17f96cfddf3fcd10bc50e539a2237fef11",
+   "identity": "column:public.invoice_items.tax_rate_bps",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'inherit'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "82cec156c1d2573351129137b2c2d7574477c3f9ace13949749e43f2443d3df4",
+   "identity": "column:public.invoice_items.tax_treatment",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(9,4)"
+   },
+   "after_sha256": "0e45ad2841894e39a0af33ed67d4da9dcba534ef2516e0653a859ecf5cde7430",
+   "identity": "column:public.invoices.tax_rate",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.invoices.tax_terms_locked_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.quote_requests.quoted_items",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (tax_treatment <> 'override'::text AND tax_label IS NULL AND tax_rate_bps IS NULL AND tax_price_mode IS NULL OR tax_treatment = 'override'::text AND tax_label IS NOT NULL AND tax_rate_bps IS NOT NULL AND tax_price_mode IS NOT NULL AND length(TRIM(BOTH FROM tax_label)) >= 1 AND length(TRIM(BOTH FROM tax_label)) <= 60 AND tax_rate_bps >= 0::numeric AND tax_rate_bps <= 10000::numeric AND (tax_price_mode = ANY (ARRAY['inclusive'::text, 'exclusive'::text])))",
+    "validated": true
+   },
+   "after_sha256": "c4bd23c7a7b1b934f921097e704880f1d1ab677ec1827f18abeae4e850f53051",
+   "identity": "constraint:public.invoice_items.invoice_item_tax_rule",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (tax_treatment = ANY (ARRAY['inherit'::text, 'override'::text, 'exempt'::text]))",
+    "validated": true
+   },
+   "after_sha256": "591817e69905c4b377db6debc5515d214a1a222d20bf47973fd321983f27a81e",
+   "identity": "constraint:public.invoice_items.invoice_items_tax_treatment_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_template_id uuid, p_period date, p_issue_date date",
+    "body_sha256": "864e9434adc8c5627e53e88a2b5dc6f473381047b6500b11001de6409e2edd39",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "6ff0507be79c833970acde478ca95f56fd2a5bc34691aaec701d95cfd41e596c",
+   "identity": "function:public.clone_recurring_invoice_tax_980(p_template_id uuid, p_period date, p_issue_date date)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_invoice_id uuid, p_expected_snapshot jsonb",
+    "body_sha256": "b0cba5c5cd270824bd4bc80dd40c5554a58e5ecde035bb35a6009d3c985f2a88",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "6e9da1af2a67e804bc64fe665ae66402b8d4caee41e82437d84bc335c8d7557d",
+   "identity": "function:public.freeze_invoice_tax_terms_980(p_business_id uuid, p_invoice_id uuid, p_expected_snapshot jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "92a1f69097aaab89508b959a1ebdc44cd6f0c4c9216cfc94f3e916af8763c8b2",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "6e60e0c90823125c870ef36da6ebe480a22a8758d7bd33290b9ab82ab4f95074",
+   "identity": "function:public.guard_frozen_invoice_tax_terms_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "05850893317084a5fa28a1f7e0dd71f55736bbf05513c3511dcc3db2e630d692",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "4dae6c015e043567208af8f6ccf0d9867a21e7992b6b16ecd103df3e0f73ab55",
+   "identity": "function:public.guard_invoice_tax_items_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "fd89ce30e30bcc7ea3a4c151ba4dcad55ce6710225e29841e73d3c93b56fbf22",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "2606a63a451a546ddab03f75ae6de508e5dcdf75134b0c6a350466f936751b31",
+   "identity": "function:public.guard_issued_tax_invoice_delete_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "a4c340cab2faec4051e58252e5c5043a32a8ad83b34e7fedbc853a18c84fecd3",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5346f4b7cacc6545ba670aceaa071e402803e423d7b1f747a7c2d8e09dfd8e87",
+   "identity": "function:public.guard_quoted_items_980()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_quote_id uuid, p_items jsonb, p_legacy_amount numeric, p_notes text DEFAULT NULL::text, p_preview boolean DEFAULT false, p_expected_snapshot jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "1fe986255ba822a620598a7a5051b4599608a4455d795efba66dc8cf0799eaf7",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "ac7930cdea3fa49996825b95072e7c2c72de6eb78ed3517b3deda99d58b8387d",
+   "identity": "function:public.respond_order_quote_tax_980(p_business_id uuid, p_quote_id uuid, p_items jsonb, p_legacy_amount numeric, p_notes text, p_preview boolean, p_expected_snapshot jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_invoice_id uuid, p_body jsonb",
+    "body_sha256": "1e8215c72de339bdb3774f3a88ce9b02a2cad2af4ab2fe2687507e631af20eba",
+    "config": [
+     "search_path=pg_catalog, extensions"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "0720413bf0134ba8f271530afbbcc325e938f26a26a3dff2236b1f63673d5619",
+   "identity": "function:public.save_invoice_tax_980(p_business_id uuid, p_invoice_id uuid, p_body jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX invoices_recurring_period_980 ON public.invoices USING btree (recurring_parent_id, ((metadata ->> 'recurring_period'::text))) WHERE ((recurring_parent_id IS NOT NULL) AND (metadata ? 'recurring_period'::text))",
+    "predicate": "((recurring_parent_id IS NOT NULL) AND (metadata ? 'recurring_period'::text))",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "075e0abd14c9966738b0bd85937d609227cb7a516f67b2017877d3906ef2ad06",
+   "identity": "index:public.invoices.invoices_recurring_period_980",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER invoice_tax_items_guard BEFORE INSERT OR DELETE OR UPDATE ON invoice_items FOR EACH ROW EXECUTE FUNCTION guard_invoice_tax_items_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "b0b8636c4ad040566906a49ff47afe3d6c5609c25c9e68632928bee196887ae7",
+   "identity": "trigger:public.invoice_items.invoice_tax_items_guard",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER frozen_invoice_tax_terms_guard BEFORE UPDATE ON invoices FOR EACH ROW EXECUTE FUNCTION guard_frozen_invoice_tax_terms_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "d9225b3b756e459b84469303b290e56d26abeec73a8cc5f00b275c26c9cec2d7",
+   "identity": "trigger:public.invoices.frozen_invoice_tax_terms_guard",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER issued_tax_invoice_delete_guard BEFORE DELETE ON invoices FOR EACH ROW EXECUTE FUNCTION guard_issued_tax_invoice_delete_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "05a0de28da4041363050e118bd0c35d4cab79315944766bb03dc7b069000bee6",
+   "identity": "trigger:public.invoices.issued_tax_invoice_delete_guard",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER quoted_items_guard BEFORE INSERT OR UPDATE ON quote_requests FOR EACH ROW EXECUTE FUNCTION guard_quoted_items_980()",
+    "enabled": "O"
+   },
+   "after_sha256": "58ce95abd54d246565cef1a981a99cc7ef37f739d5c7ad3ba5d42314017d24c1",
+   "identity": "trigger:public.quote_requests.quoted_items_guard",
+   "operation": "add"
+  }
+ ],
+ "migration": "533_merchant_tax_invoices_quotes.sql",
+ "migration_sha256": "de1572705f7e07ef7da7f2386bf1d0d44b04406df1b10be06e66fea938c85e7d",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

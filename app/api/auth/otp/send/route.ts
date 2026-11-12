@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { generatePhoneOtp } from '@/lib/otp-phone-token';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 import { createServiceClient } from '@/lib/supabase/service';
 import { checkBruteForce } from '@/lib/brute-force';
 import { logger } from '@/lib/logger';
@@ -62,14 +63,18 @@ export async function POST(request: NextRequest) {
       },
       // Primary: database channel
       primarySend: async (sb) => {
-        const { data: channel } = await sb
-          .from('whatsapp_channels')
-          .select('phone_number_id, meta_access_token')
-          .eq('provider', 'meta_cloud')
-          .eq('is_active', true)
-          .eq('channel_type', 'shared')
-          .limit(1)
-          .maybeSingle();
+        // Staging: only the designated shared number (fails closed to the env fallback).
+        const { data: channel } = isStagingWhatsAppRouting()
+          ? await loadStagingDesignatedChannel(sb, { credentials: true })
+            .then(row => ({ data: row?.provider === 'meta_cloud' ? row : null }))
+          : await sb
+            .from('whatsapp_channels')
+            .select('phone_number_id, meta_access_token')
+            .eq('provider', 'meta_cloud')
+            .eq('is_active', true)
+            .eq('channel_type', 'shared')
+            .limit(1)
+            .maybeSingle();
 
         if (!channel?.phone_number_id || !channel?.meta_access_token) {
           return { ok: false };

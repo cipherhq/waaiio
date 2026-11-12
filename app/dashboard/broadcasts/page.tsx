@@ -9,12 +9,23 @@ import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { filterEligibleAudience, eligibleTags, keepEligible, phoneDigits, type EligibleContact } from '@/lib/broadcasts/audience-filter';
 
 interface BroadcastContact {
   phone: string;
   first_name: string | null;
   last_name: string | null;
   last_interaction: string;
+}
+
+function toBroadcastContact(c: EligibleContact): BroadcastContact {
+  const parts = (c.name || '').split(/\s+/);
+  return {
+    phone: c.phone,
+    first_name: parts[0] || null,
+    last_name: parts.slice(1).join(' ') || null,
+    last_interaction: c.last_seen_at || '',
+  };
 }
 
 type SegmentPreset = 'all' | 'active_30' | 'inactive_30' | 'high_spenders' | 'by_tag';
@@ -41,12 +52,31 @@ interface BroadcastUsage {
   tier: string;
 }
 
+/**
+ * Why some numbers were left out. When the opted-in list is capped (truncated), a
+ * number missing from it may still have opted in, so it is "could not be confirmed",
+ * never "not opted in".
+ */
+function skippedNote(n: number, noun: 'number' | 'respondent', listTruncated: boolean): string {
+  const many = n !== 1;
+  if (listTruncated) {
+    return `${n} ${noun}${many ? 's' : ''} could not be confirmed as opted in (your list is too long to check them all here).`;
+  }
+  return `Skipped ${n} ${noun}${many ? 's' : ''} ${noun === 'number' ? 'that' : 'who'} ${many ? 'have' : 'has'} not opted in.`;
+}
+
 export default function BroadcastsPage() {
   const business = useBusiness();
   const capReady = useRequireCapability('broadcast');
   const searchParams = useSearchParams();
   const campaignId = searchParams.get('campaign_id');
   const [contacts, setContacts] = useState<BroadcastContact[]>([]);
+  // Everyone the server would send to (latest marketing consent granted, not opted out).
+  // Every audience on this page is a subset of it. null until loaded.
+  const [eligible, setEligible] = useState<EligibleContact[] | null>(null);
+  const [eligibleTruncated, setEligibleTruncated] = useState(false);
+  const [eligibleError, setEligibleError] = useState(false);
+  const [importSkipped, setImportSkipped] = useState(0);
   const [history, setHistory] = useState<BroadcastHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -75,10 +105,11 @@ export default function BroadcastsPage() {
   const [importMode, setImportMode] = useState<'csv' | 'paste'>('paste');
   const [pasteInput, setPasteInput] = useState('');
   const [importCount, setImportCount] = useState<number | null>(null);
-  const [campaignBanner, setCampaignBanner] = useState<{ name: string; count: number } | null>(null);
+  const [campaignBanner, setCampaignBanner] = useState<{ name: string; count: number; skipped: number } | null>(null);
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
+  const nobodyOptedIn = eligible !== null && eligible.length === 0 && !eligibleError;
 
   useEffect(() => {
     async function load() {
@@ -100,36 +131,22 @@ export default function BroadcastsPage() {
         return;
       }
 
-      // Load contacts from customer_profiles with opt-in filter
-      const { data: profiles } = await supabase
-        .from('customer_profiles')
-        .select('phone, name, tags, total_spent, last_seen_at')
-        .eq('business_id', business.id)
-        .eq('notification_opt_in', true)
-        .order('last_seen_at', { ascending: false });
-
-      const contactList: BroadcastContact[] = (profiles || [])
-        .filter(p => p.phone)
-        .map(p => {
-          const parts = (p.name || '').split(/\s+/);
-          return {
-            phone: p.phone,
-            first_name: parts[0] || null,
-            last_name: parts.slice(1).join(' ') || null,
-            last_interaction: p.last_seen_at || '',
-          };
-        });
-
-      setContacts(contactList);
-
-      // Collect unique tags for the tag filter
-      const tagSet = new Set<string>();
-      for (const p of profiles || []) {
-        if (Array.isArray(p.tags)) {
-          for (const t of p.tags) tagSet.add(t);
-        }
+      // Only people who opted in, from the same rule the send routes apply (#591 Part B).
+      // If that list cannot be loaded, offer nobody rather than guess.
+      let list: EligibleContact[] = [];
+      try {
+        const res = await fetch(`/api/broadcasts/recipients?businessId=${business.id}`);
+        if (!res.ok) throw new Error('recipients unavailable');
+        const data = await res.json();
+        list = Array.isArray(data.recipients) ? data.recipients : [];
+        setEligibleTruncated(Boolean(data.truncated));
+        setEligibleError(false);
+      } catch {
+        setEligibleError(true);
       }
-      setAvailableTags(Array.from(tagSet).sort());
+      setEligible(list);
+      setContacts(list.map(toBroadcastContact));
+      setAvailableTags(eligibleTags(list));
 
       // Load broadcast history
       const { data: broadcasts } = await supabase
@@ -173,24 +190,24 @@ export default function BroadcastsPage() {
     load();
   }, [business.id, isFreeTier]);
 
-  // Pre-populate recipients from keyword campaign if campaign_id is present
+  // Pre-populate recipients from keyword campaign if campaign_id is present.
+  // Runs once the opted-in list has loaded: only respondents who opted in are kept.
   useEffect(() => {
-    if (!campaignId || isFreeTier) return;
+    if (!campaignId || isFreeTier || !eligible) return;
+    const optedIn = eligible;
     async function loadCampaignRespondents() {
       try {
         const res = await fetch(`/api/keyword-campaigns/${campaignId}/responses?business_id=${business.id}`);
         if (res.ok) {
           const data = await res.json();
           const campaignName = data.campaign_name || 'Unknown Campaign';
-          const respondents: BroadcastContact[] = (data.responses || []).map((r: { phone: string; customer_name: string | null }) => ({
-            phone: r.phone,
-            first_name: r.customer_name?.split(/\s+/)[0] || null,
-            last_name: r.customer_name?.split(/\s+/).slice(1).join(' ') || null,
-            last_interaction: '',
-          }));
-          if (respondents.length > 0) {
-            setContacts(respondents);
-            setCampaignBanner({ name: campaignName, count: respondents.length });
+          const phones: string[] = (data.responses || []).map((r: { phone: string }) => r.phone);
+          if (phones.length > 0) {
+            // One entry per number, so someone who replied twice is counted once.
+            const unique = Array.from(new Map(phones.map(p => [phoneDigits(p), p])).values());
+            const { kept, skipped } = keepEligible(unique, optedIn);
+            setContacts(kept.map(toBroadcastContact));
+            setCampaignBanner({ name: campaignName, count: kept.length, skipped });
           }
         }
       } catch {
@@ -198,67 +215,11 @@ export default function BroadcastsPage() {
       }
     }
     loadCampaignRespondents();
-  }, [campaignId, business.id, isFreeTier]);
+  }, [campaignId, business.id, isFreeTier, eligible]);
 
-  // Load filtered contacts based on audience filters
+  // Narrow the opted-in list with the audience filters (never widens it).
   async function loadFilteredContacts(f: AudienceFilters): Promise<BroadcastContact[]> {
-    const supabase = createClient();
-    let query = supabase
-      .from('customer_profiles')
-      .select('phone, name, tags, total_spent, last_seen_at')
-      .eq('business_id', business.id)
-      .eq('notification_opt_in', true);
-
-    const now = new Date();
-
-    // Preset shortcuts
-    if (f.preset === 'active_30') {
-      const thirtyAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
-      query = query.gte('last_seen_at', thirtyAgo);
-    } else if (f.preset === 'inactive_30') {
-      const thirtyAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
-      query = query.lte('last_seen_at', thirtyAgo);
-    }
-    // high_spenders handled client-side after fetch
-
-    // Custom filters
-    if (f.lastVisit === '7days') {
-      query = query.gte('last_seen_at', new Date(now.getTime() - 7 * 86400000).toISOString());
-    } else if (f.lastVisit === '30days') {
-      query = query.gte('last_seen_at', new Date(now.getTime() - 30 * 86400000).toISOString());
-    } else if (f.lastVisit === '90days') {
-      query = query.gte('last_seen_at', new Date(now.getTime() - 90 * 86400000).toISOString());
-    } else if (f.lastVisit === 'over90') {
-      query = query.lte('last_seen_at', new Date(now.getTime() - 90 * 86400000).toISOString());
-    }
-
-    if (f.minSpend && Number(f.minSpend) > 0) {
-      query = query.gte('total_spent', Number(f.minSpend));
-    }
-
-    if (f.tags.length > 0) {
-      query = query.contains('tags', f.tags);
-    }
-
-    const { data } = await query.order('last_seen_at', { ascending: false });
-
-    let results = (data || []).filter(p => p.phone);
-
-    // High spenders: filter client-side (above average)
-    if (f.preset === 'high_spenders' && results.length > 0) {
-      const avgSpend = results.reduce((s, p) => s + Number(p.total_spent || 0), 0) / results.length;
-      results = results.filter(p => Number(p.total_spent || 0) > avgSpend);
-    }
-
-    return results.map(p => {
-      const parts = (p.name || '').split(/\s+/);
-      return {
-        phone: p.phone,
-        first_name: parts[0] || null,
-        last_name: parts.slice(1).join(' ') || null,
-        last_interaction: p.last_seen_at || '',
-      };
-    });
+    return filterEligibleAudience(eligible || [], f).map(toBroadcastContact);
   }
 
   async function applyFilters(f: AudienceFilters) {
@@ -293,27 +254,27 @@ export default function BroadcastsPage() {
   function handlePasteImport() {
     if (!pasteInput.trim()) return;
     const lines = pasteInput.split(/[,\n]+/).map(l => l.trim()).filter(Boolean);
-    const existing = new Set(contacts.map(c => c.phone));
-    const newContacts: BroadcastContact[] = [];
+    const phones: string[] = [];
     for (const line of lines) {
       // Support "phone" or "phone name" or "name phone" formats
       const parts = line.split(/\s+/);
       const phonePart = parts.find(p => /^\+?\d[\d\s-]{6,}$/.test(p.replace(/[\s-]/g, '')));
       const phone = (phonePart || parts[0]).replace(/[\s-]/g, '');
-      if (!phone || existing.has(phone)) continue;
-      existing.add(phone);
-      const nameParts = parts.filter(p => p !== phonePart);
-      newContacts.push({
-        phone,
-        first_name: nameParts[0] || null,
-        last_name: nameParts.slice(1).join(' ') || null,
-        last_interaction: '',
-      });
+      if (phone) phones.push(phone);
     }
+    addImported(phones);
+    setPasteInput('');
+  }
+
+  // Imported numbers join the audience only if that person opted in; the rest are counted as skipped.
+  function addImported(phones: string[]) {
+    const { kept, skipped } = keepEligible(phones, eligible || []);
+    const existing = new Set(contacts.map(c => c.phone));
+    const newContacts = kept.filter(c => !existing.has(c.phone)).map(toBroadcastContact);
     setContacts(prev => [...prev, ...newContacts]);
     setImportCount(newContacts.length);
-    setPasteInput('');
-    setTimeout(() => setImportCount(null), 3000);
+    setImportSkipped(skipped);
+    setTimeout(() => { setImportCount(null); setImportSkipped(0); }, 3000);
   }
 
   function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -324,26 +285,15 @@ export default function BroadcastsPage() {
       const text = ev.target?.result as string;
       if (!text) return;
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      const existing = new Set(contacts.map(c => c.phone));
-      const newContacts: BroadcastContact[] = [];
+      const phones: string[] = [];
       // Skip header if it looks like one
       const start = /phone/i.test(lines[0]) ? 1 : 0;
       for (let i = start; i < lines.length; i++) {
         const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
         const phone = (cols[0] || '').replace(/[\s-]/g, '');
-        if (!phone || existing.has(phone)) continue;
-        existing.add(phone);
-        const nameParts = (cols[1] || '').split(/\s+/);
-        newContacts.push({
-          phone,
-          first_name: nameParts[0] || null,
-          last_name: nameParts.slice(1).join(' ') || null,
-          last_interaction: '',
-        });
+        if (phone) phones.push(phone);
       }
-      setContacts(prev => [...prev, ...newContacts]);
-      setImportCount(newContacts.length);
-      setTimeout(() => setImportCount(null), 3000);
+      addImported(phones);
     };
     reader.readAsText(file);
     // Reset input so same file can be re-uploaded
@@ -627,6 +577,11 @@ export default function BroadcastsPage() {
               </svg>
               <p className="text-sm text-gray-700 dark:text-gray-300">
                 Sending to <span className="font-semibold">{campaignBanner.count}</span> respondent{campaignBanner.count !== 1 ? 's' : ''} from campaign: <span className="font-semibold">{campaignBanner.name}</span>
+                {campaignBanner.skipped > 0 && (
+                  <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">
+                    {skippedNote(campaignBanner.skipped, 'respondent', eligibleTruncated)}
+                  </span>
+                )}
               </p>
               <button
                 onClick={() => setCampaignBanner(null)}
@@ -726,6 +681,11 @@ export default function BroadcastsPage() {
                           <p className="text-xs font-medium text-green-700 dark:text-green-400">
                             Added {importCount} contact{importCount !== 1 ? 's' : ''}
                           </p>
+                          {importSkipped > 0 && (
+                            <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+                              {skippedNote(importSkipped, 'number', eligibleTruncated)}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -774,7 +734,9 @@ export default function BroadcastsPage() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {previewLoading ? 'Counting...' : `Sending to ${contacts.length} recipient${contacts.length !== 1 ? 's' : ''}`}
+                    {eligible === null || previewLoading ? 'Counting...'
+                      : nobodyOptedIn ? 'No one has opted in yet'
+                      : `Sending to ${contacts.length} recipient${contacts.length !== 1 ? 's' : ''}`}
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
                     {filters.preset === 'all' ? 'Everyone who opted in' :
@@ -907,10 +869,20 @@ export default function BroadcastsPage() {
                 )}
               </div>
 
-              {contacts.length === 0 && (
+              {eligibleTruncated && (
+                <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                  Showing the first {eligible?.length ?? 0} people who opted in.
+                </p>
+              )}
+
+              {eligible !== null && contacts.length === 0 && (
                 <div className="mt-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
                   <p className="text-sm text-amber-700 dark:text-amber-400">
-                    No contacts match this filter. Try broadening your criteria.
+                    {eligibleError
+                      ? "We couldn't check who has opted in, so there is no one to send to right now. Refresh the page to try again."
+                      : nobodyOptedIn
+                        ? "No one has opted in yet. Customers can opt in from your forms or by tapping 'Get updates' in WhatsApp."
+                        : 'No contacts match this filter. Try broadening your criteria.'}
                   </p>
                 </div>
               )}

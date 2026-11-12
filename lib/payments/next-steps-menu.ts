@@ -23,22 +23,12 @@ export function buildPaymentNextStepsButtons(kind: string, shared: boolean, lang
   return buttons;
 }
 
-/** Confirmation statuses that mean Stage 3 handed the confirmation (and its menu) to Meta. */
-const HANDED_TO_META = ['accepted', 'sent', 'delivered', 'read'];
-
-/**
- * True when Stage 3 sent this chat payment's confirmation, and so its next-steps
- * menu, during the current chat request (accepted at or after `sinceIso`). That
- * is the "I've Paid" tap that ran Stage 3 synchronously: the chat then skips its
- * own menu so the customer gets one, not two. A confirmation accepted earlier
- * (the webhook got there first) returns false, so a later tap still gets the
- * chat's reply and menu. Any lookup failure returns false: two menus beat none.
- */
+/** True when durable Stage 3 follow-ups own this payment, including pending PIN/opt-in. */
 export async function paymentNextStepsMenuSent(
   supabase: SupabaseClient,
   businessId: string,
   sessionData: Record<string, unknown>,
-  sinceIso: string,
+  _sinceIso: string,
 ): Promise<boolean> {
   try {
     const savedCardPaymentId = typeof sessionData._saved_card_payment_id === 'string' && sessionData._saved_card_payment_id
@@ -54,20 +44,19 @@ export async function paymentNextStepsMenuSent(
       .eq('business_id', businessId)
       .eq(savedCardPaymentId ? 'id' : 'gateway_reference', savedCardPaymentId ?? reference)
       .maybeSingle();
-    if (paymentError) return false;
+    if (paymentError) return true;
     const paymentId = (payment?.id as string | undefined) ?? null;
     if (!paymentId) return false;
 
     const { data, error } = await supabase
-      .from('payment_confirmation_deliveries')
+      .from('transaction_followups')
       .select('id')
       .eq('payment_id', paymentId)
-      .in('delivery_status', HANDED_TO_META)
-      .gte('accepted_at', sinceIso)
+      .eq('business_id', businessId)
       .limit(1);
-    if (error) return false;
+    if (error) return true;
     return Array.isArray(data) && data.length > 0;
   } catch {
-    return false;
+    return true;
   }
 }

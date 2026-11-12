@@ -20,7 +20,8 @@ const MIGRATION = /^supabase\/migrations\/(([0-9]{3})[a-z]?_[a-z0-9_]+)\.sql$/;
 
 export function loadLock(text = readFileSync(here('./lock.json'), 'utf8')) {
   let lock; try { lock = JSON.parse(text); } catch { fail('Release lock is not valid JSON'); }
-  if (!exactKeys(lock, ['schema_version', 'bootstrap_migration', 'certified', 'catalog_query_sha256', 'ledger_query_sha256', 'environments', 'observed', 'reviewed_prs'])
+  const keys = ['schema_version', 'bootstrap_migration', 'certified', 'catalog_query_sha256', 'ledger_query_sha256', 'environments', 'observed', 'reviewed_prs'];
+  if (!(exactKeys(lock, keys) || exactKeys(lock, [...keys, 'recertified']))
     || lock.schema_version !== 1 || !/^[0-9]{3}_[a-z0-9_]+\.sql$/.test(lock.bootstrap_migration || '')
     || !exactKeys(lock.certified, ['merchant', 'admin']) || !SHA.test(lock.certified.merchant) || !SHA.test(lock.certified.admin)
     || lock.catalog_query_sha256 !== CATALOG_QUERY_SHA256 || lock.ledger_query_sha256 !== LEDGER_QUERY_SHA256
@@ -30,6 +31,14 @@ export function loadLock(text = readFileSync(here('./lock.json'), 'utf8')) {
       || !exactKeys(env.catalog, ['count', 'sha256']) || !Number.isSafeInteger(env.catalog.count) || !HASH.test(env.catalog.sha256)
       || !exactKeys(env.ledger, ['count', 'sha256']) || !Number.isSafeInteger(env.ledger.count) || !HASH.test(env.ledger.sha256)
       || !(env.catalog_map === null || env.catalog_map === `scripts/release-v3/lock-catalog-${name}.json`)) fail(`Release lock entry for ${name} is invalid`);
+  }
+  // Optional re-certification of the last release's deployments (docs: "Recovery").
+  if ('recertified' in lock) {
+    const re = lock.recertified;
+    if (!exactKeys(re, ['after_deploy_run', 'sha', 'merchant_deployment_sha256', 'admin_deployment_sha256', 'reason'])
+      || !Number.isSafeInteger(re.after_deploy_run) || re.after_deploy_run <= 0 || !SHA.test(re.sha)
+      || !HASH.test(re.merchant_deployment_sha256) || !HASH.test(re.admin_deployment_sha256)
+      || typeof re.reason !== 'string' || !re.reason.trim() || re.reason.length > 500) fail('Release lock re-certification is invalid');
   }
   if (!lock.reviewed_prs || typeof lock.reviewed_prs !== 'object' || Object.entries(lock.reviewed_prs).some(([n, sha]) => !/^[1-9][0-9]*$/.test(n) || !SHA.test(sha))) fail('Release lock review records are invalid');
   return lock;

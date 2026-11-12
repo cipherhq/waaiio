@@ -1,4 +1,6 @@
 'use client';
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+import { buildReceiptTax } from '@/lib/tax/receipt';
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
@@ -21,6 +23,7 @@ interface InvoiceData {
   customer_address: string | null;
   status: string;
   subtotal: number;
+  tax_snapshot?: TaxSnapshot | null;
   tax_rate: number;
   tax_amount: number;
   discount_type: string | null;
@@ -250,16 +253,19 @@ export default function InvoicePage() {
           {/* Totals */}
           <div className="border-t border-gray-100 px-5 py-4 space-y-1">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Subtotal</span>
-              <span className="text-gray-700">{formatAmount(invoice.subtotal, invoice.currency)}</span>
+              <span className="text-gray-500">{invoice.tax_snapshot ? 'Before tax (after discounts)' : 'Subtotal'}</span>
+              <span className="text-gray-700">{formatAmount(invoice.tax_snapshot ? invoice.tax_snapshot.netAmount / 100 : invoice.subtotal, invoice.currency)}</span>
             </div>
-            {invoice.tax_rate > 0 && (
+            {invoice.tax_snapshot && buildReceiptTax({ snapshot: invoice.tax_snapshot }, 0).groups.map(group => (
+              <div key={group.label} className="mt-1 flex justify-between text-sm"><span>{group.label}</span><span>{formatAmount(group.taxAmount, invoice.currency)}</span></div>
+            ))}
+            {!invoice.tax_snapshot && invoice.tax_rate > 0 && (
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">Tax ({invoice.tax_rate}%)</span>
                 <span className="text-gray-700">{formatAmount(invoice.tax_amount, invoice.currency)}</span>
               </div>
             )}
-            {invoice.discount_amount > 0 && (
+            {!invoice.tax_snapshot && invoice.discount_amount > 0 && (
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">
                   Discount {invoice.discount_type === 'percent' ? `(${invoice.discount_value}%)` : ''}

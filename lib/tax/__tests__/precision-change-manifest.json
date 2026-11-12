@@ -1,0 +1,167 @@
+{
+  "columns": {
+    "payments": [
+      "amount",
+      "gateway_fee",
+      "verified_gateway_fee",
+      "gateway_fee_claim_snapshot"
+    ],
+    "platform_fees": [
+      "transaction_amount",
+      "fee_total",
+      "fee_flat",
+      "gateway_fee",
+      "reseller_commission"
+    ],
+    "orders": [
+      "total_amount",
+      "platform_fee",
+      "discount_amount",
+      "shipping_cost",
+      "addons_total",
+      "volume_discount_amount",
+      "deposit_amount",
+      "balance_amount"
+    ],
+    "bookings": [
+      "deposit_amount",
+      "total_amount",
+      "platform_fee",
+      "discount_amount"
+    ],
+    "order_items": [
+      "unit_price"
+    ],
+    "quote_requests": [
+      "estimated_subtotal",
+      "quoted_amount"
+    ],
+    "payment_spend_applications": [
+      "amount"
+    ],
+    "payment_visit_applications": [
+      "visit_amount"
+    ]
+  },
+  "functions": [
+    {
+      "schema": "private",
+      "name": "scheduling_604_create_booking",
+      "before": "private.scheduling_604_create_booking(jsonb,text,uuid)",
+      "after": "private.scheduling_604_create_booking(jsonb,text,uuid)",
+      "dropsOld": false
+    },
+    {
+      "schema": "private",
+      "name": "scheduling_604_quote",
+      "before": "private.scheduling_604_quote(uuid,uuid,uuid,integer,jsonb,uuid,jsonb)",
+      "after": "private.scheduling_604_quote(uuid,uuid,uuid,integer,jsonb,uuid,jsonb)",
+      "dropsOld": false
+    },
+    {
+      "schema": "public",
+      "name": "apply_payment_customer_visit_once",
+      "before": "public.apply_payment_customer_visit_once(uuid)",
+      "after": "public.apply_payment_customer_visit_once(uuid)",
+      "dropsOld": false
+    },
+    {
+      "schema": "public",
+      "name": "book_manual_slot_authoritative_604",
+      "before": "public.book_manual_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,integer,integer,uuid,uuid,jsonb)",
+      "after": "public.book_manual_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,numeric,text,integer,integer,uuid,uuid,jsonb)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "book_slot_authoritative_604",
+      "before": "public.book_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer,jsonb)",
+      "after": "public.book_slot_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,numeric,text,text,text,text,text,text,text,date,jsonb,uuid,numeric,text,uuid,uuid,integer,integer,uuid,uuid,numeric,numeric,jsonb)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "book_with_package_authoritative_604",
+      "before": "public.book_with_package_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,uuid,jsonb)",
+      "after": "public.book_with_package_authoritative_604(uuid,uuid,uuid,uuid,date,text,integer,integer,text,numeric,text,text,text,text,text,text,text,date,jsonb,uuid,numeric,text,uuid,uuid,integer,integer,uuid,uuid,uuid,jsonb)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "claim_payment_finalization_with_verified_fee",
+      "before": "public.claim_payment_finalization_with_verified_fee(uuid,text,text,numeric,text,boolean,numeric)",
+      "after": "public.claim_payment_finalization_with_verified_fee(uuid,text,text,numeric,text,boolean,numeric)",
+      "dropsOld": false
+    },
+    {
+      "schema": "public",
+      "name": "confirm_nonorder_transfer_atomic",
+      "before": "public.confirm_nonorder_transfer_atomic(uuid,uuid,uuid,boolean)",
+      "after": "public.confirm_nonorder_transfer_atomic(uuid,uuid,uuid,boolean)",
+      "dropsOld": false
+    },
+    {
+      "schema": "public",
+      "name": "create_catalog_order_atomic",
+      "before": "public.create_catalog_order_atomic(uuid,uuid,text,text,text,jsonb)",
+      "after": "public.create_catalog_order_atomic(uuid,uuid,text,text,text,jsonb)",
+      "dropsOld": false
+    },
+    {
+      "schema": "public",
+      "name": "create_order_atomic",
+      "before": "public.create_order_atomic(uuid,uuid,uuid,text,text,text,integer,integer,integer,uuid,text,text,uuid,text,integer,integer,text,text,text,text,jsonb,uuid,boolean,integer)",
+      "after": "public.create_order_atomic(uuid,uuid,uuid,text,text,text,numeric,numeric,numeric,uuid,text,text,uuid,text,numeric,numeric,text,text,text,text,jsonb,uuid,boolean,numeric)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "book_slot_atomic",
+      "before": "public.book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer)",
+      "after": "public.book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,numeric,text,text,text,text,text,text,text,date,jsonb,uuid,numeric,text,uuid,uuid,integer,integer,uuid,uuid,numeric,numeric)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "get_business_revenue",
+      "before": "public.get_business_revenue(uuid)",
+      "after": "public.get_business_revenue(uuid)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "get_business_revenue_totals",
+      "before": "public.get_business_revenue_totals(uuid)",
+      "after": "public.get_business_revenue_totals(uuid)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "get_business_transactions",
+      "before": "public.get_business_transactions(uuid,integer,integer)",
+      "after": "public.get_business_transactions(uuid,integer,integer)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "get_customer_history",
+      "before": "public.get_customer_history(uuid,uuid,integer)",
+      "after": "public.get_customer_history(uuid,uuid,integer)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "get_order_revenue",
+      "before": "public.get_order_revenue(uuid)",
+      "after": "public.get_order_revenue(uuid)",
+      "dropsOld": true
+    },
+    {
+      "schema": "public",
+      "name": "accept_order_quote_atomic",
+      "before": "public.accept_order_quote_atomic(uuid,text)",
+      "after": "public.accept_order_quote_atomic(uuid,text)",
+      "dropsOld": false
+    }
+  ]
+}

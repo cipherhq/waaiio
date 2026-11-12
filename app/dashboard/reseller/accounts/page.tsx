@@ -35,12 +35,6 @@ const CATEGORY_OPTIONS = [
   { group: 'Education & Training', items: ['school', 'tutor', 'driving_school', 'language_school', 'training_academy', 'daycare'] },
 ];
 
-const TIER_OPTIONS = [
-  { value: 'free', label: 'Free' },
-  { value: 'growth', label: 'Growth (Pro)' },
-  { value: 'business', label: 'Business (Premium)' },
-];
-
 const COUNTRY_OPTIONS = [
   { value: 'US', label: 'United States' },
   { value: 'CA', label: 'Canada' },
@@ -146,7 +140,6 @@ export default function ResellerAccountsPage() {
         category: form.category,
         email: form.email.trim(),
         country_code: form.country_code,
-        subscription_tier: form.subscription_tier,
       };
 
       if (editingId) {
@@ -309,20 +302,6 @@ export default function ResellerAccountsPage() {
                   >
                     {COUNTRY_OPTIONS.map((c) => (
                       <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Tier
-                  </label>
-                  <select
-                    value={form.subscription_tier}
-                    onChange={(e) => setForm({ ...form, subscription_tier: e.target.value })}
-                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
-                  >
-                    {TIER_OPTIONS.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>
                 </div>

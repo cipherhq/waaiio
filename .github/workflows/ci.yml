@@ -81,7 +81,8 @@ jobs:
           test -f scripts/__tests__/release-v3-classify.test.ts
           test -f scripts/__tests__/release-v3-admission.test.ts
           test -f scripts/__tests__/release-v3-gate.test.ts
-          npm run test -- --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/legacy-accounting-hold.pg.test.ts --exclude lib/__tests__/recurring-payment-provenance.pg.test.ts --exclude lib/__tests__/accounting-migration-installation.pg.test.ts --exclude lib/__tests__/recurring-cancellation-503.pg.test.ts --exclude lib/__tests__/party-slug-foundation-504.pg.test.ts --exclude lib/__tests__/full-release-additive-506.pg.test.ts --exclude lib/__tests__/subscription-owner-downgrade.pg.test.ts --exclude lib/__tests__/first-shared-assignment-507.pg.test.ts --exclude lib/__tests__/business-control-columns-508.pg.test.ts --exclude lib/__tests__/table-keyword-whole-word-509.pg.test.ts --exclude lib/__tests__/table-overnight-510.pg.test.ts --exclude lib/__tests__/party-seating-by-tag-514.pg.test.ts --exclude lib/__tests__/profile-consent-preferences-515.pg.test.ts --exclude lib/__tests__/seating-resource-gallery-516.pg.test.ts --exclude lib/__tests__/form-sends-517.pg.test.ts --exclude lib/__tests__/payout-covered-range-521.pg.test.ts --exclude lib/__tests__/property-stay-no-overlap-522.pg.test.ts --exclude lib/__tests__/public-views-security-invoker-523.pg.test.ts --exclude lib/__tests__/scheduling-price-authority-604.pg.test.ts --exclude lib/__tests__/party-tables-grants-519.pg.test.ts --exclude lib/__tests__/api-key-dml-lockdown-520.pg.test.ts --exclude lib/__tests__/business-upload-paths-878.pg.test.ts --exclude scripts/__tests__/release-v3-observer.pg.test.ts
+          test -f scripts/__tests__/release-v3-oracle-accounting.test.ts
+          npm run test -- --exclude lib/__tests__/saved-card-shared-routing.pg.test.ts --exclude lib/tax/__tests__/purchase-lifecycle.pg.test.ts --exclude lib/tax/__tests__/precision-db.test.ts --exclude lib/tax/__tests__/finance-authority-db.test.ts --exclude lib/tax/__tests__/invoice-authority.pg.test.ts --exclude lib/tax/__tests__/sql-calculation-authority.pg.test.ts --exclude lib/tax/__tests__/sql-calculation.pg.test.ts --exclude lib/__tests__/channel-number-continuity.pg.test.ts --exclude lib/__tests__/legacy-accounting-hold.pg.test.ts --exclude lib/__tests__/recurring-payment-provenance.pg.test.ts --exclude lib/__tests__/accounting-migration-installation.pg.test.ts --exclude lib/__tests__/recurring-cancellation-503.pg.test.ts --exclude lib/__tests__/party-slug-foundation-504.pg.test.ts --exclude lib/__tests__/full-release-additive-506.pg.test.ts --exclude lib/__tests__/subscription-owner-downgrade.pg.test.ts --exclude lib/__tests__/first-shared-assignment-507.pg.test.ts --exclude lib/__tests__/business-control-columns-508.pg.test.ts --exclude lib/__tests__/table-keyword-whole-word-509.pg.test.ts --exclude lib/__tests__/table-overnight-510.pg.test.ts --exclude lib/__tests__/party-seating-by-tag-514.pg.test.ts --exclude lib/__tests__/profile-consent-preferences-515.pg.test.ts --exclude lib/__tests__/seating-resource-gallery-516.pg.test.ts --exclude lib/__tests__/form-sends-517.pg.test.ts --exclude lib/__tests__/payout-covered-range-521.pg.test.ts --exclude lib/__tests__/property-stay-no-overlap-522.pg.test.ts --exclude lib/__tests__/public-views-security-invoker-523.pg.test.ts --exclude lib/__tests__/resellers-own-record-read-only-524.pg.test.ts --exclude lib/__tests__/feature-trial-clock-525.pg.test.ts --exclude lib/__tests__/booking-intakes-526.pg.test.ts --exclude lib/__tests__/shared-channel-has-no-owner-527.pg.test.ts --exclude lib/__tests__/scheduling-price-authority-604.pg.test.ts --exclude lib/__tests__/party-tables-grants-519.pg.test.ts --exclude lib/__tests__/api-key-dml-lockdown-520.pg.test.ts --exclude lib/__tests__/business-upload-paths-878.pg.test.ts --exclude scripts/__tests__/release-v3-observer.pg.test.ts --exclude scripts/__tests__/release-v3-catalog-scope.pg.test.ts
 
       - name: Build
         env:
@@ -246,12 +247,15 @@ jobs:
   # ── Admin Application ──
   admin-app:
     name: Admin App (install, build)
-    # Pin to ubuntu-24.04: Playwright 1.59.1 cannot install Chromium on ubuntu-latest (26.04).
-    # Remove this pin after upgrading Playwright to a version that supports 26.04.
     runs-on: ubuntu-24.04
+    # Match admin/package-lock.json; browsers and OS dependencies are preinstalled.
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --ipc=host
 
     defaults:
       run:
+        shell: bash
         working-directory: admin
 
     steps:
@@ -268,8 +272,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium --with-deps
+      - name: Verify preinstalled Playwright Chromium
+        run: |
+          node -e "const assert = require('node:assert/strict'); assert.equal(require('playwright/package.json').version, '1.59.1', 'Update the Playwright container to match the lockfile'); assert.ok(require('node:fs').existsSync(require('playwright').chromium.executablePath()), 'Preinstalled Chromium is missing')"
 
       - name: Run tests
         run: npm test
@@ -4477,11 +4482,59 @@ jobs:
         run: npm ci
       - name: Verify PostgreSQL client
         run: psql --version
+      - name: Transaction follow-up sequencing and cancellation proof (M534, PostgreSQL 17)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          test -f scripts/tests/transaction-followups-db.py
+          python3 scripts/tests/transaction-followups-db.py > transaction-followups-db.json
+          cat transaction-followups-db.json
+          python3 - <<'PY'
+          import json
+          with open('transaction-followups-db.json') as source:
+              result = json.load(source)
+          expected = {'postgres_major': 17, 'checks_passed': 26, 'checks_failed': 0, 'checks_skipped': 0}
+          if any(result.get(key) != value for key, value in expected.items()):
+              raise SystemExit('Expected PostgreSQL 17 and exactly 26 passed, 0 failed, 0 skipped checks')
+          print('M534 transaction follow-up SQL proof: 26 passed, 0 failed, 0 skipped')
+          PY
       - name: Regenerate and compare catalog deltas
         env:
           ORACLE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
           ORACLE_OUTPUT_DIR: oracle-output
         run: node scripts/release-v3/catalog-oracle.mjs check
+      - name: Full-schema merchant tax purchase lifecycle (real PostgreSQL 17)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          TAX_LIFECYCLE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_tax_lifecycle_test
+          REQUIRE_TAX_PG_TESTS: 'true'
+        run: |
+          set -euo pipefail
+          test -f lib/tax/__tests__/purchase-lifecycle.pg.test.ts
+          export TESTED_COMMIT_SHA=$(git rev-parse HEAD)
+          createdb --template=waaiio_release_oracle waaiio_tax_lifecycle_test
+          npx vitest run lib/tax/__tests__/purchase-lifecycle.pg.test.ts --testTimeout=30000 --reporter=verbose --reporter=json --outputFile.json=purchase-lifecycle.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('purchase-lifecycle.json', 'utf8'));
+          const tests = report.testResults.flatMap(suite => suite.assertionResults || []);
+          if (!report.success || tests.length !== 11 || tests.some(test => test.status !== 'passed') || report.numPendingTests || report.numFailedTests) throw new Error('Expected all eleven full-schema custody lifecycle tests to pass without skips');
+          const receipt = { sha: process.env.TESTED_COMMIT_SHA, file: 'lib/tax/__tests__/purchase-lifecycle.pg.test.ts', passed: tests.length, skipped: 0, database: 'full migration-replayed disposable PostgreSQL17', provider: 'synthetic verified-evidence boundary; no network calls' };
+          fs.writeFileSync('purchase-lifecycle.receipt.json', JSON.stringify(receipt, null, 2));
+          console.log(JSON.stringify(receipt));
+          NODE
+      - name: Upload full-schema tax lifecycle receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: purchase-lifecycle-pg17-receipts
+          path: purchase-lifecycle*.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Release observer role proof (real PostgreSQL 17)
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
@@ -4490,6 +4543,14 @@ jobs:
           test -f scripts/__tests__/release-v3-observer.pg.test.ts
           npx vitest run scripts/__tests__/release-v3-observer.pg.test.ts --reporter=json --outputFile=observer.json
           node -e "const r=require('./observer.json');if(r.numTotalTests!==10||r.numPassedTests!==10||r.numPendingTests||r.numTodoTests||r.numFailedTests){console.error('Expected 10 passed, 0 skipped');process.exit(1)}console.log('release_observer proof: 10 passed, 0 skipped (incl. replica-only guard)')"
+      - name: Catalog scope proof for M523 objects (#929, real PostgreSQL 17)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          test -f scripts/__tests__/release-v3-catalog-scope.pg.test.ts
+          npx vitest run scripts/__tests__/release-v3-catalog-scope.pg.test.ts --reporter=json --outputFile=catalog-scope.json
+          node -e "const r=require('./catalog-scope.json');if(r.numTotalTests!==12||r.numPassedTests!==12||r.numPendingTests||r.numTodoTests||r.numFailedTests){console.error('Expected 12 passed, 0 skipped');process.exit(1)}console.log('catalog scope proof: 12 passed, 0 skipped')"
       - name: Upload generated oracle files
         if: failure()
         uses: actions/upload-artifact@v4
@@ -4502,18 +4563,20 @@ jobs:
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
-    needs: [migration-shard-a, migration-shard-b, catalog-oracle]
+    needs: [migration-shard-a, migration-shard-b, catalog-oracle, merchant-tax-postgres-tests]
     if: always()
     steps:
       - name: Check shard results
         run: |
           if [ "${{ needs.migration-shard-a.result }}" != "success" ] || \
              [ "${{ needs.migration-shard-b.result }}" != "success" ] || \
-             [ "${{ needs.catalog-oracle.result }}" != "success" ]; then
+             [ "${{ needs.catalog-oracle.result }}" != "success" ] || \
+             [ "${{ needs.merchant-tax-postgres-tests.result }}" != "success" ]; then
             echo "❌ One or more migration checks failed."
             echo "Shard A: ${{ needs.migration-shard-a.result }}"
             echo "Shard B: ${{ needs.migration-shard-b.result }}"
             echo "Catalog oracle (PG17): ${{ needs.catalog-oracle.result }}"
+            echo "Merchant tax authority (PG17): ${{ needs.merchant-tax-postgres-tests.result }}"
             exit 1
           fi
           echo "All migration shards and the catalog oracle passed"
@@ -4545,8 +4608,15 @@ jobs:
   # ── Playwright Smoke Tests ──
   playwright:
     name: Playwright smoke tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: main-app
+    # Match package-lock.json; avoid runtime apt downloads during browser setup.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
 
     env:
       # Dummy Supabase URL matching CSP connect-src pattern (*.supabase.co).
@@ -4582,8 +4652,9 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npx next build
 
-      - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
+      - name: Verify preinstalled Playwright Chromium
+        run: |
+          node -e "const assert = require('node:assert/strict'); assert.equal(require('playwright/package.json').version, '1.61.1', 'Update the Playwright container to match the lockfile'); assert.ok(require('node:fs').existsSync(require('playwright').chromium.executablePath()), 'Preinstalled Chromium is missing')"
 
       - name: Guard — no dangerous secrets in Playwright environment
         run: |
@@ -4812,7 +4883,8 @@ jobs:
           set -uo pipefail
 
           # Discover files
-          mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f | sort)
+          mapfile -t PG_FILES < <(find lib -name '*.pg.test.ts' -type f ! -path 'lib/tax/__tests__/purchase-lifecycle.pg.test.ts' ! -path 'lib/tax/__tests__/precision-db.test.ts' ! -path 'lib/tax/__tests__/finance-authority-db.test.ts' ! -path 'lib/tax/__tests__/invoice-authority.pg.test.ts' ! -path 'lib/tax/__tests__/sql-calculation-authority.pg.test.ts' ! -path 'lib/tax/__tests__/sql-calculation.pg.test.ts' | sort)
+          test -f lib/__tests__/saved-card-shared-routing.pg.test.ts || exit 1
           test -f lib/__tests__/accounting-migration-installation.pg.test.ts || exit 1
           test -f lib/__tests__/recurring-cancellation-503.pg.test.ts || exit 1
           test -f lib/__tests__/party-slug-foundation-504.pg.test.ts || exit 1
@@ -4833,6 +4905,10 @@ jobs:
           test -f lib/__tests__/payout-covered-range-521.pg.test.ts || exit 1
           test -f lib/__tests__/property-stay-no-overlap-522.pg.test.ts || exit 1
           test -f lib/__tests__/public-views-security-invoker-523.pg.test.ts || exit 1
+          test -f lib/__tests__/resellers-own-record-read-only-524.pg.test.ts || exit 1
+          test -f lib/__tests__/feature-trial-clock-525.pg.test.ts || exit 1
+          test -f lib/__tests__/booking-intakes-526.pg.test.ts || exit 1
+          test -f lib/__tests__/shared-channel-has-no-owner-527.pg.test.ts || exit 1
           PG_COUNT=${#PG_FILES[@]}
           printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/legacy-accounting-hold.pg.test.ts' >/dev/null || { echo 'Missing required accounting-hold SQL proof'; exit 1; }
           printf '%s\n' "${PG_FILES[@]}" | grep -Fx 'lib/__tests__/recurring-payment-provenance.pg.test.ts' >/dev/null || { echo 'Missing required recurring payment provenance SQL proof'; exit 1; }
@@ -5087,3 +5163,90 @@ jobs:
             exit 1
           fi
           grep -qE 'Tests.*[1-9][0-9]* passed' /tmp/admin-business-save-tests.log
+
+  merchant-tax-postgres-tests:
+    name: Merchant tax authority (disposable PG17, zero skips)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: tax_test_only_ephemeral
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: tax_test_only_ephemeral
+      REQUIRE_PG_TESTS: 'true'
+      REQUIRE_TAX_PG_TESTS: 'true'
+      TEST_DATABASE_URL: postgresql://postgres:tax_test_only_ephemeral@localhost:5432/waaiio_tax_test
+      TAX_PRECISION_TEST_DATABASE_URL: postgresql://postgres:tax_test_only_ephemeral@localhost:5432/waaiio_tax_precision_test
+      TAX_FINANCE_TEST_DATABASE_URL: postgresql://postgres:tax_test_only_ephemeral@localhost:5432/waaiio_tax_finance_test
+      TAX_AUTHORITY_TEST_DATABASE_URL: postgresql://postgres:tax_test_only_ephemeral@localhost:5432/waaiio_tax_authority_test
+      TAX_INVOICE_TEST_DATABASE_URL: postgresql://postgres:tax_test_only_ephemeral@localhost:5432/waaiio_tax_invoice_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+      - run: npm ci
+      - name: Create isolated tax test databases
+        run: |
+          set -euo pipefail
+          version=$(psql -d postgres -Atc 'SHOW server_version_num')
+          test "$version" -ge 170000 && test "$version" -lt 180000
+          psql -d postgres -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
+          for database in waaiio_tax_test waaiio_tax_precision_test waaiio_tax_finance_test waaiio_tax_authority_test waaiio_tax_invoice_test; do
+            createdb "$database"
+          done
+      - name: Execute each required tax SQL suite and verify zero skipped tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          TESTED_COMMIT_SHA=$(git rev-parse HEAD)
+          mkdir -p tax-test-results
+          files=(
+            lib/tax/__tests__/precision-db.test.ts
+            lib/tax/__tests__/finance-authority-db.test.ts
+            lib/tax/__tests__/invoice-authority.pg.test.ts
+            lib/tax/__tests__/sql-calculation-authority.pg.test.ts
+            lib/tax/__tests__/sql-calculation.pg.test.ts
+          )
+          for file in "${files[@]}"; do
+            test -f "$file"
+            report="tax-test-results/$(basename "$file").json"
+            npx vitest run "$file" --testTimeout=30000 --reporter=verbose --reporter=json --outputFile.json="$report"
+            node - "$report" "$file" "$TESTED_COMMIT_SHA" <<'NODE'
+          const fs = require('node:fs');
+          const [report, file, sha] = process.argv.slice(2);
+          const result = JSON.parse(fs.readFileSync(report, 'utf8'));
+          const tests = result.testResults.flatMap(suite => suite.assertionResults || []);
+          if (!result.success || !tests.length || result.numFailedTests !== 0 || result.numPendingTests !== 0
+              || tests.some(test => test.status !== 'passed')) {
+            throw new Error(`Required tax SQL suite failed or skipped tests: ${file}`);
+          }
+          const receipt = { sha, file, passed: tests.length, skipped: 0, database: 'disposable PostgreSQL 17' };
+          fs.writeFileSync(report + '.receipt.json', JSON.stringify(receipt, null, 2));
+          console.log(JSON.stringify(receipt));
+          NODE
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merchant-tax-pg17-test-receipts
+          path: tax-test-results
+          if-no-files-found: error
+          retention-days: 7

@@ -1,6 +1,6 @@
 {
  "environment": "production",
- "lock_catalog_sha256": "21d2db2a7c68ddcd6027b4a6bf142685b001b136e248aa9aa0e7fe5ae36ee72c",
+ "lock_catalog_sha256": "a30411a6da256d29d86304576d40249ae288daf94f9f12d300128604c587bd3e",
  "objects": {
   "column:public.admin_audit_logs.action": "383131652a456d5c6979b552f66d992cdb29081cd94fe097a57a0637f4ed8e17",
   "column:public.admin_audit_logs.actor_id": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
@@ -5943,7 +5943,7 @@
   "table:public.business_payouts": "87a3078bd0c1d9cae46e28a78159304c3b5039ba9bdb4f88bc68473105bcadbb",
   "table:public.business_staff": "58f298d35890beb3fa64dd4ee7e77457da449dd814e7cbc8880daf76d31fb637",
   "table:public.businesses": "b55cb9c6966352fd169479ee58add290b62e0bb8a8d3ede0474acbd07a3c803c",
-  "table:public.businesses_public": "ddd86a5e93a911db6ab36e4c0726caea05ff58f2888a2d6dc4c1dd0a8e586952",
+  "table:public.businesses_public": "edbe0859114893f1f03ba14f07d78a50c207a6fc30c796829b6aa7b34ceb48bf",
   "table:public.campaign_donations": "58f298d35890beb3fa64dd4ee7e77457da449dd814e7cbc8880daf76d31fb637",
   "table:public.campaigns": "58f298d35890beb3fa64dd4ee7e77457da449dd814e7cbc8880daf76d31fb637",
   "table:public.canned_responses": "58f298d35890beb3fa64dd4ee7e77457da449dd814e7cbc8880daf76d31fb637",
@@ -6130,7 +6130,7 @@
   "table:public.whatsapp_channel_candidates": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
   "table:public.whatsapp_channel_secrets": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
   "table:public.whatsapp_channels": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
-  "table:public.whatsapp_channels_public": "46675b82300ef6ba4dbabf35ab6432298d27f584eb41157ec89dc564b07fe7fa",
+  "table:public.whatsapp_channels_public": "b57cd5fbde517c6c96f730f274c157bb9ef303f5e0111ad7ae26dfcbebfc2088",
   "table:public.whatsapp_config": "58f298d35890beb3fa64dd4ee7e77457da449dd814e7cbc8880daf76d31fb637",
   "table:public.whatsapp_inbound_receipts": "fe96dc4db0104aaac0c5d53ae62725421e0a13efaedc23c44833a35e1de5aea2",
   "table:public.whatsapp_signup_sessions": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
@@ -6291,6 +6291,6 @@
   "type:public.verification_level": "f9c83222c06c31d341d958e3f40dd2d945a346dad9efcfba7154b0a8a0ea2f79",
   "type:public.whatsapp_plan": "2a21d5e1df5e84900ab01d90e4508fbfb337e5dffb70d731e5e3443ecb9e469b"
  },
- "query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809",
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
 }

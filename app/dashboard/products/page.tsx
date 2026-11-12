@@ -26,6 +26,7 @@ import {
   mapCSVRow,
 } from './components/types';
 import ProductForm from './components/ProductForm';
+import { parseItemTax } from '@/lib/tax/settings';
 import ProductList from './components/ProductList';
 import BulkUpload from './components/BulkUpload';
 
@@ -450,12 +451,16 @@ export default function ProductsPage() {
   // ── Save (create or update) ──
   async function handleSave() {
     if (!form.name.trim()) return;
+    let taxFields: ReturnType<typeof parseItemTax> | undefined;
+    try { taxFields = form.tax_treatment === undefined ? undefined : parseItemTax(form); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Invalid tax settings'); return; }
     setSaving(true);
 
     // R8: Use shared production save logic from the hook (not a page-local copy)
     const imagePayload = await gallery.buildSaveImagePayload();
 
     const payload: Record<string, unknown> = {
+      ...taxFields,
       business_id: business.id,
       name: form.name.trim(),
       description: form.description?.trim() || null,
@@ -489,13 +494,15 @@ export default function ProductsPage() {
         // Retry without variant_options in case migration not applied
         if (error.message?.includes('variant_options')) {
           delete payload.variant_options;
-          const { data: retryData } = await supabase.from('products').insert(payload).select('id').single();
+          const { data: retryData, error: retryError } = await supabase.from('products').insert(payload).select('id').single();
+          if (retryError) { alert('This product could not be saved. Please try again.'); setSaving(false); return; }
           productId = retryData?.id;
           if (productId) {
             try { captureProductEvent('product.created', { business_id: business.id, entity_id: productId, entity_type: 'product', status: 'created' }); } catch { /* never affect creation */ }
           }
         } else {
           console.error('Product save error:', error);
+          alert('This product could not be saved. Please try again.');
           setSaving(false);
           return;
         }
@@ -506,11 +513,12 @@ export default function ProductsPage() {
         }
       }
     } else {
-      const { error } = await supabase.from('products').update(payload).eq('id', form.id);
+      let { error } = await supabase.from('products').update(payload).eq('id', form.id);
       if (error?.message?.includes('variant_options')) {
         delete payload.variant_options;
-        await supabase.from('products').update(payload).eq('id', form.id);
+        ({ error } = await supabase.from('products').update(payload).eq('id', form.id));
       }
+      if (error) { alert('This product could not be saved. Please try again.'); setSaving(false); return; }
     }
 
     // Upsert variants

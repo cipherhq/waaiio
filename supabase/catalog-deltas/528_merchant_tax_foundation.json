@@ -1,0 +1,548 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.merchant_tax_settings.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'Delivery tax'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "601345eb292fa973b628f8f28d4ae0dda5765475fdf6495f87fc830f5759af35",
+   "identity": "column:public.merchant_tax_settings.delivery_label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'exclusive'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "5a50bf2e13073ade57abbd2e37eb3646dd8d1effa2d665f490a6c341ca6b045f",
+   "identity": "column:public.merchant_tax_settings.delivery_price_mode",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(7,2)"
+   },
+   "after_sha256": "d28a68c8c07519716fcccc6461772d8032660abbbe6e78f9f5185f5559c2f27f",
+   "identity": "column:public.merchant_tax_settings.delivery_rate_bps",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'exempt'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "7a556e8dc6bb2409b4d3aa4a92acdfd6f2dcd95dba40520d5cfa8c612a9941a1",
+   "identity": "column:public.merchant_tax_settings.delivery_treatment",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "false",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "8297533d5dfe9297714c79d7fce4b1991c9dba7a34f9ee58a3f8eada63fad6ea",
+   "identity": "column:public.merchant_tax_settings.enabled",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'Tax'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "fe2c08663935ee3d8ac7701160438d78f1f0aa784598f681d1c02665e2797eeb",
+   "identity": "column:public.merchant_tax_settings.label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'exclusive'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "5a50bf2e13073ade57abbd2e37eb3646dd8d1effa2d665f490a6c341ca6b045f",
+   "identity": "column:public.merchant_tax_settings.price_mode",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "numeric(7,2)"
+   },
+   "after_sha256": "d28a68c8c07519716fcccc6461772d8032660abbbe6e78f9f5185f5559c2f27f",
+   "identity": "column:public.merchant_tax_settings.rate_bps",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.merchant_tax_settings.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.products.tax_label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.products.tax_price_mode",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(7,2)"
+   },
+   "after_sha256": "a5fd6be234c871b78a4f9a8540ef1b17f96cfddf3fcd10bc50e539a2237fef11",
+   "identity": "column:public.products.tax_rate_bps",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'inherit'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "82cec156c1d2573351129137b2c2d7574477c3f9ace13949749e43f2443d3df4",
+   "identity": "column:public.products.tax_treatment",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.services.tax_label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.services.tax_price_mode",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "numeric(7,2)"
+   },
+   "after_sha256": "a5fd6be234c871b78a4f9a8540ef1b17f96cfddf3fcd10bc50e539a2237fef11",
+   "identity": "column:public.services.tax_rate_bps",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'inherit'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "82cec156c1d2573351129137b2c2d7574477c3f9ace13949749e43f2443d3df4",
+   "identity": "column:public.services.tax_treatment",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(delivery_label)) >= 1 AND length(btrim(delivery_label)) <= 60)",
+    "validated": true
+   },
+   "after_sha256": "d0ab126a71427a8f07b285331552d52ae793ec919639272a26ff25c3efab7514",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_delivery_label_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (delivery_price_mode = ANY (ARRAY['inclusive'::text, 'exclusive'::text]))",
+    "validated": true
+   },
+   "after_sha256": "d93dc885294c7a661e4296a605c12b9f50f4e5bcc398301e81b336fd5121b43d",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_delivery_price_mode_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (delivery_rate_bps >= 0::numeric AND delivery_rate_bps <= 10000::numeric)",
+    "validated": true
+   },
+   "after_sha256": "72fb4ddc30a3b6f589d206b2e5178b9dabe8079aec3a89b9b083245eb1d86478",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_delivery_rate_bps_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (delivery_treatment = ANY (ARRAY['override'::text, 'exempt'::text]))",
+    "validated": true
+   },
+   "after_sha256": "a4681a0526d072b5287d73955b32f94954436ab0d9fb0764b8e4238c9077a6ed",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_delivery_treatment_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(label)) >= 1 AND length(btrim(label)) <= 60)",
+    "validated": true
+   },
+   "after_sha256": "b37cf2d86eb5df17593174ba909afac537dbbb385efaaee42a0a04f44af9e1fc",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_label_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (business_id)",
+    "validated": true
+   },
+   "after_sha256": "f5ee967b24f73d7a7c3d265aef572a29d8d6d2734c3cb45d4e74f37f14f784a5",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (price_mode = ANY (ARRAY['inclusive'::text, 'exclusive'::text]))",
+    "validated": true
+   },
+   "after_sha256": "bc8c0f79e6b794db1baf70d9bbfcff95e46645bd8f16fc327492522bf7a58a6a",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_price_mode_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (rate_bps >= 0::numeric AND rate_bps <= 10000::numeric)",
+    "validated": true
+   },
+   "after_sha256": "c5dc31369661f69db21cf328d9395f11ea1b8aa400f161bc0dd30adeba5d3b17",
+   "identity": "constraint:public.merchant_tax_settings.merchant_tax_settings_rate_bps_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((tax_treatment = ANY (ARRAY['inherit'::text, 'exempt'::text])) AND tax_label IS NULL AND tax_rate_bps IS NULL AND tax_price_mode IS NULL OR tax_treatment = 'override'::text AND tax_label IS NOT NULL AND length(btrim(tax_label)) >= 1 AND length(btrim(tax_label)) <= 60 AND tax_rate_bps IS NOT NULL AND tax_rate_bps >= 0::numeric AND tax_rate_bps <= 10000::numeric AND tax_price_mode IS NOT NULL AND (tax_price_mode = ANY (ARRAY['inclusive'::text, 'exclusive'::text])))",
+    "validated": true
+   },
+   "after_sha256": "b3bd9a31d6dc9add765915587a20ddd142e10a038447be886099bbb5ca9c03c5",
+   "identity": "constraint:public.products.products_tax_treatment_valid",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((tax_treatment = ANY (ARRAY['inherit'::text, 'exempt'::text])) AND tax_label IS NULL AND tax_rate_bps IS NULL AND tax_price_mode IS NULL OR tax_treatment = 'override'::text AND tax_label IS NOT NULL AND length(btrim(tax_label)) >= 1 AND length(btrim(tax_label)) <= 60 AND tax_rate_bps IS NOT NULL AND tax_rate_bps >= 0::numeric AND tax_rate_bps <= 10000::numeric AND tax_price_mode IS NOT NULL AND (tax_price_mode = ANY (ARRAY['inclusive'::text, 'exclusive'::text])))",
+    "validated": true
+   },
+   "after_sha256": "b3bd9a31d6dc9add765915587a20ddd142e10a038447be886099bbb5ca9c03c5",
+   "identity": "constraint:public.services.services_tax_treatment_valid",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX merchant_tax_settings_pkey ON public.merchant_tax_settings USING btree (business_id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "4dce1943fcfb18f6cf6b183c4a957d6bba137ecf80ff3b9d51692caeb7c72213",
+   "identity": "index:public.merchant_tax_settings.merchant_tax_settings_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "INSERT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": null,
+    "with_check": "(EXISTS ( SELECT 1\n   FROM businesses b\n  WHERE ((b.id = merchant_tax_settings.business_id) AND (b.owner_id = ( SELECT auth.uid() AS uid)))))"
+   },
+   "after_sha256": "469d4122caf27ab6a966c489311f9cb99f224a517b419415057db4b56c5b2cc1",
+   "identity": "policy:public.merchant_tax_settings.merchant_tax_owner_insert",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(EXISTS ( SELECT 1\n   FROM businesses b\n  WHERE ((b.id = merchant_tax_settings.business_id) AND (b.owner_id = ( SELECT auth.uid() AS uid)))))",
+    "with_check": null
+   },
+   "after_sha256": "b3f06a486325b7e29bfb1e7ada2f7ddcaa353c268337f30c68e18935ee3680e1",
+   "identity": "policy:public.merchant_tax_settings.merchant_tax_owner_select",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "UPDATE",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(EXISTS ( SELECT 1\n   FROM businesses b\n  WHERE ((b.id = merchant_tax_settings.business_id) AND (b.owner_id = ( SELECT auth.uid() AS uid)))))",
+    "with_check": "(EXISTS ( SELECT 1\n   FROM businesses b\n  WHERE ((b.id = merchant_tax_settings.business_id) AND (b.owner_id = ( SELECT auth.uid() AS uid)))))"
+   },
+   "after_sha256": "ffa97866e97de686eebaaac78dcf72fbb10ba2a8d7e094395e2145a1784c0ba7",
+   "identity": "policy:public.merchant_tax_settings.merchant_tax_owner_update",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "374c3c583fd10e94b0745045a303ae05ad84c344017d336e8f23e46a3c0d61ac",
+   "identity": "table:public.merchant_tax_settings",
+   "operation": "add"
+  }
+ ],
+ "migration": "528_merchant_tax_foundation.sql",
+ "migration_sha256": "8f9757044757e0db6399ebf82f0141825c96100759e01be30fda5ef694972959",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

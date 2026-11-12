@@ -1,3 +1,4 @@
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
@@ -6,7 +7,7 @@ import { truncTitle } from '../utils/truncate';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getTicketConfirmationMessage } from './shared/templates';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
 import { notifyOwnerNewTicketSale } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
@@ -17,6 +18,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 
@@ -443,7 +445,7 @@ export const ticketingFlow: FlowDefinition = {
         const total = d.total_amount as number;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const requireTerms = total > 0 && meta.require_terms_before_payment !== false;
-        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsUrl = getBusinessTermsUrl(ctx.business);
 
         const lines = [
           getFlowCopy(ctx.copyLang, 'ticketing.ticket_summary'),
@@ -613,6 +615,7 @@ export const ticketingFlow: FlowDefinition = {
             });
 
           if (rpcErr) {
+            if (rpcErr.message?.includes('unsupported_tax_purchase')) return [{ type: 'text', text: 'This purchase needs an itemized invoice from the business so tax can be shown correctly. Please contact the business to continue.' }];
             // Tier paused or all-paused between selection and booking
             if (rpcErr.message?.includes('tier_paused') || rpcErr.message?.includes('all_tiers_paused')) {
               return [{ type: 'text' as const, text: await ctx.t('Sorry, this ticket type is no longer available. Send *Hi* to start over.') }];
@@ -868,6 +871,7 @@ export const ticketingFlow: FlowDefinition = {
 
         return [{
           type: 'text',
+          _afterSend: await prepareFreeCompletion(ctx, { completionKey: `booking:${booking.id}`, kind: 'ticketing' }),
           text: getTicketConfirmationMessage({
             eventName: d.event_name as string,
             dateLabel,
@@ -995,15 +999,7 @@ export const ticketingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const pRef = d.payment_reference as string | undefined;
         if (d.bank_transfer_offered) {
-          return [{
-            type: 'buttons',
-            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
-            buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
-              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
-              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
-            ],
-          }];
+          return [await bankTransferPaymentPrompt(d, ctx.copyLang, ctx.t)];
         }
         const buttons: Array<{ id: string; title: string }> = [
           { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
@@ -1151,13 +1147,7 @@ export const ticketingFlow: FlowDefinition = {
           if (!d.bank_transfer_reference) {
             return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
           }
-          d._awaiting_transfer_proof = true;
-          await ctx.supabase.from('bot_sessions').update({ session_data: d }).eq('id', ctx.session.id);
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
-          });
-          return { valid: false, errorMessage: '' };
+          return awaitTransferProof(d);
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
@@ -1199,6 +1189,8 @@ export const ticketingFlow: FlowDefinition = {
             return { valid: false };
           }
 
+          // Transfer-only payment: nothing online to verify, so ask for the receipt.
+          if (!ref && d.bank_transfer_reference) return awaitTransferProof(d);
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
           // #375: If session has a saved-card payment ID, try payment-ID recovery first

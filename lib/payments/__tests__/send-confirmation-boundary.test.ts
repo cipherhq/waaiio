@@ -69,6 +69,9 @@ vi.mock('@/lib/bot/flows/shared/send-tickets', () => ({
   sendTicketsAfterPurchase: vi.fn().mockResolvedValue({ success: true, tickets: [] }),
 }));
 
+vi.mock('@/lib/bot/transaction-followups', () => ({ startTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/payments/transaction-followup', () => ({ resumePaidTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
+
 // ── TARGET: intercept handlePostCompletion ──
 vi.mock('@/lib/bot/flows/shared/post-completion', () => ({
   handlePostCompletion: vi.fn().mockResolvedValue(undefined),
@@ -192,7 +195,7 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
   it('Booking: passes real amountPaid + skipCustomerSpend=true', async () => {
     const { sendProactiveConfirmation } = await import('../send-confirmation');
     const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
-    const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+    const { resumePaidTransactionFollowup } = await import('@/lib/payments/transaction-followup');
     const supabase = buildSupabase('booking');
 
     const result = await sendProactiveConfirmation(
@@ -212,16 +215,10 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
     const finalizeCallIndex = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls
       .findIndex(([name]) => name === 'finalize_payment_confirmation');
     expect(finalizeCallIndex).toBeGreaterThanOrEqual(0);
-    expect(checkAndOfferSavedCard).toHaveBeenCalledWith(
-      supabase,
-      'p1',
-      '+2341234567890',
-      'biz-1',
-      expect.anything(),
-    );
+    expect(resumePaidTransactionFollowup).toHaveBeenCalledWith(supabase, 'p1');
     const finalizeOrder = (supabase.rpc as ReturnType<typeof vi.fn>).mock.invocationCallOrder
       [finalizeCallIndex];
-    const offerOrder = (checkAndOfferSavedCard as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const offerOrder = (resumePaidTransactionFollowup as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     expect(offerOrder).toBeGreaterThan(finalizeOrder);
   });
 

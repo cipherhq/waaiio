@@ -64,6 +64,9 @@ beforeEach(() => {
   state.errors.clear();
   state.queries = [];
   localStorage.clear();
+  // The claim-credit step (Owner decision 2026-11-07) is covered in
+  // claim-credit-ui.test.tsx; here it is already done.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ phone_verified: true, credited: false }), { status: 200 })));
 });
 afterEach(cleanup);
 
@@ -74,7 +77,7 @@ describe('Checklist nudge: Add your tables & sections', () => {
     await settled();
     const link = screen.getByText(NUDGE).closest('a')!;
     expect(link.getAttribute('href')).toBe('/dashboard/seating');
-    expect(screen.getByText('0 of 5 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 6 steps completed')).toBeTruthy();
     // Owner's own business, active resources only
     const q = state.queries.find(x => x.table === 'seating_resources')!;
     expect(q.filters).toContainEqual(['business_id', 'own']);
@@ -87,7 +90,7 @@ describe('Checklist nudge: Add your tables & sections', () => {
     render(<OnboardingChecklist />);
     await settled();
     expect(screen.queryByText(NUDGE)).toBeNull();
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
   });
 
   it('still shows when the only table is archived or belongs to another business', async () => {
@@ -106,7 +109,7 @@ describe('Checklist nudge: Add your tables & sections', () => {
     await settled();
     expect(screen.queryByText(NUDGE)).toBeNull();
     expect(state.queries.some(q => q.table === 'seating_resources')).toBe(false);
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
   });
 
   it.each([['food_delivery'], [null], [undefined]])('does not show for category %s, even with table_reservation on', async (category) => {
@@ -132,7 +135,7 @@ describe('Checklist nudge: Add your tables & sections', () => {
     await settled();
     expect(screen.queryByText(NUDGE)).toBeNull();
     expect(state.queries.some(q => q.table === 'seating_resources')).toBe(false);
-    expect(screen.getByText('0 of 4 steps completed')).toBeTruthy();
+    expect(screen.getByText('1 of 5 steps completed')).toBeTruthy();
   });
 
   it('does not trust a count returned with a query error', async () => {

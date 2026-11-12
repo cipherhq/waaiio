@@ -4,13 +4,14 @@ import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constan
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
-import { getTermsPrompt } from './shared/terms';
+import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { notifyOwnerNewPayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken } from '@/lib/payments/flutterwave-recurring';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
@@ -217,7 +218,7 @@ export const paymentFlow: FlowDefinition = {
         const amount = d.amount as number;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const requireTerms = amount > 0 && meta.require_terms_before_payment !== false;
-        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsUrl = getBusinessTermsUrl(ctx.business);
 
         const summaryLines = [
           `📋 *${summaryTitle}*`,
@@ -694,15 +695,7 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const pRef = d.payment_reference as string | undefined;
         if (d.bank_transfer_offered) {
-          return [{
-            type: 'buttons',
-            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
-            buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
-              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
-              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
-            ],
-          }];
+          return [await bankTransferPaymentPrompt(d, ctx.copyLang, ctx.t)];
         }
         const buttons: Array<{ id: string; title: string }> = [
           { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
@@ -872,17 +865,7 @@ export const paymentFlow: FlowDefinition = {
           if (!d.bank_transfer_reference) {
             return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
           }
-          d._awaiting_transfer_proof = true;
-          await ctx.supabase
-            .from('bot_sessions')
-            .update({ session_data: d })
-            .eq('id', ctx.session.id);
-
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
-          });
-          return { valid: false, errorMessage: '' }; // Keep at this step, wait for proof
+          return awaitTransferProof(d);
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
@@ -925,6 +908,8 @@ export const paymentFlow: FlowDefinition = {
             return { valid: false };
           }
 
+          // Transfer-only payment: nothing online to verify, so ask for the receipt.
+          if (!ref && d.bank_transfer_reference) return awaitTransferProof(d);
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
           // #375: If session has a saved-card payment ID, try payment-ID recovery first

@@ -39,6 +39,7 @@ vi.mock('@/lib/bot/flows/shared/bank-transfer', () => ({
 
 vi.mock('@/lib/bot/flows/shared/terms', () => ({
   getTermsPrompt: vi.fn(() => [{ type: 'text', text: 'Terms prompt' }]),
+  getBusinessTermsUrl: vi.fn(() => 'https://www.waaiio.com/t/test'),
 }));
 vi.mock('@/lib/bot/flows/shared/templates', () => ({
   getOrderConfirmationMessage: vi.fn(() => 'Order summary'),
@@ -87,6 +88,8 @@ vi.mock('@/lib/observability', () => ({
 }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn() }));
 vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialStatus: vi.fn(async () => ({ isInTrial: false, trialEndsAt: null })),
   resolveTrialCredit: vi.fn(async () => false),
 }));

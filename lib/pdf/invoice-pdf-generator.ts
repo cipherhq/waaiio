@@ -1,4 +1,6 @@
 import PDFDocument from 'pdfkit';
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+import { buildReceiptTax } from '@/lib/tax/receipt';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export interface InvoicePdfData {
@@ -16,6 +18,7 @@ export interface InvoicePdfData {
     unitPrice: number;
     amount: number;
   }>;
+  taxSnapshot?: TaxSnapshot | null;
   subtotal: number;
   taxRate: number;
   taxAmount: number;
@@ -55,11 +58,15 @@ function formatDate(iso: string | null): string {
   }
 }
 
-function fmtCurrency(amount: number, countryCode: CountryCode): string {
+function fmtCurrency(amount: number, countryCode: CountryCode, currency?: string): string {
+  if (currency) return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
   return formatCurrency(amount, countryCode);
 }
 
 export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
+  const tax = data.taxSnapshot ? buildReceiptTax({ snapshot: data.taxSnapshot }, 0) : undefined;
+  if (tax && (tax.currency !== data.currency || tax.grossAmount !== data.totalAmount)) throw new Error('Invoice tax terms mismatch');
+  const money = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: data.currency }).format(amount);
   const { DEFAULT_INVOICE_LABELS: INV_DEFAULTS } = await import('./localize-pdf');
   const IL = data.labels || INV_DEFAULTS;
 
@@ -171,8 +178,8 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
     doc.text(String(i + 1), colX.num + 4, y, { width: colW.num });
     doc.text(item.description.slice(0, 50), colX.desc, y, { width: colW.desc });
     doc.text(String(item.quantity), colX.qty, y, { width: colW.qty, align: 'right' });
-    doc.text(fmtCurrency(item.unitPrice, data.countryCode), colX.price, y, { width: colW.price, align: 'right' });
-    doc.text(fmtCurrency(item.amount, data.countryCode), colX.amount, y, { width: colW.amount, align: 'right' });
+    doc.text(fmtCurrency(item.unitPrice, data.countryCode, tax ? data.currency : undefined), colX.price, y, { width: colW.price, align: 'right' });
+    doc.text(fmtCurrency(item.amount, data.countryCode, tax ? data.currency : undefined), colX.amount, y, { width: colW.amount, align: 'right' });
     y += 18;
   }
 
@@ -188,31 +195,30 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
 
   function summaryRow(label: string, value: string, bold = false) {
     doc.fontSize(9).font(bold ? 'Helvetica-Bold' : 'Helvetica').fillColor('#555555');
+    const height = Math.max(16, (doc as PDFDocument & { heightOfString(text: string, options: { width: number }): number }).heightOfString(label, { width: 115 }) + 5);
+    if (y + height > doc.page.height - 60) { doc.addPage(); y = margin; }
     doc.text(label, summaryLabelX, y, { width: 115, align: 'right' });
     doc.fillColor(bold ? '#333333' : '#555555');
     doc.text(value, summaryValueX, y, { width: summaryW, align: 'right' });
-    y += 16;
+    y += height;
   }
 
-  summaryRow(IL.lblSubtotal, fmtCurrency(data.subtotal, data.countryCode));
-
-  if (data.taxRate > 0) {
-    summaryRow(`${IL.lblTax} (${data.taxRate}%)`, fmtCurrency(data.taxAmount, data.countryCode));
+  if (tax) {
+    summaryRow('Before tax (after discounts)', money(tax.netAmount));
+    for (const group of tax.groups) summaryRow(group.label, money(group.taxAmount));
+    if (data.discountAmount > 0) summaryRow('Discount already applied', money(data.discountAmount));
+  } else {
+    summaryRow(IL.lblSubtotal, fmtCurrency(data.subtotal, data.countryCode, tax ? data.currency : undefined));
+    if (data.taxRate > 0) summaryRow(`${IL.lblTax} (${data.taxRate}%)`, fmtCurrency(data.taxAmount, data.countryCode, tax ? data.currency : undefined));
+    if (data.discountAmount > 0) summaryRow(IL.lblDiscount, `-${fmtCurrency(data.discountAmount, data.countryCode, tax ? data.currency : undefined)}`);
   }
 
-  if (data.discountAmount > 0) {
-    const discountLabel = data.discountType === 'percent'
-      ? `${IL.lblDiscount} (${data.discountValue}%)`
-      : IL.lblDiscount;
-    summaryRow(discountLabel, `-${fmtCurrency(data.discountAmount, data.countryCode)}`);
-  }
-
-  summaryRow(IL.lblTotal, fmtCurrency(data.totalAmount, data.countryCode), true);
+  summaryRow(IL.lblTotal, fmtCurrency(data.totalAmount, data.countryCode, tax ? data.currency : undefined), true);
 
   if (data.amountPaid > 0) {
-    summaryRow(IL.lblAmountPaid, fmtCurrency(data.amountPaid, data.countryCode));
+    summaryRow(IL.lblAmountPaid, fmtCurrency(data.amountPaid, data.countryCode, tax ? data.currency : undefined));
     const balance = data.totalAmount - data.amountPaid;
-    summaryRow(IL.lblBalanceDue, fmtCurrency(balance, data.countryCode), true);
+    summaryRow(IL.lblBalanceDue, fmtCurrency(balance, data.countryCode, tax ? data.currency : undefined), true);
   }
 
   // ── Notes & Terms ──

@@ -7,9 +7,15 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { ItemTaxFields, type ItemTaxFieldsValue } from '@/components/dashboard/ItemTaxFields';
+import { TaxRateInput } from '@/components/dashboard/TaxRateInput';
+import { previewInvoiceTax, previewLegacyInvoice } from '@/lib/tax/invoice';
+import { parseTaxPercent, validateTaxRule, type MerchantTaxConfig, type TaxSnapshot } from '@/lib/tax/calculation';
+import { getCurrencyCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 
-interface InvoiceItem {
+interface InvoiceItem extends ItemTaxFieldsValue {
   id: string;
   description: string;
   quantity: number;
@@ -29,6 +35,9 @@ interface Invoice {
   status: string;
   subtotal: number;
   tax_rate: number;
+  tax_snapshot?: TaxSnapshot;
+  tax_terms_locked_at?: string | null;
+  metadata?: { tax_config?: MerchantTaxConfig };
   tax_amount: number;
   discount_type: string | null;
   discount_value: number;
@@ -48,7 +57,7 @@ interface Invoice {
   invoice_items: InvoiceItem[];
 }
 
-interface FormItem {
+interface FormItem extends ItemTaxFieldsValue {
   description: string;
   quantity: number;
   unit_price: number;
@@ -93,12 +102,21 @@ export default function InvoicesPage() {
   const [toastMsg, setToastMsg] = useState('');
 
   // Form state
+  const [invoiceCurrency, setInvoiceCurrency] = useState('');
+  const [defaultCurrency, setDefaultCurrency] = useState('');
+  useEffect(() => { let active = true; loadCountries().then(() => {
+    if (active) { const currency = getCurrencyCode((business.country_code || 'NG') as CountryCode); setDefaultCurrency(currency); setInvoiceCurrency(current => current || currency); }
+  }).catch(() => {}); return () => { active = false; }; }, [business.country_code]);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [items, setItems] = useState<FormItem[]>([{ description: '', quantity: 1, unit_price: 0 }]);
-  const [taxRate, setTaxRate] = useState(0);
+  const [invoiceTax, setInvoiceTax] = useState<ItemTaxFieldsValue>({ tax_treatment: 'inherit' });
+  const [taxSettingsBusinessId, setTaxSettingsBusinessId] = useState<string | null>(null);
+  const [taxSettingsError, setTaxSettingsError] = useState('');
+  const [taxSettingsRetry, setTaxSettingsRetry] = useState(0);
+  const [businessTax, setBusinessTax] = useState<MerchantTaxConfig>({ enabled: false, label: 'Tax', rateBps: 0, priceMode: 'exclusive' });
   const [discountType, setDiscountType] = useState<'flat' | 'percent'>('flat');
   const [discountValue, setDiscountValue] = useState(0);
   const [dueDate, setDueDate] = useState('');
@@ -179,12 +197,13 @@ export default function InvoicesPage() {
   }, [loadInvoices]);
 
   function resetForm() {
+    setInvoiceCurrency(defaultCurrency);
     setCustomerName('');
     setCustomerPhone('');
     setCustomerEmail('');
     setCustomerAddress('');
     setItems([{ description: '', quantity: 1, unit_price: 0 }]);
-    setTaxRate(0);
+    setInvoiceTax({ tax_treatment: 'inherit' });
     setDiscountType('flat');
     setDiscountValue(0);
     setDueDate('');
@@ -199,7 +218,9 @@ export default function InvoicesPage() {
   }
 
   function openEdit(inv: Invoice) {
+    if (inv.tax_terms_locked_at) { toast('Amounts are locked for sending. Create a new invoice to revise them.'); return; }
     setEditingId(inv.id);
+    setInvoiceCurrency(inv.currency);
     setCustomerName(inv.customer_name);
     setCustomerPhone(inv.customer_phone || '');
     setCustomerEmail(inv.customer_email || '');
@@ -207,9 +228,10 @@ export default function InvoicesPage() {
     setItems(
       inv.invoice_items
         .sort((a, b) => a.sort_order - b.sort_order)
-        .map(i => ({ description: i.description, quantity: i.quantity, unit_price: i.unit_price }))
+        .map(i => ({ ...i }))
     );
-    setTaxRate(inv.tax_rate);
+    const cfg = inv.metadata?.tax_config;
+    setInvoiceTax(cfg?.enabled || inv.tax_rate > 0 ? { tax_treatment: 'override', tax_label: cfg?.label || 'Tax', tax_rate_bps: cfg?.rateBps ?? parseTaxPercent(String(inv.tax_rate)), tax_price_mode: cfg?.priceMode || 'exclusive' } : { tax_treatment: 'inherit' });
     setDiscountType((inv.discount_type as 'flat' | 'percent') || 'flat');
     setDiscountValue(inv.discount_value);
     setDueDate(inv.due_date || '');
@@ -218,33 +240,52 @@ export default function InvoicesPage() {
     setShowForm(true);
   }
 
-  // Computed totals
-  const subtotal = items.reduce((sum, i) => sum + (i.quantity || 1) * (i.unit_price || 0), 0);
-  const taxAmount = Math.round(subtotal * taxRate / 100 * 100) / 100;
-  let discountAmount = 0;
-  if (discountType === 'percent' && discountValue) {
-    discountAmount = Math.round(subtotal * discountValue / 100 * 100) / 100;
-  } else if (discountType === 'flat' && discountValue) {
-    discountAmount = discountValue;
-  }
-  const totalAmount = Math.round((subtotal + taxAmount - discountAmount) * 100) / 100;
+  useEffect(() => {
+    const controller = new AbortController();
+    setTaxSettingsBusinessId(null); setTaxSettingsError('');
+    fetch(`/api/businesses/${business.id}/tax-settings`, { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error('Unable to load business tax settings. Retry before using the business default.');
+      const { settings } = await response.json();
+      if (!settings || typeof settings.enabled !== 'boolean') throw new Error('Invalid business tax settings. Please retry.');
+      const config = { enabled: settings.enabled, label: settings.label, rateBps: settings.rate_bps, priceMode: settings.price_mode };
+      validateTaxRule(config);
+      if (!controller.signal.aborted) { setBusinessTax(config); setTaxSettingsBusinessId(business.id); }
+    }).catch(error => { if (!controller.signal.aborted) setTaxSettingsError(error instanceof Error ? error.message : 'Unable to load tax settings'); });
+    return () => controller.abort();
+  }, [business.id, taxSettingsRetry]);
+  const effectiveTax: MerchantTaxConfig = invoiceTax.tax_treatment === 'override'
+    ? { enabled: true, label: invoiceTax.tax_label || 'Tax', rateBps: invoiceTax.tax_rate_bps ?? 0, priceMode: invoiceTax.tax_price_mode || 'exclusive' }
+    : invoiceTax.tax_treatment === 'exempt' ? { ...businessTax, enabled: false } : businessTax;
+  const legacyCurrency = !!invoiceCurrency && !['NGN','USD','GBP','CAD'].includes(invoiceCurrency);
+  const taxSettingsReady = taxSettingsBusinessId === business.id;
+  const inheritedTaxUnresolved = !legacyCurrency && (invoiceTax.tax_treatment ?? 'inherit') === 'inherit' && !taxSettingsReady;
+  let legacyPreview: ReturnType<typeof previewLegacyInvoice> | undefined;
+  let preview: TaxSnapshot | undefined;
+  try { if (legacyCurrency) legacyPreview = previewLegacyInvoice(items, (invoiceTax.tax_rate_bps ?? 0) / 100, discountType, discountValue); else if (!inheritedTaxUnresolved) preview = previewInvoiceTax(effectiveTax, invoiceCurrency, items, discountType, discountValue); } catch { /* incomplete form */ }
+  const subtotal = preview ? preview.netAmount / 100 : legacyPreview?.subtotal ?? 0;
+  const taxAmount = preview ? preview.taxAmount / 100 : legacyPreview?.taxAmount ?? 0;
+  const discountAmount = preview ? preview.discountAmount / 100 : legacyPreview?.discountAmount ?? 0;
+  const totalAmount = preview ? preview.grossAmount / 100 : legacyPreview?.totalAmount ?? 0;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!customerName || items.length === 0 || !items[0].description) return;
+    if (!customerName || items.length === 0 || !items[0].description || inheritedTaxUnresolved) return;
+    if (legacyCurrency && !Number.isFinite(invoiceTax.tax_rate_bps ?? 0)) { toast('Enter a valid tax rate with at most four decimal places.'); return; }
 
     setSaving(true);
     try {
       const body = {
         business_id: business.id,
+        currency: invoiceCurrency || undefined,
         customer_name: customerName,
         customer_phone: customerPhone || undefined,
         customer_email: customerEmail || undefined,
         customer_address: customerAddress || undefined,
         items: items.filter(i => i.description),
-        tax_rate: taxRate,
-        discount_type: discountValue > 0 ? discountType : undefined,
-        discount_value: discountValue || undefined,
+        ...(legacyCurrency ? { tax_rate: (invoiceTax.tax_rate_bps ?? 0) / 100 } : { tax_version: 1,
+          ...(invoiceTax.tax_treatment !== 'inherit' ? { tax_config: effectiveTax } : {}) }),
+        discount_type: discountValue > 0 ? discountType : null,
+        discount_value: discountValue,
         due_date: dueDate || undefined,
         is_recurring: isRecurring,
         recurring_frequency: isRecurring ? recurringFrequency : undefined,
@@ -271,7 +312,7 @@ export default function InvoicesPage() {
         resetForm();
         await loadInvoices();
         toast(editingId ? 'Invoice updated' : 'Invoice created');
-      }
+      } else { const result = await res.json(); toast(result.error || 'Unable to save invoice'); }
     } catch (err) {
       console.error('Save failed:', err);
     } finally {
@@ -286,7 +327,7 @@ export default function InvoicesPage() {
       const res = await fetch('/api/invoices/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoice_id: sendModalInvoice.id, channel: sendChannel }),
+        body: JSON.stringify({ invoice_id: sendModalInvoice.id, channel: sendChannel, expected_tax_snapshot: sendModalInvoice.tax_snapshot ?? null }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -494,7 +535,7 @@ export default function InvoicesPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {inv.status === 'draft' && (
+                      {inv.status === 'draft' && !inv.tax_terms_locked_at && (
                         <>
                           <button
                             onClick={() => openEdit(inv)}
@@ -558,20 +599,22 @@ export default function InvoicesPage() {
             onClick={async () => {
               setBulkSending(true);
               const draftIds = Array.from(selectedIds).filter(id => invoices.find(i => i.id === id)?.status === 'draft');
+              let delivered = 0;
               for (const id of draftIds) {
                 const inv = invoices.find(i => i.id === id);
                 if (inv) {
-                  await fetch('/api/invoices/send', {
+                  const response = await fetch('/api/invoices/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ invoice_id: id, business_id: business.id, channel: 'whatsapp' }),
+                    body: JSON.stringify({ invoice_id: id, business_id: business.id, channel: 'whatsapp', expected_tax_snapshot: inv.tax_snapshot ?? null }),
                   });
+                  if (response.ok) delivered++;
                 }
               }
               setBulkSending(false);
               setSelectedIds(new Set());
               loadInvoices();
-              setToastMsg(`Sent ${draftIds.length} invoices`);
+              setToastMsg(`Sent ${delivered} of ${draftIds.length} invoices${delivered < draftIds.length ? ". Refresh and review any remaining drafts." : ""}`);
               setTimeout(() => setToastMsg(''), 3000);
             }}
             className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
@@ -681,7 +724,7 @@ export default function InvoicesPage() {
                 <label className="mb-2 block text-sm font-medium text-gray-700">Line Items</label>
                 <div className="space-y-2">
                   {items.map((item, i) => (
-                    <div key={i} className="flex items-start gap-2">
+                    <div key={i} className="space-y-2"><div className="flex items-start gap-2">
                       <input
                         type="text"
                         value={item.description}
@@ -692,7 +735,7 @@ export default function InvoicesPage() {
                       />
                       <input
                         type="number"
-                        min="1"
+                        min="0.001" step="any"
                         value={item.quantity}
                         onFocus={e => e.target.select()}
                         onChange={e => setItems(prev => prev.map((x, j) => j === i ? { ...x, quantity: parseFloat(e.target.value) || 1 } : x))}
@@ -722,7 +765,7 @@ export default function InvoicesPage() {
                           </svg>
                         </button>
                       )}
-                    </div>
+                    </div>{!legacyCurrency && <ItemTaxFields value={item} onChange={tax => setItems(rows => rows.map((row, j) => j === i ? { ...row, ...tax } : row))} />}</div>
                   ))}
                 </div>
                 <button
@@ -736,16 +779,8 @@ export default function InvoicesPage() {
 
               {/* Tax & Discount */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Tax Rate (%)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={taxRate || ''}
-                    onChange={e => setTaxRate(parseFloat(e.target.value) || 0)}
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                  />
+                <div>{legacyCurrency ? <label className="text-sm">Tax rate (%)<TaxRateInput aria-label="Invoice tax rate (%)" className="mt-1 w-full rounded border p-2" rateBps={invoiceTax.tax_rate_bps ?? 0} onRateChange={rate => setInvoiceTax({ tax_treatment: 'override', tax_rate_bps: rate })} /></label> : <ItemTaxFields value={invoiceTax} onChange={setInvoiceTax} />}
+                  <p className="mt-1 text-xs text-gray-500" hidden={legacyCurrency || !taxSettingsReady}>Business default: {businessTax.enabled ? `${businessTax.label} ${businessTax.rateBps / 100}% (${businessTax.priceMode})` : 'Tax off'}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Discount Type</label>
@@ -850,29 +885,34 @@ export default function InvoicesPage() {
                 />
               </div>
 
-              {/* Computed summary */}
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              {inheritedTaxUnresolved && <div className="rounded border p-3 text-sm">
+                {taxSettingsError ? <><p role="alert">{taxSettingsError}</p><button type="button" onClick={() => setTaxSettingsRetry(value => value + 1)}>Retry tax settings</button></>
+                  : <p role="status">Loading business tax settings…</p>}
+              </div>}
+              {/* Draft preview; save confirms the authoritative totals before dispatch. */}
+              {!inheritedTaxUnresolved && <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                <p className="mb-2 text-xs text-gray-500">Preview. Save the draft to review confirmed totals before sending.</p>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Subtotal</span>
+                  <span className="text-gray-500">{legacyCurrency ? 'Subtotal' : 'Before tax (after discounts)'}</span>
                   <span className="text-gray-700">{subtotal.toLocaleString()}</span>
                 </div>
-                {taxRate > 0 && (
+                {(preview || legacyPreview) && (
                   <div className="mt-1 flex justify-between text-sm">
-                    <span className="text-gray-500">Tax ({taxRate}%)</span>
+                    <span className="text-gray-500">Tax</span>
                     <span className="text-gray-700">{taxAmount.toLocaleString()}</span>
                   </div>
                 )}
                 {discountAmount > 0 && (
                   <div className="mt-1 flex justify-between text-sm">
                     <span className="text-gray-500">Discount</span>
-                    <span className="text-red-500">-{discountAmount.toLocaleString()}</span>
+                    <span className="text-red-500">{legacyCurrency ? `-${discountAmount.toLocaleString()}` : `${discountAmount.toLocaleString()} already applied`}</span>
                   </div>
                 )}
                 <div className="mt-2 flex justify-between border-t border-gray-200 pt-2 text-sm font-bold">
                   <span className="text-gray-700">Total</span>
                   <span className="text-gray-900">{totalAmount.toLocaleString()}</span>
                 </div>
-              </div>
+              </div>}
 
               {/* Actions */}
               <div className="flex gap-3 pt-2">
@@ -885,7 +925,7 @@ export default function InvoicesPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving || !customerName || !items[0]?.description}
+                  disabled={saving || inheritedTaxUnresolved || !customerName || !items[0]?.description}
                   className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                 >
                   {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
@@ -905,6 +945,11 @@ export default function InvoicesPage() {
               Send {sendModalInvoice.reference_code} to {sendModalInvoice.customer_name}
             </p>
 
+            {sendModalInvoice.tax_terms_locked_at && <p className="mt-2 text-xs text-gray-500">Amounts are locked for sending. You can retry delivery; create a new invoice to revise the amounts.</p>}
+            <div className="mt-3 rounded border p-3 text-sm">
+              {sendModalInvoice.tax_snapshot && <p>Tax: {formatAmount(sendModalInvoice.tax_snapshot.taxAmount / 100, sendModalInvoice.currency)}</p>}
+              <p className="font-semibold">Customer total: {formatAmount(sendModalInvoice.total_amount, sendModalInvoice.currency)}</p>
+            </div>
             <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5">
               <p className="text-xs text-amber-700">WhatsApp delivery requires the customer to have messaged your bot first. Use email for new contacts.</p>
             </div>

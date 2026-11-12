@@ -1,31 +1,64 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse, after, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
+import { OPTIN_POLICY_VERSION, OPTIN_REQUEST_TTL_MS, SENT_REQUEST_RE, newOptInNonce, pendingEvidence, sendOptInConfirmationRequest } from '@/lib/consent/optin-confirmation';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+
+/**
+ * A pending request that can still be confirmed: it carries a nonce hash, was
+ * actually sent, and is at most 30 days old (Owner Q5). An expired request, a
+ * request that was never sent, or a pre-release tick without a hash does not block
+ * a fresh tick (Owner decision 2026-11-06).
+ */
+function isLiveRequest(row: { status?: string | null; evidence_reference?: string | null; created_at?: string | null } | null): boolean {
+  if (row?.status !== 'pending' || !SENT_REQUEST_RE.test(row.evidence_reference || '')) return false;
+  const created = Date.parse(row.created_at || '');
+  return Number.isFinite(created) && Date.now() - created <= OPTIN_REQUEST_TTL_MS;
+}
 
 /**
  * Append a 'pending' WhatsApp marketing consent row for a ticked web opt-in. Never
  * written over a newer 'granted' record: an unverified web tick must not be able
- * to replace (and so withdraw) a real permission. Never blocks the saved response.
+ * to replace (and so withdraw) a real permission. A live request is not repeated.
+ * Never blocks the saved response.
+ * A NEW row carries sha256 of a one-time nonce; the nonce itself goes only to the
+ * typed number (WhatsApp confirmation, #591 part B1) and is never stored.
+ * Returns the new request to send, or null when there is nothing to send.
  */
-async function recordPendingOptIn(db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string): Promise<boolean> {
+async function recordPendingOptIn(
+  db: ReturnType<typeof createServiceClient>, businessId: string, formId: string, e164: string,
+): Promise<{ id: string; nonce: string; evidence: string } | null> {
   try {
     const digits = e164.replace(/\D/g, '');
-    const { data: latest, error } = await db.from('customer_consents').select('status')
+    // An opted-out number is never sent a request (a web tick is not a verified
+    // re-start after STOP), so the tick is not recorded.
+    const { count: optedOut, error: optOutError } = await db.from('messaging_opt_outs')
+      .select('id', { count: 'exact', head: true }).in('phone', [digits, `+${digits}`])
+      .or(`business_id.eq.${sanitizeFilterValue(businessId)},business_id.is.null`)
+      .eq('channel', 'whatsapp').is('resubscribed_at', null);
+    if (optOutError || optedOut !== 0) return null;
+    const { data: latest, error } = await db.from('customer_consents').select('status, evidence_reference, created_at')
       .eq('business_id', businessId).in('phone', [digits, `+${digits}`])
       .eq('channel', 'whatsapp').eq('purpose', 'marketing')
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .limit(1).maybeSingle();
-    if (error) return false;
-    if (latest?.status === 'granted' || latest?.status === 'pending') return true;
-    const { error: insertError } = await db.from('customer_consents').insert({
+    if (error) return null;
+    if (latest?.status === 'granted' || isLiveRequest(latest)) return null;
+    const nonce = newOptInNonce();
+    const evidence = pendingEvidence(formId, nonce);
+    const { data: inserted, error: insertError } = await db.from('customer_consents').insert({
       business_id: businessId, phone: e164, channel: 'whatsapp', purpose: 'marketing',
-      status: 'pending', source: 'website', evidence_reference: `form:${formId}`,
-    });
-    if (insertError) logger.warn('[FORMS] Opt-in not recorded:', insertError.message);
-    return !insertError;
-  } catch { return false; }
+      status: 'pending', source: 'website', evidence_reference: evidence,
+      policy_version: OPTIN_POLICY_VERSION,
+    }).select('id').single();
+    if (insertError || !inserted?.id) {
+      logger.warn('[FORMS] Opt-in not recorded:', insertError?.message);
+      return null;
+    }
+    return { id: inserted.id as string, nonce, evidence };
+  } catch { return null; }
 }
 
 export async function POST(request: NextRequest) {
@@ -88,7 +121,7 @@ export async function POST(request: NextRequest) {
     // Optional "Yes, send me updates" box (#591). Only offered when the merchant turned it
     // on, unticked by default, and only for a valid phone. Nobody has proved they own the
     // typed number, so the tick is recorded as *pending*, which is never sendable
-    // (hasRecipientPermission needs 'granted'). Owner decision pending on confirmation.
+    // (hasRecipientPermission needs 'granted') until confirmed on WhatsApp (Owner Q2).
     const offersOptIn = (form.settings as Record<string, unknown> | null)?.marketing_opt_in === true;
     const optIn = offersOptIn && marketing_opt_in === true;
     let optInPhone: string | null = null;
@@ -168,7 +201,19 @@ export async function POST(request: NextRequest) {
 
     let optInPending: boolean | undefined;
     if (optIn && optInPhone) {
-      optInPending = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
+      const recorded = await recordPendingOptIn(supabase, form.business_id, form.id, optInPhone);
+      // Uniform opt-in response: the same for every valid ticked number.
+      optInPending = true;
+      if (recorded) {
+        // Ask the typed number to confirm on WhatsApp after the response is sent. It
+        // never blocks or fails the submit (the sender never throws).
+        const request = { businessId: form.business_id as string, phone: optInPhone, requestId: recorded.id, nonce: recorded.nonce, evidenceReference: recorded.evidence };
+        try {
+          after(() => sendOptInConfirmationRequest(supabase, request).then(() => undefined));
+        } catch (err) {
+          logger.warn('[FORMS] Opt-in confirmation not scheduled:', (err as Error).message);
+        }
+      }
     }
 
     // Atomic increment — prevents race condition with concurrent submissions

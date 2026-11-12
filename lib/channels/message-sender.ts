@@ -179,6 +179,7 @@ export interface MessageSender {
     }>;
     footer?: string;
     messageCategory?: string;
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendButtons(msg: {
     to: string;
@@ -186,6 +187,8 @@ export interface MessageSender {
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
     messageCategory?: string;
+    /** Single application attempt where an ambiguous retry must not send twice. */
+    noRetry?: boolean;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendImage(msg: {
     to: string;
@@ -218,6 +221,8 @@ export interface MessageSender {
     languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
+    /** Quick-reply button payloads, in the template's button order. Not combined with buttonParams. */
+    quickReplyPayloads?: string[];
     noRetry?: boolean;
     messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
@@ -575,6 +580,7 @@ export class MetaCloudSender implements MessageSender {
     }>;
     footer?: string;
     messageCategory?: string;
+    noRetry?: boolean;
   }) {
     // Enforce WhatsApp API limits: title 24 chars, body 1024 chars, buttonLabel 20 chars, item title 24 chars, item description 72 chars
     const truncatedTitle = msg.title.length > 24 ? msg.title.slice(0, 21) + '...' : msg.title;
@@ -599,14 +605,15 @@ export class MetaCloudSender implements MessageSender {
           })),
         }];
 
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendList({
+    const listCall = () => this.withAttemptAndGuard(() => this.cloud.sendList({
       to: msg.to,
       headerText: truncatedTitle,
       bodyText: truncatedBody,
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttonText: truncatedButtonLabel,
       sections,
-    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory });
+    const result = msg.noRetry ? await listCall() : await withRetry(listCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -616,13 +623,15 @@ export class MetaCloudSender implements MessageSender {
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
     messageCategory?: string;
+    noRetry?: boolean;
   }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendButtons({
+    const buttonsCall = async () => this.withAttemptAndGuard(() => this.cloud.sendButtons({
       to: msg.to,
       bodyText: msg.body.slice(0, 1024),
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
-    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory });
+    const result = msg.noRetry ? await buttonsCall() : await withRetry(buttonsCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -658,11 +667,13 @@ export class MetaCloudSender implements MessageSender {
     languageCode?: string;
     templateParams: string[];
     buttonParams?: string[];
+    /** Quick-reply button payloads, in the template's button order. Not combined with buttonParams. */
+    quickReplyPayloads?: string[];
     /** Skip automatic retry for delivery-critical sends where ambiguous outcomes must not produce duplicate provider POSTs */
     noRetry?: boolean;
     messageCategory?: string;
   }) {
-    const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string }>; sub_type?: string; index?: number }> = [{
+    const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string } | { type: 'payload'; payload: string }>; sub_type?: string; index?: number }> = [{
       type: 'body' as const,
       parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })),
     }];
@@ -672,6 +683,10 @@ export class MetaCloudSender implements MessageSender {
         components.push({ type: 'button' as const, sub_type: 'url', index, parameters: [{ type: 'text' as const, text: param }] });
       });
     }
+    // Quick-reply payloads come back in the inbound webhook as msg.button.payload.
+    msg.quickReplyPayloads?.forEach((payload, index) => {
+      components.push({ type: 'button' as const, sub_type: 'quick_reply', index, parameters: [{ type: 'payload' as const, payload }] });
+    });
     const templateCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, languageCode: msg.languageCode, components }),

@@ -1,3 +1,4 @@
+import { reserveTaxPayment, confirmTaxPaymentFailure } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -6,6 +7,7 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
 import { normalizeError } from '@/lib/errors';
 import { resolveTrialStatus } from '@/lib/trial-status';
+import { paystackMerchantSplit } from './paystack-split';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -72,7 +74,7 @@ export async function resolveGatewaySplit(
   }
 
   const tier = (biz.subscription_tier || 'free') as SubscriptionTier;
-  const isInTrial = await resolveTrialStatus(supabase, businessId, tier, biz.trial_ends_at);
+  const isInTrial = await resolveTrialStatus(supabase, businessId, tier);
   const feeResult = await getPlatformFees(amount, tier, isInTrial, {
     feePercentage: biz.custom_fee_percentage ?? undefined,
     feeFlat: biz.custom_fee_flat ?? undefined,
@@ -467,7 +469,7 @@ async function chargePaystackAuthorization(
         }
 
         const scTier = (bizForFee.subscription_tier || 'free') as SubscriptionTier;
-        const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier, bizForFee.trial_ends_at);
+        const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier);
         const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
         const snapErr = validateV1Snapshot(
           snapshot as Parameters<typeof validateV1Snapshot>[0],
@@ -498,10 +500,8 @@ async function chargePaystackAuthorization(
         const { calculateFee } = await import('@/lib/payments/calculateFee');
         const v1Fee = calculateFee(opts.amount, scBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
         if (splitSubaccount) {
-          splitParams = {
-            subaccount: splitSubaccount,
-            transaction_charge: Math.round(v1Fee.feeTotal * 100),
-          };
+          // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
+          splitParams = paystackMerchantSplit(splitSubaccount, Math.round(v1Fee.feeTotal * 100));
         }
       }
       // gateVal === false → v0 (resolved below via resolvePaystackSplit)
@@ -515,17 +515,16 @@ async function chargePaystackAuthorization(
   if (v1Fields.fee_policy_version !== 1) {
     const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
     if (splitResult.mode === 'split') {
-      splitParams = {
-        subaccount: splitResult.subaccount,
-        transaction_charge: splitResult.transactionChargeKobo,
-      };
+      // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
+      splitSubaccount = splitResult.subaccount;
+      splitParams = paystackMerchantSplit(splitResult.subaccount, splitResult.transactionChargeKobo);
     } else if (splitResult.mode === 'split_required_but_missing') {
       logger.error('[SAVED-CARD] Direct split config missing, blocking charge', { businessId: opts.businessId, reason: splitResult.reason });
       return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
     }
   }
 
-  const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
+  const paymentPayload = {
     business_id: opts.businessId,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
@@ -550,7 +549,20 @@ async function chargePaystackAuthorization(
       ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
     },
     ...v1Fields,
-  }).select('id').single();
+  };
+  let taxReservation: Awaited<ReturnType<typeof reserveTaxPayment>> = null;
+  try {
+    taxReservation = await reserveTaxPayment(supabase, paymentPayload);
+  } catch (error) {
+    logger.error('[SAVED-CARD] Tax payment reservation failed', error);
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment reservation failed' };
+  }
+  if (taxReservation && splitSubaccount) {
+    splitParams = paystackMerchantSplit(splitSubaccount, taxReservation.fee.totalMinor);
+  }
+  const { data: payRow, error: insertErr } = taxReservation
+    ? { data: taxReservation.payment, error: null }
+    : await supabase.from('payments').insert(paymentPayload).select('id').single();
 
   if (insertErr || !payRow) {
     logger.error('[SAVED-CARD] Payment row creation failed — NOT calling provider', insertErr);
@@ -579,7 +591,7 @@ async function chargePaystackAuthorization(
   const amountInKobo = Math.round(opts.amount * 100);
 
   // ── Step 2b: Provider-init state machine for v1 ──
-  if (v1Fields.fee_policy_version === 1) {
+  if (v1Fields.fee_policy_version === 1 || taxReservation) {
     // CAS: pre_dispatch → dispatched
     const { data: casRows } = await supabase.from('payments')
       .update({ provider_init_state: 'dispatched' })
@@ -626,7 +638,7 @@ async function chargePaystackAuthorization(
 
     if (data.status && data.data?.status === 'success') {
       // CAS: dispatched → provider_confirmed (for v1) — exact row check
-      if (v1Fields.fee_policy_version === 1) {
+      if (v1Fields.fee_policy_version === 1 || taxReservation) {
         const { data: confirmRows, error: confirmErr } = await supabase.from('payments')
           .update({ provider_init_state: 'provider_confirmed' })
           .eq('id', paymentId)
@@ -658,6 +670,13 @@ async function chargePaystackAuthorization(
       // Non-terminal/unknown provider state — leave payment pending for reconciliation
       logger.warn('[SAVED-CARD] Non-terminal provider response:', providerStatus, gatewayResponse);
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: gatewayResponse };
+    }
+
+    if (taxReservation) {
+      if (!['failed','abandoned','expired'].includes(providerStatus)) return {outcome:'indeterminate',paymentId,reference:opts.reference,message:'Provider outcome needs verification'};
+      const released=await confirmTaxPaymentFailure(supabase,paymentId,'paystack',opts.reference,providerStatus as 'failed'|'abandoned'|'expired');
+      return released ? {outcome:'declined',reference:opts.reference,message:gatewayResponse}
+        : {outcome:'indeterminate',paymentId,reference:opts.reference,message:'Decline allocation needs reconciliation'};
     }
 
     // Definitive provider decline — mark payment row terminal and prove the write occurred.

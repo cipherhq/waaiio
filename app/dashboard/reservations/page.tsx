@@ -1,11 +1,14 @@
 'use client';
 
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
+import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -242,6 +245,8 @@ export default function BookingsPage() {
     setNbStaff(staffData);
   }
 
+  const [nbTaxQuote, setNbTaxQuote] = useState<{ key: string; total: number; tax_snapshot: TaxSnapshot | null } | null>(null);
+
   function resetNewBookingForm() {
     setNbForm({
       serviceId: '',
@@ -256,6 +261,7 @@ export default function BookingsPage() {
       sendConfirmation: true,
     });
     setNbError('');
+    setNbTaxQuote(null);
     setNbSuccess(null);
     setNbStaff([]);
   }
@@ -270,11 +276,13 @@ export default function BookingsPage() {
     try {
       const selectedItem = nbServices.find(s => s.id === nbForm.serviceId);
       const isAppt = selectedItem?._isAppointment === true;
+      const quoteMatches = nbTaxQuote?.key === JSON.stringify(nbForm);
       const res = await fetch('/api/bookings/create-manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
+          preview: !quoteMatches, expectedTaxSnapshot: quoteMatches ? nbTaxQuote?.tax_snapshot : null,
           ...(isAppt ? { appointmentId: nbForm.serviceId } : { serviceId: nbForm.serviceId }),
           date: nbForm.date,
           time: nbForm.time,
@@ -289,7 +297,9 @@ export default function BookingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setNbError(data.error || 'Failed to create booking');
+        setNbTaxQuote(null); setNbError(data.error || 'Failed to create booking');
+      } else if (!quoteMatches) {
+        setNbTaxQuote({ key: JSON.stringify(nbForm), total: data.total, tax_snapshot: data.tax_snapshot });
       } else {
         setNbSuccess({
           refCode: data.reference_code,
@@ -590,7 +600,16 @@ export default function BookingsPage() {
     }
 
     const table = isThisReservation ? 'reservations' : 'bookings';
-    await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
+    const { error: statusError } = await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
+
+    // #963: an approved booking sends its after-booking intake form (if any).
+    if (!statusError && !isThisReservation && newStatus === 'confirmed') {
+      fetch('/api/intake/after-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: id, businessId: business.id }),
+      }).catch(() => {});
+    }
 
     // Notify guest on check-in (reservation only)
     if (isThisReservation && newStatus === 'checked_in' && booking?.guest_phone) {
@@ -1209,6 +1228,10 @@ export default function BookingsPage() {
                   </label>
 
                   {/* Summary */}
+                  {nbTaxQuote?.key === JSON.stringify(nbForm) && <div className="rounded-lg border p-3 text-sm">
+                    {nbTaxQuote.tax_snapshot && <><p>Before tax: {nbTaxQuote.tax_snapshot.currency} {(nbTaxQuote.tax_snapshot.netAmount / 100).toFixed(2)}</p><p>Tax: {nbTaxQuote.tax_snapshot.currency} {(nbTaxQuote.tax_snapshot.taxAmount / 100).toFixed(2)}</p></>}
+                    <p>Total: {nbTaxQuote.total.toFixed(2)}</p>
+                  </div>}
                   {nbSelectedService && nbForm.date && nbForm.time && (
                     <div className="rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-4">
                       <h3 className="text-xs font-semibold uppercase text-gray-400 dark:text-gray-500 mb-2">Summary</h3>
@@ -1234,7 +1257,7 @@ export default function BookingsPage() {
                           Creating...
                         </span>
                       ) : (
-                        'Create Booking'
+                        nbTaxQuote?.key === JSON.stringify(nbForm) ? 'Confirm Booking' : 'Review Total'
                       )}
                     </button>
                     <button
@@ -1278,6 +1301,12 @@ export default function BookingsPage() {
                 {selected.guest_phone && <p className="text-sm text-gray-600">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-600">{selected.guest_email}</p>}
               </div>
+
+              {/* Client intake (#963): service bookings only */}
+              {!selected._isReservation && (
+                <BookingIntakePanel businessId={business.id} bookingId={selected.id} serviceId={selected.service_id || null}
+                  bookingDate={selected.date || null} bookingStatus={selected.status} />
+              )}
 
               {/* Guest List (group bookings) */}
               {selected.guest_list && selected.guest_list.length > 0 && (

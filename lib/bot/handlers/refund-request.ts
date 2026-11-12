@@ -57,7 +57,7 @@ async function handleRefundSelect(
     const { data: payments } = await supabase
       .from('payments')
       .select(`
-        id, amount, currency, status, refund_amount, created_at, business_id, booking_id, order_id, invoice_id,
+        id, amount, currency, status, refund_amount, created_at, business_id, booking_id, order_id, invoice_id, tax_allocation,
         bookings:booking_id (guest_phone, guest_name, service_id, event_id, services:service_id (name), events:event_id (name, refund_policy))
       `)
       .eq('status', 'success')
@@ -103,7 +103,7 @@ async function handleRefundSelect(
     }
 
     // Store eligible payment IDs in session data for validation
-    const paymentMap: Record<string, { id: string; amount: number; currency: string; refundAmount: number; businessId: string; bookingId: string | null }> = {};
+    const paymentMap: Record<string, { id: string; amount: number; currency: string; refundAmount: number; businessId: string; bookingId: string | null; taxed?: boolean }> = {};
     const items: { title: string; description: string; postbackText: string }[] = [];
 
     for (let i = 0; i < eligible.length; i++) {
@@ -118,7 +118,7 @@ async function handleRefundSelect(
       const dateStr = new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const currency = (p.currency || 'NGN') as CountryCode;
       // formatCurrency expects amount in major units for display
-      const amountDisplay = formatCurrency(refundable / 100, currency);
+      const amountDisplay = p.tax_allocation ? new Intl.NumberFormat('en',{style:'currency',currency:p.currency}).format(refundable) : formatCurrency(refundable / 100, currency);
 
       const key = `refund_${i + 1}`;
       paymentMap[key] = {
@@ -128,6 +128,7 @@ async function handleRefundSelect(
         refundAmount: Number(p.refund_amount) || 0,
         businessId: p.business_id,
         bookingId: p.booking_id || null,
+        taxed: !!p.tax_allocation,
       };
 
       items.push({
@@ -175,7 +176,7 @@ async function handleRefundSelect(
   }
 
   // User selected a payment — validate and move to reason step
-  const paymentMap = session.session_data.refund_payments as Record<string, { id: string; amount: number; currency: string; refundAmount: number; businessId: string; bookingId: string | null }> | undefined;
+  const paymentMap = session.session_data.refund_payments as Record<string, { id: string; amount: number; currency: string; refundAmount: number; businessId: string; bookingId: string | null; taxed?: boolean }> | undefined;
   if (!paymentMap || !paymentMap[input]) {
     await sendText(from, getFlowCopy(l, 'refund.invalid_selection'));
     return;
@@ -232,6 +233,7 @@ async function handleRefundReason(
     refundAmount: number;
     businessId: string;
     bookingId: string | null;
+    taxed?: boolean;
   } | undefined;
 
   if (!selected) {
@@ -281,6 +283,20 @@ async function handleRefundReason(
     return;
   }
 
+  if(selected.taxed){
+    const {data:current,error}=await supabase.from('payments').select('amount,refund_amount,tax_allocation,currency')
+      .eq('id',selected.id).eq('business_id',selected.businessId).single();
+    if(error||!current?.tax_allocation){await sendText(from,getFlowCopy(l,'refund.generic_error'));return;}
+    const remaining=Number(current.amount)-Number(current.refund_amount||0);
+    if(!Number.isFinite(remaining)||remaining<=0){await sendText(from,getFlowCopy(l,'refund.no_eligible'));return;}
+    // The bot requests the entire remaining payment. Partial item refunds are
+    // selected by the merchant/admin in the refund form before authorization.
+    selected.amount=remaining;selected.currency=current.currency;
+  }
+  const requestedDisplay=selected.taxed
+    ? new Intl.NumberFormat('en',{style:'currency',currency:selected.currency}).format(selected.amount)
+    : formatCurrency(selected.amount/100,selected.currency as CountryCode);
+
   // Insert refund request
   const { error: insertError } = await supabase.from('refund_requests').insert({
     business_id: selected.businessId,
@@ -308,7 +324,7 @@ async function handleRefundReason(
     type: 'refund_request',
     channel: 'system',
     subject: 'New Refund Request',
-    body: `${customerName || phoneP} has requested a refund of ${formatCurrency(selected.amount / 100, selected.currency as CountryCode)}.`,
+    body: `${customerName || phoneP} has requested a refund of ${requestedDisplay}.`,
     metadata: { payment_id: selected.id, reason },
   });
 
@@ -318,8 +334,8 @@ async function handleRefundReason(
     sender: messageSender,
     businessId: selected.businessId,
     subject: 'New Refund Request',
-    emailHtml: `<p><strong>${customerName || phoneP}</strong> has requested a refund of ${formatCurrency(selected.amount / 100, selected.currency as CountryCode)}.</p><p><strong>Reason:</strong> ${reason}</p><p>Review this request in your dashboard.</p>${getPoweredByHtml(null)}`,
-    whatsappText: `💰 *New Refund Request*\n\nFrom: ${customerName || phoneP}\nAmount: ${formatCurrency(selected.amount / 100, selected.currency as CountryCode)}\nReason: ${reason}\n\nReview in your dashboard.`,
+    emailHtml: `<p><strong>${customerName || phoneP}</strong> has requested a refund of ${requestedDisplay}.</p><p><strong>Reason:</strong> ${reason}</p><p>Review this request in your dashboard.</p>${getPoweredByHtml(null)}`,
+    whatsappText: `💰 *New Refund Request*\n\nFrom: ${customerName || phoneP}\nAmount: ${requestedDisplay}\nReason: ${reason}\n\nReview in your dashboard.`,
   }).catch(err => logger.error('[REFUND-REQUEST] Failed to notify owner:', err));
 
   // Confirm to customer

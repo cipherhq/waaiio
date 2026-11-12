@@ -1,0 +1,532 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.transaction_followups.acknowledgment",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.transaction_followups.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.transaction_followups.channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.transaction_followups.claim_token",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.transaction_followups.claim_until",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.transaction_followups.completion_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.transaction_followups.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.transaction_followups.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "boolean"
+   },
+   "after_sha256": "74401442300d4d8ed60d7c0cc761b56d7aac2f444616e8eba8730ca7393ed984",
+   "identity": "column:public.transaction_followups.includes_waaiio",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.transaction_followups.kind",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'en'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "22dbff0c71c80910278ceb178131df90d66e3fc705c779766d549b1053edae5c",
+   "identity": "column:public.transaction_followups.lang",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.transaction_followups.payment_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.transaction_followups.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.transaction_followups.responded_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.transaction_followups.response",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.transaction_followups.state",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.transaction_followups.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (business_id, completion_key)",
+    "validated": true
+   },
+   "after_sha256": "74624cf405b310046604a412b46953b82ddb5192b8186ded12db153c6b1f1e82",
+   "identity": "constraint:public.transaction_followups.transaction_followups_business_id_completion_key_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.transaction_followups.transaction_followups_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (channel_id) REFERENCES whatsapp_channels(id)",
+    "validated": true
+   },
+   "after_sha256": "ef2ba8bb6976ed47293b804c11fb084a0321dc796836eb8a1b2552aff4b146a0",
+   "identity": "constraint:public.transaction_followups.transaction_followups_channel_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((response IS NULL) = (responded_at IS NULL))",
+    "validated": true
+   },
+   "after_sha256": "8812b75fe477c8f6007eaa63074c9418596c3ebf0fce9d61b18663904ef8afc7",
+   "identity": "constraint:public.transaction_followups.transaction_followups_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(completion_key) >= 1 AND length(completion_key) <= 180)",
+    "validated": true
+   },
+   "after_sha256": "550a0810781803cc66575aeb6a1d448225b8dcf958b679991b8edc7cba43c5f0",
+   "identity": "constraint:public.transaction_followups.transaction_followups_completion_key_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (payment_id) REFERENCES payments(id)",
+    "validated": true
+   },
+   "after_sha256": "f1f939fbf0e40007efb820a48b8967ddc8d10edeff5c5ad6828624efa7bac2b3",
+   "identity": "constraint:public.transaction_followups.transaction_followups_payment_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (payment_id)",
+    "validated": true
+   },
+   "after_sha256": "c7644a99603a99f51b06b2fa415ff77ab6637909c9ef2748f3809ead81f1fe19",
+   "identity": "constraint:public.transaction_followups.transaction_followups_payment_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone ~ '^\\+[1-9][0-9]{7,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "c4884f32fe0f0db5d3ef7900829d00adc5cb54a74aff7ca65e9639d8350a5feb",
+   "identity": "constraint:public.transaction_followups.transaction_followups_phone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.transaction_followups.transaction_followups_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (response = ANY (ARRAY['yes'::text, 'no'::text]))",
+    "validated": true
+   },
+   "after_sha256": "49ced61c5d63c7e918a56e1af51a6b928160f748e7748f037d6bf39b225d2a3d",
+   "identity": "constraint:public.transaction_followups.transaction_followups_response_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (state = ANY (ARRAY['awaiting_confirmation'::text, 'waiting_card'::text, 'card_active'::text, 'card_resolved'::text, 'ready'::text, 'optin_sending'::text, 'awaiting_optin'::text, 'consent_pending'::text, 'consent_recording'::text, 'menu_ready'::text, 'menu_sending'::text, 'done'::text]))",
+    "validated": true
+   },
+   "after_sha256": "cbc7718445d61cb79d3a36e27bd9e7891292fcc209bdba03a1f5eca3470a084b",
+   "identity": "constraint:public.transaction_followups.transaction_followups_state_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_session_id uuid, p_expected_version integer, p_payment_id uuid, p_customer_phone text, p_business_id uuid, p_session_data jsonb",
+    "body_sha256": "dabb2fac4b6adf70df3e15948e34c210bbe338e480f1555574660b8eae2377c8",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "68f6c3fed3952daba765c1d99eebb152cb97d65959cf9ee9b539f979c1ba6aec",
+   "identity": "function:public.cancel_transaction_card_setup(p_session_id uuid, p_expected_version integer, p_payment_id uuid, p_customer_phone text, p_business_id uuid, p_session_data jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX transaction_followups_business_id_completion_key_key ON public.transaction_followups USING btree (business_id, completion_key)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "4c358887c115f0f383119ed88ab367e86379a4c2f7c30d2263838f333d2eb9e3",
+   "identity": "index:public.transaction_followups.transaction_followups_business_id_completion_key_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX transaction_followups_conversation_prompt ON public.transaction_followups USING btree (phone, channel_id) WHERE (state = ANY (ARRAY['card_active'::text, 'card_resolved'::text, 'optin_sending'::text, 'awaiting_optin'::text, 'consent_pending'::text, 'consent_recording'::text, 'menu_ready'::text, 'menu_sending'::text]))",
+    "predicate": "(state = ANY (ARRAY['card_active'::text, 'card_resolved'::text, 'optin_sending'::text, 'awaiting_optin'::text, 'consent_pending'::text, 'consent_recording'::text, 'menu_ready'::text, 'menu_sending'::text]))",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "8d8df7194045f3c9810023c7966932d444030ad31cb54e0fcfbb790f106fcea8",
+   "identity": "index:public.transaction_followups.transaction_followups_conversation_prompt",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX transaction_followups_payment_id_key ON public.transaction_followups USING btree (payment_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "f6033e8899868ccd470e43db4865b51701682211b7d29d8e8cbbd69c7007fc87",
+   "identity": "index:public.transaction_followups.transaction_followups_payment_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX transaction_followups_pkey ON public.transaction_followups USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "123ff1b4925435910512f038d377df798b624cec86ee57b5a79b8ab254681534",
+   "identity": "index:public.transaction_followups.transaction_followups_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX transaction_followups_recovery ON public.transaction_followups USING btree (state, updated_at) WHERE (state = ANY (ARRAY['waiting_card'::text, 'card_active'::text, 'card_resolved'::text, 'ready'::text, 'consent_pending'::text, 'consent_recording'::text, 'menu_ready'::text]))",
+    "predicate": "(state = ANY (ARRAY['waiting_card'::text, 'card_active'::text, 'card_resolved'::text, 'ready'::text, 'consent_pending'::text, 'consent_recording'::text, 'menu_ready'::text]))",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "6b5678d1009f3ee6da7df44badc795416492b6bd1131a1c231934157b8931ff9",
+   "identity": "index:public.transaction_followups.transaction_followups_recovery",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "f2fe515ce7cb36576c0b89be5cb24ceaab7d8875f00cfe8dd3cab3149c1d08de",
+   "identity": "table:public.transaction_followups",
+   "operation": "add"
+  }
+ ],
+ "migration": "534_transaction_followups.sql",
+ "migration_sha256": "7c8cb04181ef7b9d18be27efa5965b6618121499ed6c9d0631766d7ba0dc1597",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

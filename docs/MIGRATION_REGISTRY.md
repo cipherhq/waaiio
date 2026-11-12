@@ -48,7 +48,8 @@ Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan 
 
 | Version | Name | Status | PR | Notes |
 |---------|------|--------|----|-------|
-| 523 | `public_views_security_invoker` | RESERVED — NOT APPLIED | (this PR) | `businesses_public` and `whatsapp_channels_public` run as the caller (`security_invoker`) and read through two read-only functions in the new non-API schema `public_view_private`. Same public columns, rows and grants. Owner: claude/inspiring-franklin-90af36. |
+| 524 | `resellers_own_record_read_only` | RESERVED — NOT APPLIED | (this PR) | A reseller reads its own `resellers` row; writes only by admin (aal2) RLS or the service role. Exact grants for anon/authenticated/service_role. Owner decision 2026-11-06. Owner: claude/m524-reseller-own-record-read-only. Apply only after the reseller branding service-client write (PR claude/reseller-free-until-paid) is in the production build. |
+| 523 | `public_views_security_invoker` | Applied to staging and production (verified) | #927 | `businesses_public` and `whatsapp_channels_public` run as the caller (`security_invoker`) and read through two read-only functions in the new non-API schema `public_view_private`. Same public columns and rows; view grants set exactly to SELECT for anon, authenticated and service_role. Applied 2026-11-06 with Owner approval per environment, as one whole-file statement: staging ledger `20261106141919`, production ledger `20261106142321`, statement md5 `b2a6cd53cd6d48ccf2d0f84e92dc3873` (equals the file). Apply checks and Security Advisor lint 0010 cleared in both; evidence in #927. Catalog-scope follow-up: #929. |
 | 518 | `scheduling_price_authority_core` | RESERVED — NOT APPLIED | #806 (issue #602) | Core price authority; configurable modes excluded. Owner: codex/604-scheduling-price-authority-core. Renumbered from 497 to 518 on 2026-11-05 (497 is below the Release V3 lock at 508; 511–513 are #813's). Supersedes the stale M495 coordination allocation; preserves occupied M495/M496. |
 | 496 | `channel_number_continuity` | SOURCE ONLY — NOT APPLIED | #799 | Channel number continuity & recovery: merchant_step_up_authorizations, channel_change_approvals (two-admin), channel_transition_audit (append-only), atomic promotion/disconnect/execution wrappers, admin step-up CHECK extension. Disposable PG only. |
 | 495 | `embedded_signup_sessions` | MERGED — rollout not verified here | #805 | Embedded Signup session binding; preserved when renumbering continuity to M496. |
@@ -211,7 +212,7 @@ Owner decisions 2026-11-04: option A (renumber above the lock) and staging plan 
 **Batch 8 repair summary:** 15 versions (227-241) now tracked in remote schema_migrations. Remote count 209 -> 224 (+15). 101-246 tracked count 113 -> 128 (+15). 120 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-08-production-verification.json` (V3 SHA: `f2d54c694f97858fb523247834587bcc3257f8715446ce5d2034086870913c95`). Repair evidence: `docs/migrations/evidence/batch-08-repair.json` (SHA: `fc5b5a9f8dce28507764c4bd7bf9a39adc29a1302784da47b3e67c017d84a9e7`). No migration SQL executed. History-only operation.
 **Batch 9 repair summary:** 4 versions (242, 243, 245, 246) now tracked in remote schema_migrations. Remote count 224 -> 228 (+4). 101-246 tracked count 128 -> 132 (+4). 124 total completed migration-history repairs. Verification evidence: `docs/migrations/evidence/batch-09-production-verification.json` (V3 SHA: `ca531e1e6f23307d14948b89d854a985d6a56495539c072eb2ce3d17334a35c5`). Repair evidence: `docs/migrations/evidence/batch-09-repair.json` (SHA: `1bf9ad999576a73f2aa4e1f554f4a1806f5ec1e54270ffd9be4125fc048f1731`). No migration SQL executed. History-only operation.
 
-**Next available version:** 524 (recheck main and open PR reservations before use)
+**Next available version:** 526 (recheck main and open PR reservations before use)
 
 ## Storage security repair reservations — 2026-10-31
 
@@ -356,3 +357,32 @@ M505 moves the existing owner-requested local downgrade into a service-authorize
 | 507 | merchant_notification_pre_emission_recovery | codex/merchant-notifications | Superseded by 513 (PR #813; was briefly 510) |
 
 Checked current main and all 15 open PR migration file lists on 2026-11-02; no collision.
+
+### Reservation — pricing lane B (trial from sign-up, fee never waived)
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 525 | feature_trial_clock_and_no_trial_fee_waiver | claude/m525-feature-trial-clock | Reserved; not applied |
+
+Adds `businesses.feature_trial_ends_at` with server-only sign-up and update triggers, and rewrites only the `v_is_in_trial` assignment of the live recurring fee functions to `false`. Checked main, open PRs #939/#945/#957 and local worktrees on 2026-11-08; no collision.
+
+### Reservation — transaction completion follow-ups
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 534 | transaction_followups | codex/transaction-followups | Reserved; not applied |
+
+Checked main at `0a5b2d4798ca8d1c99aa45c7a291c0434f804483`, registry and both open PRs (#939/#945) on 2026-11-11; local merchant-tax drafts occupy 528–533, so 534 is reserved here. Adds service-only completion sequencing and scoped card-setup cancellation.
+
+### Reservation — merchant tax Phase A (#980, PR #982)
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 528 | merchant_tax_foundation | codex/merchant-tax-phase-a | Reserved; not applied |
+| 529 | merchant_tax_money_precision | codex/merchant-tax-phase-a | Reserved; not applied |
+| 530 | merchant_tax_calculator | codex/merchant-tax-phase-a | Reserved; not applied |
+| 531 | merchant_tax_purchase_authority | codex/merchant-tax-phase-a | Reserved; not applied |
+| 532 | merchant_tax_payment_refund_authority | codex/merchant-tax-phase-a | Reserved; not applied |
+| 533 | merchant_tax_invoices_quotes | codex/merchant-tax-phase-a | Reserved; not applied |
+
+These numbers were held for the tax drafts before 534 was reserved (see the 534 note above), so they land after 534 on main by design. Release admission has no ordering check today, and the lock bootstrap (508) is below 528. They must be released before any release lock advances past 527. M529 widens money columns on `payments`, `orders`, `bookings` and `platform_fees` under exclusive locks, so it needs a deployment window. Checked main at `f15d56d9c` and the registry on 2026-11-11; no collision.

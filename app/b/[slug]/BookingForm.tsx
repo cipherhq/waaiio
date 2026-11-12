@@ -1,8 +1,11 @@
 'use client';
 
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+
 import { useState, useEffect, useCallback } from 'react';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
+import { IntakeFormView } from '@/components/intake/IntakeFormView';
 
 // ── Types ──
 
@@ -27,6 +30,8 @@ interface ServiceInfo {
   image_url: string | null;
   is_dropoff: boolean;
   is_appointment?: boolean;
+  /** #963: the service links a client intake form, so the phone number is required. */
+  has_form?: boolean;
 }
 
 interface TimeSlot {
@@ -125,6 +130,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
 
 export default function BookingForm({ business, services }: BookingFormProps) {
   const [step, setStep] = useState(1);
+  const [taxQuote, setTaxQuote] = useState<{ total: number; deposit: number; tax_snapshot: TaxSnapshot | null } | null>(null);
   const [selectedService, setSelectedService] = useState<ServiceInfo | null>(null);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
@@ -144,6 +150,12 @@ export default function BookingForm({ business, services }: BookingFormProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [referenceCode, setReferenceCode] = useState('');
+  // #963 client intake form: answered inside the page before booking (before-booking
+  // forms), or linked from the confirmation screen (after-booking forms).
+  const [intake, setIntake] = useState<{ id: string; token: string | null; done: boolean } | null>(null);
+  const [intakeLoading, setIntakeLoading] = useState(false);
+  const [intakeUrl, setIntakeUrl] = useState('');
+  const onIntakeDone = useCallback(() => setIntake(prev => (prev ? { ...prev, done: true } : prev)), []);
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
@@ -186,6 +198,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
 
   function selectService(svc: ServiceInfo) {
     setSelectedService(svc);
+    setIntake(null); // another service never reuses a form answered for this one
     setSelectedDate('');
     setSelectedTime('');
     setStep(2);
@@ -241,7 +254,32 @@ export default function BookingForm({ business, services }: BookingFormProps) {
     setOtpLoading(false);
   }
 
-  function goToConfirm() {
+  const needsPhone = !!selectedService?.has_form && !selectedService.is_appointment;
+
+  /** Asks whether this service needs a form before booking and, if so, opens it. */
+  async function loadIntake(existingId?: string) {
+    if (!selectedService || !needsPhone) { setIntake(null); return; }
+    setIntakeLoading(true);
+    try {
+      const res = await fetch('/api/bookings/public/intake', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessSlug: business.slug, serviceId: selectedService.id,
+          guestEmail: guestEmail.trim().toLowerCase(), guestPhone, otpToken,
+          ...(existingId ? { intakeId: existingId } : {}),
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setError(d.error || 'Something went wrong. Please try again.'); setIntake(null); }
+      else if (d.required) setIntake({ id: d.intakeId, token: d.token || null, done: !!d.submitted });
+      else setIntake(null);
+    } catch {
+      setError('Something went wrong. Please try again.');
+    }
+    setIntakeLoading(false);
+  }
+
+  async function goToConfirm() {
     if (!guestName.trim() || !guestEmail.trim()) {
       setError('Please fill in your name and email.');
       return;
@@ -250,8 +288,25 @@ export default function BookingForm({ business, services }: BookingFormProps) {
       setError('Please verify your email first.');
       return;
     }
-    setError('');
+    if (needsPhone && guestPhone.replace(/\D/g, '').length < 6) {
+      setError('Please add your phone number.');
+      return;
+    }
+    setError(''); setTaxQuote(null); setAgreedToTerms(false);
+    try {
+      const response = await fetch('/api/bookings/public/create', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preview: true, businessSlug: business.slug,
+          ...(selectedService?.is_appointment ? { appointmentId: selectedService.id } : { serviceId: selectedService?.id }),
+          date: selectedDate, time: selectedTime, guestName: guestName.trim(), guestEmail: guestEmail.trim().toLowerCase(), guestPhone, otpToken }) });
+      const quote = await response.json();
+      if (!response.ok || !Number.isFinite(quote.total) || !Number.isFinite(quote.deposit)) { setError(quote.error || 'Could not verify the booking total. Please try again.'); return; }
+      setTaxQuote(quote); setTermsNeedRefresh(false);
+      if (quote.currentTerms) setSelectedService(current => current ? { ...current, price: quote.currentTerms.price, deposit_amount: quote.currentTerms.deposit } : current);
+    } catch { setError('Could not verify the booking total. Please try again.'); return; }
     setStep(5);
+    // Back then Continue reuses the same intake (kept if already answered); the server
+    // opens a new one only if the service or phone no longer match it.
+    await loadIntake(intake?.id);
   }
 
   async function handleBooking() {
@@ -274,7 +329,8 @@ export default function BookingForm({ business, services }: BookingFormProps) {
           guestEmail: guestEmail.trim().toLowerCase(),
           guestPhone: guestPhone || undefined,
           otpToken,
-          expectedTerms: { price: selectedService.price, deposit: selectedService.deposit_amount ?? 0, country: business.country_code, quantity: 1 },
+          ...(intake?.done ? { intakeId: intake.id } : {}),
+          expectedTerms: { price: selectedService.price, deposit: selectedService.deposit_amount ?? 0, country: business.country_code, quantity: 1, tax_snapshot: taxQuote?.tax_snapshot ?? null },
         }),
       });
 
@@ -282,15 +338,16 @@ export default function BookingForm({ business, services }: BookingFormProps) {
 
       if (!res.ok) {
         if (data.code === 'terms_changed') {
-          setAgreedToTerms(false);
+          setAgreedToTerms(false); setTaxQuote(null); setStep(4);
           if (data.currentTerms && data.currentTerms.country === business.country_code
-              && Number.isSafeInteger(data.currentTerms.price) && data.currentTerms.price >= 0
-              && Number.isSafeInteger(data.currentTerms.deposit) && data.currentTerms.deposit >= 0) {
+              && Number.isFinite(data.currentTerms.price) && data.currentTerms.price >= 0
+              && Number.isFinite(data.currentTerms.deposit) && data.currentTerms.deposit >= 0) {
             setSelectedService({ ...selectedService, price: data.currentTerms.price, deposit_amount: data.currentTerms.deposit });
           } else {
             setTermsNeedRefresh(true);
           }
         }
+        if (data.code === 'intake_required') await loadIntake(intake?.id);
         setError(data.error || 'Something went wrong. Please try again.');
         setSubmitting(false);
         return;
@@ -302,6 +359,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
       }
 
       setReferenceCode(data.referenceCode || '');
+      setIntakeUrl(typeof data.intakeUrl === 'string' ? data.intakeUrl : '');
       setSuccess(true);
     } catch {
       setError('Something went wrong. Please try again.');
@@ -330,6 +388,16 @@ export default function BookingForm({ business, services }: BookingFormProps) {
             <p className="mt-3 rounded-lg bg-gray-50 px-4 py-2 text-sm font-mono text-gray-700">
               Reference: {referenceCode}
             </p>
+          )}
+          {intakeUrl && (
+            <div className="ph-no-capture mt-5 rounded-xl border border-violet-100 bg-violet-50 p-4 text-left">
+              <p className="text-sm font-medium text-gray-900">{business.name} would like a few answers from you before your booking.</p>
+              <a href={intakeUrl} target="_blank" rel="noopener noreferrer"
+                className="mt-3 block w-full rounded-lg bg-brand py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-600">
+                Fill in your form
+              </a>
+              <p className="mt-2 text-xs text-gray-500">We also emailed you the link. Only {business.name} can see your answers.</p>
+            </div>
           )}
           <p className="mt-4 text-xs text-gray-400">
             A confirmation has been sent to {guestEmail}.
@@ -582,7 +650,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Phone <span className="text-xs text-gray-400">(optional)</span>
+                  Phone {needsPhone ? <span className="text-red-500">*</span> : <span className="text-xs text-gray-400">(optional)</span>}
                 </label>
                 <PhoneInput
                   value={guestPhone}
@@ -604,6 +672,18 @@ export default function BookingForm({ business, services }: BookingFormProps) {
         {step === 5 && selectedService && (
           <div>
             <BackButton onClick={goBack} />
+            {intakeLoading && (
+              <div className="flex justify-center py-10">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-violet-600" />
+              </div>
+            )}
+            {!intakeLoading && intake && !intake.done && intake.token && (
+              <div className="mb-6 rounded-xl bg-white p-5 shadow-sm">
+                <p className="mb-4 text-sm text-gray-600">Before you book, {business.name} needs a few answers from you.</p>
+                <IntakeFormView token={intake.token} onDone={onIntakeDone} />
+              </div>
+            )}
+            {!intakeLoading && (!intake || intake.done) && (<>
             <h2 className="mb-4 text-lg font-semibold text-gray-900">Confirm your booking</h2>
             <div className="rounded-xl bg-white p-5 shadow-sm space-y-4">
               {/* Summary */}
@@ -627,12 +707,13 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                 <div className="border-t border-gray-100 pt-3">
                   <SummaryRow
                     label="Total"
-                    value={selectedService.price > 0 ? formatPrice(selectedService.price, cc) : 'Free'}
+                    value={taxQuote ? formatPrice(taxQuote.total, cc) : 'Unavailable'}
                     bold
                   />
-                  {selectedService.deposit_amount && selectedService.deposit_amount > 0 && selectedService.deposit_amount < selectedService.price && (
+                  {taxQuote?.tax_snapshot && <><SummaryRow label="Before tax" value={formatPrice(taxQuote.tax_snapshot.netAmount / 100, cc)} /><SummaryRow label="Tax" value={formatPrice(taxQuote.tax_snapshot.taxAmount / 100, cc)} /></>}
+                  {taxQuote && taxQuote.deposit > 0 && taxQuote.deposit < taxQuote.total && (
                     <p className="mt-1 text-xs text-gray-500">
-                      Deposit due now: {formatPrice(selectedService.deposit_amount, cc)}
+                      Deposit due now: {formatPrice(taxQuote.deposit, cc)}
                     </p>
                   )}
                 </div>
@@ -653,16 +734,17 @@ export default function BookingForm({ business, services }: BookingFormProps) {
               {termsNeedRefresh && <button type="button" onClick={() => window.location.reload()} className="text-brand underline">Refresh booking details</button>}
               <button
                 onClick={handleBooking}
-                disabled={submitting || !agreedToTerms || termsNeedRefresh}
+                disabled={submitting || !agreedToTerms || termsNeedRefresh || !taxQuote}
                 className="w-full rounded-lg bg-brand py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
                 {submitting
                   ? 'Processing...'
-                  : selectedService.price > 0
-                    ? `Pay ${formatPrice(selectedService.deposit_amount || selectedService.price, cc)}`
+                  : (taxQuote?.deposit ?? 0) > 0
+                    ? `Pay ${formatPrice(taxQuote!.deposit, cc)}`
                     : 'Book Now'}
               </button>
             </div>
+            </>)}
           </div>
         )}
 

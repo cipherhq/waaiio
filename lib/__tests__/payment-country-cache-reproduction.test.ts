@@ -54,6 +54,8 @@ vi.mock('@/lib/getPlatformFees', () => ({
 }));
 
 vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialStatus: vi.fn(async () => false),
   resolveTrialCredit: vi.fn(async () => false),
 }));
@@ -107,7 +109,7 @@ function buildPaymentSupabase() {
       if (table === 'platform_config_versions') return makeChain({ data: { id: 'cfg-001', config_snapshot: { fee_policy_enabled: false } }, error: null });
       return makeChain({ data: null, error: null });
     }),
-    rpc: vi.fn(async () => ({ data: null, error: null })),
+    rpc: vi.fn(async (name: string) => ({ data: name === 'reserve_merchant_tax_payment_980' ? { taxable: false } : null, error: null })),
   };
 }
 

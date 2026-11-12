@@ -9,6 +9,7 @@ import { NextRequest } from 'next/server';
 type Row = Record<string, any>;
 let rows: Row[];
 let link: Row | null;
+let taxEnabled=false;
 let provider: 'paystack' | 'stripe';
 let inserts: Row[];
 let effects: string[];
@@ -39,6 +40,7 @@ function database() {
             if (operation === 'update') { effects.push('use-fallback'); return { data: null, error: null }; }
             return { data: link, error: null };
           }
+          if (table === 'merchant_tax_settings') return { data: { enabled: taxEnabled }, error: null };
           if (table !== 'payments') throw new Error('Unexpected table: ' + table);
           if (operation === 'insert') {
             inserts.push(structuredClone(values)); effects.push('insert');
@@ -96,6 +98,7 @@ function stripe() {
   }
 }
 beforeEach(async () => {
+  taxEnabled=false;
   vi.resetModules();
   vi.clearAllMocks();
   vi.stubEnv('PAYSTACK_SECRET_KEY', 'synthetic-paystack-fixture');
@@ -158,6 +161,11 @@ afterEach(() => {
 });
 
 describe('scan-to-pay guards before side effects', () => {
+  it('refuses an enabled-tax standalone link before payment/provider side effects',async()=>{
+    taxEnabled=true;const response=await route.POST(request());
+    expect(response.status).toBe(409);expect(await response.json()).toMatchObject({code:'unsupported_tax_purchase'});
+    expect(inserts).toHaveLength(0);expect(transport).not.toHaveBeenCalled();
+  });
   it.each([undefined, '', '   ', '08012345678', 'invalid', 123])('rejects invalid required phone %s', async phone => {
     const response = await route.POST(request({ ...BODY, customer_phone: phone }));
     expect(response.status).toBe(422);

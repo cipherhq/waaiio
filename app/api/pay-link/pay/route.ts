@@ -70,6 +70,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Standalone links have no itemized purchase authority. Do not silently take
+  // an untaxed new payment for an enabled merchant or invent a tax allocation.
+  const { data: taxSettings, error: taxSettingsError } = await supabase.from('merchant_tax_settings')
+    .select('enabled').eq('business_id', link.business_id).maybeSingle();
+  if (taxSettingsError) return NextResponse.json({ error: 'Unable to verify merchant tax settings. Please try again.' }, { status: 503 });
+  if (taxSettings?.enabled) return NextResponse.json({ code: 'unsupported_tax_purchase',
+    error: 'This business uses itemized tax. Ask the business for an invoice or order checkout instead of a standalone payment link.' }, { status: 409 });
+
   // Check expiry
   if (link.expires_at && new Date(link.expires_at) < new Date()) {
     return NextResponse.json({ error: 'This payment link has expired' }, { status: 410 });

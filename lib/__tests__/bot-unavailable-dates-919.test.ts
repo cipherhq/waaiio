@@ -380,10 +380,13 @@ describe('T tables whose business hours close at or after midnight (M510)', () =
     expect(rowIds(await date.prompt(list))).toContain(SAT);
   });
 
-  it('closing at 02:00: a 23:30 table (ends 01:00) is offered', async () => {
+  it('closing at 02:00: a 23:00 table (ends 00:30) is offered', async () => {
     const { time } = await flow();
     const ids = rowIds(await time.prompt(lateCtx({}, { saturday: { open: '20:00', close: '02:00' } })));
-    expect(ids).toEqual(['20:00', '21:30', '23:00', '00:30', 'change_date']);
+    // 00:30 is not listed under Saturday: book_table_atomic reads Saturday 00:30
+    // as early Saturday morning, before Saturday opens, and refuses it
+    // (before_opening; table-overnight-510.pg.test.ts). It was listed before.
+    expect(ids).toEqual(['20:00', '21:30', '23:00', 'change_date']);
   });
 });
 
@@ -665,3 +668,105 @@ describe('C through the real FlowExecutor', () => {
 });
 
 const TAKEN_TEXT = 'Sorry, this time slot just got booked. Please choose another time.';
+
+// ═══════════════════════════════════════════════════════
+// H. Tables: the business must be open for the whole booking (M510)
+// ═══════════════════════════════════════════════════════
+// TestBiz on staging, 6 Nov 2026: the table takes bookings 10:00-22:00, the
+// business is open 09:00-17:00 on Fridays. The bot offered 20:30 from the
+// table's own hours; book_table_atomic refused it (day_unavailable) and the
+// chat ended with "Send *Hi*".
+describe('H tables: times outside the business hours are not offered (TestBiz, 6 Nov)', () => {
+  const TESTBIZ_HOURS = {
+    friday: { open: '09:00', close: '17:00' },
+    saturday: { open: '09:00', close: '17:00', closed: true },
+  };
+  const TABLE_HOURS = {
+    _service_available_from: '10:00:00', _service_available_to: '22:00:00',
+    _seating_available_from: '10:00:00', _seating_available_to: '22:00:00',
+  };
+  const testBizCtx = (db: ReturnType<typeof mockDb>, sessionData: Record<string, unknown> = {}) =>
+    ctxFor({ table: true, db, operatingHours: TESTBIZ_HOURS, sessionData: { date: FRI, ...TABLE_HOURS, ...sessionData } });
+
+  it('the Friday time list stops where a 90-min table still ends by 17:00 (20:30 was offered before)', async () => {
+    const { time } = await flow();
+    expect(rowIds(await time.prompt(testBizCtx(mockDb())))).toEqual(['10:00', '11:30', '13:00', '14:30', 'change_date']);
+  });
+
+  it('a typed 20:30 is refused as not offered; 14:30 is accepted', async () => {
+    const { time } = await flow();
+    expect(await time.validate('20:30', testBizCtx(mockDb())))
+      .toEqual({ valid: false, errorMessage: "That time isn't available. Please pick a time from the list." });
+    expect(await time.validate('14:30', testBizCtx(mockDb()))).toMatchObject({ valid: true, data: { time: '14:30' } });
+  });
+
+  it('a pre-filled 20:30 shows the time list instead of being kept', async () => {
+    const { time } = await flow();
+    expect(await time.skipIf!(testBizCtx(mockDb(), { time: '20:30' }))).toBe(false);
+  });
+
+  it('the date list leaves out the closed Saturday and keeps Friday', async () => {
+    const { date } = await flow();
+    const ctx = testBizCtx(mockDb(), { _show_full_date_list: true });
+    delete ctx.session.session_data.date;
+    const ids = rowIds(await date.prompt(ctx));
+    expect(ids).toContain(FRI);
+    expect(ids).not.toContain(SAT);
+  });
+
+  it('today is not offered once no table can still end by closing time', async () => {
+    const { hasTableSlotLeftToday } = await import('@/lib/bot/flows/shared/table-same-day');
+    const ctx = testBizCtx(mockDb());
+    // 13:00: 14:30 still ends at 16:00. 15:00: only 16:00 and later are left, all past 17:00.
+    expect(await hasTableSlotLeftToday(ctx, { date: FRI, minutes: 13 * 60 })).toBe(true);
+    expect(await hasTableSlotLeftToday(ctx, { date: FRI, minutes: 15 * 60 })).toBe(false);
+  });
+
+  it('table window inside the business hours: nothing changes', async () => {
+    const { time } = await flow();
+    const ctx = ctxFor({ table: true, db: mockDb(), operatingHours: { friday: { open: '09:00', close: '23:00' } }, sessionData: { date: FRI, ...TABLE_HOURS } });
+    expect(rowIds(await time.prompt(ctx))).toEqual(['10:00', '11:30', '13:00', '14:30', '16:00', '17:30', '19:00', '20:30', 'change_date']);
+  });
+
+  describe('create_booking: book_table_atomic still refuses over hours', () => {
+    beforeEach(async () => {
+      vi.spyOn(await import('@/lib/capabilities/service'), 'getEnabledCapabilities').mockResolvedValue([]);
+      vi.spyOn(await import('@/lib/tier-limits'), 'checkTierLimit').mockResolvedValue({ allowed: true } as never);
+      vi.spyOn(await import('@/lib/bot/flows/shared/capability-guard'), 'requireCurrentCapability').mockResolvedValue({ allowed: true } as never);
+    });
+    const NOTICE = 'That time is no longer available for this table. Please choose another time.';
+    const refuse = (message: string) => ({ single: async () => ({ data: null, error: { message } }) });
+
+    for (const code of ['day_unavailable', 'before_opening', 'after_closing', 'past_midnight']) {
+      it(`${code}: says so and sends the open times again, not "Send *Hi*"`, async () => {
+        const { create } = await flow();
+        const db = mockDb({ rpc: name => name === 'book_table_atomic' ? refuse(`${code}:refused`) : undefined });
+        const ctx = testBizCtx(db, { time: '20:30', party_size: 2, _seating_deposit: 0 });
+        const messages = await create.prompt(ctx);
+        expect(messages[0]).toEqual({ type: 'text', text: NOTICE });
+        expect(rowIds(messages)).toEqual(['10:00', '11:30', '13:00', '14:30', 'change_date']);
+        expect(JSON.stringify(messages)).not.toMatch(/Send \*Hi\*/);
+        expect(ctx.session.session_data).toMatchObject({ _slot_taken_return: true, _slot_taken_count: 1 });
+        expect(typeof create.nextAfterPrompt === 'function' && create.nextAfterPrompt(ctx)).toBe('select_time');
+      });
+    }
+
+    it('after three refusals in one session: the old message, no loop', async () => {
+      const { create } = await flow();
+      const db = mockDb({ rpc: name => name === 'book_table_atomic' ? refuse('day_unavailable:refused') : undefined });
+      const ctx = testBizCtx(db, { time: '20:30', party_size: 2, _seating_deposit: 0, _slot_taken_count: 2 });
+      expect(await create.prompt(ctx)).toEqual([{ type: 'text', text: 'That time is no longer available for this table. Send *Hi* to pick a different time.' }]);
+    });
+  });
+});
+
+
+// This suite exercises confirmation UX with an untaxed authoritative quote.
+// RPC validation and quote failures are covered by the merchant-tax suites.
+vi.mock('@/lib/tax/server-quote', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tax/server-quote')>()),
+  quoteBookingTax: vi.fn(async (_db, input) => ({
+    total: Math.max(Number(input.expectedTerms.price || 0) * input.partySize, Number(input.expectedTerms.deposit || 0)),
+    deposit: Number(input.expectedTerms.deposit || 0), tax_snapshot: null,
+  })),
+}));

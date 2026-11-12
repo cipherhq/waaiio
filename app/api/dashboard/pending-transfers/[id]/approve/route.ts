@@ -105,6 +105,16 @@ export async function POST(
       // Notify customer
       await notifyCustomer(service, transfer, business_id, 'approved');
 
+      // #963: the approved booking sends its after-booking intake form (if any). Non-blocking.
+      if (transfer.booking_id) {
+        try {
+          const { deliverAfterBookingIntake } = await import('@/lib/intake/send');
+          await deliverAfterBookingIntake(service, transfer.booking_id);
+        } catch (intakeErr) {
+          logger.warn('[APPROVE] Intake form not sent (non-critical):', (intakeErr as Error).message);
+        }
+      }
+
       return NextResponse.json({ success: true, action: 'approved' });
     }
 

@@ -7,6 +7,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { resolvePaymentOrigin } from './provider-adapters';
 
 // ─── Canonical phone validation ───
 
@@ -25,6 +26,17 @@ export function canonicalSavedCardPhone(phone: string): string | null {
 /** Derive the deterministic digits-only bot-session phone from a canonical +E.164 phone. */
 export function savedCardSessionPhone(canonPhone: string): string {
   return canonPhone.replace(/^\+/, '');
+}
+
+/**
+ * A Paystack payment taken on the merchant's own account (BYO) or a Connect
+ * account can never be saved as a Waaiio card: the card authorization belongs
+ * to that account (the same rule as the 'not_platform' eligibility reason).
+ */
+export function paystackPaymentCannotSaveCard(payment: { gateway?: unknown; metadata?: unknown }): boolean {
+  if (payment.gateway !== 'paystack') return false;
+  const origin = resolvePaymentOrigin((payment.metadata || {}) as Record<string, unknown>);
+  return origin === 'byo' || origin === 'connect';
 }
 
 // ─── Gateway-neutral internal email alias ───

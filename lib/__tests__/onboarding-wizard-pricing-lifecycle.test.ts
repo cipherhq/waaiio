@@ -277,13 +277,13 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     await navigateCategoryToFeatures(container);
     await act(async () => { findButton(container, /Continue to plans/).click(); });
     await waitFor(() => assertTextPresent(container, 'Choose your plan'));
-    await act(async () => { findButton(container, /Premium/).click(); });
+    await act(async () => { findButton(container, /^Premium/).click(); });
     await act(async () => { findButton(container, /Continue with/).click(); });
     await waitFor(() => assertTextPresent(container, 'First Name'));
     expect(container.textContent).toContain('Pay ₦70,000/mo');
     await act(async () => { findButton(container, /^Back$/).click(); });
     await waitFor(() => assertTextPresent(container, 'Choose your plan'));
-    expect(findButton(container, /Premium/).getAttribute('aria-pressed')).toBe('true');
+    expect(findButton(container, /^Premium/).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('stale ?billing=annual URL: real wizard verify request emits billing_interval=month', async () => {

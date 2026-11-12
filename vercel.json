@@ -1,4 +1,10 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/merchant-tax-phase-a": false,
+      "codex/directory-short-links": false
+    }
+  },
   "redirects": [
     {
       "source": "/:path*",
@@ -42,6 +48,10 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/cron/trial-activation",
+      "schedule": "30 * * * *"
+    },
+    {
       "path": "/api/cron/trial-check",
       "schedule": "0 9 * * *"
     },
@@ -78,6 +88,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/intake-reminders",
+      "schedule": "15 * * * *"
+    },
+    {
       "path": "/api/cron/data-retention",
       "schedule": "0 1 * * 0"
     },
@@ -112,6 +126,14 @@
     {
       "path": "/api/cron/recover-reservations",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/messaging-spend-warnings",
+      "schedule": "40 * * * *"
+    },
+    {
+      "path": "/api/cron/reservation-expiry",
+      "schedule": "50 * * * *"
     },
     {
       "path": "/api/cron/subscription-checkout-recovery",

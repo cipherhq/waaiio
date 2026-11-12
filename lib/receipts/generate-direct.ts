@@ -1,8 +1,12 @@
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } from '@/lib/pdf/receipt-generator';
-import type { HistoryRow } from '@/lib/pdf/receipt-generator';
+import type { HistoryRow, ReceiptLineItem } from '@/lib/pdf/receipt-generator';
+import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { loadTicketLine, ORDER_ITEMS_SELECT, toOrderLineItems, loadEntityReceiptTax } from '@/lib/receipts/line-items';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import type { ReceiptTaxSource } from '@/lib/tax/receipt';
+import { buildReceiptTax } from '@/lib/tax/receipt';
 
 /**
  * Generate a receipt/history/annual PDF directly (no HTTP self-fetch).
@@ -88,34 +92,41 @@ async function buildReceipt(
     ? [customerPhone, customerPhone.slice(1)]
     : [customerPhone, `+${customerPhone}`];
 
-  const [bookingRes, bookingByPhoneRes, chargeRes, paymentRes, orderRes, donationRes] = await Promise.all([
+  const [bookingRes, bookingByPhoneRes, chargeRes, paymentRes, orderRes, donationRes, invoiceRes] = await Promise.all([
+    // #889: a pending booking is unpaid, so it never becomes a "receipt".
     supabase.from('bookings')
-      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
-      .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
+      .select('id, business_id, tax_snapshot, reference_code, date, status, total_amount, quantity, event_id, guest_name, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
+      .eq('user_id', userId).in('status', ['completed', 'confirmed'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     // Fallback: find by guest_phone (bot bookings may not link user_id correctly)
     supabase.from('bookings')
-      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
+      .select('id, business_id, tax_snapshot, reference_code, date, status, total_amount, quantity, event_id, guest_name, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .or(`guest_phone.eq.${phoneVariants[0]},guest_phone.eq.${phoneVariants[1]}`)
-      .in('status', ['completed', 'confirmed', 'pending'])
+      .in('status', ['completed', 'confirmed'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('subscription_charges')
-      .select('id, reference_code, amount, status, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
+      // #889: subscription_charges has no reference_code (the select always failed); gateway_reference is the ref.
+      .select('id, gateway_reference, amount, currency, status, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('payments')
-      .select('id, gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code, subscription_tier)')
+      .select('id, business_id, tax_allocation, gateway_reference, amount, currency, status, created_at, booking_id, order_id, invoice_id, businesses:business_id(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('orders')
-      .select('id, reference_code, status, total_amount, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
+      .select(`id, business_id, tax_snapshot, reference_code, status, total_amount, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url), ${ORDER_ITEMS_SELECT}`)
       .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('campaign_donations')
-      .select('id, reference_code, amount, status, created_at, campaigns:campaign_id(name, businesses:business_id(name, country_code, subscription_tier, logo_url))')
+      // #889: the campaign column is title (name does not exist, so this query always failed).
+      .select('id, reference_code, amount, currency, status, created_at, donor_name, campaigns:campaign_id(title, businesses:business_id(name, country_code, subscription_tier, logo_url))')
       .in('donor_phone', phoneVariants)
       .eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('invoices')
+      .select('id, business_id, tax_snapshot, invoice_number, currency, total_amount, status, paid_at, created_at, customer_name, businesses:business_id(name, country_code, subscription_tier, logo_url)')
+      .eq('customer_phone', customerPhone).eq('status', 'paid')
+      .order('paid_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   const recentBooking = bookingRes.data;
@@ -124,6 +135,7 @@ async function buildReceipt(
   const recentPayment = paymentRes.data;
   const recentOrder = orderRes.data;
   const recentDonation = donationRes.data;
+  const recentInvoice = invoiceRes.data;
 
   // Log errors for debugging (non-blocking)
   if (bookingRes.error) logger.warn('[RECEIPTS] Booking query error:', bookingRes.error.message);
@@ -140,6 +152,7 @@ async function buildReceipt(
   if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at), data: recentCharge });
   if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at), data: recentPayment });
   if (recentOrder) candidates.push({ source: 'order', date: new Date(recentOrder.created_at), data: recentOrder });
+  if (recentInvoice) candidates.push({ source: 'invoice', date: new Date(recentInvoice.paid_at || recentInvoice.created_at), data: recentInvoice });
   if (recentDonation) candidates.push({ source: 'donation', date: new Date(recentDonation.created_at), data: recentDonation });
 
   if (candidates.length === 0) return null;
@@ -154,28 +167,95 @@ async function buildReceipt(
   const svc = d.services as { name: string } | null;
   const cc = (biz?.country_code || 'NG') as CountryCode;
 
-  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : best.source === 'donation' ? ((d.campaigns as any)?.name || 'Donation') : 'Payment');
-  if (best.source === 'payment' && d.booking_id) {
-    const { data: linked } = await supabase.from('bookings').select('services(name)').eq('id', d.booking_id).single();
+  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : best.source === 'invoice' ? 'Invoice' : best.source === 'donation' ? ((d.campaigns as any)?.title || 'Donation') : 'Payment');
+  // #889 (Owner decision 2026-11-11): the name the buyer gave comes first, then the account name.
+  let buyerName: string | null = d.guest_name || d.donor_name || d.customer_name || null;
+  let taxSnapshot = d.tax_snapshot;
+  let taxSource: ReceiptTaxSource | undefined;
+  if (best.source === 'payment' && (d.booking_id || d.order_id || d.invoice_id)) {
+    const table = d.booking_id ? 'bookings' : d.order_id ? 'orders' : 'invoices';
+    const linkedId = d.booking_id || d.order_id || d.invoice_id;
+    let query = supabase.from(table).select(table === 'bookings' ? 'business_id, tax_snapshot, guest_name, services(name)' : 'business_id, tax_snapshot').eq('id', linkedId);
+    if (d.business_id) query = query.eq('business_id', d.business_id);
+    const { data: linked, error } = await query.single();
+    if (error && d.tax_allocation != null) throw new Error('Unable to load original payment tax terms');
     if (linked) {
-      const ls = linked.services as unknown as { name: string } | null;
-      if (ls?.name) serviceName = ls.name;
+      const booking = linked as unknown as { guest_name?: string; services?: { name: string } | null; business_id?: string; tax_snapshot?: ReceiptTaxSource['snapshot'] };
+      if (booking.services?.name) serviceName = booking.services.name;
+      buyerName = buyerName || booking.guest_name || null;
+      if (booking.tax_snapshot != null) {
+        if (!d.business_id || booking.business_id !== d.business_id) throw new Error('Payment tax business does not match');
+        taxSnapshot = booking.tax_snapshot;
+      }
     }
+  }
+
+  // #889: what was bought, and for a part-paid booking what was paid and what is still owed.
+  let amount = d.total_amount || d.amount || 0;
+  let items: ReceiptLineItem[] = [];
+  let totalDue: number | undefined;
+  let balanceDue: number | undefined;
+  if (best.source === 'order') items = toOrderLineItems(d.order_items);
+  if (best.source === 'order' && taxSnapshot != null) {
+    const total = Number(d.total_amount || 0);
+    const balance = await getEntityBalance(supabase, { orderId: d.id, totalAmount: total });
+    if (balance && balance.balanceDue > 0 && balance.netPaid > 0) {
+      amount = balance.netPaid; totalDue = total; balanceDue = balance.balanceDue;
+    }
+  }
+  if (best.source === 'booking') {
+    if (d.event_id) {
+      const ticket = await loadTicketLine(supabase, d);
+      if (ticket.eventName) serviceName = ticket.eventName;
+      items = ticket.items;
+    }
+    const total = Number(d.total_amount || 0);
+    if (total > 0) {
+      const balance = await getEntityBalance(supabase, { bookingId: d.id, totalAmount: total });
+      // Nothing paid online yet (walk-in, pay at venue): print as before, without deposit lines.
+      if (balance && balance.balanceDue > 0 && balance.netPaid > 0) {
+        amount = balance.netPaid;
+        totalDue = total;
+        balanceDue = balance.balanceDue;
+      }
+    }
+  }
+
+  if (taxSnapshot != null) {
+    if (d.currency && d.currency !== taxSnapshot.currency) throw new Error('Receipt currency does not match original tax snapshot');
+    if (best.source === 'payment') {
+      taxSource = { snapshot: taxSnapshot, ...(d.tax_allocation == null ? {} : { allocations: [d.tax_allocation] }) };
+    } else if (best.source === 'booking' || best.source === 'order' || best.source === 'invoice') {
+      taxSource = await loadEntityReceiptTax(supabase, { snapshot: taxSnapshot, businessId: d.business_id, entityId: d.id,
+        entityColumn: best.source === 'booking' ? 'booking_id' : best.source === 'order' ? 'order_id' : 'invoice_id', paidAmount: Number(amount) });
+    }
+    if (taxSource) {
+      items = buildReceiptTax(taxSource, Number(amount)).items;
+      serviceName = items.length === 1 ? items[0].name : 'Purchase';
+    }
+  } else if (d.tax_allocation != null) {
+    throw new Error('Original sale tax snapshot is missing');
   }
 
   const tier = (biz?.subscription_tier || 'free') as SubscriptionTier;
   return await generateReceiptPdf({
     businessName: biz?.name || 'Business',
-    referenceCode: d.reference_code || d.gateway_reference || '-',
+    referenceCode: d.reference_code || d.gateway_reference || d.invoice_number || '-',
     date: d.date || d.created_at,
     serviceName,
-    amount: d.total_amount || d.amount || 0,
+    amount,
     paymentStatus: d.status,
-    customerName,
+    customerName: buyerName || customerName,
     customerPhone,
     countryCode: cc,
     whitelabel: PRICING_TIERS[tier]?.whitelabel === true,
     logoUrl: biz?.logo_url || undefined,
+    // #889: the payment's own currency where the row records it; otherwise the business country.
+    currencyCode: d.currency || undefined,
+    items,
+    tax: taxSource,
+    totalDue,
+    balanceDue,
   });
 }
 
