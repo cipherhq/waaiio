@@ -64,7 +64,7 @@ const GROUPS: GroupDef[] = [
   },
   {
     label: 'Bot & Automation',
-    keys: ['bot_rate_limit_per_minute', 'ocr_confidence_threshold', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes', 'contract_signing_hours'],
+    keys: ['bot_rate_limit_per_minute', 'customer_daily_reply_limit', 'customer_daily_reply_limit_max', 'customer_repeat_message_limit', 'ocr_confidence_threshold', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes', 'contract_signing_hours'],
   },
   {
     label: 'Business Limits',

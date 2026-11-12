@@ -58,6 +58,8 @@ type Cas = { p_expected_version: number; p_conversation_log: Array<{ role: strin
 function supabaseWithCas(casCalls: Cas[], staleFrom = Infinity) {
   return {
     rpc: vi.fn((_fn: string, args: Cas) => {
+      // #536 invalid-input counter: first invalid reply, no pause.
+      if (_fn === 'record_customer_invalid_input') return Promise.resolve({ data: 1, error: null });
       casCalls.push(args);
       const stale = casCalls.length >= staleFrom;
       return Promise.resolve({ data: { success: !stale, version: args.p_expected_version + 1 }, error: null });

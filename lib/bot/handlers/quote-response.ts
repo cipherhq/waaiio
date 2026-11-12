@@ -20,6 +20,12 @@ export async function handleQuoteResponse(
   quoteId: string,
   action: 'accept' | 'reject',
   expectedDigest?: string,
+  /**
+   * #536: sends the payment link for a freshly accepted quote. A paying
+   * customer is never stopped by the daily reply limit; every other reply
+   * here goes through `sendText` and stays limited.
+   */
+  sendPaymentText: (to: string, text: string) => Promise<void> = sendText,
 ): Promise<void> {
   try {
     if (action === 'reject') {
@@ -228,7 +234,9 @@ export async function handleQuoteResponse(
               paymentResult.url,
             ];
 
-        await sendText(from, messageLines.join('\n'));
+        // Only a fresh acceptance is exempt from the daily limit; a re-tap of
+        // an already accepted quote re-sends the link as an ordinary reply.
+        await (result.already_accepted ? sendText : sendPaymentText)(from, messageLines.join('\n'));
       } else {
         // Payment init failed but order exists
         await sendText(from, `✅ *Price Accepted!*\n\n🔑 Order: *${referenceCode}*\n💰 Total: *${formatCurrency(total, cc)}*\n\nPlease contact the business for payment details.`);

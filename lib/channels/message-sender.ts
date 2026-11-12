@@ -25,6 +25,7 @@ import {
 import { resolveRecipientCountry } from '@/lib/channels/phone-country';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import type { CustomerReplyGuard } from '@/lib/messaging/customer-message-guard';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Suspension detection for retry logic — uses message-based matching
@@ -166,7 +167,7 @@ export interface MessageSender {
   enterPlatformDiscovery?(): void;
   /** S-1 (#256): Read the currently bound business identity. */
   readonly boundBusinessId?: string;
-  sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string }): Promise<{ success?: boolean; messageId?: string }>;
+  sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string; /** #536: payment-link reply, never daily-limited. */ payingCustomer?: boolean }): Promise<{ success?: boolean; messageId?: string }>;
   sendList(msg: {
     to: string;
     title: string;
@@ -278,6 +279,13 @@ export class MetaCloudSender implements MessageSender {
   beforeEachAttempt?: () => void;
 
   /**
+   * Customer daily-limit guard for the inbound message being answered (#536).
+   * Set by the webhook around bot.handleMessage only. Called before any
+   * business-paid send; throws CustomerDailyLimitError to refuse it.
+   */
+  customerReplyGuard?: CustomerReplyGuard;
+
+  /**
    * S-1 (#256): Private business identity for the hard-stop guard.
    * Only modifiable through bindBusiness() and enterPlatformDiscovery().
    */
@@ -302,7 +310,7 @@ export class MetaCloudSender implements MessageSender {
     providerCall: () => Promise<T>,
     params: Omit<AttemptParams, 'businessId' | 'attemptScope'> & { recipientPhone: string; messageCategory?: string },
     /** Platform-scoped sends skip the guard when no business is bound */
-    options?: { platformScopeAllowed?: boolean; reportSafePreEmissionFailure?: boolean },
+    options?: { platformScopeAllowed?: boolean; reportSafePreEmissionFailure?: boolean; payingCustomer?: boolean },
   ): Promise<T> {
     const isPlatform = !this._businessId && options?.platformScopeAllowed;
     const scope: 'business' | 'platform' = isPlatform ? 'platform' : 'business';
@@ -312,6 +320,14 @@ export class MetaCloudSender implements MessageSender {
     // be bypassed simply because #257 is OFF. GateBlockError is non-retryable.
     if (!isPlatform && !this._supabase) {
       throw new GateBlockError('Business send requires attempt authority (Supabase client unavailable) — zero Meta emission');
+    }
+
+    // Customer daily limit: refuse any business-billed send before an attempt
+    // row or reservation exists, including platform-style replies sent while a
+    // business is bound (dedicated numbers). STOP/START messages get no guard;
+    // a payment-link reply (payingCustomer) is never refused.
+    if (!isPlatform && !options?.payingCustomer && this._businessId && this.customerReplyGuard) {
+      await this.customerReplyGuard(this._businessId, params.recipientPhone);
     }
 
     // 1. Create pre-WAMID attempt with authoritative pricing context.
@@ -556,12 +572,13 @@ export class MetaCloudSender implements MessageSender {
 
   // ── Business-scoped sends — require business identity, fail-closed ──
 
-  async sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string }) {
+  async sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string; payingCustomer?: boolean }) {
     // #257 lifecycle: attempt → deadline → #256 guard → deadline → sending → emission
     const textCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
         { recipientPhone: msg.to, messageCategory: msg.messageCategory },
+        msg.payingCustomer ? { payingCustomer: true } : undefined,
       );
     };
     const result = msg.noRetry ? await textCall() : await withRetry(textCall, 2, 1000, this.beforeEachAttempt);

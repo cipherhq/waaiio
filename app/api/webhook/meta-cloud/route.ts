@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { installCustomerReplyGuard } from '@/lib/messaging/customer-message-guard';
 import { recordInboundReceipt } from '@/lib/channels/inbound-receipts';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
@@ -582,6 +583,15 @@ export async function POST(request: NextRequest) {
 
             const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
+            // #536: every business-paid reply to this inbound message (media and
+            // voice replies as well as the bot) counts toward the customer's daily
+            // limit; STOP/START commands and native catalog orders are never
+            // limited (an accepted quote's payment link is exempted at its own
+            // send). Cleared, and the notice sent, in finally.
+            const replyGuard = installCustomerReplyGuard(resolved.sender, supabase, source, {
+              text: msg.type === 'text' ? msg.text?.body : (msg.interactive?.button_reply?.id ?? msg.button?.payload ?? null),
+              isCatalogOrder: msg.type === 'order',
+            });
             // Process the message — wrap in try/catch for state updates
             try {
               // ── Handle WhatsApp Catalog order messages ──
@@ -811,6 +821,8 @@ export async function POST(request: NextRequest) {
                 p_claim_token: claimToken,
               });
               // Don't rethrow — continue processing other messages in the batch
+            } finally {
+              await replyGuard.finish(preResolvedBusinessId);
             }
             continue; // Move to next message
           }

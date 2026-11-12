@@ -29,12 +29,12 @@ beforeEach(()=>vi.clearAllMocks());
 describe('real BotService Party RSVP entry',()=>{
  it('rejects mismatched sender before shared completion or session creation',async()=>{
    const h=harness('15559999999'); await h.bot.handleMessage('15551234567','rsvp_yes_00000000-0000-4000-a489-000000000007','text');
-   expect(h.rpc).not.toHaveBeenCalled(); expect(h.calls).toHaveLength(0); expect(mocks.execute).not.toHaveBeenCalled();
+   expect(h.rpc.mock.calls.filter((call: unknown[]) => call[0] !== 'record_customer_inbound')).toEqual([]); expect(h.calls).toHaveLength(0); expect(mocks.execute).not.toHaveBeenCalled();
    expect(h.sender.sendText).toHaveBeenCalledWith(expect.objectContaining({text:expect.stringContaining('Invitation unavailable')}));
  });
  it('routes Accepted button through question collection without direct RSVP mutation',async()=>{
    const h=harness(); await h.bot.handleMessage('15551234567','rsvp_yes_00000000-0000-4000-a489-000000000007','text');
-   expect(h.rpc).not.toHaveBeenCalled(); expect(mocks.execute).toHaveBeenCalledTimes(1); expect(h.updates).not.toContain('event_invites');
+   expect(h.rpc.mock.calls.filter((call: unknown[]) => call[0] !== 'record_customer_inbound')).toEqual([]); expect(mocks.execute).toHaveBeenCalledTimes(1); expect(h.updates).not.toContain('event_invites');
    expect(h.calls[0]).toMatchObject({business_id:'business',current_step:'rsvp_plus_ones',session_data:{rsvp_token:'a'.repeat(24),rsvp_response:'accepted',rsvp_revision:1,rsvp_questions:party.question_definitions}});
  });
 });

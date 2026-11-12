@@ -39,6 +39,14 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
   const [customRequireMeasurements, setCustomRequireMeasurements] = useState<boolean>(customConfig.require_measurements !== false);
   const [customRequireDeadline, setCustomRequireDeadline] = useState<boolean>(customConfig.require_deadline !== false);
 
+  // Messaging protection (#536): paid replies per customer per day. Blank = Waaiio default.
+  const [dailyReplyLimit, setDailyReplyLimit] = useState<string>(
+    typeof meta.customer_daily_reply_limit === 'number' ? String(meta.customer_daily_reply_limit) : ''
+  );
+  const [protectionSaving, setProtectionSaving] = useState(false);
+  const [protectionSaved, setProtectionSaved] = useState(false);
+  const [protectionError, setProtectionError] = useState('');
+
   // Auto-reply settings (from whatsapp_config)
   const [arEnabled, setArEnabled] = useState(false);
   const [arAwayMessage, setArAwayMessage] = useState('Thanks for your message! We\'re currently closed. We\'ll get back to you during business hours.');
@@ -692,6 +700,59 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
             </>
           )}
         </div>
+              </div>
+            )}
+          </div>
+          <div>
+            <button onClick={() => toggleSection('message_protection')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Messaging Protection</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('message_protection') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('message_protection') && (
+              <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
+                <label htmlFor="daily-reply-limit" className="text-sm font-bold text-gray-900">Replies per customer per day</label>
+                <p className="mt-1 text-xs text-gray-500">
+                  Every bot reply uses your messaging credit. When one customer reaches this many replies in a day, the bot stops answering them until tomorrow and tells them once. Customers who are paying are never cut off. Leave blank to use Waaiio&apos;s default (50). Lowest 10; Waaiio sets the highest.
+                </p>
+                <input
+                  id="daily-reply-limit"
+                  type="number"
+                  inputMode="numeric"
+                  min={10}
+                  step={1}
+                  value={dailyReplyLimit}
+                  onChange={(e) => { setDailyReplyLimit(e.target.value); setProtectionError(''); }}
+                  placeholder="50"
+                  className="mt-3 w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                {protectionError && <p role="alert" className="mt-2 text-xs text-red-600">{protectionError}</p>}
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={async () => {
+                      const raw = dailyReplyLimit.trim();
+                      const parsed = raw === '' ? null : Number(raw);
+                      if (parsed !== null && (!Number.isSafeInteger(parsed) || parsed < 10)) {
+                        setProtectionError('Enter a whole number of 10 or more, or leave it blank.');
+                        return;
+                      }
+                      setProtectionSaving(true);
+                      const supabase = createClient();
+                      const nextMeta: Record<string, unknown> = { ...meta };
+                      if (parsed === null) delete nextMeta.customer_daily_reply_limit;
+                      else nextMeta.customer_daily_reply_limit = parsed;
+                      const { error } = await supabase.from('businesses').update({ metadata: nextMeta }).eq('id', business.id);
+                      setProtectionSaving(false);
+                      if (error) { setProtectionError('Could not save. Please try again.'); return; }
+                      setProtectionSaved(true);
+                      setTimeout(() => setProtectionSaved(false), 2000);
+                    }}
+                    disabled={protectionSaving}
+                    className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-lg hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    {protectionSaving ? 'Saving...' : 'Save'}
+                  </button>
+                  {protectionSaved && <span className="text-sm text-green-600">Saved!</span>}
+                </div>
               </div>
             )}
           </div>
