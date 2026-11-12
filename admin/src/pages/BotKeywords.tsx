@@ -1,3 +1,4 @@
+import { KeywordPayloadEditor } from '@/components/SettingFields';
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
@@ -526,22 +527,7 @@ export default function BotKeywords() {
             </select>
           </div>
 
-          {/* Payload */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Payload (JSON) <span className="text-red-400">*</span>
-            </label>
-            <textarea
-              value={formPayload}
-              onChange={e => setFormPayload(e.target.value)}
-              rows={4}
-              placeholder='{"message":"Your response here"}'
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm text-gray-700 focus:border-brand focus:outline-none"
-            />
-            <p className="mt-1 text-xs text-gray-400">
-              JSON payload. For replies: {`{"message":"..."}`}. For capabilities: {`{"capability":"scheduling"}`}. For navigation: {`{"action":"show_status"}`}.
-            </p>
-          </div>
+          <KeywordPayloadEditor action={formActionType} value={formPayload} onChange={setFormPayload} />
 
           {/* Description */}
           <div>

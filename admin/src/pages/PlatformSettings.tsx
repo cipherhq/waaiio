@@ -1,3 +1,4 @@
+import { DirectoryBusinessEditor, SettingSummary } from '@/components/SettingFields';
 import { useEffect, useState, useRef } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
@@ -563,13 +564,18 @@ function TopupPackagesEditor({
 }
 
 /** Render a friendly editor based on the setting's value type */
-function renderSettingEditor(
+export function renderSettingEditor(
   setting: PlatformSetting,
   currentVal: string,
   changed: boolean,
   onChange: (val: string) => void,
 ) {
   const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+
+  if (setting.key === 'site_announcement') return <a href="/site-announcement" className="text-brand underline">Edit announcement and preview</a>;
+  if (['directory_featured', 'directory_hidden'].includes(setting.key)) {
+    try { const ids = JSON.parse(currentVal); if (Array.isArray(ids) && ids.every(id => typeof id === 'string')) return <DirectoryBusinessEditor value={ids} onChange={ids => onChange(JSON.stringify(ids))} />; } catch { /* Retain advanced fallback for invalid data. */ }
+  }
 
   // Topup packages editor (messaging_topup_packages)
   if (isTopupPackagesKey(setting.key)) {
@@ -634,10 +640,12 @@ function renderSettingEditor(
             <div key={k} className="flex items-center gap-2">
               <label className="w-32 text-xs font-medium text-gray-500 capitalize shrink-0">{k.replace(/_/g, ' ')}</label>
               <input
-                type="text"
+                aria-label={k.replace(/_/g, ' ')}
+                type={typeof v === 'boolean' ? 'checkbox' : typeof v === 'number' ? 'number' : 'text'}
+                checked={typeof v === 'boolean' ? v : undefined}
                 value={String(v)}
                 onChange={e => {
-                  const updated = { ...parsed, [k]: e.target.value };
+                  const updated = { ...parsed, [k]: typeof v === 'boolean' ? e.target.checked : typeof v === 'number' ? Number(e.target.value) : e.target.value };
                   onChange(JSON.stringify(updated, null, 2));
                 }}
                 className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
@@ -696,6 +704,12 @@ function renderSettingEditor(
                       );
                     }
 
+                    if (typeof val === 'number' && ['maxBookings', 'maxBroadcasts', 'maxRecipients'].includes(field)) {
+                      return <div key={field}><label className="text-xs">{label}</label>
+                        <label className="block text-xs"><input type="checkbox" aria-label={`${tier} ${label} unlimited`} checked={val === 999999999} onChange={e => onChange(JSON.stringify({ ...parsed, [tier]: { ...tierVal, [field]: e.target.checked ? 999999999 : 0 } }, null, 2))} /> Unlimited</label>
+                        {val !== 999999999 && <input type="number" min="0" aria-label={`${tier} ${label}`} value={val} onChange={e => onChange(JSON.stringify({ ...parsed, [tier]: { ...tierVal, [field]: Number(e.target.value) } }, null, 2))} />}
+                      </div>;
+                    }
                     return (
                       <div key={field}>
                         <label className="text-[10px] font-medium text-gray-500 block mb-0.5">{label}</label>
@@ -789,12 +803,13 @@ function renderSettingEditor(
                       </span>
                     ))}
                     <input
-                      type="number"
+                      type={(setting.key === 'booking_defaults' && k === 'reminderHours') || (v.length > 0 && v.every(item => typeof item === 'number')) ? 'number' : 'text'}
+                      aria-label={`Add ${label}`}
                       placeholder="Add..."
                       className="w-16 rounded border border-gray-200 px-1.5 py-0.5 text-xs outline-none focus:border-brand"
                       onKeyDown={e => {
                         if (e.key === 'Enter' && (e.target as HTMLInputElement).value) {
-                          const updated = [...v as (string | number)[], Number((e.target as HTMLInputElement).value)];
+                          const updated = [...v as (string | number)[], (setting.key === 'booking_defaults' && k === 'reminderHours') || (v.length > 0 && v.every(item => typeof item === 'number')) ? Number((e.target as HTMLInputElement).value) : (e.target as HTMLInputElement).value];
                           onChange(JSON.stringify({ ...parsed, [k]: updated }, null, 2));
                           (e.target as HTMLInputElement).value = '';
                         }
@@ -1293,12 +1308,12 @@ export default function PlatformSettings() {
                           <span className="text-sm font-semibold text-gray-900">
                             {setting.key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                           </span>
-                          <span className="ml-2 font-mono text-xs text-gray-400">{setting.key}</span>
+                          <details className="mt-1 text-xs text-gray-400"><summary>Technical key</summary><code>{setting.key}</code></details>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                          {(MESSAGING_BUNDLE_KEYS.has(setting.key) || setting.key === 'site_announcement') ? (
                             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
-                              Managed in Countries config
+                              {setting.key === 'site_announcement' ? 'Managed in Site Announcement' : 'Managed in Countries config'}
                             </span>
                           ) : (
                             <>
@@ -1337,7 +1352,8 @@ export default function PlatformSettings() {
                       {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
                         /* Bundle-only keys: read-only value display, no editable controls */
                         <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono whitespace-pre-wrap break-all" data-testid={`readonly-value-${setting.key}`}>
-                          {formatValue(setting.value)}
+                          <SettingSummary value={setting.value} />
+                          <a href="/countries" className="block mt-2 text-brand underline">Edit in Countries</a>
                         </div>
                       ) : (
                         /* All other keys: interactive editor */
