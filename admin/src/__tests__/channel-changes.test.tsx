@@ -88,3 +88,15 @@ describe('channel changes mounted UI and actual step-up hook', () => {
     expect(JSON.parse(String(calls('/preview')[0][1].body)).details).toMatchObject({ target_channel_id: 'shared-1', target_candidate_id: null, verification_record: { owner_reverified: true, evidence_refs: [{ type: 'business_document', document_id: 'doc-1' }] } });
   });
 });
+
+ it('does not report an empty list on a failed read and recovers on retry', async () => {
+  f.fetch.mockResolvedValueOnce(json({ error: 'Unavailable' }, 503));
+  render(<ChannelChanges />);
+  await screen.findByText('Unable to load requests. Please retry.');
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(screen.queryByText('No channel change requests.')).not.toBeInTheDocument();
+  f.rows = [];
+  await userEvent.click(screen.getByRole('button', { name: 'Retry loading requests' }));
+  await screen.findByText('No channel change requests.');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+ });

@@ -1,3 +1,19 @@
+## 2026-11-12 — RSVP by WhatsApp reaches the bot (deep link + guest phone format)
+
+- **Why:** an Owner test showed RSVP codes never reached the bot. There were two causes:
+  - the RSVP page's "Open in WhatsApp" link had no phone number (`wa.me/?text=…`), so WhatsApp opened a "choose chat" picker instead of the business chat;
+  - invite guest phones were stored as typed (for example local `0803…`), while the bot matches the WhatsApp sender in international form (`234803…`), so RSVP codes and buttons never matched.
+- **What changed:**
+  - `app/api/rsvp/[token]/route.ts` GET returns the business WhatsApp number (`wa_number`, via `ChannelResolver`) and no longer exposes `business_id`.
+  - `app/rsvp/[token]/page.tsx` links to `wa.me/<number>?text=RSVP <token>`, and hides the button when the business has no channel.
+  - New `lib/parties/invite-phone.ts` normalizes guest phones with libphonenumber, using the business country. It is used in `app/api/events/invite/route.ts` (host invites, opt-in check, email linking) and `app/api/invite-optin/route.ts` (guest self opt-in).
+  - Existing invites stored in the old local format are found and upgraded in place on resend, so no duplicate invite is created.
+- **Affects:** party/event invite creation and resend, the opt-in check, SMS invites (now receive international numbers, which also fixes Ghana local numbers being sent as +234), and the public RSVP page.
+- **Could break:**
+  - A foreign number typed in local form for a business in another country is read as local. Guests should use a leading `+`.
+  - Old local-format rows are upgraded only when they are re-sent. There is no backfill.
+- **Tests:** `lib/__tests__/rsvp-whatsapp-delivery.test.ts`
+
 ## 2026-11-09 — Fee and trial model written down as an Owner standing order
 
 - **Why:** the Owner asked on 2026-11-09 that every financial decision live in the engineering documentation as a standing order that nothing may change.

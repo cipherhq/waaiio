@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { createClient } from '@/lib/supabase/client';
+import { TurnstileWidget, turnstileSiteKey } from './TurnstileWidget';
 
 interface FormField {
   id: string;
@@ -37,6 +38,10 @@ export default function PublicFormPage() {
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   // "Yes, send me updates" is always unticked until the customer ticks it.
   const [wantsUpdates, setWantsUpdates] = useState(false);
+  // Bot check (Cloudflare Turnstile). Tokens are single-use, so a failed submit asks for a new one.
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [botCheckFailed, setBotCheckFailed] = useState(false);
+  const [turnstileReset, setTurnstileReset] = useState(0);
 
   useEffect(() => {
     async function loadForm() {
@@ -109,6 +114,16 @@ export default function PublicFormPage() {
       return;
     }
 
+    if (!turnstileToken) {
+      setErrorMsg(botCheckFailed
+        ? 'The security check could not load. Please refresh the page and try again.'
+        : 'Please wait a moment while we check your browser, then press Submit again.');
+      return;
+    }
+
+    // A token can be checked only once, so drop it now; a failed submit asks for a new one.
+    const sentToken = turnstileToken;
+    setTurnstileToken('');
     setState('submitting');
     setErrorMsg('');
 
@@ -133,6 +148,7 @@ export default function PublicFormPage() {
             return emailField ? String(answers[emailField.id] || '') : '';
           })() || null,
           marketing_opt_in: form.marketing_opt_in ? wantsUpdates : undefined,
+          turnstileToken: sentToken,
         }),
       });
 
@@ -140,6 +156,7 @@ export default function PublicFormPage() {
         const data = await res.json();
         setErrorMsg(data.error || 'Submission failed');
         setState('ready');
+        setTurnstileReset(n => n + 1);
         return;
       }
 
@@ -147,6 +164,7 @@ export default function PublicFormPage() {
     } catch {
       setErrorMsg('Something went wrong. Please try again.');
       setState('ready');
+      setTurnstileReset(n => n + 1);
     }
   }
 
@@ -328,6 +346,13 @@ export default function PublicFormPage() {
               </span>
             </label>
           )}
+
+          <TurnstileWidget
+            siteKey={turnstileSiteKey()}
+            onToken={t => { setTurnstileToken(t); if (t) setBotCheckFailed(false); }}
+            onError={() => setBotCheckFailed(true)}
+            resetSignal={turnstileReset}
+          />
 
           {errorMsg && <p className="text-sm text-red-600">{errorMsg}</p>}
 

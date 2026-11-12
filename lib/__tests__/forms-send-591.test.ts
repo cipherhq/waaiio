@@ -35,6 +35,8 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ from: (t: string) => m.db.from(t), rpc: m.rpc }) }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: async () => null, getRateLimitKey: () => 'k' }));
 vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
+// The public submit route's bot check is covered by form-submit-turnstile.test.ts; here it passes.
+vi.mock('@/lib/security/turnstile', () => ({ verifyTurnstileToken: async () => ({ ok: true }) }));
 vi.mock('@/lib/bot/conversation-guard', () => ({ checkConversationLimit: async () => m.conv }));
 vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class {

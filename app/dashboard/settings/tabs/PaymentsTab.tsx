@@ -588,7 +588,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
     } catch { setZonesSaving(false); }
   }
 
-  async function handleByoVerify() {
+  async function handleByoVerify(gateway: 'paystack' | 'flutterwave') {
     setByoVerifying(true);
     setByoError('');
     try {
@@ -597,10 +597,10 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           business_id: business.id,
-          gateway: byoGateway,
+          gateway,
           secret_key: byoSecretKey,
           public_key: byoPublicKey || undefined,
-          ...(byoGateway === 'flutterwave' && byoWebhookHash ? { webhook_secret_hash: byoWebhookHash } : {}),
+          ...(gateway === 'flutterwave' && byoWebhookHash ? { webhook_secret_hash: byoWebhookHash } : {}),
         }),
       });
       const data = await res.json();
@@ -608,6 +608,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
         setByoError(data.error || 'Verification failed');
         return;
       }
+      setByoGateway(gateway);
       setByoCredential(data.credential);
       setByoWebhookUrl(data.webhookUrl);
       setByoSecretKey('');
@@ -859,7 +860,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
             </div>
           )}
           <BankAccountSection business={business} openSections={openSections} toggleSection={toggleSection} saving={saving} setSaving={setSaving} saved={saved} setSaved={setSaved} />
-          {capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding') && (
+          {(capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding')) && (
             <div>
               <button onClick={() => toggleSection('gateway')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
                 <h3 className="text-sm font-bold text-gray-900">Payment Gateway</h3>
@@ -1023,6 +1024,34 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                   )}
                 </div>
 
+                {SETUP_AVAILABLE_GATEWAYS.includes('paystack') && (
+                  <details className="rounded-lg border-2 border-gray-200 p-4">
+                    <summary className="cursor-pointer text-sm font-bold text-gray-900">Use Paystack API keys</summary>
+                    <div className="mt-4 space-y-4">
+                      <p className="text-xs text-gray-500">
+                        Connect an existing Paystack business using its API keys. Waaiio creates a fee subaccount automatically. Use test keys when testing in staging.
+                      </p>
+                      <div>
+                        <label htmlFor="paystack-secret-key" className="mb-1 block text-sm font-medium text-gray-700">Paystack secret key</label>
+                        <input id="paystack-secret-key" type="password" autoComplete="off"
+                          value={byoSecretKey} onChange={(e) => setByoSecretKey(e.target.value)}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono" />
+                      </div>
+                      <div>
+                        <label htmlFor="paystack-public-key" className="mb-1 block text-sm font-medium text-gray-700">Paystack public key (optional)</label>
+                        <input id="paystack-public-key" type="text" autoComplete="off"
+                          value={byoPublicKey} onChange={(e) => setByoPublicKey(e.target.value)}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono" />
+                      </div>
+                      <button type="button" onClick={() => handleByoVerify('paystack')}
+                        disabled={byoVerifying || !byoSecretKey.trim()}
+                        className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                        {byoVerifying ? 'Verifying...' : 'Verify & Connect Paystack'}
+                      </button>
+                    </div>
+                  </details>
+                )}
+
                 {/* Stripe Connect */}
                 <button
                   onClick={handleConnectStripe}
@@ -1139,7 +1168,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
                       </div>
 
                       <button
-                        onClick={() => { setByoGateway('flutterwave'); handleByoVerify(); }}
+                        onClick={() => handleByoVerify('flutterwave')}
                         disabled={byoVerifying || !byoSecretKey || !byoWebhookHash}
                         className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                       >

@@ -87,16 +87,26 @@ export default function ClassSessions() {
     }
   }
 
+  const [detailError, setDetailError] = useState('');
+  const detailRequest = useRef(0);
+  const closeDetail = () => { detailRequest.current++; setSelectedSession(null); setDetailLoading(false); };
+  useEffect(() => () => { detailRequest.current++; }, []);
+
   async function openDetail(session: ClassSession) {
+    const request = ++detailRequest.current;
+    setDetailError('');
     setSelectedSession(session);
     setDetailLoading(true);
     try {
       const result = await adminClassFetch(`?sessionId=${session.id}`);
-      if (result.data) {
+      if (result.error || !result.data) throw new Error('Unable to load attendees. Close and reopen to retry.');
+      if (request === detailRequest.current && result.data) {
         setSelectedSession(result.data as ClassSession & { attendees?: Attendee[] });
       }
+    } catch {
+      if (request === detailRequest.current) setDetailError('Unable to load attendees. Close and reopen to retry.');
     } finally {
-      setDetailLoading(false);
+      if (request === detailRequest.current) setDetailLoading(false);
     }
   }
 
@@ -153,27 +163,27 @@ export default function ClassSessions() {
               </tbody>
             </table>
           </div>
-          <Pagination current={page} total={totalPages} onChange={setPage} />
+          <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
         </>
       )}
 
       {selectedSession && (
-        <DetailModal title="Class Session Detail" onClose={() => setSelectedSession(null)}>
-          <DetailRow label="Business">{selectedSession.business_name}</DetailRow>
-          <DetailRow label="Class">{selectedSession.service_name}</DetailRow>
-          <DetailRow label="Date">{fmtCalendarDate(selectedSession.date)}</DetailRow>
-          <DetailRow label="Time">{selectedSession.start_time?.slice(0, 5)} — {selectedSession.end_time?.slice(0, 5)}</DetailRow>
-          <DetailRow label="Instructor">{selectedSession.instructor_name || '—'}</DetailRow>
-          <DetailRow label="Capacity">{selectedSession.attendee_count}/{selectedSession.capacity}</DetailRow>
-          <DetailRow label="Status"><StatusBadge status={selectedSession.status} /></DetailRow>
+        <DetailModal open={!!selectedSession} title="Class Session Detail" onClose={closeDetail}>
+          <DetailRow label="Business" value={selectedSession.business_name} />
+          <DetailRow label="Class" value={selectedSession.service_name} />
+          <DetailRow label="Date" value={fmtCalendarDate(selectedSession.date)} />
+          <DetailRow label="Time" value={`${selectedSession.start_time?.slice(0, 5)} — ${selectedSession.end_time?.slice(0, 5)}`} />
+          <DetailRow label="Instructor" value={selectedSession.instructor_name || '—'} />
+          <DetailRow label="Capacity" value={`${selectedSession.attendee_count}/${selectedSession.capacity}`} />
+          <DetailRow label="Status" value={<StatusBadge status={selectedSession.status} />} />
           {selectedSession.cancellation_reason && (
-            <DetailRow label="Cancellation Reason">{selectedSession.cancellation_reason}</DetailRow>
+            <DetailRow label="Cancellation Reason" value={selectedSession.cancellation_reason} />
           )}
-          <DetailRow label="Created">{fmtDateTime(selectedSession.created_at)}</DetailRow>
+          <DetailRow label="Created" value={fmtDateTime(selectedSession.created_at)} />
 
           {detailLoading ? (
             <div className="mt-4 text-center text-sm text-gray-400">Loading attendees...</div>
-          ) : selectedSession.attendees && selectedSession.attendees.length > 0 ? (
+          ) : detailError ? <p role="alert">{detailError}</p> : selectedSession.attendees && selectedSession.attendees.length > 0 ? (
             <div className="mt-4">
               <h4 className="text-sm font-semibold text-gray-700 mb-2">Attendees ({selectedSession.attendee_count})</h4>
               <div className="space-y-1">
