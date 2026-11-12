@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { canonicalSavedCardPhone, savedCardSessionPhone } from '@/lib/payments/saved-card-compat';
+import { canonicalSavedCardPhone, paystackPaymentCannotSaveCard, savedCardSessionPhone } from '@/lib/payments/saved-card-compat';
 import { isProvenPreEmission } from '@/lib/payments/saved-card-delivery';
 import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
 import { prepareRecurringOffer } from '@/lib/payments/recurring-offer';
@@ -54,7 +54,12 @@ async function transition(db: SupabaseClient, row: TransactionFollowupRow, state
     .update({ ...extra, state, updated_at: new Date().toISOString() })
     .eq('id', row.id).eq('state', row.state).select('*').maybeSingle();
   // Another completion owns this conversation. Leave this one queued.
-  if (error?.code === '23505') return null;
+  if (error?.code === '23505') {
+    logger.warn('[TRANSACTION-FOLLOWUP] Blocked by another follow-up on this conversation', {
+      followupId: row.id, from: row.state, to: state,
+    });
+    return null;
+  }
   if (error) throw new Error(`transaction_followup_transition:${error.code}`);
   return data as TransactionFollowupRow | null;
 }
@@ -338,7 +343,16 @@ export async function dismissTransactionFollowups(db: SupabaseClient, input: {
       .select('state,offer_type').eq('payment_id', row.payment_id).eq('customer_phone', phone)
       .eq('business_id', row.business_id).maybeSingle();
     if (offerError) throw new Error(`transaction_followup_dismiss_offer:${offerError.code}`);
-    if (!offer || !['sent', 'ambiguous', 'declined'].includes(offer.state)) continue;
+    if (!offer) {
+      // A claimed card step with no offer may still be about to send one, except
+      // for a payment that can never save a card (BYO/Connect): release that one.
+      const { data: paid, error: paidError } = await db.from('payments').select('gateway,metadata')
+        .eq('id', row.payment_id).eq('business_id', row.business_id).maybeSingle();
+      if (paidError) throw new Error(`transaction_followup_dismiss_payment:${paidError.code}`);
+      if (paid && paystackPaymentCannotSaveCard(paid)) await transition(db, row, 'done');
+      continue;
+    }
+    if (!['sent', 'ambiguous', 'declined'].includes(offer.state)) continue;
     const { data: declined, error: declineError } = await db.rpc('decline_saved_card_offer', {
       p_payment_id: row.payment_id, p_customer_phone: phone, p_expected_offer_type: offer.offer_type,
     });

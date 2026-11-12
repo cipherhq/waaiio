@@ -12,7 +12,7 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     return;
   }
   const { data: payment, error: paymentError } = await supabase.from('payments')
-    .select('status,gateway,confirmation_sent_at').eq('id', paymentId)
+    .select('status,gateway,confirmation_sent_at,metadata').eq('id', paymentId)
     .eq('business_id', followup.business_id).maybeSingle();
   // Enrollment precedes finalization so a crash cannot lose the continuation.
   if (paymentError || payment?.status !== 'success' || !payment.confirmation_sent_at) return;
@@ -20,6 +20,13 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     .select('id').eq('payment_id', paymentId)
     .in('delivery_status', ['accepted', 'sent', 'delivered', 'read']).limit(1);
   if (deliveryError || !delivered?.length) return;
+  // BYO/Connect Paystack payments never get a card offer, so they skip the card
+  // step instead of holding the conversation while nothing can resolve it.
+  const { paystackPaymentCannotSaveCard } = await import('./saved-card-compat');
+  if (paystackPaymentCannotSaveCard(payment)) {
+    await resumeTransactionFollowupForPayment(supabase, paymentId, { cardResolved: true });
+    return;
+  }
   if (!await claimTransactionCardStep(supabase, paymentId)) return;
 
   const { data: offer, error: offerError } = await supabase.from('payment_saved_card_offers')

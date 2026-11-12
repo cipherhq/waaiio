@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createMemoryDb } from '../../__tests__/helpers/memory-db';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(), list: vi.fn(), recurring: vi.fn(), eligibility: vi.fn(), record: vi.fn(), resolve: vi.fn(), incoming: vi.fn(), paid: vi.fn(),
@@ -495,4 +496,49 @@ describe('durable transaction follow-up sequence', () => {
     expect(mocks.send).toHaveBeenCalledTimes(1); // only the earlier explicit opt-in prompt
     expect(tables.transaction_followups[0].state).toBe('done');
   });
+
+  it('explicit navigation releases a BYO card step that can never get an offer', async () => {
+    const { db, tables } = database();
+    tables.payments.push({ id: payment, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'byo', byo: true } });
+    await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment }));
+    await claimTransactionCardStep(db, payment);
+    await dismissTransactionFollowups(db, { from: phone, channelId: channel });
+    expect(tables.transaction_followups[0].state).toBe('done');
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  it('explicit navigation keeps a claimed Waaiio-collected card step that may still send its offer', async () => {
+    const { db, tables } = database();
+    tables.payments.push({ id: payment, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'platform' } });
+    await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment }));
+    await claimTransactionCardStep(db, payment);
+    await dismissTransactionFollowups(db, { from: phone, channelId: channel });
+    expect(tables.transaction_followups[0].state).toBe('card_active');
+  });
+
+  it('does not release a card step when its payment cannot be read', async () => {
+    const { db, tables, errors } = database();
+    await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment }));
+    await claimTransactionCardStep(db, payment);
+    errors.set('payments', 'boom');
+    await expect(dismissTransactionFollowups(db, { from: phone, channelId: channel })).rejects.toThrow('transaction_followup_dismiss_payment');
+    expect(tables.transaction_followups[0].state).toBe('card_active');
+  });
+
+  it('a stuck BYO order no longer blocks the next payment once the customer moves on (staging 2026-11-12)', async () => {
+    const { db, tables } = database();
+    const order = '30000000-0000-4000-8000-000000000002';
+    tables.payments.push({ id: order, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'byo' } });
+    await startTransactionFollowup(db, start({ waitForCard: true, paymentId: order, completionKey: 'payment:order', kind: 'ordering' }));
+    await claimTransactionCardStep(db, order);
+    await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment, completionKey: 'payment:booking', kind: 'scheduling' }));
+    expect(await claimTransactionCardStep(db, payment)).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Blocked by another follow-up'), expect.objectContaining({ to: 'card_active' }));
+    await dismissTransactionFollowups(db, { from: phone, channelId: channel });
+    expect(tables.transaction_followups.find(r => r.payment_id === order)?.state).toBe('done');
+    // The unclaimed booking row was retired by the same navigation, freeing the conversation.
+    expect(tables.transaction_followups.some(r => active.has(r.state))).toBe(false);
+  });
 });
+
