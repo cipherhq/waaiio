@@ -79,6 +79,11 @@ vi.mock('@/lib/capabilities/service', () => ({
   initCapabilities: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Server-side plan price for the Paystack fixture below (business plan, 39,999 NGN).
+vi.mock('@/lib/payments/subscription-expected-price', () => ({
+  resolveExpectedPlanPrice: vi.fn().mockResolvedValue({ ok: true, amountMinor: 3_999_900, currency: 'NGN' }),
+}));
+
 import { POST } from '@/app/api/onboarding/verify/route';
 
 // ═══════════════════════════════════════════════════════════
