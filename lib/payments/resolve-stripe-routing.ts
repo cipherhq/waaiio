@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { decryptToken } from '@/lib/encryption';
 
 export interface StripeRoutingAuthority {
   classification: 'platform' | 'platform_subaccount' | 'connect' | 'byo';
@@ -97,7 +98,7 @@ export async function resolvePaymentRoutingAuthority(
       if (business) {
         const tier = (business.subscription_tier || 'free') as SubscriptionTier;
         const { resolveTrialStatus } = await import('@/lib/trial-status');
-        const isInTrial = await resolveTrialStatus(supabase, businessId, tier, business.trial_ends_at);
+        const isInTrial = await resolveTrialStatus(supabase, businessId, tier);
         const { getPlatformFees } = await import('@/lib/getPlatformFees');
         const feeResult = await getPlatformFees(amount, tier, isInTrial, {
           feePercentage: business.custom_fee_percentage ?? undefined,
@@ -144,7 +145,14 @@ export async function resolvePaymentRoutingAuthority(
       result.classification = 'byo';
       result.paymentOrigin = 'byo';
       result.isByo = true;
-      result.byoSecretKey = byoCreds.secret_key;
+      // The stored key is encrypted at rest; the gateway needs the plaintext key.
+      try {
+        result.byoSecretKey = decryptToken(byoCreds.secret_key);
+      } catch (e) {
+        logger.withContext({ op: 'routing.byo-key-decrypt', ...safeLogErrorContext(e) })
+          .error('[ROUTING] BYO secret key could not be decrypted — fail closed');
+        return null;
+      }
       result.byoPlatformSubaccount = byoCreds.platform_subaccount_code;
       result.byoBusinessId = businessId;
       result.providerConnectionId = byoCreds.id;
@@ -172,7 +180,7 @@ export async function resolvePaymentRoutingAuthority(
       if (biz?.payout_mode === 'direct_split') {
         const { data: payout, error: payoutError } = await supabase
           .from('payout_accounts')
-          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, gateway')
           .eq('business_id', businessId)
           .eq('is_active', true)
           .maybeSingle();
@@ -203,7 +211,15 @@ export async function resolvePaymentRoutingAuthority(
             } else {
               result.squareAccessToken = null;
             }
-            result.platformFeeAmount = Math.round(amount * (payout.platform_percentage / 100));
+            // Plan rate, same as every other route (Owner decision #958 rule 1).
+            // The legacy payout_accounts.platform_percentage no longer sets the fee.
+            try {
+              result.platformFeeAmount = await resolveFee();
+            } catch (e) {
+              logger.withContext({ op: 'routing.direct-split-fee', ...safeLogErrorContext(e) })
+                .error('[ROUTING] Business tier lookup failed for direct split — fail closed');
+              return null;
+            }
             result.payoutAccountId = payout.id;
           }
         }

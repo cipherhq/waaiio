@@ -40,6 +40,8 @@ vi.mock('@/lib/bot/flows/shared/post-completion', () => ({ handlePostCompletion:
 vi.mock('@/lib/bot/flows/shared/send-tickets', () => ({ sendTicketsAfterPurchase: vi.fn(), ensureCanonicalTicketRows: vi.fn(), deliverTicketsWhatsApp: vi.fn(), deliverTicketsEmail: vi.fn() }));
 vi.mock('@/lib/payments/saved-card-compat', () => ({ canonicalSavedCardPhone: vi.fn(() => null), isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: false }) }));
 vi.mock('@/lib/payments/saved-card-offer', () => ({ checkAndOfferSavedCard: vi.fn().mockResolvedValue(undefined), retryPendingSavedCardOffer: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/bot/transaction-followups', () => ({ startTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/payments/transaction-followup', () => ({ resumePaidTransactionFollowup: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/payments/terminal-effects', () => ({
   initializeManifest: vi.fn().mockResolvedValue({ ok: true }),
   computeApplicableEffects: vi.fn().mockReturnValue([]),
@@ -160,8 +162,14 @@ describe('F3: five-step delivery sequence', () => {
     expect(captured).toContain('Confirmed');
     expect(captured).toContain('Remaining balance');
     expect(captured).toContain('receipt');
-    expect(captured).toContain('my bookings');
+    // Navigation belongs to the durable follow-up after card/consent, not this
+    // confirmation body. Receipt, balance and calendar guidance remain intact.
+    expect(captured).not.toContain('my bookings');
     expect(captured).toContain('cal.google.com/test');
+    const { startTransactionFollowup } = await import('@/lib/bot/transaction-followups');
+    expect(startTransactionFollowup).toHaveBeenCalledWith(s, expect.objectContaining({
+      completionKey: 'payment:p1', paymentId: 'p1', waitForCard: true,
+    }));
   });
 
   it('calendar URL exact in transport sendText', async () => {

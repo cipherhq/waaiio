@@ -150,6 +150,12 @@ for f in supabase/migrations/*.sql; do
     # Continue to catch multiple failures
   else
     APPLIED=$((APPLIED + 1))
+    # Migration replay creates the installer but does not execute the approved
+    # operational cutover. Restore only lock-verified entrypoints, as the catalog
+    # oracle does; later migrations depend on those exact bodies.
+    if [[ "$(basename "$f")" == "501_"* ]]; then
+      node scripts/ci-restore-accounting-entrypoints.mjs "$DB_ARG"
+    fi
   fi
 done
 echo ""

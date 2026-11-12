@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { PRICING_TIERS } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
+import { resolveLimitTier } from '@/lib/trial-status';
 
 export interface TierCheckResult {
   allowed: boolean;
@@ -44,7 +45,9 @@ export class StandaloneService {
     isWhitelabel?: boolean,
   ): Promise<TierCheckResult> {
     const tierKey = (subscriptionTier as SubscriptionTier) || 'free';
-    const tier = PRICING_TIERS[tierKey] || PRICING_TIERS.free;
+    // During the Pro/Premium feature trial a Starter business uses Premium limits.
+    const limitTier = await resolveLimitTier(this.supabase, businessId, tierKey);
+    const tier = PRICING_TIERS[limitTier] || PRICING_TIERS.free;
 
     if (tier.maxBookings === Infinity) {
       return {

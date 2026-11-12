@@ -3,6 +3,11 @@ import { MetaCloudService } from './meta-cloud';
 import { MetaCloudSender, type MessageSender } from './message-sender';
 import { logger } from '@/lib/logger';
 import type { CountryCode } from '@/lib/constants';
+import {
+  isStagingWhatsAppRouting,
+  stagingDesignatedChannelProblem,
+  STAGING_SHARED_WHATSAPP_CHANNEL,
+} from './staging-whatsapp-routing';
 
 interface ChannelRecord {
   id: string;
@@ -11,6 +16,7 @@ interface ChannelRecord {
   channel_type: 'shared' | 'dedicated';
   business_id: string | null;
   is_active: boolean;
+  connection_status?: string | null;
   provider: 'meta_cloud';
   waba_id: string | null;
   phone_number_id: string | null;
@@ -244,6 +250,10 @@ export class ChannelResolver {
       const assignedRecord = assigned as ChannelRecord | null;
       if (assignedRecord && assignedRecord.channel_type !== 'shared' && assignedRecord.business_id !== businessId) {
         console.warn('[ChannelResolver] Ignoring channel pointer not owned by business', { businessId, channelId });
+      } else if (assignedRecord && assignedRecord.channel_type === 'shared' && isStagingWhatsAppRouting()
+        && stagingDesignatedChannelProblem(assignedRecord) !== null) {
+        // Staging sends shared traffic only through the designated number.
+        console.warn('[ChannelResolver] Ignoring non-designated shared channel in staging', { businessId, channelId });
       } else if (assignedRecord) {
         this.cacheSet(cacheKey, assignedRecord);
         const resolved = this.buildResolved(assignedRecord);
@@ -288,6 +298,12 @@ export class ChannelResolver {
       }
     }
 
+    // Staging never falls back to an arbitrary shared number.
+    if (isStagingWhatsAppRouting()) {
+      this.cacheSet(cacheKey, null);
+      return null;
+    }
+
     // Final fallback: any active shared channel (for non-shared wa_method only)
     const { data: anyShared } = await this.supabase
       .from('whatsapp_channels')
@@ -319,6 +335,7 @@ export class ChannelResolver {
    *
    * Authorization rules:
    * - Shared channel (channel_type='shared'): any business may use it
+   *   (staging: only the designated number)
    * - Dedicated channel owned by this business: authorized
    * - Channel explicitly assigned to this business: authorized
    * - Otherwise: rejected (returns null)
@@ -345,6 +362,12 @@ export class ChannelResolver {
     // Authorization check
     const isShared = channel.channel_type === 'shared';
     const isOwnedByBusiness = channel.business_id === authoritativeBusinessId;
+
+    // Staging sends shared traffic only through the designated number.
+    if (isShared && isStagingWhatsAppRouting() && stagingDesignatedChannelProblem(channel) !== null) {
+      logger.warn('[ChannelResolver] Refusing non-designated shared channel in staging', { channelId });
+      return null;
+    }
 
     if (!isShared && !isOwnedByBusiness) {
       // Check if the business explicitly references this channel
@@ -386,6 +409,9 @@ export class ChannelResolver {
    * Get the shared channel for a given country.
    */
   async getSharedChannelForCountry(countryCode: CountryCode): Promise<ResolvedChannel | null> {
+    // Staging: every country uses the designated US number; a local number never wins.
+    if (isStagingWhatsAppRouting()) return this.getStagingDesignatedSharedChannel();
+
     const cacheKey = `shared:${countryCode}`;
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
@@ -406,6 +432,32 @@ export class ChannelResolver {
     this.cacheSet(cacheKey, record);
 
     if (!record) return null;
+    return this.buildResolved(record);
+  }
+
+  /** Staging only: the designated shared number, or null (fail closed) if it is not usable. */
+  private async getStagingDesignatedSharedChannel(): Promise<ResolvedChannel | null> {
+    const cacheKey = 'shared:staging-designated';
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      if (!cached.data) return null;
+      return { channel: cached.data, sender: this.buildSender(cached.data) };
+    }
+
+    const { data } = await this.supabase
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('id', STAGING_SHARED_WHATSAPP_CHANNEL.id)
+      .maybeSingle();
+
+    const record = data as ChannelRecord | null;
+    const problem = stagingDesignatedChannelProblem(record);
+    if (problem || !record) {
+      logger.error('[CHANNEL] Staging designated WhatsApp number unavailable', { problem });
+      this.cacheSet(cacheKey, null);
+      return null;
+    }
+    this.cacheSet(cacheKey, record);
     return this.buildResolved(record);
   }
 }

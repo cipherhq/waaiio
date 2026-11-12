@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { parseTaxRefundSelection, parseTaxRefundRequestId } from '@/lib/tax/refund-selection';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
@@ -34,8 +35,19 @@ export async function POST(request: NextRequest) {
       stepUpId?: string;
     };
 
-    if (!paymentId || !businessId || !amount) {
+    if (!paymentId || !businessId || typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
       return NextResponse.json({ error: 'Missing required fields: paymentId, businessId, amount' }, { status: 400 });
+    }
+
+    let taxSelection; let requestId;
+    try {
+      taxSelection = parseTaxRefundSelection(body.taxSelection);
+      requestId = parseTaxRefundRequestId(body.requestId, taxSelection);
+    } catch {
+      return NextResponse.json({ error: 'Invalid refund selection or request ID' }, { status: 400 });
+    }
+    if (amount === 0 && taxSelection?.mode !== 'items') {
+      return NextResponse.json({ error: 'Zero-value returns require item quantities' }, { status: 400 });
     }
 
     // SEC-005 Layer 4: Consume operation-bound step-up authorization
@@ -45,6 +57,8 @@ export async function POST(request: NextRequest) {
         businessId,
         amount,
         reason: reason ?? null,
+        ...(taxSelection ? { taxSelection } : {}),
+        ...(requestId ? { requestId } : {}),
       });
     } catch (err) {
       const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
@@ -57,6 +71,8 @@ export async function POST(request: NextRequest) {
       businessId,
       amount,
       reason,
+      taxSelection,
+      requestId,
       initiatedBy: admin.id,
       initiatedByRole: 'admin',
     });
@@ -83,6 +99,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       refundId: result.refundId,
+      returnId: result.returnId,
+      zeroValueReturn: result.zeroValueReturn,
       isDirectSplit: result.isDirectSplit,
     });
   } catch (error) {

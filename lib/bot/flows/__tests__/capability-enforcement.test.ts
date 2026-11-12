@@ -11,8 +11,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock resolveTrialCredit before importing capability-guard (which imports it at load time).
 // Default: no trial credit (fail closed). Override per-test for active trial scenarios.
 vi.mock('@/lib/trial-status', () => ({
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialCredit: vi.fn().mockResolvedValue(false),
   resolveTrialStatus: vi.fn().mockResolvedValue(false),
+  // M525: feature trial clock (businesses.feature_trial_ends_at). Default: none.
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
 }));
 
 import { requireCurrentCapability } from '../shared/capability-guard';
@@ -22,7 +25,7 @@ import { executeKeywordAction } from '@/lib/bot/handlers/keyword-actions';
 import { reservationFlow } from '../reservation.flow';
 import { schedulingFlow } from '../scheduling.flow';
 import { createMockContext, getStep } from './helpers';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveTrialCredit, resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 
 // ── Table-aware Supabase mock for capability guard ──
 // The guard queries businesses, business_capabilities, and capability_overrides fresh.
@@ -109,6 +112,7 @@ describe('requireCurrentCapability (Point C) — unit', () => {
   beforeEach(() => {
     // Default: no trial credit (fail closed). Override per-test for active trial scenarios.
     vi.mocked(resolveTrialCredit).mockResolvedValue(false);
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(null);
   });
 
   it('A: allows CREATE_NEW for effective capability', async () => {
@@ -130,7 +134,8 @@ describe('requireCurrentCapability (Point C) — unit', () => {
   });
 
   it('F: active trial allows CREATE_NEW', async () => {
-    vi.mocked(resolveTrialCredit).mockResolvedValue(true);
+    // M525: an active feature clock (not the messaging credit) unlocks the trial.
+    vi.mocked(resolveFeatureTrialEndsAt).mockResolvedValue(new Date(Date.now() + 86400000).toISOString());
     const supabase = mockGuardSupabase({ business: FREE_BIZ_ACTIVE_TRIAL, capabilities: RESERVATION_ENABLED });
     const result = await requireCurrentCapability(supabase, { businessId: 'biz-2', capability: 'reservation', action: 'create_new' });
     expect(result.allowed).toBe(true);
@@ -577,7 +582,7 @@ describe('Session resume revalidation (Point A)', () => {
         { capability: 'scheduling', is_enabled: true },
         { capability: 'reservation', is_enabled: true },
       ],
-      overrides: [], tier: 'free', trialEndsAt: '2024-01-01T00:00:00Z', hasTrialCredit: false,
+      overrides: [], tier: 'free', trialEndsAt: '2024-01-01T00:00:00Z',
     });
     expect(result.effective).toContain('scheduling');
     expect(result.effective).not.toContain('reservation');
@@ -590,7 +595,7 @@ describe('Session resume revalidation (Point A)', () => {
         { capability: 'scheduling', is_enabled: true },
         { capability: 'reservation', is_enabled: true },
       ],
-      overrides: [], tier: 'free', trialEndsAt: new Date(Date.now() + 86400000).toISOString(), hasTrialCredit: true,
+      overrides: [], tier: 'free', trialEndsAt: new Date(Date.now() + 86400000).toISOString(),
     });
     expect(result.effective).toContain('scheduling');
     expect(result.effective).toContain('reservation');

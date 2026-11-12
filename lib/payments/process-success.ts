@@ -1,3 +1,4 @@
+import { validatePinnedTaxFee, type PinnedTaxFee } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { getPlatformFees } from '@/lib/getPlatformFees';
@@ -8,6 +9,7 @@ import { isSafeIdentifier } from '@/lib/redact';
 import { markWaitlistConverted } from '@/lib/waitlist/auto-notify';
 import type { FinalizationResult } from './authority';
 import { resolveTrialStatus } from '@/lib/trial-status';
+import { supersedeUnusedTransfers } from './stale-transfers';
 
 interface PaymentRecord {
   id: string;
@@ -525,6 +527,16 @@ export async function processSuccessfulPayment(
     }
   }
 
+  // NONCRITICAL: close the unused bank-transfer offer now that this payment won
+  // (orders already do this in apply_order_stock_once). Transfers with a receipt stay.
+  if (criticalErrors.length === 0 && (payment.booking_id || payment.reservation_id || payment.invoice_id)) {
+    try {
+      await supersedeUnusedTransfers(supabase, payment);
+    } catch (err) {
+      logger.withContext({ op: 'process-success.supersede-transfers', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Closing unused bank transfer failed');
+    }
+  }
+
   // Emit structured finalization outcome.
   // NOTE: This function runs AFTER the payment provider has already confirmed success.
   // The payment itself succeeded. A failure here means business finalization failed,
@@ -637,6 +649,17 @@ export async function recordPlatformFee(
 
   if (!businessId) return;
 
+  let pinnedTaxFee: PinnedTaxFee | null = null;
+  if (opts.paymentId) {
+    const { data: authority, error } = await supabase.from('payments')
+      .select('business_id,amount,currency,tax_allocation,tax_fee_basis').eq('id', opts.paymentId).single();
+    if (error || !authority) throw new Error('Payment fee authority unavailable');
+    if (authority.tax_allocation) {
+      if (authority.business_id !== businessId || Number(authority.amount) !== transactionAmount) throw new Error('Tax fee payment identity mismatch');
+      pinnedTaxFee = validatePinnedTaxFee(authority.tax_fee_basis, transactionAmount, authority.currency);
+    }
+  }
+
   // ── #264: V1 fee-policy pinned path ──
   // Branch on fee_policy_version FIRST. If v1, require all authority fields or fail closed.
   // Never downgrade to legacy — a v1 payment with missing authority is corrupt, not legacy.
@@ -683,7 +706,7 @@ export async function recordPlatformFee(
     if (!business) return;
     if (business.payout_mode === 'direct_split') return;
 
-    const { feePercentage, feeFlat, feeTotal } = calculateFee(
+    const { feePercentage, feeFlat, feeTotal } = pinnedTaxFee ?? calculateFee(
       transactionAmount,
       feeBasis as Parameters<typeof calculateFee>[1],
       opts.transactionCategory || null,
@@ -747,10 +770,10 @@ export async function recordPlatformFee(
   if (!business) return;
   if (business.payout_mode === 'direct_split') return;
 
-  const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-  const isInTrial = await resolveTrialStatus(supabase, businessId, tier, business.trial_ends_at);
+  const tier = (pinnedTaxFee?.tier || business.subscription_tier || 'free') as SubscriptionTier;
+  const isInTrial = await resolveTrialStatus(supabase, businessId, tier);
 
-  const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial, {
+  const { feePercentage, feeFlat, feeTotal } = pinnedTaxFee ?? await getPlatformFees(transactionAmount, tier, isInTrial, {
     feePercentage: business.custom_fee_percentage != null ? Number(business.custom_fee_percentage) : null,
     feeFlat: business.custom_fee_flat != null ? Number(business.custom_fee_flat) : null,
   });

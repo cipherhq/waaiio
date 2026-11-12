@@ -3,19 +3,20 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Vercel deployment control', () => {
-  it('delegates deployment gating to per-project dashboard Ignored Build Step', () => {
-    const configPath = resolve(process.cwd(), 'vercel.json');
+  it.each(['vercel.json', 'admin/vercel.json'])('preserves per-project deployment gating with only the approved tax and directory review exceptions in %s', (file) => {
+    const configPath = resolve(process.cwd(), file);
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as {
-      git?: { deploymentEnabled?: boolean };
+      git?: { deploymentEnabled?: boolean | Record<string, boolean> };
       ignoreCommand?: string;
     };
 
-    // vercel.json must NOT contain git.deploymentEnabled or ignoreCommand.
-    // Both settings override ALL projects sharing this root directory and
-    // cannot distinguish git-triggered from manual deploys. Per-project
-    // Ignored Build Step in the Vercel dashboard is the correct mechanism.
-    // See PR #614 for the full rationale.
-    expect(config.git?.deploymentEnabled).toBeUndefined();
+    // Owner-approved CI-only branch exceptions (#982 tax, #984 directory). Reject
+    // global switches, wildcard rules, and changes to any release branch. Unspecified
+    // branches retain Vercel's default and their per-project Ignored Build Step (#614).
+    expect(config.git?.deploymentEnabled).toEqual({
+      'codex/merchant-tax-phase-a': false,
+      'codex/directory-short-links': false,
+    });
     expect(config.ignoreCommand).toBeUndefined();
   });
 });

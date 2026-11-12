@@ -11,6 +11,7 @@ import {
   getRequiredTier,
   TIER_LABELS,
 } from '@/lib/capabilities/types';
+import { isTrialActive } from '@/lib/capabilities/policy';
 
 import type { SubscriptionTier } from '@/lib/constants';
 
@@ -123,13 +124,12 @@ export default function CapabilitiesPage() {
     setDragOverIndex(null);
   }, []);
 
-  // Check if business is still in 30-day trial
+  // Check if business is still in its free trial
   const isInTrial = useMemo(() => {
     // Paid plans are never in trial — they have their tier's capabilities
-    if (tier !== 'free') return false;
-    if (!business.trial_ends_at) return false;
-    return new Date(business.trial_ends_at) > new Date();
-  }, [business.trial_ends_at, tier]);
+    // Feature-trial clock from sign-up (M525), not the messaging-credit clock.
+    return isTrialActive(tier, business.feature_trial_ends_at);
+  }, [business.feature_trial_ends_at, tier]);
 
   // During trial, everything is toggleable regardless of tier
   const canToggle = (capId: CapabilityId) => {
@@ -277,7 +277,7 @@ export default function CapabilitiesPage() {
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Choose the features you want, then click Save Changes to update your account and WhatsApp bot.
-            {isInTrial && ' Your 30-day trial includes everything — try them all.'}
+            {isInTrial && ' Your 14-day trial includes every Pro and Premium feature — try them all.'}
           </p>
         </div>
         <div className="flex items-center gap-3">

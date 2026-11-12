@@ -13,8 +13,8 @@ import { resolveProactiveLocalization } from '@/lib/payments/proactive-localizat
 import { getFlowCopy, fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { createWhatsAppUser } from '@/lib/bot/flows/shared/user';
 import { getCurrencyForCountry } from '@/lib/channels/catalog';
-import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
-import type { CountryCode, PaymentGatewayName } from '@/lib/constants';
+import { initializePayment } from '@/lib/bot/flows/shared/payment';
+import type { CountryCode } from '@/lib/constants';
 
 export async function handleCatalogOrder(
   supabase: SupabaseClient,
@@ -105,22 +105,13 @@ export async function handleCatalogOrder(
 
   if (totalAmount > 0) {
     try {
-      const gatewayName = (biz.payment_gateway || undefined) as PaymentGatewayName | undefined;
-      const gateway = gatewayName ? getPaymentGatewayByName(gatewayName) : getPaymentGateway((biz.country_code || 'NG') as CountryCode);
-      const paymentResult = await gateway.initializePayment({
-        supabase, orderId, userId, amount: totalAmount, currency, referenceCode,
-        businessName: biz.name, phone,
-        callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success`,
-        businessId: biz.id,
+      const paymentResult = await initializePayment(supabase, {
+        orderId, userId, amount: totalAmount, referenceCode, businessName: biz.name, phone,
+        businessId: biz.id, countryCode: (biz.country_code || 'NG') as CountryCode,
+        inboundChannelId: resolved.channel.id, confirmationOrigin: 'whatsapp', transactionCategory: 'ordering',
       });
-      if (paymentResult?.url) {
-        await supabase.from('payments').insert({
-          business_id: biz.id, order_id: orderId, user_id: userId,
-          amount: totalAmount, currency, gateway: gateway.name,
-          gateway_reference: referenceCode, status: 'pending',
-        });
-        paymentLine = `\nPay here:\n${paymentResult.url}`;
-      }
+      paymentLine = paymentResult?.url ? `\nPay here:\n${paymentResult.url}`
+        : '\n' + getFlowCopy('en', 'notification.catalog_contact_business');
     } catch (payErr) {
       msgLog.error('[META-WEBHOOK] Payment init failed for catalog order:', payErr);
       paymentLine = '\n' + getFlowCopy('en', 'notification.catalog_contact_business');
@@ -134,6 +125,7 @@ export async function handleCatalogOrder(
   const copyLang = l10n.language;
   const confirmationMsg = [
     getFlowCopy(copyLang, 'notification.catalog_order_received'), '', `*${biz.name}*`, '', itemLines, '',
+    ...(result.tax_snapshot ? [`Before tax: ${currency} ${result.tax_snapshot.netAmount / 100}`, `Tax: ${currency} ${result.tax_snapshot.taxAmount / 100}`] : []),
     `*Total: ${currency} ${totalAmount}*`, `Ref: *${referenceCode}*`,
     customerNote ? `Note: ${customerNote}` : '', paymentLine, outOfStockNote, '',
     totalAmount > 0 ? getFlowCopy(copyLang, 'notification.catalog_payment_pending') : getFlowCopy(copyLang, 'notification.catalog_order_confirmed'),

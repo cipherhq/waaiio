@@ -1,11 +1,13 @@
-import { isSharedConversation, transactionNextSteps } from './shared/navigation';
+import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
+import { quoteBookingTax, isTaxTermsChanged, isSafePurchaseAmount } from '@/lib/tax/server-quote';
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, getStaffDaySchedule, isStaffAvailable, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
+import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { buildListItem, truncTitle } from '../utils/truncate';
@@ -21,6 +23,7 @@ import { notifyOwnerNewBooking, notifyOwnerNewPayment } from './shared/notify-ow
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
@@ -32,6 +35,10 @@ import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filte
 import { parseTypedDate, isCalendarDate } from './shared/typed-date';
 import { openTimesOnDate, tableTimeInsideBusinessHours, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
 import { seatingGalleryMessages } from './table-reservation.flow';
+import {
+  beforeBookingMessage, deliverAfterBookingIntake, hasAnsweredBefore, intakeState, isIntakeEntitled,
+  linkIntakeToBooking, loadUsableForm, openBeforeBookingIntake, syncIntakeExpiry, toE164,
+} from '@/lib/intake/send';
 
 /** Table deposits are flat; discard transient promo state even on resumed steps. */
 function clearTablePromoState(ctx: FlowContext): boolean {
@@ -338,6 +345,36 @@ const MAX_SLOT_TAKEN_RETRIES = 2;
  * or after "Change date". Never claim then: show the time list again (or the
  * date list when the date was cleared); nextAfterPrompt waits there.
  */
+/**
+ * Before-booking client intake (#963): the service's linked form, when this
+ * booking must answer it first. Null means no intake step: no form, an
+ * after-booking form, an appointment or table booking, a business without
+ * Pro/Premium/trial, a client who already answered (first booking only), or a
+ * form that cannot be answered on the intake page. Read failures also mean no
+ * step, so a database hiccup never blocks booking.
+ */
+async function beforeBookingIntakeConfig(ctx: FlowContext): Promise<{ formId: string; key: string } | null> {
+  const d = ctx.session.session_data;
+  // A reschedule keeps the original booking and its intake: never ask again.
+  if (!ctx.business || !d.service_id || d._is_appointment || d._is_table_reservation || d._reschedule_booking_id) return null;
+  const { data: svc, error } = await ctx.supabase.from('services')
+    .select('intake_form_id, intake_timing, intake_frequency, is_class')
+    .eq('id', d.service_id as string).eq('business_id', ctx.business.id).maybeSingle();
+  // Classes are skipped (#963 lane 3 contract).
+  if (error || !svc?.intake_form_id || svc.intake_timing !== 'before_booking' || svc.is_class === true) return null;
+  const formId = svc.intake_form_id as string;
+  const key = `${d.service_id}:${formId}`;
+  if (d._intake_done_key === key) return null;
+  const phone = toE164(ctx.from);
+  if (!phone) return null;
+  if (!(await isIntakeEntitled(ctx.supabase, ctx.business.id, ctx.business.subscription_tier))) return null;
+  // The intake of this booking in progress is not an earlier answer.
+  const current = d._intake_key === key ? (d._intake_id as string | undefined) : undefined;
+  if (svc.intake_frequency === 'first_booking' && await hasAnsweredBefore(ctx.supabase, ctx.business.id, formId, phone, current)) return null;
+  if (!(await loadUsableForm(ctx.supabase, ctx.business.id, formId))) return null;
+  return { formId, key };
+}
+
 async function reshowPickerAfterTakenTime(ctx: FlowContext): Promise<PromptMessage[]> {
   const stepId = ctx.session.session_data.date ? 'select_time' : 'select_date';
   const step = schedulingFlow.steps.find(s => s.id === stepId);
@@ -378,6 +415,85 @@ async function backToTimeList(ctx: FlowContext, notice?: string): Promise<Prompt
   // The last message is the time list; table photos before it were already seen
   const timeList = timeMessages[timeMessages.length - 1];
   return [{ type: 'text', text: notice ?? getFlowCopy(ctx.copyLang, 'booking.time_taken') }, ...(timeList ? [timeList] : [])];
+}
+
+type StaffCandidate = { id: string; name: string };
+
+/**
+ * "Any available" on a service that requires staff. book_slot_atomic refuses a booking
+ * with no staff member for such a service, with the same answer as a full slot, so the
+ * customer was told the time had just been booked. Instead, create_booking offers the
+ * time to each staff member shown on the staff step, least busy that day first, until the
+ * booking function accepts one (claimAnyStaff). Each try is a full booking-function call:
+ * the staff schedule, per-staff capacity and buffer and the slot lock are unchanged.
+ *
+ * A booking this session already made (an answer lost before the session was saved) is
+ * tried first with its own staff member, so the retry repeats the same request and the
+ * booking function returns that booking instead of refusing a changed request.
+ * Returns null when "Any available" does not apply; then exactly one call is made, as before.
+ */
+async function anyStaffCandidates(ctx: FlowContext): Promise<StaffCandidate[] | null> {
+  const d = ctx.session.session_data;
+  if (d._staff_any !== true || d._service_requires_staff !== true) return null;
+  if (d._is_table_reservation === true || d._service_is_class === true || d._class_session_id) return null;
+  // A list kept from an earlier service (e.g. the staff step skipped by a merchant override)
+  // only counts for staff members this service names.
+  const serviceStaff = (d._service_staff_ids as string[] | undefined) || [];
+  const listed = ((d._available_staff as StaffCandidate[] | undefined) || [])
+    .filter(s => s && s.id && (serviceStaff.length === 0 || serviceStaff.includes(s.id)));
+  if (listed.length === 0 || !ctx.business) return null;
+
+  const { data: existing } = await ctx.supabase.from('bookings')
+    .select('staff_id')
+    .eq('bot_session_id', ctx.session.id)
+    .eq('business_id', ctx.business.id)
+    .in('status', ['pending', 'confirmed'])
+    .maybeSingle();
+  const already = listed.find(s => s.id === (existing as { staff_id?: string | null } | null)?.staff_id);
+  if (already) return [already];
+
+  // Least busy that day first, as the staff step does when it assigns one itself
+  const counts = await Promise.all(listed.map(async (s, i) => {
+    const { count } = await ctx.supabase.from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', ctx.business!.id)
+      .eq('staff_id', s.id)
+      .eq('date', d.date as string)
+      .in('status', ['confirmed', 'pending', 'in_progress']);
+    return { s, i, n: count || 0 };
+  }));
+  counts.sort((a, b) => a.n - b.n || a.i - b.i);
+  return counts.map(c => ({ id: c.s.id, name: c.s.name }));
+}
+
+/**
+ * Runs one booking-function call per staff candidate (or one call when there are none),
+ * with d.staff_id / d.staff_name set to the staff member being tried. Stops at a booking,
+ * or at the first answer that is not a plain refusal (an error, or a refusal for another reason).
+ * Without a booking, staff_id / staff_name are cleared again: the time list shown next is not
+ * narrowed to the last staff member tried, and a later confirmation or retry starts from
+ * "Any available" (a booking this session already made is then found by anyStaffCandidates).
+ */
+async function claimAnyStaff<R>(
+  ctx: FlowContext,
+  candidates: StaffCandidate[] | null,
+  call: () => Promise<R>,
+  refused: (r: R) => boolean,
+  booked: (r: R) => boolean,
+): Promise<R> {
+  const d = ctx.session.session_data;
+  if (!candidates) return call();
+  let result!: R;
+  for (const c of candidates) {
+    d.staff_id = c.id;
+    d.staff_name = c.name;
+    result = await call();
+    if (booked(result)) return result;
+    if (!refused(result)) break;
+  }
+  d.staff_id = null;
+  d.staff_name = null;
+  return result;
 }
 
 /** WhatsApp lists hold at most 10 rows. */
@@ -528,6 +644,7 @@ function schedulingExpectedTerms604(d: Record<string, unknown>, country: string)
     classSession: d._class_session_id ?? null, location: d.location_id ?? null,
     date: d.date ?? null, time: String(d.time ?? '').slice(0, 5),
     quantity: Number(d.party_size ?? 1), addons: d._selected_addons ?? [],
+    tax_snapshot: d._tax_snapshot ?? null,
   };
 }
 
@@ -1045,6 +1162,8 @@ export const schedulingFlow: FlowDefinition = {
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
         const d = ctx.session.session_data;
+        // A new pass through this step (e.g. after "Change date") forgets an earlier "Any available"
+        delete d._staff_any;
 
         // Table reservations don't use staff selection
         if (d._is_table_reservation) return true;
@@ -1200,8 +1319,11 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _staff_action: 'cancel' } };
         }
 
+        // "Any available": no staff member yet. A staff member kept from an earlier pass is
+        // dropped; create_booking picks one the booking function accepts (see claimAnyStaff).
+        const anyStaff = { valid: true, data: { staff_id: null, staff_name: null, _staff_any: true } };
         if (input === 'staff_any') {
-          return { valid: true };
+          return anyStaff;
         }
         const match = input.match(/^staff_(.+)$/);
         if (match) {
@@ -1209,12 +1331,12 @@ export const schedulingFlow: FlowDefinition = {
           const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
           const found = staff?.find(s => s.id === staffId);
           if (found) {
-            return { valid: true, data: { staff_id: found.id, staff_name: found.name } };
+            return { valid: true, data: { staff_id: found.id, staff_name: found.name, _staff_any: false } };
           }
         }
         // Fuzzy match by typed name (e.g., "Mike" matches "Mike Johnson")
         if (input.toLowerCase() === 'any' || input.toLowerCase() === 'anyone') {
-          return { valid: true };
+          return anyStaff;
         }
         const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
         if (staff) {
@@ -1225,7 +1347,7 @@ export const schedulingFlow: FlowDefinition = {
             lower.includes(s.name.toLowerCase().split(' ')[0])
           );
           if (nameMatch) {
-            return { valid: true, data: { staff_id: nameMatch.id, staff_name: nameMatch.name } };
+            return { valid: true, data: { staff_id: nameMatch.id, staff_name: nameMatch.name, _staff_any: false } };
           }
         }
         return { valid: false, errorMessage: 'Try typing a name like *Mike*, or tap an option above.' };
@@ -2424,8 +2546,87 @@ export const schedulingFlow: FlowDefinition = {
         const idx = (ctx.session.session_data._pbq_index as number) || 0;
         // More questions? Loop back to same step
         if (questions && idx < questions.length) return 'pre_booking_questions';
-        return 'select_delivery';
+        return 'intake_form';
       },
+    },
+
+    // ── Client intake form, required before the booking is confirmed (#963) ──
+    // The client answers on a private link; the booking (and any payment) only
+    // starts once the answers are in. Re-showing the step keeps the same link
+    // (a client may still have it open); a new link is issued only on request or
+    // when the old one expired.
+    {
+      id: 'intake_form',
+      async skipIf(ctx: FlowContext) {
+        return !(await beforeBookingIntakeConfig(ctx));
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const cfg = await beforeBookingIntakeConfig(ctx);
+        const d = ctx.session.session_data;
+        if (!cfg || !ctx.business) {
+          // Nothing to ask (e.g. "back" after the form is done); the next message moves on.
+          return [{ type: 'text', text: d._intake_done_key ? '✅ We already have your answers. Send any message to continue.' : '✅ All set. Send any message to continue.' }];
+        }
+        const existing = d._intake_key === cfg.key ? (d._intake_id as string | undefined) : undefined;
+        const buttons = [
+          { id: 'intake_done', title: "I've filled it" },
+          { id: 'intake_new_link', title: 'Send a new link' },
+        ];
+        const state = existing && !d._intake_force_new ? await intakeState(ctx.supabase, ctx.business.id, existing) : 'missing';
+        // Answers already in (a re-prompt before "I've filled it"): record them, never open a second intake.
+        if (state === 'submitted') {
+          d._intake_done_key = cfg.key;
+          return [{ type: 'text', text: '✅ We already have your answers. Send any message to continue.' }];
+        }
+        // Pending, or unreadable right now: keep the link the client may have open.
+        if (state === 'pending' || state === 'unknown') {
+          return [{ type: 'buttons', body: 'Your form link is in the message above. When you have sent the form, tap "I\'ve filled it".', buttons }];
+        }
+        const opened = await openBeforeBookingIntake(ctx.supabase, {
+          businessId: ctx.business.id, serviceId: d.service_id as string, formId: cfg.formId,
+          phone: ctx.from, existingIntakeId: existing ?? null,
+        });
+        delete d._intake_force_new;
+        if (!opened) {
+          return [{ type: 'buttons', body: 'We could not create your form link just now. Tap "Send a new link" to try again.', buttons }];
+        }
+        d._intake_id = opened.intakeId;
+        d._intake_key = cfg.key;
+        return [{
+          type: 'buttons',
+          body: beforeBookingMessage(ctx.business.name, opened.url),
+          buttons,
+          // The link is a private secret: never send it to the translation model.
+          _localization: { protectedValues: [opened.url, ctx.business.name] },
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
+        // The step no longer applies (answers recorded, plan lapsed, form switched off,
+        // or a read error): move on. A glitch never blocks the booking (Owner decision 2026-11-10).
+        if (!(await beforeBookingIntakeConfig(ctx))) return { valid: true, data: {} };
+        const answer = input.trim().toLowerCase();
+        const id = d._intake_id as string | undefined;
+        if (!id || !ctx.business) return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
+        const state = await intakeState(ctx.supabase, ctx.business.id, id);
+        if (state === 'submitted') {
+          // Any reply once the answers are in moves on (also a late "Send a new link").
+          return { valid: true, data: { _intake_done_key: d._intake_key } };
+        }
+        if (answer === 'intake_new_link' || answer === 'send a new link' || answer === 'new link') {
+          d._intake_force_new = true;
+          return { valid: false, errorMessage: '', persistSessionDataOnFailure: true };
+        }
+        if (state === 'expired' || state === 'missing') {
+          d._intake_force_new = true;
+          return { valid: false, errorMessage: 'That link has expired, so here is a new one.', persistSessionDataOnFailure: true };
+        }
+        if (state === 'unknown') {
+          return { valid: false, errorMessage: 'We could not check your form just now. Please tap "I\'ve filled it" again in a moment.' };
+        }
+        return { valid: false, errorMessage: 'We have not received your answers yet. Please open the link, send the form, then tap "I\'ve filled it".' };
+      },
+      async next() { return 'select_delivery'; },
     },
 
     // ── Select Delivery/Pickup for drop-off services ──
@@ -2678,8 +2879,27 @@ export const schedulingFlow: FlowDefinition = {
 
         // Show price in confirmation
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const servicePrice = (d.service_price as number || 0) + deliveryPrice;
-        const deposit = d.service_deposit as number || 0;
+        let servicePrice = (d.service_price as number || 0) + deliveryPrice;
+        let deposit = d.service_deposit as number || 0;
+        if (!d._is_table_reservation) {
+          try {
+            const quote = await quoteBookingTax(ctx.supabase, {
+              businessId: ctx.business!.id,
+              serviceId: d._is_appointment ? null : (d.service_id as string) || null,
+              appointmentId: d._is_appointment ? (d.service_id as string) || null : null,
+              partySize: Number(d.party_size ?? 1), addons: (d._selected_addons as unknown[]) ?? [],
+              promoCodeId: (d._promo_id as string) || null,
+              expectedTerms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'), botClaim: true,
+              packageRedemption: !!d._package_enrollment_id,
+            });
+            d._tax_snapshot = quote.tax_snapshot; d._tax_booking_total = quote.total; d._tax_booking_deposit = quote.deposit;
+            servicePrice = quote.total; deposit = quote.deposit;
+            if (quote.tax_snapshot) lines.push(`Before tax: ${formatCurrency(quote.tax_snapshot.netAmount / 100, cc)}`, `Tax: ${formatCurrency(quote.tax_snapshot.taxAmount / 100, cc)}`);
+          } catch (error) {
+            logger.warn('[SCHEDULING] Authoritative tax preview unavailable', safeLogErrorContext(error));
+            return [{ type: 'text', text: 'Your booking details changed or could not be checked. Please review the service again before confirming.' }];
+          }
+        }
         if (servicePrice > 0) {
           if (deposit > 0 && deposit < servicePrice) {
             lines.push(`💰 Total: ${formatCurrency(servicePrice, cc)} (Deposit: ${formatCurrency(deposit, cc)})`);
@@ -2781,7 +3001,6 @@ export const schedulingFlow: FlowDefinition = {
           if (user?.first_name) {
             ctx.session.session_data.first_name = user.first_name;
             ctx.session.session_data.last_name = user.last_name;
-            ctx.session.session_data.email = user.email || '';
             return true;
           }
         }
@@ -2889,13 +3108,17 @@ export const schedulingFlow: FlowDefinition = {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };
         }
+        const businessId = ctx.business?.id || ctx.session.business_id;
+        if (businessId && (!ctx.business?.id || !ctx.session.business_id || ctx.business.id === ctx.session.business_id)) {
+          const d = ctx.session.session_data;
+          await persistStoreCustomerEmail(ctx.supabase, businessId, ctx.from, email,
+            `${d.first_name || ''} ${d.last_name || ''}`.trim() || null);
+        }
         return { valid: true, data: { email } };
       },
       async next() { return 'create_booking'; },
       async skipIf(ctx: FlowContext) {
-        // Existing customer identity alone is not proof that a usable email is known.
-        // Skip only when a real customer email is already present.
-        return isReusableCustomerEmail(ctx.session.session_data.email);
+        return reuseStoreCustomerEmail(ctx);
       },
     },
 
@@ -2904,6 +3127,7 @@ export const schedulingFlow: FlowDefinition = {
       id: 'create_booking',
       nextAfterPrompt(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        if (d._tax_reconfirm) { delete d._tax_reconfirm; return 'confirmation'; }
         // The time was just taken: the time (or date) list was sent, wait for a new pick (#919)
         if (d._slot_taken_return) return d.date ? 'select_time' : 'select_date';
         // Saved-card offer presented (separate step handles the button taps)
@@ -2944,6 +3168,9 @@ export const schedulingFlow: FlowDefinition = {
             logger.withContext({ op: 'scheduling.reschedule-rpc', reason }).error('[SCHEDULING] Atomic reschedule failed');
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
+
+          // #963: a pending after-booking form link now lasts until the new start.
+          await syncIntakeExpiry(ctx.supabase, ctx.business!.id, rescheduleId);
 
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
@@ -3114,6 +3341,9 @@ export const schedulingFlow: FlowDefinition = {
             ? Math.max(baseTransactionTotal, totalDeposit)
             : (servicePrice > 0 || serviceDeposit > 0 ? baseTransactionTotal : totalDeposit));
 
+        if (!d._is_table_reservation && !packageEnrollmentId && d._tax_snapshot) {
+          bookingTotalAmount = Number(d._tax_booking_total); totalDeposit = Number(d._tax_booking_deposit);
+        }
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
           return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
@@ -3232,6 +3462,7 @@ export const schedulingFlow: FlowDefinition = {
 
             if (tableError || !tableResult) {
               const pgError = tableError as { code?: string; message?: string } | null;
+              if (pgError?.message?.includes('unsupported_tax_purchase')) return [{ type: 'text', text: 'This purchase needs an itemized invoice from the business so tax can be shown correctly. Please contact the business to continue.' }];
               if (pgError?.message?.includes('party_too_small') || pgError?.message?.includes('party_too_large')) {
                 return [{ type: 'text', text: await ctx.t(`Sorry, that table doesn't accommodate a party of ${partySize}. Send *Hi* to start over.`) }];
               }
@@ -3261,7 +3492,13 @@ export const schedulingFlow: FlowDefinition = {
             d.service_name = d.seating_resource_name; // For confirmation message
           } else if (packageEnrollmentId) {
             // ── Atomic package booking: booking + claim in ONE PostgreSQL transaction ──
-            const { data: pkgResult, error: pkgError } = await ctx.supabase
+            // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
+            const pkgStaff = await anyStaffCandidates(ctx);
+            // The terms the customer confirmed: for "Any available" always no staff member, so they
+            // match the confirmation claim (_604_confirmation) and, on a retry, the request already
+            // stored with the booking, while p_staff_id names the staff member being tried.
+            const pkgTerms = schedulingExpectedTerms604(pkgStaff ? { ...d, staff_id: null } : d, ctx.business?.country_code || 'NG');
+            const { data: pkgResult, error: pkgError } = await claimAnyStaff(ctx, pkgStaff, async () => await ctx.supabase
               .rpc('book_with_package_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
                 p_user_id: userId,
@@ -3292,8 +3529,9 @@ export const schedulingFlow: FlowDefinition = {
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
                 p_enrollment_id: packageEnrollmentId,
-                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
-              });
+                p_expected_terms: pkgTerms,
+              }), r => !r.error && r.data?.success !== true && r.data?.reason === 'slot_full',
+              r => !r.error && r.data?.success === true);
 
             if (pkgError || !pkgResult?.success) {
               const reason = pkgResult?.reason || 'unknown';
@@ -3311,7 +3549,13 @@ export const schedulingFlow: FlowDefinition = {
             d._package_covered = true;
           } else {
             // ── Standard non-package booking ──
-            const { data: slotResult, error: slotError } = await ctx.supabase
+            // "Any available" on a service that requires staff: one try per staff member (anyStaffCandidates)
+            const slotStaff = await anyStaffCandidates(ctx);
+            // The terms the customer confirmed: for "Any available" always no staff member, so they
+            // match the confirmation claim (_604_confirmation) and, on a retry, the request already
+            // stored with the booking, while p_staff_id names the staff member being tried.
+            const slotTerms = schedulingExpectedTerms604(slotStaff ? { ...d, staff_id: null } : d, ctx.business?.country_code || 'NG');
+            const { data: slotResult, error: slotError } = await claimAnyStaff(ctx, slotStaff, async () => (await ctx.supabase
               .rpc('book_slot_authoritative_604' as string, {
                 p_business_id: ctx.business!.id,
                 p_user_id: userId,
@@ -3341,11 +3585,17 @@ export const schedulingFlow: FlowDefinition = {
                 p_duration: (d.service_duration as number) || 30,
                 p_bot_session_id: ctx.session.id,
                 p_class_session_id: (d._class_session_id as string) || null,
-                p_expected_terms: schedulingExpectedTerms604(d, ctx.business?.country_code || 'NG'),
+                p_expected_terms: slotTerms,
               })
-              .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+              .single()) as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown },
+              r => !r.error && !!r.data && r.data.slot_available === false,
+              r => !r.error && r.data?.slot_available === true);
 
             if (slotError || !slotResult) {
+              if (isTaxTermsChanged(slotError)) {
+                d._tax_reconfirm = true; delete d._terms_accepted;
+                return [{ type: 'text', text: 'Your booking price or tax details changed. Please review and confirm the updated summary.' }];
+              }
               // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
               const pgError = slotError as { code?: string; message?: string } | null;
               if (pgError?.code === '23505' && pgError?.message?.includes('bot_session_id')) {
@@ -3449,9 +3699,10 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         // Use persisted authority on create, response-loss recovery and payment retry.
+        let confirmedBooking = false;
         if (!d._is_table_reservation) {
           const { data: committed, error: committedError } = await ctx.supabase.from('bookings')
-            .select('id, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id')
+            .select('id, status, total_amount, deposit_amount, service_id, appointment_id, party_size, date, time, class_session_id, staff_id, tax_snapshot')
             .eq('id', booking.id).eq('business_id', ctx.business!.id)
             .eq('user_id', userId).eq('bot_session_id', ctx.session.id)
             .in('status', ['pending', 'confirmed', 'in_progress']).single();
@@ -3464,16 +3715,24 @@ export const schedulingFlow: FlowDefinition = {
             && committed.staff_id === (d.staff_id || null);
           const committedTotal = Number(committed?.total_amount);
           const committedDeposit = Number(committed?.deposit_amount);
-          if (committedError || !sameSelection || !Number.isSafeInteger(committedTotal)
-              || !Number.isSafeInteger(committedDeposit) || committedDeposit < 0 || committedTotal < committedDeposit) {
+          if (committedError || !sameSelection || !isSafePurchaseAmount(committedTotal) || !isSafePurchaseAmount(committedDeposit) || committedTotal < committedDeposit) {
             return [{ type: 'text', text: await ctx.t('Your booking terms could not be verified. Please contact the business before retrying payment.') }];
           }
           totalDeposit = committedDeposit;
           bookingTotalAmount = committedTotal;
+          d._tax_snapshot = committed.tax_snapshot ?? null;
+          confirmedBooking = committed.status === 'confirmed';
         }
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
+        // Before-booking intake (#963): attach the answered form to this booking.
+        // The key must belong to the service being booked: a client may answer service A's
+        // form, go back and book service B.
+        if (d._intake_id && d._intake_done_key && d._intake_done_key === d._intake_key
+            && String(d._intake_key).startsWith(`${d.service_id}:`) && ctx.business) {
+          await linkIntakeToBooking(ctx.supabase, ctx.business.id, d._intake_id as string, booking.id, d.service_id as string);
+        }
         // Store canonical transaction total (not merely the upfront deposit).
         d.total_amount = bookingTotalAmount;
 
@@ -3486,7 +3745,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (isNewBooking) {
-          // ── Fire booking_created rules + sequences (non-blocking) ──
+          // Await immediate customer rule messages before completion follow-ups.
           if (ctx.business) {
             const ruleCtx = {
               customer_phone: ctx.from,
@@ -3503,7 +3762,7 @@ export const schedulingFlow: FlowDefinition = {
             const sendMsg = async (to: string, txt: string) => {
               await ctx.sender.sendText({ to, text: txt });
             };
-            evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
+            await evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
               .catch(err => logger.withContext({ op: 'scheduling.booking-rule', ...safeLogErrorContext(err) }).error('[SCHEDULING] booking_created rule error'));
             triggerSequences(ctx.supabase, ctx.business.id, 'after_booking', ctx.from, ruleCtx)
               .catch(err => logger.withContext({ op: 'scheduling.after-booking-sequence', ...safeLogErrorContext(err) }).error('[SCHEDULING] after_booking sequence error'));
@@ -3843,7 +4102,7 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           // Post-completion: loyalty, feedback, referral, auto-receipt
-          handlePostCompletion({
+          await handlePostCompletion({
             supabase: ctx.supabase,
             businessId: ctx.business.id,
             customerPhone: ctx.from,
@@ -3856,23 +4115,6 @@ export const schedulingFlow: FlowDefinition = {
             referenceCode: booking.reference_code,
           }).catch(err => logger.withContext({ op: 'scheduling.post-completion', ...safeLogErrorContext(err) }).error('[SCHEDULING] Post-completion error'));
         }
-
-        // Add helpful tips about what customer can do next
-        const tips = [
-          'Type *my bookings* to view your appointments',
-          'Type *reschedule* to change the date/time',
-          'Type *cancel* to cancel this booking',
-        ];
-        if (ctx.business) {
-          try {
-            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
-            const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
-            if (caps.includes('loyalty')) tips.push('Type *my points* to check your loyalty balance');
-            if (caps.includes('referral')) tips.push('Type *refer* to invite friends and earn rewards');
-            if (caps.includes('ordering')) tips.push('Type *order* to place an order');
-          } catch (err) { logger.withContext({ op: 'scheduling.capabilities-tips', ...safeLogErrorContext(err) }).warn('[SCHEDULING] Failed to load capabilities for tips'); }
-        }
-        const helpText = `\n\n💡 *What you can do:*\n${tips.map(t => `• ${t}`).join('\n')}`;
 
         // Sync to Google Calendar (non-blocking)
         if (ctx.business) {
@@ -3903,8 +4145,32 @@ export const schedulingFlow: FlowDefinition = {
           durationMinutes: (d.service_duration as number) || 60,
         }) : '';
 
-        const navigation = transactionNextSteps('appointment', await isSharedConversation(ctx.supabase, d));
-        return [{ type: 'text', text: message + calendarLinks + helpText + '\n\n' + navigation }];
+        // After-booking intake (#963): only for a confirmed booking (pending ones wait for
+        // approval). It goes before the next-steps menu, which must stay last.
+        const intake = await deliverAfterBookingIntake(ctx.supabase, booking.id, { prepareOnly: true });
+        const intakeBlock = intake.status === 'prepared' ? '\n\n' + intake.text : '';
+        // Read the table booking too: only durable confirmed state may trigger
+        // follow-ups, never pending approval or stale session configuration.
+        if (d._is_table_reservation) {
+          const { data: tableBooking, error: statusError } = await ctx.supabase.from('bookings')
+            .select('status').eq('id', booking.id).eq('business_id', ctx.business!.id)
+            .eq('bot_session_id', ctx.session.id).single();
+          confirmedBooking = !statusError && tableBooking?.status === 'confirmed';
+        }
+        const finalizeIntake = intake.status === 'prepared' ? intake.finalize : undefined;
+        const completion = confirmedBooking ? await prepareFreeCompletion(ctx, {
+          completionKey: `booking:${booking.id}`, kind: 'appointment', afterSend: finalizeIntake,
+        }) : undefined;
+        return [{
+          type: 'text',
+          text: message + calendarLinks + intakeBlock,
+          _afterSend: completion ?? finalizeIntake,
+          ...(intake.status === 'prepared'
+            ? {
+                _localization: { protectedValues: [intake.url, ctx.business?.name || ''].filter(Boolean) },
+              }
+            : {}),
+        }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (ctx.session.session_data._slot_taken_return) {
@@ -4209,15 +4475,7 @@ export const schedulingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const pRef = d.payment_reference as string | undefined;
         if (d.bank_transfer_offered) {
-          return [{
-            type: 'buttons',
-            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
-            buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
-              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
-              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
-            ],
-          }];
+          return [await bankTransferPaymentPrompt(d, ctx.copyLang, ctx.t)];
         }
         const buttons: Array<{ id: string; title: string }> = [
           { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
@@ -4377,17 +4635,7 @@ export const schedulingFlow: FlowDefinition = {
           if (!d.bank_transfer_reference) {
             return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
           }
-          d._awaiting_transfer_proof = true;
-          await ctx.supabase
-            .from('bot_sessions')
-            .update({ session_data: d })
-            .eq('id', ctx.session.id);
-
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
-          });
-          return { valid: false, errorMessage: '' }; // Keep at this step, wait for proof
+          return awaitTransferProof(d);
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
@@ -4430,6 +4678,8 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: false };
           }
 
+          // Transfer-only payment: nothing online to verify, so ask for the receipt.
+          if (!ref && d.bank_transfer_reference) return awaitTransferProof(d);
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
           // #375: If session has a saved-card payment ID, try centralized recovery first

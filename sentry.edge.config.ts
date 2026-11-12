@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/nextjs';
 import { getSentryEnvironment, isSentryEnabled } from './lib/sentry-env';
+import { privateLinkScrubbers } from './lib/sentry-redact';
 
 const environment = getSentryEnvironment({
   waaiioEnv: process.env.WAAIIO_ENVIRONMENT,
@@ -26,5 +27,7 @@ Sentry.init({
     queues: false,
     graphQL: { document: false, variables: false },
   },
+  // Private intake link tokens never leave in URLs (#963).
+  ...privateLinkScrubbers,
   enabled: isSentryEnabled(process.env.SENTRY_DSN, environment),
 });

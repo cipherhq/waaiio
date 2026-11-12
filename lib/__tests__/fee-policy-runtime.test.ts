@@ -569,9 +569,9 @@ describe('V1 finalization + calculator', () => {
     expect(calculateFee(10000, { payment_routing: 'platform', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null }, 'scheduling', { pricing_tiers: { free: { feePercentage: 2.5, feeFlat: 0 } }, category_fee_rates: { scheduling: { feePercentage: 3.0 } } }).feeTotal).toBe(300);
   });
 
-  it('BYO → 0%', async () => {
+  it('BYO → same tier rate as every route (Owner decision 2026-11-08)', async () => {
     const { calculateFee } = await import('@/lib/payments/calculateFee');
-    expect(calculateFee(10000, { payment_routing: 'byo', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null }, 'scheduling', { pricing_tiers: { free: { feePercentage: 10, feeFlat: 0 } } }).feeTotal).toBe(0);
+    expect(calculateFee(10000, { payment_routing: 'byo', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null }, 'scheduling', { pricing_tiers: { free: { feePercentage: 10, feeFlat: 0 } } }).feeTotal).toBe(1000);
   });
 });
 
@@ -1236,5 +1236,27 @@ describe('PayPal webhook — CAS path + event boundary', () => {
     const { status } = await callPP(PP_CAPTURE('ppevt_ok'), sb.client, { ok: true, body: { purchase_units: [{ reference_id: 'WAAIIO-PP' }] } });
     expect(status).toBe(200);
     expect(sb.processedEventWrites.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// #980: tax allocations use the same recovery authority even when fee policy is v0.
+describe('taxable v0 dispatched recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); vi.resetModules(); process.env.PAYSTACK_SECRET_KEY='synthetic-tax-test'; setupCronMocks();
+  });
+  it('atomically terminalizes and releases a provider-confirmed decline', async () => {
+    const sb=buildCronSb({dispatched:[{...DISPATCHED_PAYSTACK,fee_policy_version:0,tax_allocation:{version:1}}]});
+    sb.client.rpc.mockResolvedValue({data:true,error:null});
+    await callCron(sb,[{ok:true,body:{status:true,data:{status:'failed'}}}]);
+    expect(sb.client.rpc).toHaveBeenCalledWith('confirm_merchant_tax_payment_failure_980',{
+      p_payment_id:DISPATCHED_PAYSTACK.id,p_gateway:'paystack',p_reference:DISPATCHED_PAYSTACK.gateway_reference,p_status:'failed',
+    });
+    expect(sb.terminalWrites).toHaveLength(0); // no separate status write that can strand a hold
+  });
+  it('retains the reservation when provider verification is ambiguous', async () => {
+    const sb=buildCronSb({dispatched:[{...DISPATCHED_PAYSTACK,fee_policy_version:0,tax_allocation:{version:1}}]});
+    await callCron(sb,[{ok:false,body:{message:'temporary error'}}]);
+    expect(sb.client.rpc.mock.calls.some(([name])=>name==='confirm_merchant_tax_payment_failure_980')).toBe(false);
+    expect(sb.terminalWrites).toHaveLength(0);
   });
 });

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { resolveLimitTier } from '@/lib/trial-status';
+import { checkSpendCapPeriod, type SpendPeriod } from '@/lib/messaging/spend-cap-alerts';
 
 /**
  * Conversation Guard
@@ -52,7 +54,9 @@ export async function checkConversationLimit(
 
     // Get limits from platform_settings (admin-editable)
     const settings = await loadPlatformSettings({ useServiceClient: true });
-    const tierLimit = settings.conversation_limits[tier] ?? 200;
+    // During the Pro/Premium feature trial a Starter business uses Premium limits.
+    const limitTier = await resolveLimitTier(supabase, businessId, tier);
+    const tierLimit = settings.conversation_limits[limitTier] ?? 200;
 
     // Get current month usage
     const monthKey = new Date().toISOString().slice(0, 7);
@@ -151,11 +155,10 @@ export function getConversationLimitMessage(): string {
 }
 
 /**
- * #682: Check messaging spend utilization and insert threshold alerts.
- * Non-blocking — fires after a successful send. Reads the current spend period
- * for the business and inserts a row into messaging_spend_threshold_alerts
- * for each newly-crossed threshold (50%, 75%, 90%, 100%).
- * Uses UNIQUE(business_id, currency_code, period_start, threshold_pct) for idempotency.
+ * #682 / #992: Check messaging spend utilization after a bot send (also after a refused one)
+ * and raise the merchant spend-cap alert (dashboard, plus email at 90% and 100%).
+ * Non-blocking: never throws. The alert logic lives in lib/messaging/spend-cap-alerts.ts,
+ * shared with the hourly messaging-spend-warnings cron.
  */
 export async function checkSpendThresholds(
   supabase: SupabaseClient,
@@ -165,43 +168,15 @@ export async function checkSpendThresholds(
     const periodStart = new Date();
     periodStart.setUTCDate(1);
     periodStart.setUTCHours(0, 0, 0, 0);
-    const periodStartIso = periodStart.toISOString();
 
     const { data: periods } = await supabase
       .from('messaging_spend_periods')
       .select('currency_code, cap_minor, reserved_minor, spent_minor, period_start')
       .eq('business_id', businessId)
-      .eq('period_start', periodStartIso);
+      .eq('period_start', periodStart.toISOString());
 
-    if (!periods || periods.length === 0) return;
-
-    const THRESHOLDS = [50, 75, 90, 100] as const;
-
-    for (const period of periods) {
-      if (!period.cap_minor || period.cap_minor <= 0) continue;
-      const utilization = ((period.reserved_minor + period.spent_minor) / period.cap_minor) * 100;
-
-      for (const threshold of THRESHOLDS) {
-        if (utilization >= threshold) {
-          // Idempotent insert — 23505 (unique violation) is expected and harmless
-          const { error: insertErr } = await supabase
-            .from('messaging_spend_threshold_alerts')
-            .insert({
-              business_id: businessId,
-              currency_code: period.currency_code,
-              period_start: period.period_start,
-              threshold_pct: threshold,
-              utilization_at_alert: Math.round(utilization * 100) / 100,
-              cap_minor: period.cap_minor,
-              reserved_minor: period.reserved_minor,
-              spent_minor: period.spent_minor,
-            });
-          // Suppress unique constraint violations (already alerted for this threshold)
-          if (insertErr && insertErr.code !== '23505') {
-            logger.warn('[CONV-GUARD] Threshold alert insert error:', insertErr.message);
-          }
-        }
-      }
+    for (const period of (periods || []) as SpendPeriod[]) {
+      await checkSpendCapPeriod(supabase, businessId, period);
     }
   } catch (err) {
     logger.error('[CONV-GUARD] Threshold check failed (non-critical):', (err as Error).message);

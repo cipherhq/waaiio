@@ -136,3 +136,14 @@ describe('Route regression: MetaApiError 5xx takes ambiguous path', () => {
     expect(isDefiniteRejection).toBe(false);
   });
 });
+
+describe('transaction final list single-attempt delivery', () => {
+  it('noRetry list does not retry a provider server error', async () => {
+    const sendList = vi.fn().mockRejectedValue(new MetaApiError('Cloud API error: 500', 500));
+    const sender = new MetaCloudSender({ sendList } as any, createTestSupabase());
+    await expect(sender.sendList({ to: '2348012345678', title: 'Options', body: 'What next?',
+      buttonLabel: 'View options', items: [{ title: 'Business menu', postbackText: 'menu' }], noRetry: true,
+    })).rejects.toThrow('500');
+    expect(sendList).toHaveBeenCalledTimes(1);
+  });
+});

@@ -4,49 +4,38 @@ import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATI
  * Treat unrecognized channel types as pending, not an implicit platform fallback.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isStagingTestMode } from '@/lib/staging-test-mode';
+import {
+  isStagingWhatsAppRouting,
+  stagingDesignatedChannelProblem,
+  STAGING_SHARED_WHATSAPP_CHANNEL,
+} from '@/lib/channels/staging-whatsapp-routing';
 
 export interface ReadinessBusiness {
   id: string;
   country_code: string | null;
 }
 export interface ReadinessChannel {
+  /** Required for staging shared readiness (the designated channel is pinned by id). */
+  id?: string | null;
   channel_type: string | null;
   is_active: boolean;
   connection_status: string | null;
   country_code: string | null;
   business_id: string | null;
+  /** Required for staging shared readiness (the designated channel is pinned by number). */
+  phone_number?: string | null;
 }
 
 /**
- * Explicit, owner-approved regional shared-channel fallbacks when a country
- * does not yet have a dedicated local platform shared number.
+ * Production: explicit, owner-approved regional shared-channel fallbacks when a
+ * country does not yet have its own platform shared number. Only GH -> NG.
  * Businesses keep their authoritative country_code for currency, pricing, and gateway routing.
  *
- * Staging only: When WAAIIO_ENVIRONMENT === 'staging' (server-side), approved launch
- * countries without a local shared channel fall back to US after all existing exact-country
- * and production-approved cross-country candidates are exhausted. This does not change
- * businesses.country_code, pricing, or gateway routing — only transport assignment.
- *
- * Production: Only the explicitly approved GH → NG fallback is active. Missing,
- * malformed, or contradictory WAAIIO_ENVIRONMENT values never enable staging fallbacks.
+ * Staging does not use this list. In staging every business country uses the one
+ * designated US shared number (lib/channels/staging-whatsapp-routing.ts).
  */
-export const SHARED_CHANNEL_FALLBACK_COUNTRIES: Readonly<Record<string, readonly string[]>> = (() => {
-  const base: Record<string, string[]> = { GH: ['NG'] };
-  // Only the authoritative server-side env var gates staging behavior.
-  // NEXT_PUBLIC_WAAIIO_ENVIRONMENT is intentionally NOT checked — client-side
-  // config must never enable staging-only routing policy.
-  // Belt-and-suspenders: also require canonical staging infrastructure identity
-  // (Vercel project ID + Supabase URL) to prevent contradictory configuration
-  // from enabling staging fallbacks on production infrastructure.
-  if (process.env.WAAIIO_ENVIRONMENT === 'staging' && isStagingTestMode()) {
-    base.GH.push('US');     // GH → try NG first, then US
-    base.NG = ['US'];       // NG → US (staging has no NG shared channel)
-    base.GB = ['US'];       // GB → US
-    base.CA = ['US'];       // CA → US
-  }
-  return base;
-})();
+export const SHARED_CHANNEL_FALLBACK_COUNTRIES: Readonly<Record<string, readonly string[]>> =
+  Object.freeze({ GH: Object.freeze(['NG']) });
 
 export type SharedChannelFallbackPolicy = 'GH_TO_NG_SHARED' | 'EXACT_COUNTRY';
 
@@ -77,6 +66,10 @@ export function isAssignedWhatsAppChannelReady(
 ): boolean {
   if (!business || !channel || !channel.is_active || channel.connection_status !== 'active') return false;
   if (channel.channel_type === 'shared') {
+    if (isStagingWhatsAppRouting()) {
+      // Staging: any business country, but only the designated unowned US number.
+      return !!business.country_code?.trim() && stagingDesignatedChannelProblem(channel) === null;
+    }
     return isCompatibleSharedChannelCountry(business.country_code, channel.country_code) && !channel.business_id;
   }
   if (channel.channel_type === 'dedicated') {
@@ -124,6 +117,9 @@ export async function assignFirstSharedChannel(
   if (!firstSharedAssignmentEnabled()) {
     return { data: { allocated: false, unavailable: true, reason: CHANNEL_OPERATIONS_UNAVAILABLE.code }, error: null };
   }
+  // The M507 database function is exact-country (GH -> NG only); staging uses
+  // the designated US number for every country instead.
+  if (isStagingWhatsAppRouting()) return allocateStagingDesignatedSharedChannel(service, businessId, { mode: 'first_assignment' });
   const { data, error } = await service.rpc('assign_first_shared_channel', { p_business_id: businessId });
   if (error) return { data: null, error };
   const result = (data ?? null) as SharedChannelAllocationResult | null;
@@ -168,6 +164,14 @@ export async function allocateSharedChannelWithFallback(
       data: { allocated: false, reason: 'missing_business_country' },
       error: null,
     };
+  }
+
+  // Staging: never search by country; use only the designated US number.
+  if (isStagingWhatsAppRouting()) {
+    return allocateStagingDesignatedSharedChannel(service, businessId, {
+      mode: 'channel_operations',
+      repairStaleSharedChannel: options?.repairStaleSharedChannel === true,
+    });
   }
 
   const candidateCountries = [
@@ -329,3 +333,139 @@ export async function allocateSharedChannelWithFallback(
   };
 }
 
+
+type AllocationResponse = { data: SharedChannelAllocationResult | null; error: { message: string } | null };
+
+const CHANNEL_READINESS_COLUMNS = 'id, phone_number, channel_type, is_active, connection_status, country_code, business_id';
+
+/**
+ * Staging only: give a business the designated US shared number, whatever the
+ * business's country (Owner rule 2026-11-10). businesses.country_code is never
+ * read for routing and never changed.
+ *
+ * - Fails closed when the designated row is missing, inactive, disconnected,
+ *   not shared, owned by a business, or has a different id/number.
+ * - Never searches by country, so no other US or local number can be chosen.
+ * - First assignment uses the same eligibility rules as M507 (no channel at
+ *   all, shared method, no owned channel). 'first_assignment' mode, like M507,
+ *   has no capacity limit; 'channel_operations' mode uses the M430
+ *   reassign_shared_channel function, which locks both rows and enforces
+ *   shared_number_capacity.
+ * - An existing assignment to another shared number is moved only by the
+ *   stale-channel repair path; a ready own dedicated channel is kept.
+ */
+async function allocateStagingDesignatedSharedChannel(
+  service: SupabaseClient,
+  businessId: string,
+  options: { mode: 'first_assignment' | 'channel_operations'; repairStaleSharedChannel?: boolean },
+): Promise<AllocationResponse> {
+  const fail = (reason: string, channelId?: string | null): AllocationResponse => ({
+    data: { allocated: false, reason, ...(channelId ? { channel_id: channelId } : {}) },
+    error: null,
+  });
+  const designatedId = STAGING_SHARED_WHATSAPP_CHANNEL.id;
+
+  const { data: biz, error: bizErr } = await service
+    .from('businesses')
+    .select('id, country_code, wa_method, assigned_channel_id, whatsapp_channel_id')
+    .eq('id', businessId)
+    .maybeSingle();
+  if (bizErr) return { data: null, error: { message: `Business lookup failed: ${bizErr.message}` } };
+  if (!biz) return fail('business_not_found');
+  if (!biz.country_code || !String(biz.country_code).trim()) return fail('missing_business_country');
+
+  const { data: designated, error: designatedErr } = await service
+    .from('whatsapp_channels')
+    .select(CHANNEL_READINESS_COLUMNS)
+    .eq('id', designatedId)
+    .maybeSingle();
+  if (designatedErr) return { data: null, error: { message: `Staging channel lookup failed: ${designatedErr.message}` } };
+  const problem = stagingDesignatedChannelProblem(designated);
+
+  const allocated = (extra: Partial<SharedChannelAllocationResult>): AllocationResponse => ({
+    data: {
+      allocated: true,
+      channel_id: designatedId,
+      phone_number: designated?.phone_number ?? null,
+      channel_country: designated?.country_code ?? null,
+      fallback_used: biz.country_code !== designated?.country_code,
+      idempotent: false,
+      ...extra,
+    },
+    error: null,
+  });
+
+  if (biz.assigned_channel_id) {
+    if (biz.assigned_channel_id === designatedId) {
+      return problem ? fail(problem, designatedId) : allocated({ idempotent: true });
+    }
+    const { data: current, error: currentErr } = await service
+      .from('whatsapp_channels')
+      .select(CHANNEL_READINESS_COLUMNS)
+      .eq('id', biz.assigned_channel_id)
+      .maybeSingle();
+    if (currentErr) return { data: null, error: { message: `Assigned channel lookup failed: ${currentErr.message}` } };
+    // A ready channel the business owns (dedicated) is never replaced.
+    if (current && isAssignedWhatsAppChannelReady(biz, current)) {
+      return {
+        data: {
+          allocated: true,
+          idempotent: true,
+          channel_id: current.id,
+          phone_number: current.phone_number,
+          channel_country: current.country_code,
+          fallback_used: false,
+        },
+        error: null,
+      };
+    }
+    if (options.mode !== 'channel_operations' || !options.repairStaleSharedChannel) {
+      return fail('assigned_channel_not_staging_designated', biz.assigned_channel_id);
+    }
+    if (current && current.channel_type !== 'shared') return fail('assigned_dedicated_channel_not_ready', biz.assigned_channel_id);
+    if (problem) return fail(problem, biz.assigned_channel_id);
+    const { data: moved, error: moveErr } = await service.rpc('reassign_shared_channel', {
+      p_business_id: businessId,
+      p_new_channel_id: designatedId,
+    });
+    if (moveErr) return { data: null, error: moveErr };
+    const moveRes = (moved ?? null) as { reassigned?: boolean; reason?: string } | null;
+    if (!moveRes?.reassigned) return fail(moveRes?.reason || 'reassign_failed', biz.assigned_channel_id);
+    return allocated({ repaired: true });
+  }
+
+  // First assignment: same eligibility as M507.
+  if (biz.whatsapp_channel_id) return fail('has_channel');
+  if (biz.wa_method && biz.wa_method !== 'shared') return fail('not_shared_method');
+  const { data: owned, error: ownedErr } = await service
+    .from('whatsapp_channels')
+    .select('id')
+    .eq('business_id', businessId)
+    .limit(1);
+  if (ownedErr) return { data: null, error: { message: `Owned channel lookup failed: ${ownedErr.message}` } };
+  if (owned && owned.length > 0) return fail('has_dedicated_channel');
+  if (problem) return fail(problem);
+
+  if (options.mode === 'channel_operations') {
+    const { data: assignedRaw, error: assignErr } = await service.rpc('reassign_shared_channel', {
+      p_business_id: businessId,
+      p_new_channel_id: designatedId,
+    });
+    if (assignErr) return { data: null, error: assignErr };
+    const assignRes = (assignedRaw ?? null) as { reassigned?: boolean; reason?: string } | null;
+    if (!assignRes?.reassigned) return fail(assignRes?.reason || 'assign_failed');
+    return allocated({});
+  }
+
+  // Never replaces an assignment made concurrently.
+  const { data: updated, error: updateErr } = await service
+    .from('businesses')
+    .update({ assigned_channel_id: designatedId })
+    .eq('id', businessId)
+    .is('assigned_channel_id', null)
+    .is('whatsapp_channel_id', null)
+    .select('id');
+  if (updateErr) return { data: null, error: { message: `Assignment failed: ${updateErr.message}` } };
+  if (!updated || updated.length !== 1) return fail('concurrent_change');
+  return allocated({});
+}

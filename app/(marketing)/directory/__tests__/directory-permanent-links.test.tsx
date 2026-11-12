@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Directory permanent link surface test.
+ * Directory merchant link surface test.
  *
- * Verifies: no hardcoded US phone number, permanent Waaiio UUID link
- * used as primary href, no raw phone display in WhatsApp CTA.
+ * Verifies: short merchant links with UUID fallback, environment origin,
+ * readiness gating and no raw phone display in the WhatsApp CTA.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,6 +30,7 @@ const mockBusinesses = [
 
 // The API exposes a phone only for the persisted ready channel assignment.
 beforeEach(() => {
+  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://www.waaiio.com');
   mockBusinesses[0].wa_method = 'shared';
   mockBusinesses[0].wa_phone = '+2348001234567';
   mockBusinesses[0].bot_code = 'TESTBIZ';
@@ -51,9 +52,9 @@ vi.mock('next/link', () => ({
 
 import DirectoryClient from '../DirectoryClient';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-describe('Directory permanent link surface', () => {
+describe('Directory merchant link surface', () => {
   it('does not display hardcoded US phone number (12029226251)', async () => {
     render(<DirectoryClient />);
     await waitFor(() => expect(screen.getByText('Test Biz')).toBeTruthy());
@@ -62,14 +63,38 @@ describe('Directory permanent link surface', () => {
     expect(html).not.toContain('1-202-922-6251');
   });
 
-  it('WhatsApp button links to permanent Waaiio URL with business UUID', async () => {
+  it.each([
+    ['shared', 'https://www.waaiio.com'],
+    ['dedicated', 'https://www.waaiio.com'],
+    ['shared', 'https://staging.waaiio.com'],
+    ['dedicated', 'https://staging.waaiio.com'],
+  ])('links a ready %s business to its short URL on %s', async (method, origin) => {
+    mockBusinesses[0].wa_method = method;
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', origin);
     render(<DirectoryClient />);
     await waitFor(() => expect(screen.getByText('Test Biz')).toBeTruthy());
     const waBtn = screen.getByText('WhatsApp').closest('a');
     expect(waBtn).toBeTruthy();
-    expect(waBtn!.getAttribute('href')).toBe(`https://www.waaiio.com/m/${BIZ_ID}`);
+    expect(waBtn!.getAttribute('href')).toBe(`${origin}/m/TESTBIZ`);
     // No wa.me direct link
     expect(waBtn!.getAttribute('href')).not.toContain('wa.me');
+  });
+
+  it.each(['testbiz', 'TEST BIZ'])('retains the UUID fallback for a noncanonical code: %s', async (code) => {
+    mockBusinesses[0].bot_code = code;
+    render(<DirectoryClient />);
+    await screen.findByText('Test Biz');
+    expect(screen.getByRole('link', { name: 'WhatsApp' }).getAttribute('href'))
+      .toBe(`https://www.waaiio.com/m/${BIZ_ID}`);
+  });
+
+  it('retains the UUID fallback for a ready dedicated business without a code', async () => {
+    mockBusinesses[0].wa_method = 'dedicated';
+    mockBusinesses[0].bot_code = '';
+    render(<DirectoryClient />);
+    await screen.findByText('Test Biz');
+    expect(screen.getByRole('link', { name: 'WhatsApp' }).getAttribute('href'))
+      .toBe(`https://www.waaiio.com/m/${BIZ_ID}`);
   });
 
   it('CTA says "Opens a WhatsApp conversation" not raw phone instructions', async () => {

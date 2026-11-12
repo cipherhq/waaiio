@@ -238,10 +238,19 @@ export async function handleCardPinStep(
     delete updatedData._save_card_business_id;
     delete updatedData._save_card_gateway;
     delete updatedData._save_card_auth;
-    await supabase.from('bot_sessions')
-      .update({ current_step: 'select_capability', session_data: updatedData })
-      .eq('id', session.id);
+    const { data: cancelled, error: cancelError } = await supabase.rpc('cancel_transaction_card_setup', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_payment_id: session.session_data._save_card_payment_id,
+      p_customer_phone: from.startsWith('+') ? from : `+${from}`,
+      p_business_id: session.business_id, p_session_data: updatedData,
+    });
+    if (cancelError || !cancelled?.success) {
+      await localSend(from, 'Card setup is still processing. Please try again shortly.');
+      return;
+    }
+    session.version = cancelled.version;
     await localSend(from, 'Card save cancelled.');
+    await finishTransactionCardStep(supabase, session.session_data._save_card_payment_id, from, session.business_id);
     return;
   }
 
@@ -526,9 +535,10 @@ export async function handleCardPinStep(
   delete cleanData._save_card_business_id;
   delete cleanData._save_card_gateway;
   delete cleanData._save_card_auth;
-  await supabase.from('bot_sessions')
-    .update({ current_step: 'select_capability', session_data: cleanData })
-    .eq('id', session.id);
+  await supabase.rpc('update_session_cas', {
+    p_session_id: session.id, p_expected_version: session.version ?? 0,
+    p_current_step: 'select_capability', p_session_data: cleanData,
+  });
 
   // I6: Durable confirmation — committed → confirmed with fenced delivery
   // R5-B2: No sendText fallback for provider-consented offers — recovery worker handles retries
@@ -593,6 +603,7 @@ export async function handleCardPinStep(
             complete: (id, token) => supabase.rpc('complete_confirmation_delivery', { p_offer_id: id, p_claim_token: token, p_customer_phone: claimCustomerPhone }),
             releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
           });
+          if (confirmOutcome === 'delivered') await finishTransactionCardStep(supabase, d._save_card_payment_id, claimCustomerPhone, claimBusinessId);
         }
       } else {
         // Claim returned null — offer not committed, or already confirmed by another worker.
@@ -611,6 +622,7 @@ export async function handleCardPinStep(
     const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
     try {
       await localSend(from, confirmationMsg, [cardLabel, 'Waaiio']);
+      await finishTransactionCardStep(supabase, d._save_card_payment_id, from, businessId);
     } catch (confirmErr) {
       logger.error('[SAVED_CARDS] Legacy confirmation delivery failed', { confirmErr });
     }
@@ -648,14 +660,19 @@ export async function handleReplacementPinStep(
     delete cleanData._replace_method_id;
     delete cleanData._replace_payment_id;
     delete cleanData._replace_expected_state_hash;
-    const { data: casResult } = await supabase.rpc('update_session_cas', {
+    const { data: casResult } = await supabase.rpc('cancel_transaction_card_setup', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
-      p_current_step: 'select_capability',
+      p_payment_id: paymentId, p_customer_phone: phoneP, p_business_id: session.business_id,
       p_session_data: cleanData,
     });
-    if (casResult?.success) session.version = casResult.version;
+    if (!casResult?.success) {
+      await localSend(from, 'Card setup is still processing. Please try again shortly.');
+      return;
+    }
+    session.version = casResult.version;
     await localSend(from, 'Card replacement cancelled. Your existing card is unchanged.');
+    await finishTransactionCardStep(supabase, paymentId, from, session.business_id);
     return;
   }
 
@@ -897,23 +914,43 @@ export async function handleReplacementPinStep(
       });
       if (!commitResult) {
         logger.warn('[SAVED_CARDS] Replacement commit RPC failed — credential replaced but offer not committed');
+        return;
       }
-    }
+    } else return;
   }
 
+  if (replaceOfferId) {
+    const { data: claim, error: claimError } = await supabase.rpc('claim_confirmation_delivery', {
+      p_offer_id: replaceOfferId,
+    });
+    if (claimError || !claim?.channel_id || !claim.committed_card_display) return;
+    let acknowledgment = `💳 Card updated to *${claim.committed_card_display}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`;
+    try {
+      const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+      const l10n = await resolveProactiveLocalization(supabase, claim.customer_phone, claim.business_id);
+      if (l10n.language !== 'en') acknowledgment = await l10n.translate(acknowledgment, [claim.committed_card_display, 'Waaiio']);
+    } catch { /* retain the acknowledged card label in English */ }
+    const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+    const outcome = await sendWithFencedDelivery({
+      supabase, offerId: replaceOfferId, claimToken: claim.claim_token,
+      customerPhone: claim.customer_phone, businessId: claim.business_id, channelId: claim.channel_id,
+      messageText: acknowledgment,
+      markStarted: (id, token) => supabase.rpc('mark_confirmation_send_started', { p_offer_id: id, p_claim_token: token }),
+      complete: (id, token) => supabase.rpc('complete_confirmation_delivery', { p_offer_id: id, p_claim_token: token, p_customer_phone: claim.customer_phone }),
+      releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
+    });
+    if (outcome === 'delivered') await finishTransactionCardStep(supabase, paymentId, claim.customer_phone, claim.business_id);
+    return;
+  }
   try {
     await localSend(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`, [newLabel, 'Waaiio']);
-    // Delivery proven → confirm
-    if (replaceOfferId) {
-      const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
-        p_offer_id: replaceOfferId, p_customer_phone: phoneP,
-      });
-      if (!confirmResult) {
-        logger.warn('[SAVED_CARDS] Replacement confirm RPC failed');
-      }
-    }
+    await finishTransactionCardStep(supabase, paymentId, from, businessId);
   } catch (confirmErr) {
-    // Delivery failed — offer stays 'committed' for recovery
-    logger.error('[SAVED_CARDS] Replacement confirmation delivery failed — stays committed', { confirmErr });
+    logger.error('[SAVED_CARDS] Replacement confirmation delivery failed', { confirmErr });
   }
+}
+
+async function finishTransactionCardStep(...args: Parameters<typeof import('@/lib/payments/transaction-followup').finishTransactionCardStep>): Promise<void> {
+  const followup = await import('@/lib/payments/transaction-followup');
+  await followup.finishTransactionCardStep(...args);
 }

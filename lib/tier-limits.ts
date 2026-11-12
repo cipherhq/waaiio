@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { TIER_TRANSACTION_LIMITS } from '@/lib/constants';
+import { resolveLimitTier } from '@/lib/trial-status';
 
 export type TierResourceType = 'bookings' | 'orders' | 'tickets' | 'giving' | 'invoices';
 
@@ -30,7 +31,8 @@ export async function checkTierLimit(
   tier: string,
   eventId?: string,
 ): Promise<TierLimitResult> {
-  const tierKey = tier || 'free';
+  // During the Pro/Premium feature trial a Starter business uses Premium limits.
+  const tierKey = await resolveLimitTier(supabase, businessId, tier || 'free');
   const tierLimits = TIER_TRANSACTION_LIMITS[tierKey] || TIER_TRANSACTION_LIMITS.free;
 
   // Map resource type to the correct limit key

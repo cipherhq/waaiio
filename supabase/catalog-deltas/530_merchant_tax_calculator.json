@@ -1,0 +1,80 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_config jsonb, p_currency text, p_lines jsonb, p_discount_amount bigint DEFAULT 0",
+    "body_sha256": "747d51b10f3f4ad4477e2a741c8a8827bdcddff713b75b94d64da4dd3007c8b1",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "6cf68bad8ed9dae58afa52a3e61e17ccdb19fdfbf80421a6cccd12b6d194c6b1",
+   "identity": "function:public.calculate_merchant_tax_quote_980(p_config jsonb, p_currency text, p_lines jsonb, p_discount_amount bigint)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_rule jsonb",
+    "body_sha256": "1b436df6a0fcc19eee9213cb8f17be05103e7d63ac0cf6ff4a92c258eb5d33ee",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "void",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "958b8485e1c1ec36fc437d4eb608558cb612b4d88ef3cfe48e08f3e53a21a0d2",
+   "identity": "function:public.validate_merchant_tax_rule_980(p_rule jsonb)",
+   "operation": "add"
+  }
+ ],
+ "migration": "530_merchant_tax_calculator.sql",
+ "migration_sha256": "a02d568bfaa56a324a7dbca875d8bc878c5e13cec6a2ea4e79c99d4dbae9754a",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/channels/staging-whatsapp-routing';
 
 // ── Types ──
 
@@ -65,11 +66,26 @@ export class LaunchConfigError extends Error {
   }
 }
 
+export interface LaunchDeliveryScope { retryOnly?: boolean; limit?: number }
+
+/** Same bounded, deterministic candidates for preview and delivery. Claims remain authoritative. */
+export async function getLaunchCandidates(supabase: SupabaseClient, campaignVersion: string, scope: LaunchDeliveryScope = {}) {
+  let query = supabase.from('launch_subscribers').select('id, receiving_number')
+    .eq('opt_in_status', 'active').in('notification_status', ['pending', 'failed'])
+    .order('created_at', { ascending: true }).order('id', { ascending: true })
+    .limit(scope.limit || 100);
+  if (scope.retryOnly) query = query.eq('campaign_version', campaignVersion);
+  const { data, error } = await query;
+  if (error || !data) throw new LaunchConfigError('Unable to verify launch recipients. Try Preview again.');
+  return data as Array<{ id: string; receiving_number: string }>;
+}
+
 // ── Readiness counts ──
 
 export async function getDeliveryReadiness(
   supabase: SupabaseClient,
   campaignVersion: string,
+  scope: LaunchDeliveryScope = {},
 ): Promise<{
   eligible: number;
   pending: number;
@@ -79,11 +95,13 @@ export async function getDeliveryReadiness(
   opted_out: number;
   confirmToken: string;
 }> {
-  const { data: all } = await supabase
+  const { data: all, error } = await supabase
     .from('launch_subscribers')
     .select('opt_in_status, notification_status, campaign_version');
 
-  const rows = all || [];
+  if (error || !all) throw new LaunchConfigError('Unable to verify launch counts. Try Preview again.');
+  const rows = all;
+  const candidates = await getLaunchCandidates(supabase, campaignVersion, scope);
 
   // Generate a confirmation token for the admin to use when triggering send
   const { randomUUID } = await import('crypto');
@@ -91,7 +109,7 @@ export async function getDeliveryReadiness(
 
   return {
     eligible: rows.filter(r => r.opt_in_status === 'active').length,
-    pending: rows.filter(r => r.opt_in_status === 'active' && (r.notification_status === 'pending' || r.notification_status === 'failed') && r.campaign_version !== campaignVersion).length,
+    pending: candidates.length,
     sent: rows.filter(r => r.campaign_version === campaignVersion && r.notification_status === 'sent').length,
     failed: rows.filter(r => r.campaign_version === campaignVersion && r.notification_status === 'failed').length,
     skipped: rows.filter(r => r.notification_status === 'skipped' || r.opt_in_status === 'opted_out').length,
@@ -148,9 +166,23 @@ export async function resolveChannelCredentials(
   supabase: SupabaseClient,
   receivingNumber: string,
 ): Promise<ChannelCredentials | null> {
+  // Staging: send only from the designated shared number, and only when the
+  // subscriber signed up on it (same two identifiers as the lookups below).
+  if (isStagingWhatsAppRouting()) {
+    const designated = await loadStagingDesignatedChannel(supabase, { credentials: true });
+    if (!designated?.phone_number_id) return null;
+    if (receivingNumber !== designated.phone_number_id && receivingNumber !== designated.phone_number) return null;
+    return {
+      phone_number_id: designated.phone_number_id,
+      meta_access_token: designated.meta_access_token ?? null,
+      waba_id: designated.waba_id ?? null,
+      phone_number: designated.phone_number,
+    };
+  }
+
   // Primary: match by Meta phone_number_id (the identifier stored by launch-optin
   // and passed by Meta webhooks). This is a numeric API identifier, not human-readable.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('whatsapp_channels')
     .select('phone_number_id, meta_access_token, waba_id, phone_number')
     .eq('phone_number_id', receivingNumber)
@@ -159,11 +191,12 @@ export async function resolveChannelCredentials(
     .limit(1)
     .maybeSingle();
 
+  if (error) throw new LaunchConfigError('Unable to verify launch sender.');
   if (data?.phone_number_id) return data as ChannelCredentials;
 
   // Bounded fallback: match by human-readable phone_number
   // (handles any historical subscriber rows that stored the display format)
-  const { data: fallback } = await supabase
+  const { data: fallback, error: fallbackError } = await supabase
     .from('whatsapp_channels')
     .select('phone_number_id, meta_access_token, waba_id, phone_number')
     .eq('phone_number', receivingNumber)
@@ -172,6 +205,7 @@ export async function resolveChannelCredentials(
     .limit(1)
     .maybeSingle();
 
+  if (fallbackError) throw new LaunchConfigError('Unable to verify launch sender.');
   if (!fallback?.phone_number_id) return null;
   return fallback as ChannelCredentials;
 }
@@ -217,21 +251,21 @@ export async function claimAndSendToSubscriber(
   const waNumber = claim.wa_number!;
   const receivingNumber = claim.receiving_number!;
 
-  // Step 2: Resolve channel credentials
-  const credentials = await resolveChannelCredentials(supabase, receivingNumber);
-  if (!credentials) {
-    logger.warn(`[LAUNCH] No channel for receiving_number=${receivingNumber}, subscriber=${subscriberId}`);
-    await supabase.rpc('complete_launch_delivery', {
-      p_subscriber_id: subscriberId,
-      p_claim_token: claimToken,
-      p_status: 'failed',
-      p_error: 'no_channel_credentials',
-    });
-    return { subscriberId, status: 'failed', error: 'no_channel_credentials' };
-  }
+  try {
+    // Step 2: Resolve channel credentials
+    const credentials = await resolveChannelCredentials(supabase, receivingNumber);
+    if (!credentials) {
+      logger.warn(`[LAUNCH] No channel for receiving_number=${receivingNumber}, subscriber=${subscriberId}`);
+      await supabase.rpc('complete_launch_delivery', {
+        p_subscriber_id: subscriberId,
+        p_claim_token: claimToken,
+        p_status: 'failed',
+        p_error: 'no_channel_credentials',
+      });
+      return { subscriberId, status: 'failed', error: 'no_channel_credentials' };
+    }
 
   // Step 3: Send template — ONLY if we hold the claim
-  try {
     const result = await sendTemplateFn(
       credentials,
       waNumber,
@@ -283,29 +317,7 @@ export async function deliverLaunchNotifications(
   ) => Promise<{ messageId: string }>,
   options?: { retryOnly?: boolean; limit?: number },
 ): Promise<DeliverySummary> {
-  const limit = options?.limit || 100;
-
-  // Query candidate subscribers (actual eligibility enforced by claim RPC)
-  let query = supabase
-    .from('launch_subscribers')
-    .select('id')
-    .eq('opt_in_status', 'active')
-    .limit(limit);
-
-  if (options?.retryOnly) {
-    query = query
-      .eq('campaign_version', config.campaignVersion)
-      .in('notification_status', ['failed', 'pending']);
-  } else {
-    query = query.in('notification_status', ['pending', 'failed']);
-  }
-
-  const { data: candidates, error } = await query;
-
-  if (error || !candidates) {
-    logger.error('[LAUNCH] Failed to query subscribers:', error?.message);
-    return { total: 0, sent: 0, failed: 0, skipped: 0, results: [] };
-  }
+  const candidates = await getLaunchCandidates(supabase, config.campaignVersion, { ...options, limit: options?.limit || 100 });
 
   const results: DeliveryResult[] = [];
   let sent = 0;

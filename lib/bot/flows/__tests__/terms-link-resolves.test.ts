@@ -151,3 +151,18 @@ describe('getBusinessTermsUrl', () => {
     expect(getBusinessTermsUrl({ slug: 'testbiz', metadata: { terms_url: 42 } })).toBe(`${STAGING}/t/testbiz`);
   });
 });
+
+
+// This suite exercises confirmation UX with an untaxed authoritative quote.
+// RPC validation and quote failures are covered by the merchant-tax suites.
+vi.mock('@/lib/tax/server-quote', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tax/server-quote')>()),
+  quoteBookingTax: vi.fn(async (_db, input) => ({
+    total: Math.max(Number(input.expectedTerms.price || 0) * input.partySize, Number(input.expectedTerms.deposit || 0)),
+    deposit: Number(input.expectedTerms.deposit || 0), tax_snapshot: null,
+  })),
+  quoteOrderTax: vi.fn(async (_db, input) => ({ is_preview: true, created: false,
+    server_total: input.items.reduce((sum: number, item: { unit_price: number; quantity: number }) => sum + item.unit_price * item.quantity, input.shippingCost),
+    server_discount: 0, server_volume_discount: 0, tax_snapshot: null,
+  })),
+}));

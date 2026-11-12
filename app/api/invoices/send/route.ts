@@ -98,12 +98,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch invoice with items
-    const { data: invoice } = await supabase
+    const { data: loadedInvoice } = await supabase
       .from('invoices')
       .select('*, invoice_items(*)')
       .eq('id', invoice_id)
       .single();
 
+    let invoice = loadedInvoice;
     if (!invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
@@ -141,6 +142,17 @@ export async function POST(request: NextRequest) {
     const token = existingTokenIsUsable ? invoice.token : generateToken();
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const expiresAt = new Date(sendStartedAt + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
+
+    // Pin the reviewed tax terms before any provider call. Failed or uncertain
+    // delivery remains retryable without falsely changing draft status to sent.
+    const { data: frozenInvoice, error: freezeError } = await service.rpc('freeze_invoice_tax_terms_980', {
+      p_business_id: invoice.business_id, p_invoice_id: invoice.id,
+      p_expected_snapshot: body.expected_tax_snapshot ?? null,
+    });
+    if (freezeError || !frozenInvoice) {
+      return NextResponse.json({ error: 'Invoice terms changed. Refresh and review the saved totals before sending.' }, { status: 409 });
+    }
+    invoice = frozenInvoice;
 
     // Persist the token before sending so every link sent to the customer resolves.
     // Status remains current (e.g. 'draft') until delivery is attempted.
@@ -233,6 +245,7 @@ export async function POST(request: NextRequest) {
               amount: item.amount,
             })),
             subtotal: invoice.subtotal || invoice.total_amount,
+            taxSnapshot: invoice.tax_snapshot,
             taxRate: invoice.tax_rate || 0,
             taxAmount: invoice.tax_amount || 0,
             discountType: invoice.discount_type || null,

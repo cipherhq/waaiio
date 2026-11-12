@@ -320,6 +320,25 @@ describe('capability menu pagination (#736)', () => {
 // ── Navigation validate() / next() ──
 
 describe('pagination navigation', () => {
+  it.each(['cap_queue', 'cap_my_account'])('clears prior completion ownership on a genuine %s selection', async input => {
+    const ctx = buildCtx({ capabilities: ['queue'] });
+    ctx.session.session_data.active_capability = 'queue';
+    ctx.session.session_data._transaction_followup_key = 'queue:previous-entry';
+    const result = await step.validate!(input, ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?.active_capability).toBe(input.replace('cap_', ''));
+    expect(ctx.session.session_data._transaction_followup_key).toBeUndefined();
+  });
+
+  it.each(['cap_nav_more', 'cap_not_enabled'])('preserves completion ownership during pagination or rejected selection: %s', async input => {
+    const ctx = buildCtx({ capabilities: ['queue'], menuPage: 0 });
+    ctx.session.session_data._cap_menu_total_pages = 2;
+    ctx.session.session_data._transaction_followup_key = 'queue:previous-entry';
+    const result = await step.validate!(input, ctx);
+    expect(result.valid).toBe(input === 'cap_nav_more');
+    expect(ctx.session.session_data._transaction_followup_key).toBe('queue:previous-entry');
+  });
+
   it('cap_nav_more advances page and signals reprompt', async () => {
     const ctx = buildCtx({
       capabilities: ELEVEN_CAPS,

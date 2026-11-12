@@ -200,7 +200,8 @@ describe('Public Pricing Projection — runtime proofs', () => {
     expect(body.categoryFees.scheduling.label).toBe('Appointments & Scheduling');
     expect(body.categoryFees.scheduling.feePercentage).toBe(2.5);
     expect(body.categoryFees.ticketing.label).toBe('Events & Tickets');
-    expect(body.byoFeePolicy).toContain('0%');
+    expect(body.byoFeePolicy).toBe("The same Waaiio fee applies when you connect your own payment gateway, and payment gateway fees are paid by your business");
+    expect(body.byoFeePolicy).not.toContain('0%');
   });
 
   it('D12: returns 503 when config_snapshot is missing', async () => {

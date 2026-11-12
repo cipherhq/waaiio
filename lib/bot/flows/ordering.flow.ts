@@ -1,7 +1,10 @@
-import { isSharedConversation, transactionNextSteps } from './shared/navigation';
+import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
+import { quoteOrderTax, isTaxTermsChanged } from '@/lib/tax/server-quote';
+import type { TaxSnapshot } from '@/lib/tax/calculation';
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
-import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
+import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { truncTitle } from '../utils/truncate';
@@ -15,9 +18,11 @@ import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
@@ -2001,12 +2006,6 @@ export const orderingFlow: FlowDefinition = {
           if (user?.first_name) {
             ctx.session.session_data.first_name = user.first_name;
             ctx.session.session_data.last_name = user.last_name;
-            ctx.session.session_data.email = user.email || '';
-            if (isReusableCustomerEmail(user.email)) {
-              // Ordering historically reads customer_email downstream. Keep both
-              // keys aligned so a known real email is not requested again.
-              ctx.session.session_data.customer_email = user.email.trim().toLowerCase();
-            }
             return true;
           }
         }
@@ -2119,16 +2118,17 @@ export const orderingFlow: FlowDefinition = {
         if (!emailRegex.test(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_email') };
         }
+        const businessId = ctx.business?.id || ctx.session.business_id;
+        if (businessId && (!ctx.business?.id || !ctx.session.business_id || ctx.business.id === ctx.session.business_id)) {
+          const d = ctx.session.session_data;
+          await persistStoreCustomerEmail(ctx.supabase, businessId, ctx.from, email,
+            `${d.first_name || ''} ${d.last_name || ''}`.trim() || null);
+        }
         return { valid: true, data: { customer_email: email, email } };
       },
       async next() { return 'review_order_summary'; },
       async skipIf(ctx: FlowContext) {
-        const known = ctx.session.session_data.customer_email || ctx.session.session_data.email;
-        if (!isReusableCustomerEmail(known)) return false;
-        const normalized = known.trim().toLowerCase();
-        ctx.session.session_data.customer_email = normalized;
-        ctx.session.session_data.email = normalized;
-        return true;
+        return reuseStoreCustomerEmail(ctx, true);
       },
     },
 
@@ -2283,7 +2283,7 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        const promoDiscount = (d.discount_amount as number) || 0;
+        let promoDiscount = (d.discount_amount as number) || 0;
         const zonePrice = (d.delivery_zone_price as number) || 0;
         const zoneName = d.delivery_zone_name as string | undefined;
 
@@ -2311,7 +2311,27 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const deliveryCost = zoneName ? zonePrice : shippingCost;
-        const total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - promoDiscount + deliveryCost);
+        let total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - promoDiscount + deliveryCost);
+        delete d._tax_snapshot;
+        if (!d.custom_order_started && !d._force_quote_mode) {
+          try {
+            const quote = await quoteOrderTax(ctx.supabase, {
+              businessId: ctx.business!.id, userId: ctx.session.user_id ?? null, sessionId: ctx.session.id,
+              items: cart.map(item => ({ product_id: item.product_id, quantity: item.quantity, unit_price: item.price,
+                variant_id: item.variant_id || '', variant_label: item.variant_label || '',
+                addons: item.addons?.map(addon => ({ ...addon, quantity: addon.quantity || 1 })) ?? null })),
+              shippingCost, deliveryZoneId: (d.delivery_zone_id as string) || null,
+              promoCodeId: (d.promo_code_id as string) || null,
+            });
+            total = quote.server_total; promoDiscount = quote.server_discount;
+            volumeDiscountTotal = quote.server_volume_discount;
+            addonsTotal = quote.server_addons_total ?? addonsTotal;
+            d.discount_amount = promoDiscount; d._tax_snapshot = quote.tax_snapshot;
+          } catch (error) {
+            logger.warn('[ORDERING] Authoritative preview unavailable', safeLogErrorContext(error));
+            return [{ type: 'text', text: 'Your order details changed or could not be checked. Please review your cart again before confirming.' }];
+          }
+        }
 
         // Store calculated values for process_order
         d._calc_subtotal = subtotal;
@@ -2359,6 +2379,8 @@ export const orderingFlow: FlowDefinition = {
           summary.push(`🚚 Shipping: ${formatCurrency(shippingCost, cc)}`);
         }
 
+        const taxSnapshot = d._tax_snapshot as TaxSnapshot | null | undefined;
+        if (taxSnapshot) summary.push(`Before tax: ${formatCurrency(taxSnapshot.netAmount / 100, cc)}`, `Tax: ${formatCurrency(taxSnapshot.taxAmount / 100, cc)}`);
         summary.push('', `💰 *Total: ${formatCurrency(total, cc)}*`);
 
         // Customer details
@@ -2693,6 +2715,7 @@ export const orderingFlow: FlowDefinition = {
       // only when payment was initialized (paid orders). Free orders stay on process_order.
       nextAfterPrompt(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        if (d._tax_reconfirm) { delete d._tax_reconfirm; return 'review_order_summary'; }
         if (d.payment_reference || d.bank_transfer_reference) return 'await_order_payment';
         return undefined;
       },
@@ -2739,7 +2762,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-        const total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - discount + shippingCost);
+        const total = d._tax_snapshot ? (d._calc_total as number) : Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - discount + shippingCost);
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
@@ -2949,9 +2972,14 @@ export const orderingFlow: FlowDefinition = {
             p_referral_id: (d.referral_id as string) || null,
             p_validate_products: true,
             p_expected_total: total,
+            p_expected_tax_snapshot: d._tax_snapshot ?? null,
           });
 
           if (rpcError || !rpcResult) {
+            if (isTaxTermsChanged(rpcError)) {
+              d._tax_reconfirm = true; delete d._terms_accepted;
+              return [{ type: 'text', text: 'Your order total or tax details changed. Please review and confirm the updated summary.' }];
+            }
             return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
           }
 
@@ -3002,7 +3030,7 @@ export const orderingFlow: FlowDefinition = {
             .eq('id', d.referral_id as string);
         }
 
-        // ── Fire order_created rules + sequences (non-blocking) ──
+        // Await immediate rule replies before presenting completion follow-ups.
         if (ctx.business) {
           const orderRuleCtx = {
             customer_phone: ctx.from,
@@ -3019,7 +3047,7 @@ export const orderingFlow: FlowDefinition = {
           };
           // R2 Blocker 3: Guard creation-only side effects with authoritative freshlyCreated
           if (freshlyCreated) {
-            evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
+            await evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
               .catch(err => logger.error('[ORDERING] order_created rule error:', err));
             triggerSequences(ctx.supabase, ctx.business.id, 'after_order', ctx.from, orderRuleCtx)
               .catch(err => logger.error('[ORDERING] after_order sequence error:', err));
@@ -3306,7 +3334,7 @@ export const orderingFlow: FlowDefinition = {
 
         // Post-completion: loyalty, feedback, referral
         if (ctx.business) {
-          handlePostCompletion({
+          await handlePostCompletion({
             supabase: ctx.supabase,
             businessId: ctx.business.id,
             customerPhone: ctx.from,
@@ -3320,12 +3348,11 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
         }
 
-        const orderTips = getFlowCopy(ctx.copyLang, 'ordering.free_order_tips');
-        const navigation = transactionNextSteps('ordering', await isSharedConversation(ctx.supabase, d));
 
         return [
           {
             type: 'text',
+            _afterSend: freeStockErr ? undefined : await prepareFreeCompletion(ctx, { completionKey: `order:${order.id}`, kind: 'ordering' }),
             text: getOrderConfirmationMessage({
               countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
               businessName: ctx.business?.name || 'Shop',
@@ -3340,14 +3367,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               subscriptionTier: ctx.business?.subscription_tier,
               lang: ctx.copyLang,
-            }) + orderTips + '\n\n' + navigation,
-          },
-          {
-            type: 'buttons',
-            body: getFlowCopy(ctx.copyLang, 'ordering.track_prompt'),
-            buttons: [
-              { id: 'track_my_order', title: getFlowCopy(ctx.copyLang, 'ordering.track_order') },
-            ],
+            }),
           },
         ];
       },
@@ -3468,15 +3488,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         if (d.bank_transfer_offered) {
-          return [{
-            type: 'buttons',
-            body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
-            buttons: [
-              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
-              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
-              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
-            ],
-          }];
+          return [await bankTransferPaymentPrompt(d, ctx.copyLang, ctx.t)];
         }
         return [{
           type: 'buttons',
@@ -3576,13 +3588,7 @@ export const orderingFlow: FlowDefinition = {
           if (!d.bank_transfer_reference) {
             return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
           }
-          d._awaiting_transfer_proof = true;
-          await ctx.supabase.from('bot_sessions').update({ session_data: d }).eq('id', ctx.session.id);
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
-          });
-          return { valid: false, errorMessage: '' };
+          return awaitTransferProof(d);
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
@@ -3624,6 +3630,8 @@ export const orderingFlow: FlowDefinition = {
             return { valid: false };
           }
 
+          // Transfer-only payment: nothing online to verify, so ask for the receipt.
+          if (!ref && d.bank_transfer_reference) return awaitTransferProof(d);
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
           // #375: If session has a saved-card payment ID, try payment-ID recovery first

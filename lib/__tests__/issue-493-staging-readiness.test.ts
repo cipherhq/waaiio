@@ -26,7 +26,9 @@ vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: () => Promise.resolve
 vi.mock('@/lib/admin-cors', () => ({ adminCorsHeaders: () => ({}) }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: vi.fn(() => Promise.resolve(null)), getRateLimitKey: () => 'test' }));
 vi.mock('@/lib/cron-auth', () => ({ verifyCronAuth: vi.fn(() => null) }));
-vi.mock('@/lib/trial-status', () => ({ resolveTrialStatus: vi.fn().mockResolvedValue(false), resolveTrialCredit: vi.fn().mockResolvedValue(false) }));
+vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')), resolveTrialStatus: vi.fn().mockResolvedValue(false), resolveTrialCredit: vi.fn().mockResolvedValue(false) }));
 
 const mockResolveBusinessGateway = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
 
@@ -430,6 +432,7 @@ describe('POST /api/pay-link/pay — actual route', () => {
     const paymentInserts: Record<string,unknown>[] = [];
     const factoryCalls: string[] = [];
     mockServiceFrom.mockImplementation((t: string) => {
+      if (t==='merchant_tax_settings') return {select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:null,error:null})})})};
       if (t==='payment_links') return{select:()=>({eq:()=>({eq:()=>({single:()=>Promise.resolve({data:{id:'pl-1',title:'T',amount:5000,currency:null,uses_count:0,expires_at:null,max_uses:null,business_id:'biz-1',is_active:true,businesses:{name:'B',country_code:country,payment_gateway:null,status:bizStatus}},error:null})})})})};
       if (t==='payments') return {
         insert: (data: Record<string, unknown>) => {

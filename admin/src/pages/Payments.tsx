@@ -1,3 +1,4 @@
+import { loadTaxRefundLines, refundLineSelection, zeroValueReturnSelection, type RefundLineChoice } from '../../../lib/tax/refund-ui';
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
@@ -31,6 +32,7 @@ interface PaymentRecord {
   customer_email?: string | null;
   customer_name?: string | null;
   metadata: Record<string, unknown> | null;
+  tax_allocation?: unknown;
   failure_reason: string | null;
   refunded_at: string | null;
   created_at: string;
@@ -51,12 +53,30 @@ export default function Payments() {
   const [dateTo, setDateTo] = useState('');
   const [selected, setSelected] = useState<PaymentRecord | null>(null);
   const [refundAmount, setRefundAmount] = useState('');
+  const [requestToApprove,setRequestToApprove]=useState<{id:string;amount:number}|null>(null);
   const [refundReason, setRefundReason] = useState('');
   const [refundLoading, setRefundLoading] = useState(false);
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
   const [actionError, setActionError] = useState('');
   const perPage = 20;
+
+  const [taxLines,setTaxLines]=useState<RefundLineChoice[]|null>(null);
+  const [taxLoading,setTaxLoading]=useState(false);
+  const [taxReadError,setTaxReadError]=useState('');
+  const [partialTax,setPartialTax]=useState(false);
+  const [zeroReturn,setZeroReturn]=useState(false);
+  const [lineAmounts,setLineAmounts]=useState<Record<string,string>>({});
+  const taxRequestRef=useRef<{key:string;id:string}|null>(null);
+  useEffect(()=>{
+    let active=true;setTaxLines(null);setTaxReadError('');setPartialTax(false);setZeroReturn(false);setLineAmounts({});taxRequestRef.current=null;
+    if(!selected?.tax_allocation){setTaxLoading(false);return;}
+    setTaxLoading(true);
+    loadTaxRefundLines(adminDb as unknown as Parameters<typeof loadTaxRefundLines>[0],selected.id,selected.business_id).then(lines=>{if(active)setTaxLines(lines);})
+      .catch(()=>{if(active)setTaxReadError('Refund item details unavailable. Close and retry.');})
+      .finally(()=>{if(active)setTaxLoading(false);});
+    return()=>{active=false;};
+  },[selected?.id,selected?.refund_amount,selected?.tax_allocation]);
 
   const stepUp = useStepUp();
   const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
@@ -237,11 +257,24 @@ export default function Payments() {
 
   async function handleAdminRefund() {
     if (!selected || !readableRef.current || loadingRef.current) return;
-    const amt = parseFloat(refundAmount);
+    if(taxLoading||taxReadError)return;
+    let amt = parseFloat(refundAmount);
+    let taxSelection:ReturnType<typeof refundLineSelection>['taxSelection']|undefined; let taxRequestId:string|undefined;
+    if(selected.tax_allocation){
+      if(!taxLines){setRefundError('Refund item details unavailable');return;}
+      if(partialTax||zeroReturn){
+        try {const choice=zeroReturn?zeroValueReturnSelection(taxLines,lineAmounts):refundLineSelection(taxLines,lineAmounts);amt=choice.amount;taxSelection=choice.taxSelection;}
+        catch(error){setRefundError(error instanceof Error?error.message:'Select refund items');return;}
+        const key=JSON.stringify([selected.id,taxSelection,amt,refundReason.trim()]);
+        if(taxRequestRef.current?.key!==key)taxRequestRef.current={key,id:crypto.randomUUID()};
+        taxRequestId=taxRequestRef.current.id;
+      }else amt=Number(selected.amount)-Number(selected.refund_amount||0);
+    }
     const remaining = Number(selected.amount) - Number(selected.refund_amount || 0);
-    if (isNaN(amt) || amt <= 0) { setRefundError('Enter a valid amount'); return; }
+    if (isNaN(amt) || amt < 0 || (amt === 0 && !zeroReturn)) { setRefundError('Enter a valid amount'); return; }
     if (amt > remaining) { setRefundError(`Maximum refundable: ${fmtCurrency(remaining, selected.currency || 'UNKNOWN')}`); return; }
 
+    if(requestToApprove&&amt!==Number(requestToApprove.amount)){setRefundError('Choose item amounts that match the refund request before approving it.');return;}
     setRefundLoading(true);
     setRefundError('');
     setRefundSuccess('');
@@ -251,7 +284,7 @@ export default function Payments() {
       const businessId = selected.business_id;
       const reason = refundReason.trim();
 
-      const authorizationEpoch = captureAuthorization(paymentId);
+      const authorizationEpoch = captureAuthorization(paymentId,requestToApprove?.id);
       const onAuthorized = async (stepUpId: string) => {
         assertAuthorization(authorizationEpoch);
         const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -273,6 +306,7 @@ export default function Payments() {
             amount: amt,
             reason: reason || undefined,
             stepUpId,
+            ...(taxSelection?{taxSelection,requestId:taxRequestId}:{}),
           }),
         });
 
@@ -283,6 +317,13 @@ export default function Payments() {
           return;
         }
 
+        if(requestToApprove){
+          const {error:requestError}=await adminDb.from('refund_requests').update({status:'approved',reviewed_at:new Date().toISOString(),reviewed_by:sessionData?.session?.user?.id})
+            .eq('id',requestToApprove.id).eq('payment_id',paymentId).eq('status','pending');
+          if(requestError)throw new Error('Refund processed; request approval update needs retry');
+          setRequestToApprove(null);
+        }
+
         await logAudit({
           action: 'refund_payment',
           entity_type: 'payment',
@@ -290,7 +331,7 @@ export default function Payments() {
           details: { amount: amt, reason, refundId: data.refundId, isDirectSplit: data.isDirectSplit },
         });
 
-        setRefundSuccess(data.isDirectSplit
+        setRefundSuccess(data.zeroValueReturn ? 'Item return recorded — no money refunded' : data.isDirectSplit
           ? 'Refund recorded (direct split — please return funds manually)'
           : 'Refund processed successfully');
         setRefundAmount('');
@@ -302,7 +343,7 @@ export default function Payments() {
       await stepUp.execute({
         actionType: 'refund',
         targetId: paymentId,
-        params: { businessId, amount: amt, reason: reason || null },
+        params: { businessId, amount: amt, reason: reason || null, ...(taxSelection?{taxSelection,requestId:taxRequestId}:{}) },
         description: `Refund ${fmtCurrency(amt, selected.currency || 'UNKNOWN')} for payment ${paymentId.slice(0, 8)}...`,
         onAuthorized,
       });
@@ -385,6 +426,12 @@ export default function Payments() {
                     onClick={async () => {
                       if (!canMutate || !readableRef.current || loadingRef.current || !confirm(`Approve and process refund of ${fmtCurrency(req.amount, req.currency || 'UNKNOWN')} to ${req.customer_name || req.customer_phone}?`)) return;
                       try {
+                        const originalPayment=paymentSnapshotRef.current.find(payment=>payment.id===req.payment_id);
+                        if(originalPayment?.tax_allocation && Number(req.amount)!==Number(originalPayment.amount)-Number(originalPayment.refund_amount||0)){
+                          setRequestToApprove({id:req.id,amount:Number(req.amount)});setSelected(originalPayment);setRefundReason(req.reason||'Approved refund request');
+                          setActionError('This request needs item selection. Open the payment refund form and choose the item amounts before authorizing.');
+                          return;
+                        }
                         const reqId = req.id;
                         const paymentId = req.payment_id;
                         const businessId = req.business_id;
@@ -542,7 +589,7 @@ export default function Payments() {
               {pageItems.map(p => (
                 <tr
                   key={p.id}
-                  onClick={() => setSelected(p)}
+                  onClick={() => {setRequestToApprove(null);setSelected(p);}}
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">
@@ -583,7 +630,7 @@ export default function Payments() {
       {/* Detail Modal */}
       <DetailModal
         open={!!selected}
-        onClose={() => { setSelected(null); setRefundAmount(''); setRefundReason(''); setRefundError(''); setRefundSuccess(''); }}
+        onClose={() => { setRequestToApprove(null);setSelected(null); setRefundAmount(''); setRefundReason(''); setRefundError(''); setRefundSuccess(''); }}
         title="Payment Details"
       >
         {selected && (
@@ -644,6 +691,27 @@ export default function Payments() {
                     </p>
                   )}
                   <div className="mt-3 space-y-2">
+                    {taxLoading&&<p className="text-sm">Loading refundable items…</p>}
+                    {taxReadError&&<p role="alert" className="text-sm text-red-700">{taxReadError}</p>}
+                    {taxLines&&<fieldset className="space-y-2">
+                      <legend className="text-sm font-medium">Refund selection</legend>
+                      <label className="block text-sm"><input type="radio" checked={!partialTax&&!zeroReturn} onChange={()=>{authorizationEpochRef.current++;setPartialTax(false);setZeroReturn(false);}}/> Full remaining payment</label>
+                      <label className="block text-sm"><input type="radio" checked={partialTax} onChange={()=>{authorizationEpochRef.current++;setPartialTax(true);setZeroReturn(false);}}/> Choose item amounts</label>
+                      {taxLines.some(line=>line.zeroValue)&&<label className="block text-sm"><input type="radio" checked={zeroReturn} onChange={()=>{authorizationEpochRef.current++;setPartialTax(false);setZeroReturn(true);}}/> Record a no-value item return</label>}
+            {zeroReturn&&taxLines.filter(line=>line.zeroValue).map(line=><label key={line.id} className="block text-sm">{line.label} — no money refunded
+              <input aria-label={`Return quantity for ${line.label}`} type="number" min="0" step="1" max={line.quantity}
+                value={lineAmounts[line.id]||''} onChange={e=>{authorizationEpochRef.current++;setLineAmounts({...lineAmounts,[line.id]:e.target.value});}}
+                className="mt-1 w-full rounded border px-3 py-2"/>
+            </label>)}
+            {partialTax&&taxLines.map(line=><label key={line.id} className="block text-sm">{line.label} — available {fmtCurrency(line.remainingMinor/100,selected.currency||'UNKNOWN')}
+                        <input aria-label={`Refund for ${line.label}`} type="number" min="0" step="0.01" max={line.remainingMinor/100}
+                          value={lineAmounts[line.id]||''} onChange={e=>{authorizationEpochRef.current++;setLineAmounts({...lineAmounts,[line.id]:e.target.value});}}
+                          className="mt-1 w-full rounded border px-3 py-2"/>
+                      </label>)}
+                      <p className="text-xs text-gray-600">Amounts include the original tax for each item.</p>
+                    </fieldset>}
+                    {!selected.tax_allocation&&<>
+
                     <input
                       type="number"
                       step="0.01"
@@ -670,6 +738,7 @@ export default function Payments() {
                         Half
                       </button>
                     </div>
+                    </>}
                     <textarea
                       value={refundReason}
                       onChange={e => setRefundReason(e.target.value)}
@@ -681,7 +750,7 @@ export default function Payments() {
                     {refundSuccess && <p className="text-xs text-green-600">{refundSuccess}</p>}
                     <button
                       onClick={handleAdminRefund}
-                      disabled={refundLoading}
+                      disabled={refundLoading||taxLoading||!!taxReadError}
                       className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
                     >
                       {refundLoading ? 'Processing...' : 'Confirm Refund'}

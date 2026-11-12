@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { buildMerchantLink } from '@/lib/url';
+import { buildShortMerchantLink } from '@/lib/url';
 
 interface Service {
   id: string;
@@ -196,7 +196,7 @@ export default function DirectoryClient() {
                   {bizList.map((biz) => {
                     // Readiness comes from the directory API; links retain merchant identity.
                     const waLink = biz.wa_phone && (biz.wa_method !== 'shared' || biz.bot_code)
-                      ? buildMerchantLink(biz.id) : null;
+                      ? buildShortMerchantLink(biz.bot_code, biz.id) : null;
                     const isExpanded = expanded === biz.id;
 
                     return (
@@ -251,7 +251,7 @@ export default function DirectoryClient() {
                           </div>
                         )}
 
-                        {/* WhatsApp CTA — permanent Waaiio link, no hardcoded phone */}
+                        {/* WhatsApp CTA — short Waaiio link, no hardcoded phone */}
                         <div className="mt-4 rounded-xl bg-gray-50 p-3">
                           {!waLink ? <p className="text-xs text-gray-600">WhatsApp connection unavailable</p> : <>
                             <p className="text-[10px] text-gray-400 uppercase font-semibold">Message on WhatsApp</p>

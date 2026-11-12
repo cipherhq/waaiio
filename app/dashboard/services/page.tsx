@@ -14,8 +14,12 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { buildServicePayload } from '@/lib/services/payload-builders';
 import { getDepositConfigurationError } from '@/lib/payments/deposit-amount-authority';
+import { getLimitTier } from '@/lib/capabilities/policy';
+import { ServiceIntakeSettings } from '@/components/dashboard/ServiceIntakeSettings';
+import { ItemTaxFields, type ItemTaxFieldsValue } from '@/components/dashboard/ItemTaxFields';
+import { parseItemTax } from '@/lib/tax/settings';
 
-interface Service {
+interface Service extends ItemTaxFieldsValue {
   id: string;
   name: string;
   description: string | null;
@@ -50,6 +54,10 @@ interface Service {
   // Class booking
   is_class: boolean;
   class_schedule: Array<{ day: string; time: string }>;
+  // Client intake form (M526, #963)
+  intake_form_id: string | null;
+  intake_timing: 'before_booking' | 'after_booking' | null;
+  intake_frequency: 'first_booking' | 'every_booking' | null;
 }
 
 interface ServiceAddon {
@@ -88,6 +96,8 @@ export default function ServicesPage() {
   const { labels } = useCategoryConfig(business.category);
   const isScheduling = business.flow_type === 'scheduling';
   const curr = formatCurrency(0, country).charAt(0);
+  // Same rule as the M526 database guard: Pro, Premium or an active trial.
+  const intakeEntitled = getLimitTier(business.subscription_tier, business.feature_trial_ends_at) !== 'free';
 
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,8 +138,16 @@ export default function ServicesPage() {
     metadata: {},
     is_class: false,
     class_schedule: [],
+    intake_form_id: null,
+    intake_timing: null,
+    intake_frequency: null,
   };
   const [form, setForm] = useState<Service>(emptyForm);
+  const intakeValue = {
+    form_id: form.intake_form_id,
+    timing: form.intake_timing || 'before_booking',
+    frequency: form.intake_frequency || 'first_booking',
+  } as const;
   const [addons, setAddons] = useState<ServiceAddon[]>([]);
   const [addonForm, setAddonForm] = useState<{ name: string; price: number; is_required: boolean }>({ name: '', price: 0, is_required: false });
   const [saving, setSaving] = useState(false);
@@ -297,6 +315,9 @@ export default function ServicesPage() {
 
   async function handleSave() {
     if (!form.name.trim()) return;
+    let tax: ReturnType<typeof parseItemTax> | undefined;
+    try { tax = form.tax_treatment === undefined ? undefined : parseItemTax(form); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Invalid tax settings'); return; }
     const depositError = getDepositConfigurationError({
       price: form.price,
       deposit: form.deposit_amount,
@@ -310,6 +331,7 @@ export default function ServicesPage() {
     const supabase = createClient();
 
     const payload = buildServicePayload({
+      tax,
       businessId: business.id, name: form.name, description: form.description,
       price: form.price, price_is_variable: form.price_is_variable,
       duration_minutes: form.duration_minutes || 0, buffer_minutes: form.buffer_minutes,
@@ -325,18 +347,29 @@ export default function ServicesPage() {
       class_schedule: form.class_schedule,
       max_capacity: (form as unknown as Record<string, unknown>).max_capacity as number,
       metadata: form.metadata,
+      intake: intakeValue,
     });
 
+    let saveError: { message: string } | null = null;
     if (view === 'add') {
-      const { data: inserted } = await supabase.from('services').insert(payload).select('id').single();
+      const { data: inserted, error } = await supabase.from('services').insert(payload).select('id').single();
+      saveError = error;
       if (inserted?.id) {
         try { captureProductEvent('service.created', { business_id: business.id, entity_id: inserted.id, entity_type: 'service', status: 'created' }); } catch { /* never affect creation */ }
       }
     } else {
-      await supabase.from('services').update(payload).eq('id', form.id);
+      const { error } = await supabase.from('services').update(payload).eq('id', form.id);
+      saveError = error;
     }
 
     setSaving(false);
+    if (saveError) {
+      // Keep the form open so nothing typed is lost (e.g. the intake plan check, M526).
+      alert(saveError.message.includes('Pro or Premium')
+        ? 'Client intake forms are on the Pro and Premium plans. Remove the form or upgrade, then save again.'
+        : 'This service could not be saved. Please try again.');
+      return;
+    }
     setView('list');
     fetchServices();
   }
@@ -599,6 +632,8 @@ export default function ServicesPage() {
                 )}
               </div>
             )}
+
+            <ItemTaxFields value={form} onChange={tax => setForm({ ...form, ...tax })} disabled={saving} />
 
             {/* ── Optional Sections (toggle to reveal) ── */}
             <div className="space-y-2 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
@@ -926,6 +961,14 @@ export default function ServicesPage() {
                 </div>
               </div>
             )}
+
+            {/* ── Client intake form (Pro/Premium/trial, #963) ── */}
+            <ServiceIntakeSettings
+              businessId={business.id}
+              entitled={intakeEntitled}
+              value={intakeValue}
+              onChange={v => setForm({ ...form, intake_form_id: v.form_id, intake_timing: v.timing, intake_frequency: v.frequency })}
+            />
           </div>
 
           {/* Right column: Settings */}

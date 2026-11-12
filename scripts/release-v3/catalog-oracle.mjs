@@ -31,6 +31,63 @@ export const ORACLE = Object.freeze({
   delta_dir: 'supabase/catalog-deltas',
   m430_list: 'scripts/release-v3/m430-identities.json',
 });
+
+// Production and staging ran the M501 accounting installer through an
+// Owner-approved packet. The installer swapped in new bodies for these recurring
+// finalizers. Replaying the migration file only creates the installer, so the
+// replay would keep the older M335/M339 bodies, and a later migration that
+// rewrites them in place (M525) would get the wrong after-value. So, after
+// replaying M501, the oracle installs the same bodies from the installer text in
+// that file, then requires each to equal the object recorded in both approved
+// locks. Restore the finalizers that post-lock migrations rewrite, together with
+// the refund dispatcher and payout entrypoints exercised by lifecycle tests.
+// Every restored object is checked against both locks; enrollment is never run.
+export const ACCOUNTING_INSTALLED = Object.freeze([
+  Object.freeze({ tag: 'financial', identity: 'function:public.reject_payout_and_release_adjustments(p_payout_id uuid, p_reason text)' }),
+  Object.freeze({ tag: 'financial', identity: 'function:public.claim_payout_for_transfer(p_payout_id uuid, p_transfer_method text, p_approved_by uuid)' }),
+  Object.freeze({ tag: 'financial', identity: 'function:public.confirm_manual_settlement(p_payout_id uuid, p_transfer_ref text, p_attestation boolean, p_admin_id uuid)' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'function:public.finalize_refund_execution(p_refund_id uuid)' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.payments.guard_enrolled_payment_identity' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.business_payouts.guard_accounting_held_payout' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.platform_fees.guard_accounting_fee_provenance' }),
+  Object.freeze({ tag: 'dispatcher', identity: 'trigger:public.payout_adjustments.guard_accounting_adjustment_provenance' }),
+  Object.freeze({ tag: 'recurring_finalize_token_recurring_charge',
+    identity: 'function:public.finalize_token_recurring_charge(p_stable_ref text, p_subscription_id uuid, p_verified_amount numeric, p_verified_currency text, p_gateway text, p_provider_attempt_ref text)' }),
+  Object.freeze({ tag: 'recurring_finalize_stripe_recurring_charge',
+    identity: 'function:public.finalize_stripe_recurring_charge(p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text, p_payment_intent_id text)' }),
+]);
+
+// The SQL the M501 installer executes for one block: the text between
+// `EXECUTE $tag$` and `$tag$;`. Each must appear exactly once.
+export function accountingInstallerStatement(m501Text, tag) {
+  const open = `EXECUTE $${tag}$`, close = `$${tag}$;`;
+  const start = m501Text.indexOf(open);
+  if (start < 0 || m501Text.indexOf(open, start + 1) >= 0) fail(`M501 installer block ${tag} is not present exactly once`);
+  const bodyStart = start + open.length;
+  const end = m501Text.indexOf(close, bodyStart);
+  if (end < 0 || m501Text.indexOf(close, end + 1) >= 0) fail(`M501 installer block ${tag} is not closed exactly once`);
+  const statement = m501Text.slice(bodyStart, end);
+  if (tag !== 'financial') return statement;
+  // The operational payout entrypoints are required by lifecycle replay. Keep
+  // existing helper ACLs intact: their two environment locks intentionally differ.
+  const first = 'CREATE OR REPLACE FUNCTION public.reject_payout_and_release_adjustments(';
+  const last = 'DROP TRIGGER IF EXISTS trg_payout_linkage_guard';
+  if (statement.split(first).length !== 2 || statement.split(last).length !== 2) fail('M501 financial entrypoint boundaries changed');
+  return statement.slice(statement.indexOf(first), statement.indexOf(last));
+}
+
+const lockObjects = env => JSON.parse(readFileSync(here(`./lock-catalog-${env}.json`), 'utf8')).objects;
+
+export async function installAccountingFinalizers(client, m501Text, locks = ['production', 'staging'].map(lockObjects)) {
+  for (const tag of new Set(ACCOUNTING_INSTALLED.map(entry => entry.tag))) await client.query(accountingInstallerStatement(m501Text, tag));
+  const observed = catalogMap(await readCatalog(client));
+  for (const { identity } of ACCOUNTING_INSTALLED) {
+    for (const objects of locks) {
+      if (!objects[identity] || observed.get(identity) !== objects[identity]) fail(`Oracle ${identity} does not equal the approved lock after the M501 install`);
+    }
+  }
+}
+
 const MIGRATION = /^([0-9]{3})[a-z]?_[a-z0-9_]+\.sql$/;
 const IDENTITY = /^(schema|table|column|constraint|index|trigger|policy|function|type|publication):\S/;
 
@@ -146,7 +203,7 @@ export async function generate({ serverUrl, repoRoot, allowMajor = ORACLE.postgr
   const client = await connect(dbUrl);
   try {
     const deltas = [];
-    let m430 = null, defaults = false;
+    let m430 = null, defaults = false, accounting = false;
     for (const migration of migrationFiles(repoRoot)) {
       const file = join(repoRoot, migration.path), bytes = readFileSync(file);
       if (migration.name === ORACLE.m430_file) {
@@ -157,7 +214,11 @@ export async function generate({ serverUrl, repoRoot, allowMajor = ORACLE.postgr
         finally { await client.query('ROLLBACK'); }
         continue;
       }
-      if (migration.version < ORACLE.first_delta_version) { psqlFile(dbUrl, file, migration.name.startsWith('383_')); continue; }
+      if (migration.version < ORACLE.first_delta_version) {
+        psqlFile(dbUrl, file, migration.name.startsWith('383_'));
+        if (migration.version === 501) { await installAccountingFinalizers(client, bytes.toString('utf8')); accounting = true; }
+        continue;
+      }
       // History is replayed exactly as CI does (no default privileges: production's
       // historic ACL repairs cannot be replayed, e.g. M419 asserts anon has no
       // SELECT). Production's default privileges apply from the first delta on,
@@ -169,6 +230,7 @@ export async function generate({ serverUrl, repoRoot, allowMajor = ORACLE.postgr
       deltas.push(deltaDocument(migration, bytes, diffCatalog(before, await readCatalog(client))));
     }
     if (!m430) fail('M430 file not found');
+    if (!accounting) fail('M501 file not found');
     const added = m430.filter(c => c.operation === 'add').map(c => c.identity);
     if (!added.length) fail('M430 added no objects; the oracle replay is wrong');
     return { deltas, m430: { schema_version: 1, source: ORACLE.m430_file,

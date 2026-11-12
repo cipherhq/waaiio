@@ -10,19 +10,16 @@ import type { SubscriptionTier } from '@/lib/constants';
  *
  * @param amount   Transaction amount in major currency units (naira/dollars/pounds)
  * @param tier     Business subscription tier
- * @param isInTrial Whether the business is currently in its free trial
+ * @param _isInTrial Kept for call-site compatibility. Owner decision 2026-11-08:
+ *                  the free trial never waives the Waaiio fee.
  * @returns Fee breakdown: feePercentage, feeFlat, feeTotal (major currency units)
  */
 export async function getPlatformFees(
   amount: number,
   tier: SubscriptionTier,
-  isInTrial: boolean,
+  _isInTrial: boolean,
   overrides?: { feePercentage?: number | null; feeFlat?: number | null },
 ): Promise<{ feePercentage: number; feeFlat: number; feeTotal: number }> {
-  if (isInTrial) {
-    return { feePercentage: 0, feeFlat: 0, feeTotal: 0 };
-  }
-
   const settings = await loadPlatformSettings({ useServiceClient: true });
   const tierConfig = settings.pricing_tiers[tier];
 

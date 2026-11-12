@@ -1,3 +1,4 @@
+import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { logger } from '@/lib/logger';
@@ -111,7 +112,7 @@ const waitlistConfirmStep: FlowStepConfig = {
     }
 
     // Insert waitlist entry
-    const { error } = await ctx.supabase
+    const { data: entry, error } = await ctx.supabase
       .from('waitlist_entries')
       .insert({
         business_id: ctx.business.id,
@@ -121,16 +122,17 @@ const waitlistConfirmStep: FlowStepConfig = {
         event_id: (d.event_id as string) || null,
         preferred_date: (d.date as string) || null,
         status: 'waiting',
-      });
+      }).select('id').single();
 
-    if (error) {
+    if (error || !entry?.id) {
       logger.withContext({ op: 'waitlist.insert', ...safeLogErrorContext(error) }).error('[WAITLIST] Insert error');
       return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
     }
 
     return [{
       type: 'text',
-      text: `You're on the waitlist, ${customerName}! We'll send you a message when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Send *Hi* to start over`,
+      _afterSend: await prepareFreeCompletion(ctx, { completionKey: `waitlist:${entry.id}`, kind: 'waitlist' }),
+      text: `You're on the waitlist, ${customerName}! We'll send you a message when a spot opens up.`,
     }];
   },
 

@@ -316,3 +316,14 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
     expect(confirmBtn!.title).toContain('Accept');
   });
 });
+
+
+// This suite exercises confirmation UX with an untaxed authoritative quote.
+// RPC validation and quote failures are covered by the merchant-tax suites.
+vi.mock('@/lib/tax/server-quote', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tax/server-quote')>()),
+  quoteBookingTax: vi.fn(async (_db, input) => ({
+    total: Math.max(Number(input.expectedTerms.price || 0) * input.partySize, Number(input.expectedTerms.deposit || 0)),
+    deposit: Number(input.expectedTerms.deposit || 0), tax_snapshot: null,
+  })),
+}));

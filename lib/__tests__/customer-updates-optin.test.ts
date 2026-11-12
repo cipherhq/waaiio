@@ -19,6 +19,7 @@ import {
   recordUpdatesOptIn,
   parseUpdatesOptInPostback,
   shouldOfferUpdatesOptIn,
+  transactionUpdatesOptInEligibility,
   updatesOptInPostback,
   updatesOptInRowFor,
   UPDATES_OPTIN_POLICY_VERSION,
@@ -238,14 +239,33 @@ describe('opt-outs are respected and never re-asked', () => {
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_B, true)).toBe(false);
   });
 
-  it('latest consent revoked → not offered and a tap does not re-grant', async () => {
+  // Owner decision 2026-11-06: latest row wins. An earlier "No thanks" (revoked)
+  // still hides the offer, but a newer explicit Yes tap records both purposes.
+  it('latest consent revoked → not offered, but a newer explicit tap grants marketing + utility', async () => {
     const db = seed({ customer_consents: [
       { id: 'c1', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'marketing', status: 'granted', created_at: '2026-10-01T00:00:00Z' },
       { id: 'c2', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'marketing', status: 'revoked', created_at: '2026-10-02T00:00:00Z' },
     ] });
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
-    await tap(db, BIZ_A);
-    expect(consentsFor(db, BIZ_A)).toHaveLength(2);
+    const { replies } = await tap(db, BIZ_A);
+    const added = consentsFor(db, BIZ_A).filter(r => r.id !== 'c1' && r.id !== 'c2');
+    expect(added.map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
+    expect(added.every(r => r.status === 'granted')).toBe(true);
+    expect(replies[0]).toContain("You're in!");
+    // The newest marketing row is now granted, so the business can message again.
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu' })).toMatchObject({ status: 'already' });
+  });
+
+  it('latest consent revoked plus an active STOP → the tap is still blocked', async () => {
+    const db = seed({
+      customer_consents: [
+        { id: 'c2', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'marketing', status: 'revoked', created_at: '2026-10-02T00:00:00Z' },
+      ],
+      messaging_opt_outs: [{ id: 'o1', phone: E164, business_id: BIZ_A, channel: 'whatsapp', resubscribed_at: null }],
+    });
+    const { replies } = await tap(db, BIZ_A);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(1); // only the seeded row
+    expect(replies[0]).toContain('START');
   });
 
   it('unsubscribed from Waaiio updates → not offered; a stale tap records the business only and never re-activates Waaiio', async () => {
@@ -365,15 +385,15 @@ describe('marketing + utility (Owner decision 2026-11-06)', () => {
     expect(consentsFor(db, BIZ_A).filter(r => r.id !== 'u0').map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
   });
 
-  it('a revoked service (utility) consent also hides the offer and blocks the tap', async () => {
+  it('a revoked service (utility) consent also hides the offer; a newer explicit tap grants both (latest row wins)', async () => {
     const db = seed({ customer_consents: [
       { id: 'u1', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'utility', status: 'granted', created_at: '2026-10-01T00:00:00Z' },
       { id: 'u2', business_id: BIZ_A, phone: E164, channel: 'whatsapp', purpose: 'utility', status: 'revoked', created_at: '2026-10-02T00:00:00Z' },
     ] });
     expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
-    const { replies } = await tap(db, BIZ_A);
-    expect(consentsFor(db, BIZ_A)).toHaveLength(2); // only the seeded rows
-    expect(replies[0]).toContain('START');
+    await tap(db, BIZ_A);
+    const added = consentsFor(db, BIZ_A).filter(r => r.id !== 'u1' && r.id !== 'u2');
+    expect(added.map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
   });
 
   it("the shared function itself enforces the business's own-number rule", async () => {
@@ -404,6 +424,7 @@ describe('fails closed', () => {
       const db = seed();
       db.failReads.add(table);
       expect(await shouldOfferUpdatesOptIn(db as any, PHONE, BIZ_A, true)).toBe(false);
+      expect(await transactionUpdatesOptInEligibility(db as any, PHONE, BIZ_A, true)).toBe('error');
     });
   }
 
@@ -425,5 +446,44 @@ describe('fails closed', () => {
     const handled = await handleUpdatesOptInTap(db as any, { from: PHONE, text: 'yes', messageType: 'list', sendReply: async () => {} });
     expect(handled).toBe(false);
     expect(db.writes).toHaveLength(0);
+  });
+});
+
+describe('durable prompt scope', () => {
+  it('keeps a recovered Yes at its original decision time so a later revocation stays authoritative', async () => {
+    const decisionAt = '2026-01-01T00:00:00.000Z';
+    const db = seed({ customer_consents: [{ id: 'revoked', business_id: BIZ_A, phone: E164,
+      channel: 'whatsapp', purpose: 'marketing', status: 'revoked', created_at: '2026-01-02T00:00:00.000Z' }] });
+    await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', decisionAt });
+    const grants = consentsFor(db, BIZ_A).filter(r => r.status === 'granted');
+    expect(grants).toHaveLength(2);
+    expect(grants.every(r => r.created_at === decisionAt && r.granted_at === decisionAt)).toBe(true);
+    expect(await transactionUpdatesOptInEligibility(db as any, PHONE, BIZ_A, true)).toBe('ineligible');
+  });
+
+  it.each(['invalid', '2999-01-01T00:00:00.000Z'])('rejects invalid or future decisionAt %s without recording', async decisionAt => {
+    const db = seed();
+    expect(await recordUpdatesOptIn(db as any, { phone: PHONE, businessId: BIZ_A, source: 'menu', decisionAt })).toEqual({ status: 'error' });
+    expect(consentsFor(db, BIZ_A)).toHaveLength(0);
+  });
+
+  it('does not add Waaiio when the original prompt named only the business', async () => {
+    const db = seed();
+    const result = await recordUpdatesOptIn(db as any, {
+      phone: PHONE, businessId: BIZ_A, source: 'menu', includesWaaiio: false,
+    });
+    expect(result).toMatchObject({ status: 'granted', waaiioSubscribed: false });
+    expect(db.tables.launch_subscribers).toHaveLength(0);
+    expect(consentsFor(db, BIZ_A)).toHaveLength(2);
+    expect(consentsFor(db, BIZ_A).every(r => String(r.policy_version).endsWith(':business'))).toBe(true);
+  });
+
+  it('an original combined prompt cannot override current white-label scope', async () => {
+    const db = seed();
+    const result = await recordUpdatesOptIn(db as any, {
+      phone: PHONE, businessId: BIZ_WL, source: 'menu', includesWaaiio: true,
+    });
+    expect(result).toMatchObject({ status: 'granted', waaiioSubscribed: false });
+    expect(db.tables.launch_subscribers).toHaveLength(0);
   });
 });

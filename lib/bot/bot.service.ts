@@ -11,12 +11,16 @@ import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
 import { handleLaunchOptIn } from './launch-optin';
-import { handleUpdatesOptInTap } from './customer-updates-optin';
+import {
+  handleUpdatesOptInTap, askUpdatesOptIn, handleUpdatesConfirmTap, isUpdatesKeyword,
+  parseUpdatesConfirmPostback, UPDATES_DECLINE_POSTBACK,
+} from './customer-updates-optin';
+import { getFlowCopy } from './flows/flow-localization';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabilities/policy';
-import { resolveTrialCredit } from '@/lib/trial-status';
+import { resolveFeatureTrialEndsAt } from '@/lib/trial-status';
 import { trackInboundMessage } from '@/lib/bot/conversation-guard';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -29,15 +33,17 @@ import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { ensurePlus } from '@/lib/utils/phone';
-import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
+import { getPoweredByFooter, getPoweredByHtml, getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import type { BotSession, BusinessRecord, BotContext } from './bot-types';
+import { isFinancialDenial } from './financial-denial';
 import { getActiveSession as _getActiveSession, deactivateSession as _deactivateSession, sendBotText, forwardToBusinessOwner as _forwardToBusinessOwner } from './bot-helpers';
 import { getFirstStep as _getFirstStep, getFirstStepFromCapabilities as _getFirstStepFromCapabilities, capabilityToFirstStep as _capabilityToFirstStep } from './handlers/flow-routing';
 import { handleQuoteResponse as _handleQuoteResponse } from './handlers/quote-response';
+import { parseQuoteResponseButton } from '@/lib/tax/quote-acceptance';
 import { handleTicketCheckin as _handleTicketCheckin } from './handlers/ticket-checkin';
 import { handleTransactionDocument as _handleTransactionDocument } from './handlers/transaction-docs';
 import { handleMyOrders as _handleMyOrders, handleOrderDetail as _handleOrderDetail, handleOrderDetailAction as _handleOrderDetailAction } from './handlers/my-orders';
@@ -201,6 +207,19 @@ export class BotService {
     );
     if (launchHandled) return;
 
+    // Transaction continuation IDs carry durable business/phone/channel authority.
+    if (text.startsWith('txupdates_')) {
+      const { handleTransactionFollowupTap } = await import('@/lib/bot/transaction-followups');
+      if (await handleTransactionFollowupTap(this.supabase, {
+        from, text, messageType, destinationPhone, channelBusinessId: preResolvedBusinessId,
+      })) return;
+    }
+
+    if (/^(hi|hello|menu|directory)$/i.test(text.trim())) {
+      const { dismissTransactionFollowups } = await import('@/lib/bot/transaction-followups');
+      await dismissTransactionFollowups(this.supabase, { from, destinationPhone });
+    }
+
     // Customer updates opt-in tap (Owner decision 2026-11-06). Handled here so the
     // tap works whatever state the chat is in; it never touches the session, so
     // the menu the customer is on keeps working.
@@ -298,13 +317,12 @@ export class BotService {
     }
 
     // Handle quote response button postbacks (accept_quote_{id} / reject_quote_{id})
-    const quoteResponseMatch = text.match(/^(accept|reject)_quote_([0-9a-f-]{36})$/i);
+    const quoteResponseMatch = parseQuoteResponseButton(text);
     if (quoteResponseMatch) {
-      const qAction = quoteResponseMatch[1].toLowerCase() as 'accept' | 'reject';
-      const quoteId = quoteResponseMatch[2];
+      const { action: qAction, quoteId, digest } = quoteResponseMatch;
       const existingSession = await this.getActiveSession(from);
       if (existingSession) await this.deactivateSession(existingSession.id);
-      await this.handleQuoteResponse(from, quoteId, qAction);
+      await this.handleQuoteResponse(from, quoteId, qAction, digest);
       return;
     }
 
@@ -1091,13 +1109,13 @@ export class BotService {
             }));
           }
 
-          const hasTrialCredit = await resolveTrialCredit(this.supabase, currentBiz.id as string);
+          // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+          const featureTrialEndsAt = await resolveFeatureTrialEndsAt(this.supabase, currentBiz.id as string);
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: configuredRows,
             overrides,
             tier: (currentBiz.subscription_tier as string) || 'free',
-            trialEndsAt: currentBiz.trial_ends_at as string,
-            hasTrialCredit,
+            trialEndsAt: featureTrialEndsAt,
           });
 
           // Refresh the session's capabilities array with CURRENT effective set
@@ -1209,6 +1227,21 @@ export class BotService {
     }
     // Update session in case handleGlobalQuery modified it (e.g. reference code fall-through)
     session = globalResult.session;
+
+    // Customer updates confirmation taps (typed "updates" / My Account, #591 Q6).
+    // Recorded only for the business of the chat the customer is in now; the
+    // #942 hook above never matches these ids. Leaves the chat session as it is.
+    if (text.trim() === UPDATES_DECLINE_POSTBACK || parseUpdatesConfirmPostback(text)) {
+      const lang = session ? await this.resolveHandlerCopyLang(session) : 'en';
+      const reply = await handleUpdatesConfirmTap(this.supabase, {
+        from, text, messageType, lang, sessionBusinessId: session?.business_id,
+        channelBusinessId: preResolvedBusinessId, destinationPhone,
+      });
+      if (reply) {
+        await this.sendUpdatesOptInReply(from, session, lang, reply);
+        return;
+      }
+    }
 
     // Check for "connect <name>" / "switch <keyword>" command — lets users swap between businesses.
     // Owner rule: message must START with the keyword; look up first; only deactivate
@@ -1569,6 +1602,20 @@ export class BotService {
       return;
     }
 
+    // Typed "updates" before any business is chosen (shared number): ask the
+    // customer to choose one first (#591 Q6). A business whose code is
+    // "updates" still wins, as it does for a customer already in a chat.
+    if (isUpdatesKeyword(text) && !session?.business_id && !preResolvedBusinessId && !isFreeTextStep && !isRestart) {
+      const isBusinessCode = !session && /^[a-z0-9-]{2,30}$/i.test(text.trim())
+        && !!(await this.supabase.from('businesses').select('id')
+          .ilike('bot_code', text.trim().toLowerCase()).eq('status', 'active').maybeSingle()).data;
+      if (!isBusinessCode) {
+        const lang = (session?.session_data?._detected_language as string | undefined) || undefined;
+        await this.sendPlatformText(from, getFlowCopy(lang, 'updates.choose_business'));
+        return;
+      }
+    }
+
     if (!session || isRestart) {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       // Remember the business from the session being restarted — prevents country
@@ -1828,14 +1875,14 @@ export class BotService {
           ? [] // fail closed on override read error
           : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
 
-        const hasTrialCredit = await resolveTrialCredit(this.supabase, business.id);
+        // Feature-trial clock (set at sign-up, M525); independent of the messaging credit
+        const featureTrialEndsAt = await resolveFeatureTrialEndsAt(this.supabase, business.id);
         if (capResult.rows.length > 0) {
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: capResult.rows,
             overrides,
             tier: business.subscription_tier,
-            trialEndsAt: business.trial_ends_at,
-            hasTrialCredit,
+            trialEndsAt: featureTrialEndsAt,
           });
           capabilities = policyResult.effective;
         } else {
@@ -1849,8 +1896,7 @@ export class BotService {
             configuredCapabilities: legacyRows,
             overrides,
             tier: business.subscription_tier,
-            trialEndsAt: business.trial_ends_at,
-            hasTrialCredit,
+            trialEndsAt: featureTrialEndsAt,
           });
           capabilities = policyResult.effective;
         }
@@ -3574,7 +3620,7 @@ export class BotService {
     // ── #165: Recurring setup/decline button interceptor ──
     // Handles recurring_setup:{intentId}, recurring_decline:{intentId},
     // recurring_freq:{frequency}:{intentId}, recurring_consent:{action}:{intentId}
-    if (messageType === 'button' && session.business_id && (
+    if ((messageType === 'button' || (messageType === 'list' && text.startsWith('recurring_setup:'))) && session.business_id && (
       text.startsWith('recurring_setup:') || text.startsWith('recurring_decline:') ||
       text.startsWith('recurring_freq:') || text.startsWith('recurring_consent:')
     )) {
@@ -3689,6 +3735,20 @@ export class BotService {
       (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
 
     if (!isFreeTextStepForKeywords && !inputOwnedByStep) {
+      // Typed "updates" / "get updates" (Owner decision 2026-11-06, #591 Q6):
+      // ask to confirm updates from this chat's business. Same guard as every
+      // other keyword, so a free-text step still gets the words as its answer.
+      if (session.business_id && isUpdatesKeyword(text)) {
+        const lang = await this.resolveHandlerCopyLang(session);
+        await askUpdatesOptIn(this.supabase, {
+          phone: from, lang, source: 'keyword', businessId: session.business_id,
+          // Consent-control replies are platform-scoped, like the #942 tap replies.
+          sendText: (msg) => this.sendPlatformText(from, msg),
+          sendButtons: (body, buttons) => this.messageSender.sendButtons({ to: from, body, buttons }),
+        });
+        return;
+      }
+
       // Use cached category from session_data (saved during session creation)
       const businessCategory = (session.session_data?.business_category as string) || null;
 
@@ -4252,6 +4312,8 @@ export class BotService {
           }
         }
       } catch (err) {
+        // #976: a refused flow reply goes to the #682 notice below, not on to more routing.
+        if (isFinancialDenial(err)) throw err;
         logger.error('[BOT] Welcome button handler error (non-fatal):', err);
       }
     }
@@ -4549,11 +4611,8 @@ export class BotService {
     logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const isFinancialDenial = errMsg.startsWith('Financial authorization denied:')
-        || errMsg.includes('insufficient_allowance_balance')
-        || errMsg.includes('spend_cap_exceeded');
-
-      if (isFinancialDenial) {
+      // #976: same check FlowExecutor uses to pass refused flow replies up to here.
+      if (isFinancialDenial(err)) {
         // #682: Financial exhaustion — rate-limited customer-facing message via platform scope.
         // Platform scope bypasses the business financial gate that caused the denial.
         logger.warn('[BOT] Financial authorization denied for', from.slice(-4), ':', errMsg);
@@ -4681,8 +4740,8 @@ export class BotService {
 
   // ── Quote Response Handler ──────────────────────────────
 
-  private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject'): Promise<void> {
-    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action);
+  private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject', digest?: string): Promise<void> {
+    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action, digest);
   }
 
   // ── Ticket Check-in via WhatsApp ──────────────────────
@@ -4948,6 +5007,42 @@ export class BotService {
       // Fallback for non-MetaCloudSender implementations (tests)
       await this.messageSender.sendText({ to, text });
     }
+  }
+
+  /**
+   * Reply to a customer updates confirmation tap (#591 Q6). After a recorded Yes
+   * or a No thanks inside a business chat, the reply comes with the next-steps
+   * menu and "Powered by Waaiio.com" (Owner rule: every completed transaction
+   * ends with a menu). Button ids are the words the customer could type, so
+   * they work whatever step the chat is on.
+   */
+  private async sendUpdatesOptInReply(
+    from: string,
+    session: BotSession | null,
+    lang: string,
+    reply: { text: string; nextSteps: boolean },
+  ): Promise<void> {
+    if (!reply.nextSteps || !session?.business_id) {
+      await this.sendPlatformText(from, reply.text);
+      return;
+    }
+    const [{ data: biz }, shared] = await Promise.all([
+      this.supabase.from('businesses').select('subscription_tier, is_whitelabel').eq('id', session.business_id).maybeSingle(),
+      isSharedConversation(this.supabase, session.session_data),
+    ]);
+    const buttons = [
+      // My Account needs a customer profile, which a session with a user has.
+      ...(session.user_id ? [{ id: 'my account', title: getFlowCopy(lang, 'account.title') }] : []),
+      { id: 'menu', title: getFlowCopy(lang, 'nav.view_options') },
+      ...(shared ? [{ id: 'directory', title: 'Search directory' }] : []),
+    ];
+    await this.messageSender.sendButtons({
+      to: from,
+      body: `${reply.text}\n\n${getFlowCopy(lang, 'menu.what_next')}`,
+      buttons,
+      // No branding line when the business could not be read (it may be white-label).
+      footer: biz ? getPoweredByInteractiveFooter(biz.subscription_tier, biz.is_whitelabel) : undefined,
+    });
   }
 
   /**

@@ -73,7 +73,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
       -- Stub tables for local dev (IF NOT EXISTS = no-op in CI with real schema)
-      CREATE TABLE IF NOT EXISTS payments (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE IF NOT EXISTS payments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID);
       CREATE TABLE IF NOT EXISTS businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_id UUID, name TEXT, business_code TEXT
@@ -352,7 +352,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
 
   describe('complete_activation_delivery: 2-arg signature', () => {
     it('2-arg call succeeds on accepted offer with valid claim', () => {
-      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (business_id, amount, currency, gateway, status, gateway_reference) VALUES ('${BIZ_ID}', 1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
       psql(`
         INSERT INTO payment_saved_card_offers
           (payment_id, customer_phone, business_id, offer_type, state, consent_source, channel_id)
@@ -401,7 +401,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
 
   describe('discover_pending_confirmation: committed_card_display guard', () => {
     it('NULL committed_card_display is not claimable', () => {
-      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (business_id, amount, currency, gateway, status, gateway_reference) VALUES ('${BIZ_ID}', 1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
 
       // Create committed offer with NULL committed_card_display
       psql(`
@@ -427,7 +427,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
     });
 
     it('empty string committed_card_display is not claimable', () => {
-      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (business_id, amount, currency, gateway, status, gateway_reference) VALUES ('${BIZ_ID}', 1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
 
       psql(`
         INSERT INTO payment_saved_card_offers
@@ -445,7 +445,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
     });
 
     it('valid committed_card_display IS claimable', () => {
-      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (business_id, amount, currency, gateway, status, gateway_reference) VALUES ('${BIZ_ID}', 1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
 
       psql(`
         INSERT INTO payment_saved_card_offers
@@ -479,7 +479,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
 
   describe('discover_pending_confirmation: atomic claim', () => {
     it('first discover returns offer, second returns null', () => {
-      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (business_id, amount, currency, gateway, status, gateway_reference) VALUES ('${BIZ_ID}', 1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
 
       // Create a committed offer
       psql(`
@@ -509,7 +509,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
     });
 
     it('expired claim allows re-discovery', () => {
-      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (business_id, amount, currency, gateway, status, gateway_reference) VALUES ('${BIZ_ID}', 1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
 
       psql(`
         INSERT INTO payment_saved_card_offers

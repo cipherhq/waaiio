@@ -75,72 +75,12 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const {
-      customer_name, customer_phone, customer_email, customer_address,
-      customer_profile_id, items, tax_rate, discount_type, discount_value,
-      due_date, notes, terms, currency, issue_date,
-    } = body;
-
-    // Recompute financials if items provided
-    let updateData: Record<string, unknown> = {};
-
-    if (items?.length) {
-      const subtotal = items.reduce((sum: number, item: { quantity: number; unit_price: number }) =>
-        sum + (item.quantity || 1) * (item.unit_price || 0), 0);
-
-      const taxRate = tax_rate ?? 0;
-      const taxAmount = Math.round(subtotal * taxRate / 100 * 100) / 100;
-
-      let discountAmount = 0;
-      if (discount_type === 'percent' && discount_value) {
-        discountAmount = Math.round(subtotal * discount_value / 100 * 100) / 100;
-      } else if (discount_type === 'flat' && discount_value) {
-        discountAmount = discount_value;
-      }
-
-      const totalAmount = Math.round((subtotal + taxAmount - discountAmount) * 100) / 100;
-
-      updateData = {
-        subtotal, tax_rate: taxRate, tax_amount: taxAmount,
-        discount_type: discount_type || null, discount_value: discount_value || 0,
-        discount_amount: discountAmount, total_amount: totalAmount,
-      };
-
-      // Replace line items
-      await supabase.from('invoice_items').delete().eq('invoice_id', id);
-      const itemRows = items.map((item: { description: string; quantity: number; unit_price: number }, i: number) => ({
-        invoice_id: id,
-        description: item.description,
-        quantity: item.quantity || 1,
-        unit_price: item.unit_price || 0,
-        amount: Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100,
-        sort_order: i,
-      }));
-      await supabase.from('invoice_items').insert(itemRows);
+    const { data, error } = await supabase.rpc('save_invoice_tax_980', {
+      p_business_id: existing.business_id, p_invoice_id: id, p_body: body,
+    });
+    if (error || !data) {
+      return NextResponse.json({ error: 'Unable to save invoice. Check line prices, tax settings and discounts.' }, { status: 400 });
     }
-
-    if (customer_name !== undefined) updateData.customer_name = customer_name;
-    if (customer_phone !== undefined) updateData.customer_phone = customer_phone || null;
-    if (customer_email !== undefined) updateData.customer_email = customer_email || null;
-    if (customer_address !== undefined) updateData.customer_address = customer_address || null;
-    if (customer_profile_id !== undefined) updateData.customer_profile_id = customer_profile_id || null;
-    if (due_date !== undefined) updateData.due_date = due_date || null;
-    if (notes !== undefined) updateData.notes = notes || null;
-    if (terms !== undefined) updateData.terms = terms || null;
-    if (currency !== undefined) updateData.currency = currency;
-    if (issue_date !== undefined) updateData.issue_date = issue_date;
-
-    const { data, error } = await supabase
-      .from('invoices')
-      .update(updateData)
-      .eq('id', id)
-      .select('*, invoice_items(*)')
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -530,7 +530,16 @@ export default function CalendarPage() {
     const extra: Record<string, unknown> = {};
     if (newStatus === 'confirmed') extra.confirmed_at = new Date().toISOString();
 
-    await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
+    const { error: statusError } = await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
+
+    // #963: an approved booking sends its after-booking intake form (if any).
+    if (!statusError && newStatus === 'confirmed') {
+      fetch('/api/intake/after-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: id, businessId: business.id }),
+      }).catch(() => {});
+    }
 
     setSelectedEntry(null);
     fetchData();

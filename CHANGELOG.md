@@ -1,3 +1,339 @@
+## 2026-11-12 — RSVP by WhatsApp reaches the bot (deep link + guest phone format)
+
+- **Why:** an Owner test showed RSVP codes never reached the bot. There were two causes:
+  - the RSVP page's "Open in WhatsApp" link had no phone number (`wa.me/?text=…`), so WhatsApp opened a "choose chat" picker instead of the business chat;
+  - invite guest phones were stored as typed (for example local `0803…`), while the bot matches the WhatsApp sender in international form (`234803…`), so RSVP codes and buttons never matched.
+- **What changed:**
+  - `app/api/rsvp/[token]/route.ts` GET returns the business WhatsApp number (`wa_number`, via `ChannelResolver`) and no longer exposes `business_id`.
+  - `app/rsvp/[token]/page.tsx` links to `wa.me/<number>?text=RSVP <token>`, and hides the button when the business has no channel.
+  - New `lib/parties/invite-phone.ts` normalizes guest phones with libphonenumber, using the business country. It is used in `app/api/events/invite/route.ts` (host invites, opt-in check, email linking) and `app/api/invite-optin/route.ts` (guest self opt-in).
+  - Existing invites stored in the old local format are found and upgraded in place on resend, so no duplicate invite is created.
+- **Affects:** party/event invite creation and resend, the opt-in check, SMS invites (now receive international numbers, which also fixes Ghana local numbers being sent as +234), and the public RSVP page.
+- **Could break:**
+  - A foreign number typed in local form for a business in another country is read as local. Guests should use a leading `+`.
+  - Old local-format rows are upgraded only when they are re-sent. There is no backfill.
+- **Tests:** `lib/__tests__/rsvp-whatsapp-delivery.test.ts`
+
+## 2026-11-09 — Fee and trial model written down as an Owner standing order
+
+- **Why:** the Owner asked on 2026-11-09 that every financial decision live in the engineering documentation as a standing order that nothing may change.
+- **What changed:**
+  - `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md` has a new section, "Waaiio fee and trial model — Owner standing order". It records:
+    - the fee per plan from sign-up, the same on every route, with one named exception: direct bank transfer (Pro/Premium only) carries no Waaiio fee (Owner, 2026-11-10);
+    - the merchant paying all gateway fees, with Waaiio absorbing none;
+    - the 14-day Pro/Premium trial at sign-up with Premium limits;
+    - upgrade ending the trial;
+    - the separate free credit;
+    - the booking limits;
+    - the known limits that must be fixed before use: Stripe split payments, the own-Stripe setup, the Flutterwave own-gateway split, Paystack Connect, and monthly-invoice double billing;
+    - the evidence required for any fee-related change.
+  - `CLAUDE.md` has a short summary under the payment custody section that points to it.
+  - Source: issue #958; PRs #959, #960, #961.
+- **Affects:** documentation only. No code, configuration or database change.
+- **Could break:** nothing at runtime. From now on, any PR that contradicts these rules must be stopped for an Owner decision.
+
+## 2026-11-08 — Pricing wording: fee from day one plus gateway fees; 14-day Pro/Premium trial; correct rates and booking limits
+
+**Why: Owner decisions, 2026-11-08**
+- **Fee.** Waaiio's fee is Starter 3%, Pro 1.5%, Premium 1% per paid transaction, matching production `pricing_tiers`. It applies **from sign-up**, and the trial never waives it. It is the same on every route, and Waaiio collects it.
+- **Gateway fees.** The business pays every payment-gateway fee; Waaiio absorbs none.
+- **Trial.** The 14-day free trial is for Pro and Premium features. It starts at sign-up, Premium limits apply during it, and the fee stays at the business's plan rate.
+- **Messaging credit.** The free credit (verify your phone, #955) is separate.
+- **Booking limits.** Starter and Pro allow 100 and 1,000 bookings a month.
+- **The problem this fixes.** The pricing page read as "no fees". Several pages and emails quoted old rates (2.5%, 1.5% + ₦75) or wrong limits (50, 300, 500) and a 30-day or 7-day trial.
+
+**Ships in the same release as the code lanes.** This PR changes wording plus the booking limits. The code behind the wording is already on main:
+- #961 (M525) starts the 14-day feature-trial clock at sign-up, ends it on upgrade, and removes the SQL trial fee waiver.
+- #960 removes the app trial fee waiver and applies Premium limits during the trial.
+- #959 makes the merchant bear the Paystack fee on splits and charges the plan fee to own-gateway businesses.
+
+The Stripe split, Stripe own-gateway, Flutterwave own-gateway and Paystack Connect routes are known limits that are not in use (standing order, PR #962).
+
+**What changed**
+- `app/(marketing)/pricing/page.tsx`
+  - **Hero:** "Try every Pro and Premium feature free for 14 days. Starter has no monthly fee: a 3% Waaiio fee applies to each paid transaction from day one, and payment gateway fees are paid by your business."
+  - **Starter card note:** the same fee statement.
+  - **FAQ "What happens after my trial?":** Pro and Premium features switch off, and the fee is the same before and after the trial.
+  - **FAQ "hidden fees":** gateway fees "are paid by your business".
+  - **Compare row:** shows "Up to 1,000".
+- `lib/constants.ts`
+  - The Starter card highlight `TIER_FEATURES.free` is now "14-day trial of Pro & Premium features".
+  - `TIER_TRANSACTION_LIMITS` monthly bookings: 50 becomes **100** (Starter) and 300 becomes **1,000** (Pro).
+  - This table feeds:
+    - the pricing page's "Monthly bookings" row
+    - the dashboard usage meter
+    - the dashboard upgrade banner
+    - `checkTierLimit` in the scheduling bot flow, which now blocks only above 120 (Starter) or 1,200 (Pro) instead of above 60 or 360. The earlier WhatsApp greeting gate (`StandaloneService.checkTierLimitsFromBusiness`, `PRICING_TIERS.maxBookings`) already stopped at 100 / 1,000 WhatsApp bookings and is unchanged. In practice, once its trial has ended, a Starter business is stopped at 100 WhatsApp bookings, or above 120 bookings across all channels. During the trial, Premium limits apply (#960).
+  - Orders, tickets, giving and invoice limits are unchanged.
+- `components/dashboard/UpgradeBanner.tsx`: the banner assumed a 50-booking Starter limit and said Pro gives "500 bookings". It now reads both limits from `TIER_TRANSACTION_LIMITS`: it warns from 70 bookings, says "limit reached" at 100, and names Pro's 1,000.
+- `lib/email/templates.ts`
+  - **Old rates removed:** the trial-ending, trial-ended, subscription-expiring and subscription-expired emails quoted 2.5% and 1.5% + ₦75. They now quote 3% / 1.5% / 1%, and the wrong "7-day" trial wording is gone.
+  - **Trial emails:** they now say Pro and Premium features switch off and the fee stays the same, instead of fees "starting" after the trial.
+  - **Welcome email:** it said "30-day … all features", and now says "14-day … all Pro and Premium features".
+- `app/(marketing)/help/page.tsx`: the two FAQ answers now say: 14-day trial of Pro and Premium features for every new business; fee from day one; gateway fees paid by the business.
+- `app/dashboard/help/page.tsx`
+  - **Before:** "What are the fees?" gave the wrong rates and a 30-day trial.
+  - **Now:** Starter 3%, Pro 1.5%, Premium 1%; category rates or a custom agreement may apply; the 14-day feature trial; the fee from day one; gateway fees paid by the business.
+- `app/dashboard/payouts/page.tsx`: the fee sentence in the Payout Terms of Use had the same wrong rates. It now points to the Pricing page and lists the current rates. The terms version ("1.0") is not changed.
+- `app/api/whatsapp/flow-callback/onboarding.ts`: the WhatsApp sign-up messages and the welcome email said "30-day trial … all features", and the Pro upsell said "500 bookings". They now say a 14-day trial of Pro and Premium features, and 1,000 bookings.
+- `app/get-started/steps/StepPlan.tsx`: the sign-up plan picker said Starter's fee applies "after trial" and labelled Starter a "free trial". It now says "no monthly fee", that the fee applies "from day one, plus payment gateway fees", and that every Pro and Premium feature can be tried free for 14 days.
+- Smaller copy:
+  - `app/(marketing)/blog/posts.ts`: both trial lines now name Pro and Premium features.
+  - `lib/constants.ts`: unused Starter feature strings no longer say "no fees" or "after trial", and the Pro and Premium "Direct bank transfer" strings now say "(zero gateway fees)", matching `TIER_FEATURES`.
+  - The WhatsApp upsell keeps "Upgrade anytime to get:". The trial never changes the fee.
+  - The trial emails now say "keep the features you use" and "your per-transaction fee stays the same", so they hold for custom or category rates too.
+  - `app/dashboard/page.tsx`: the bookings usage-meter fallback is now the Starter limit.
+- `app/dashboard/capabilities/page.tsx`: the in-trial note now says the 14-day trial includes every Pro and Premium feature.
+- Test: `lib/__tests__/pricing-trial-fee-wording.test.tsx` checks:
+  - the rendered pricing page (wording, the absence of "no fees", the booking row)
+  - the rendered upgrade banner at 60, 75 and 100 bookings
+  - the four plan emails
+  - that the booking limits agree everywhere
+  - Also: `lib/__tests__/signup-plan-choice.test.tsx` now checks the plan picker's fee line.
+  - Also: `lib/__tests__/onboarding-wizard-pricing-lifecycle.test.ts` now picks the Premium card by its name (`/^Premium/`), because the Starter card's new trial line mentions Premium. `signup-plan-choice` gets a 15-second timeout, because the page is slow to render.
+
+**Unchanged:**
+- Fee rates, and how fees are calculated. `calculateFee` has had no trial or own-gateway shortcut since #959 and #960.
+- Trial length (`trial_days` = 14), payment routing, and all other limits.
+
+**Could break:**
+- A Starter or Pro business near 50 or 300 bookings can now take bookings up to the new limits, and the upgrade banner no longer shows at 35–69 Starter bookings.
+- `public/llms.txt`, the summary page for AI search tools, said "30-day free trial with all features, then 2.5% per transaction". It now gives the current model.
+- Several pages and emails now state the fee rates and the 14-day trial as fixed text. If the rates or `trial_days` change in settings, update them too.
+
+## 2026-11-08 — Trial starts at sign-up; the Waaiio fee is never waived
+
+**Why:** Owner pricing decisions (2026-11-08, issue #958). The Waaiio fee (Starter 3%, Pro 1.5%, Premium 1%) applies from sign-up and the free trial never waives it. The 14-day free trial is for Pro and Premium features, starts at sign-up for every new business, uses Premium limits, and is separate from the free messaging credit and from `messaging_financial_gate`. Before this change the code waived the fee during a trial, and the trial only started with the messaging-credit grant, so nobody got the 14-day trial.
+
+**What changed**
+- Depends on migration M525 (PR #961, merged and applied first): `businesses.feature_trial_ends_at` is the Pro/Premium trial clock, set at sign-up; `trial_ends_at` stays the messaging-credit clock; the recurring SQL fee path no longer waives.
+- Fee code: `lib/payments/calculateFee.ts`, `lib/getPlatformFees.ts`, `lib/constants.ts` (`calculatePlatformFee`) no longer return 0 in a trial. `lib/bot/flows/shared/payment.ts` records `waived: false`. The payouts balance estimate (`app/api/payouts/balance/route.ts`, added by #959) uses the new trial check. `is_in_trial` is still recorded on the fee basis, for reporting only.
+- Trial status: `lib/trial-status.ts` (`resolveFeatureTrialEndsAt`, `resolveTrialStatus`, `resolveLimitTier`), `lib/capabilities/policy.ts` (`isTrialActive` no longer needs credit; new `getLimitTier`). Capability callers read the feature clock: dashboard layout, capabilities configure, giving save, recurring offer, API guard, bot capability guard, bot service.
+- Premium limits during the trial: `lib/tier-limits.ts`, `lib/bot/standalone.service.ts` (bot booking cap / greeting gate), `lib/bot/conversation-guard.ts`, broadcasts send/schedule/usage, dashboard home usage bars and upgrade banner (`app/dashboard/page.tsx` passes the limit tier), and the billing page.
+- Trial emails: `app/api/cron/trial-check` uses the feature clock and only Starter businesses.
+- Tests: `lib/__tests__/pricing-lane-b-trial-fee.test.ts` (new), `lib/__tests__/pricing-lane-b-upgrade-banner.test.tsx` (new), updated trial/fee/capability tests (the M525 pg test is in PR #961).
+
+**Unchanged:** fee rates, payment routing and custody (both routes), lane C's own-gateway fee and gateway-fee rules (#959), the messaging credit (`activate_trial_if_eligible`, `/dashboard/claim-credit`, the trial-activation cron), existing businesses (no backfill — they do not get a trial).
+
+**What could break**
+- Pro/Premium features now unlock for every new Starter business for 14 days, and switch off after.
+- Businesses in a trial now pay the Waaiio fee.
+- The admin "extend trial" button still writes `trial_ends_at` (the credit clock), not the feature clock (follow-up).
+
+## 2026-11-08 — Merchant pays the Paystack fee on split payments; same Waaiio fee for bring-your-own gateways
+
+- Owner pricing decision 2026-11-08, lane C (part 1): the merchant pays every payment-gateway fee and Waaiio's fee is the same on every route.
+- Paystack split payments now send `bearer: "subaccount"`, so Paystack takes its fee from the merchant's share and Waaiio keeps exactly its fee. Before, Paystack's default made Waaiio's main account pay it (test mode, ₦10,000 payment with a ₦300 Waaiio fee: Waaiio kept ₦50 before, ₦300 after). Covers one-off checkout (`lib/payments/paystack.ts`), saved-card charges (`lib/payments/charge-saved.ts`, both fee-policy paths) and recurring retries (`lib/payments/paystack-recurring.ts` `chargeAuthorization`, used by `app/api/cron/retry-failed-charges`). The split shape is built in one place: new `lib/payments/paystack-split.ts`.
+- A 0 Waaiio fee on a Paystack merchant split is now sent as `transaction_charge: 0`. Before, it was left out, and Paystack then applied the subaccount's default 2.5% (`percentage_charge`).
+- Split-payout (`direct_split`) merchants are now charged the plan rate on one-off checkout (Starter 3%, Pro 1.5%, Premium 1%, or a per-business custom fee), like every other route. Before, it came from the legacy `payout_accounts.platform_percentage` (2.5%). Owner approved moving the live merchant to 3% (2026-11-09). If the plan tier can't be read, checkout is blocked (fail closed). `lib/payments/resolve-stripe-routing.ts`.
+- The merchant financials page (`app/dashboard/financials/page.tsx`, same figure as the billing page) and the payout balance (`app/api/payouts/balance/route.ts`) now estimate split-payout fees at that plan rate instead of `platform_percentage`, so merchants see what they are charged. `platform_percentage` no longer sets or shows any fee. The 2.5% Paystack subaccount default set at payout setup is left as is, because every split request now sends `transaction_charge`.
+- Bring-your-own Paystack reversed split now states `bearer: "account"` explicitly (the merchant's own account pays the fee). This was already the provider default; the amounts are unchanged.
+- Bring-your-own fee: `calculateFee` no longer returns 0% for `payment_routing = 'byo'`, and the bot checkout no longer forces the BYO split fee to 0 on the pinned fee-policy path (`lib/bot/flows/shared/payment.ts`). The older fee path (live today, `fee_policy_enabled = false`) already charged the plan rate. Trial waiver logic is unchanged (separate lane).
+- Public pricing wording (`app/api/public/pricing/route.ts` `byoFeePolicy`) no longer says "0% Waaiio fee"; it now reads "The same Waaiio fee applies when you connect your own payment gateway, and payment gateway fees are paid by your business" (matches PR #957 wording).
+- Not changed here (need CTO/Owner sign-off, see the PR): Stripe Connect split payments (Stripe always bills the platform on destination charges), Flutterwave bring-your-own split, Stripe bring-your-own, Paystack Connect.
+- Tests: new `lib/__tests__/merchant-pays-gateway-fees.test.ts` (28 behavioral tests), new `app/dashboard/financials/__tests__/direct-split-plan-rate.test.tsx`; updated `payout-accounting-hold-balance`, `calculateFee`, `fee-policy-runtime`, `settlement-lifecycle`, `public-pricing-projection`, `paystack-split-recurring`, `flutterwave-split-recurring`, `verified-fee-persistence-762` tests.
+- Could break: a Paystack split whose merchant share is too small to cover Paystack's fee is now rejected by Paystack with a 400 at checkout creation (only possible if the Waaiio fee were close to 100% of the amount). Refunds, the Waaiio-collected route and payout deductions (`payable-fees.ts`) are unchanged.
+
+## 2026-11-08 — M525: feature-trial clock from sign-up; recurring SQL fee path never waives
+
+**Why:** Owner pricing decisions (2026-11-08, issue #958): the Waaiio fee applies from sign-up and the trial never waives it; the 14-day Pro/Premium trial starts at sign-up, separate from the free messaging credit. Release Gate V2 §9.2: the migration ships ahead of the app change (PR #960) in its own PR.
+
+**What changed**
+- `supabase/migrations/525_feature_trial_clock_and_no_trial_fee_waiver.sql` (new):
+  - `businesses.feature_trial_ends_at`, the Pro/Premium trial clock. `trial_ends_at` stays the messaging-credit clock.
+  - BEFORE INSERT trigger: every new business gets `now() + platform_settings.trial_days` (supplied values ignored; missing or invalid `trial_days` gives no trial and does not block sign-up).
+  - BEFORE UPDATE trigger: only the server (service role / function owner) may change the clock.
+  - Owner decision 2026-11-09 ("End trial at upgrade"): a BEFORE UPDATE OF subscription_tier trigger ends a running trial when a Starter business moves to a paid plan, so Pro starts on the upgrade date and a later downgrade does not bring trial days back.
+  - The recurring fee functions (`finalize_token/stripe/paystack_recurring_charge`, `process_recurring_charge` where present) no longer waive the fee: only the `v_is_in_trial := …` statement becomes `false`, in place, keeping each live body, SECURITY DEFINER, search path, owner and grants. The migration fails if a finalizer still reads `trial_ends_at` without that change.
+- `supabase/catalog-deltas/525_….json`: catalog effect.
+- Tests: `lib/__tests__/feature-trial-clock-525.pg.test.ts` (new, in CI's pg job); `stripe-recurring-finalization-db` case s now expects the plan fee in a trial; `trial-lifecycle-db` adds cases: the sign-up clock neither blocks nor doubles the credit grant; an upgrade ends the trial and a downgrade does not restore it.
+- `docs/MIGRATION_REGISTRY.md`: 525 reserved; next is 526.
+
+**Unchanged:** `activate_trial_if_eligible` and the messaging credit, fee rates, routing and custody, BYO rule, existing rows (no backfill).
+
+**What could break**
+- Recurring charges for a business whose credit clock is in the future are now charged the plan fee (none in production today).
+- The M501 accounting activation procedure fails closed (unknown recurring precursor) until its precursor table and stored bodies are updated in the accounting lane.
+- With only this migration live, the app still reads the old trial rule; PR #960 switches it to the new clock.
+
+## 2026-11-07 — Schedule the trial-credit activation job (before message charging is switched on)
+
+**Why:** the Owner chose to make message charging safe before switching it on ("Make it safe first", 2026-11-07).
+- Trial message credit is granted by `activate_trial_if_eligible`. It is called when a business goes live (`app/api/onboarding/verify`, `app/api/whatsapp/embedded-signup`) and when an owner verifies a phone on `/dashboard/claim-credit` (#955).
+- While `messaging_financial_gate` is off, it answers `financial_gate_off` and grants nothing.
+- The only retry is `/api/cron/trial-activation`, and it was never in `vercel.json`. It was not in the database scheduler either (`cron.job` holds only chat-timeout and session-cleanup).
+- So with charging switched on, businesses that went live or verified a phone earlier would never get their trial credit, and their messages would be blocked (`insufficient_allowance_balance`). The claim page's "added automatically when message billing starts" depends on this job.
+
+**What changed**
+- `vercel.json`: `/api/cron/trial-activation` runs hourly at :30.
+- `lib/__tests__/trial-activation-cron-schedule.test.ts` (new) checks:
+  - the schedule entry;
+  - that the route refuses a request without the cron secret;
+  - that it activates an eligible business;
+  - that while charging is off it grants nothing.
+
+**Unchanged:** the route code, `activate_trial_if_eligible`, trial amounts, the one-trial-per-owner and per-phone rules, and every other cron.
+
+**Effect while charging is off:**
+- Each run finds free, active businesses without a trial. They get `financial_gate_off` (or `phone_not_verified`), and nothing is granted.
+- A business whose owner already has a trial is marked ineligible and leaves the queue.
+
+**Known limits (follow-ups):**
+- **The "Trial activation pending" alert is never written.** The route writes it with an upsert on `business_id,type`, but the matching unique index (`uq_trial_pending_alert`, M372) is partial, so Postgres refuses the upsert (42P10). The route ignores that result. The fix is a plain insert that treats a duplicate as already alerted. It was left out of this PR because writing the alert would show a new banner to merchants, and who sees it and its wording are an Owner decision.
+- **The job takes the oldest 100 waiting businesses each run.** Sign-ups that never verify a phone are never marked done, so once there are more than 100 of them, owners who did verify could stop being reached. This needs fixing before many sign-ups arrive with charging on.
+- **The one-trial-per-owner check counts only current (v2) trial grants, not older clock-only trials.** A second business of an owner whose earlier trial was clock-only can still get a trial once its owner's phone is verified.
+- **Legacy reconciliation (Phase 2) does not re-check status, owner or phone.**
+  - It matches 0 rows on production today.
+  - Since #955, WhatsApp Flow sign-ups no longer get a hand-set trial clock, so new sign-ups no longer enter it.
+
+**Could break:** one more cron run an hour; nothing else. The route fails closed without `CRON_SECRET`, and production answers 401, so the secret is set.
+
+## 2026-11-07 — Release V3: re-certify the last release after a same-code redeploy
+
+**Why:** release #5 prepare (run 42320623698) stopped with "Production merchant is not serving the last certified release (stale or uncertified baseline)".
+- On 2026-11-06 at 03:28 UTC, after the Owner changed the production Stripe keys, the merchant site was rebuilt by CLI at release #4's own SHA `466e0691` (deployment `dpl_9jdnT2Lx…`).
+- The code was the same, but it was a different deployment from the one in release #4's record (`dpl_GGSn7F8F…`).
+- The documented recovery ("reviewed lock update") had no effect, because prepare reads the lock only when no release record exists.
+- Rolling back would bring back the old Stripe keys.
+
+**What changed**
+- `scripts/release-v3/lock.json`: new `recertified` entry (Owner-approved 2026-11-07). It names deploy run 42136027063, SHA `466e0691`, the merchant deployment now serving (sha256 `bc8a5005…`), and the unchanged admin deployment (`73dbe116…`).
+- `scripts/release-v3/admission.mjs` `loadLock`: accepts an optional `recertified` with exactly these keys and valid values; anything else fails closed.
+- `scripts/release-gate-v3.mjs`: `certifiedBaseline` passes the last record through the new `applyRecertification`. The lock entry replaces the record's deployment hashes only when it names exactly the newest successful deploy run and that run's SHA. A different SHA fails closed. An entry for an older run is ignored. The packet's `certified_by` says "lock re-certification after release-deploy run N".
+- `docs/RELEASE_V3_GATE.md`: "Same-code redeploy" under Recovery.
+
+**Unchanged:** every other prepare and deploy check (CI, staging, database admission, reviews, lane, packet, single use, deploy identity); mixed baselines (still lock `certified` only); rollback rules; migrations, app code.
+
+**Tests:** `scripts/__tests__/release-v3-gate.test.ts` covers `certifiedBaseline` with a real release-record zip (record only, matching re-certification, older run ignored, other SHA refused). `scripts/__tests__/release-v3-admission.test.ts` covers the committed entry and malformed entries.
+
+**Could break:** nothing outside the release gate. A wrong deployment hash in the entry would make prepare stop again (fail closed).
+
+## 2026-11-07 — Verify your phone number to claim the free messaging credit
+
+- **What changed (Owner decisions 2026-11-07):** sign-up stays smooth with no phone step. Afterwards, the owner verifies a phone number to claim the free messaging (trial) credit, like the "add bank account" step.
+  - **Which numbers count:** any number the owner gets WhatsApp messages on, either their personal number or their everyday business number. A number connected to Waaiio (any active `whatsapp_channels` row) is refused, because it can't receive the code.
+  - **Numbers already in use:** a number already on another Waaiio login is refused for now ("rule B"). Moving a number off a customer-only login is a follow-up.
+  - **New sign-ups only:** existing businesses are not back-filled.
+- **Server.**
+  - New `POST /api/trial-credit/claim`:
+    - Requires ownership of `business_id`.
+    - `check: true` only refuses a number connected to Waaiio, before any code is sent (limited to 10 checks per 10 minutes per login).
+    - Otherwise it verifies the code with the existing `verifyPhoneOtp`, using the same 5 per 15 minutes per-phone limit and the brute-force counters as the login code. It then saves the number as the login's confirmed phone (`updateUserById {phone, phone_confirm: true}`) and runs the normal trial check `activate_trial_if_eligible` (M465) with all of its rules.
+    - It never replaces a different phone already confirmed on the login.
+    - Returns `{verified, credited, reason}`.
+  - New `GET /api/trial-credit/status` (owner only, read-only) returns:
+    - `phone_verified` and `credited` (this business's `trial_grant`/`trial_v2` row)
+    - the credit amount for the business's currency
+  - Helpers live in `lib/trial-credit/verified-phone.ts`.
+- **Dashboard.**
+  - New page `/dashboard/claim-credit` (`app/dashboard/claim-credit/page.tsx`), with the Owner-agreed copy.
+  - New first "Getting started" item, "Claim your free messaging credit" (`components/dashboard/OnboardingChecklist.tsx`). It is done once the number is verified or the credit was added.
+  - While message billing is off, the page says "Phone verified. Your free credit will be added automatically when message billing starts." The hourly trial-activation job adds it then, once that job is scheduled (PR #954). If another of the owner's businesses already has the free credit, the page says so instead.
+- **WhatsApp Flow sign-up** (`app/api/whatsapp/flow-callback/onboarding.ts`; only reachable where channel operations are enabled): the hand-set 30-day `trial_ends_at` is removed. These owners claim the credit on `/dashboard/claim-credit` like everyone else. The number in the flow token is not treated as verified: it is plain text echoed back by the client, not signed by Waaiio.
+- **Tests:**
+  - `lib/__tests__/trial-credit-claim.test.ts`
+  - `lib/__tests__/trial-credit-status.test.ts`
+  - `lib/__tests__/claim-credit-ui.test.tsx` (rendered checklist and page)
+  - `lib/__tests__/flow-onboarding-no-hand-set-trial.test.ts`
+  - The two existing checklist suites now stub the status call as already done, and their step counts gained the new step.
+- **What could break:**
+  - Every visible "Getting started" checklist gains one step, so the counts shift by one.
+  - A Flow sign-up no longer gets a trial end date at sign-up. Its WhatsApp and email welcome text still mention a 30-day trial; that wording is unchanged and needs an Owner decision.
+  - Supabase Auth phone uniqueness is the "one number, one login" rule. A merchant who once messaged a Waaiio bot as a customer already has their number on a customer login, and must use a different number until the follow-up lands.
+  - **Known limits (follow-ups):**
+    - The hourly trial-activation job picks the oldest 100 free, active businesses with no trial. Sign-ups that never verify stay in that batch, so at larger scale they could crowd out verified owners waiting for billing to start.
+    - A claimed number does not yet work for "log in with phone". `profiles.phone` is not set, so that login tries to create a new account and fails.
+    - The status amount reads `trial_credit_minor_by_currency` directly, not the versioned config the RPC uses. This only affects what is displayed.
+    - "One credit per number" relies on Supabase Auth's exact phone match, so number variants are not merged.
+    - Phone login with a claimed number signs the owner into their account and, as phone login already does today, replaces their password. An email-and-password owner who later uses phone login loses their email password.
+    - The connected-number check reads active channels in one query (default row limit about 1000).
+  - No database change.
+
+## 2026-11-06 — Broadcasts: say why people were skipped, and "could not be confirmed" when the list is capped (#948 follow-up)
+
+**Problem:** two copy gaps the #948 reviewers raised (P2s, Owner approved a follow-up).
+1. Keyword-campaign respondents who had not opted in were dropped silently: the banner read "Sending to {kept} respondents", or "Sending to 0 respondents", with no reason.
+2. The opted-in list is capped at 500 people and at a 5,000-row consent scan. Hitting the scan cap left `truncated` false, and with a capped list the page still called unmatched imported numbers "not opted in" although they might have opted in.
+
+**What changed**
+- `lib/forms/opted-in-contacts.ts`: `listOptedInContacts` sets `truncated: true` when the consent scan stops at `MAX_CONSENT_ROWS` with rows possibly unread (a full last page), as well as when more than 500 people are eligible. `MAX_CONSENT_ROWS` is exported for tests. Who is listed is unchanged.
+- `app/dashboard/broadcasts/page.tsx`: the campaign banner adds "Skipped N respondents who have not opted in." (respondents counted once per number). When the opted-in list is truncated, unmatched campaign respondents and pasted/CSV numbers read "N … could not be confirmed as opted in (your list is too long to check them all here)." instead of "not opted in". When not truncated the "not opted in" wording is kept. The "Showing the first N people who opted in." note is unchanged and now also shows at the scan cap.
+- `components/dashboard/forms/FormSendPanel.tsx`: the capped-list label says "showing the first {count}" instead of a fixed "500", since the scan cap can cap the list below 500.
+- `/api/broadcasts/recipients` and `/api/forms/recipients` already pass `truncated` through unchanged; tests now prove it at the scan cap.
+
+**Unchanged:** send, schedule and cron routes; `hasRecipientPermission`; consent rules; who is included in any audience; the Forms picker's behaviour.
+
+**Tests:** `lib/__tests__/opted-in-contacts-scan-cap.test.ts` (new), plus additions to `lib/__tests__/broadcasts-recipients-591b.test.ts`, `lib/__tests__/forms-send-591.test.ts`, `lib/__tests__/forms-send-ui-591.test.tsx`, `app/dashboard/broadcasts/__tests__/broadcasts-page.test.tsx`.
+
+**Could break:** nothing functional. A business with exactly 5,000 consent rows will see the "capped" wording although nothing was missed (the scan cannot tell without another read).
+
+## 2026-11-06 — Bot: typed "updates" and My Account "Get updates" (#591 Part B)
+
+Owner decisions 2026-11-06 on #591: Q6, customers can ask for updates in **My Account** and by typing **"updates"** (or "get updates"), but not from the main menu; Q1, one Yes covers marketing **and** utility; Q3, STOP wins. This reuses #942's `recordUpdatesOptIn`; there is no migration.
+
+- **What changed**
+  - `lib/bot/customer-updates-optin.ts`: new sources `keyword` and `account`, with evidence values `bot_updates_keyword` and `bot_my_account_menu`.
+    - `askUpdatesOptIn` sends the confirmation "Get offers and updates from {Business} (and Waaiio) on WhatsApp? You can reply STOP any time." with **Yes, get updates** / **No thanks**. If the customer already agreed or unsubscribed, it uses the #942 wording instead. It records nothing.
+    - `handleUpdatesConfirmTap` handles the Yes, whose id is `updates_yes:<keyword|account>:<businessId>`. It records only on a real button tap, and only when the id's business is the business of the chat the customer is in now. Otherwise it records nothing and replies "That option is no longer available".
+    - `updatesAccountRowFor` builds the My Account row. It uses the same who-sees-it rule as the #942 row.
+    - #942's own tap ids (`menu`/`welcome`) and hook are unchanged.
+  - `lib/bot/bot.service.ts`:
+    - **Typed keyword.** Handled in the unified-keyword block, under the same free-text and step-owned guards as every other keyword. The business is the chat session's business only.
+    - **No business yet (shared number).** Typing the keyword before a business is chosen replies "Choose a business first…", unless a business's code is "updates".
+    - **Yes / No thanks taps.** Handled right after the global queries, and they leave the chat session as it was. A recorded Yes, or a No thanks, ends with the next-steps menu (My Account if the customer has an account, View Options, Search directory on a shared number) and "Powered by Waaiio.com" (hidden for white-label).
+  - `lib/bot/flows/capability-selection.flow.ts`: My Account gets "🎁 Get updates" as its last row before Back. The row is added only if it fits within WhatsApp's 10-row limit; it never pushes an existing row out. It is hidden once the customer has agreed or after a STOP. Tapping it sends the same confirmation and keeps the chat on My Account without re-sending the list.
+  - `lib/bot/flows/flow-localization.ts`: 7 new `updates.*` keys in all 8 locales, added to the button, list, placeholder, command and native-review registries.
+  - `lib/__tests__/helpers/memory-db.ts`: case-insensitive `ilike` (no wildcards), for the bot-code check.
+- **Owner decision 2026-11-06 (relayed by the coordinator): latest row wins.** An earlier "No thanks" (a `revoked` marketing or utility consent) no longer blocks a later explicit Yes on any opt-in path: the #942 menu and welcome rows, the typed-keyword confirmation, and My Account.
+  - `recordUpdatesOptIn` now appends granted marketing + utility rows over a revoked one.
+  - Unchanged: `granted` still returns `already`; an active STOP (business or global) still blocks and returns `opted_out`; the channel and business checks are the same.
+  - A revoked customer still does not get the offer row shown again (#942's visibility rule is unchanged). The typed keyword asks them as usual.
+  - #942's tests that asserted "revoked blocks" were updated to the new behaviour, and a test was added for revoked plus an active STOP, which is still blocked.
+- **Unchanged:** the main menu (#507), payment code, #942's menu and welcome rows, STOP/START words, and Forms/broadcasts.
+- **What could break:**
+  - A merchant keyword "updates" is now answered by this built-in word first.
+  - A customer on a business's own number with no open chat who types "updates" gets the normal welcome, not the confirmation.
+  - With many My Account rows (9 or more before Back), the row is not shown; typing "updates" still works.
+
+## 2026-11-06 — Forms: confirm "send me updates" on WhatsApp (#591, Owner option C part B1)
+
+- **What changed (Owner decisions 2026-11-06, issue #591):**
+  - **Recording a tick.** A ticked "send me updates" box on a public form records a pending request: `evidence_reference = form:<formId>|confirm:<sha256(nonce)>`, `policy_version = 'optin-v1'`. The 32-byte nonce is never stored. A request that was actually delivered gets `|sent:<iso>` appended.
+  - **Re-ticks.** A re-tick adds no new row when the latest record is granted, or is a live request (pending, sent, at most 30 days old). Owner decision 2026-11-06: an expired request, a request that was never sent, or a pre-release tick does not block a fresh tick. A new request is recorded and sent, and the old one becomes stale.
+  - **Opted-out numbers** (business or global) are not recorded and nothing is sent to them: from a form tick, a customer who sent STOP is never sent a request, so they re-subscribe via START or the in-chat opt-in. Uniform opt-in response: every valid ticked number gets `optInPending: true`.
+  - **Q7.** Ticks recorded before this release get no message unless the customer ticks again.
+  - **Sending the request.** After the response is saved (`after()`), Waaiio asks the typed number to confirm:
+    - Inside THIS business's own 24-hour window (the shared `businessChatWindowState` rule), it sends free-form "Yes, send updates" / "No thanks" buttons, in a single attempt (`sendButtons` gains `noRetry`).
+    - Otherwise, only on Waaiio's shared number, it sends the template `waaiio_updates_optin_v1` (`en`), when APPROVED.
+    - Otherwise, including when the window cannot be read, nothing is sent and the request stays pending.
+    - Nothing is sent to a phone with 3 or more requests in the last 24 hours, or once a business has 200 requests today (UTC).
+    - A send failure never fails the submit.
+  - **Handling the tap.** New `lib/consent/optin-confirmation.ts` handles the tap. It is called from the verified Meta webhook right after the merchant-alert opt-in and before the bot.
+    - The business comes only from the matching pending row for the Meta-verified sender, and the tap must arrive on that business's sending number.
+    - Yes writes granted `marketing` AND `utility` rows (`source 'whatsapp'`, never expiring), then clears only OLDER STOPs for that business (kept only as a race guard, since opted-out numbers are never sent a request).
+    - Nothing is granted when there is a STOP newer than the request, or any global opt-out (the global-opt-out refusal was accepted by the Owner 2026-11-06).
+    - No writes one revoked `marketing` row only, even for a request older than 30 days (Owner decision 2026-11-06, "Promotions only"). Existing utility consent is left as it is.
+    - A Yes on a request older than 30 days, a stale request or an unknown nonce gets an "expired" reply.
+    - Typed text is never accepted.
+  - **Webhook.** The Meta webhook now reads template quick-reply taps (`type: 'button'`) only when the payload matches `optin_(yes|no):<nonce>`. Every other template button is still dropped.
+  - **Sender.** `MessageSender.sendTemplate` gains `quickReplyPayloads` (button components with `sub_type: 'quick_reply'`), and `CloudTemplateMessage` types are widened to match.
+- **Files:**
+  - `lib/consent/optin-confirmation.ts` (new)
+  - `app/api/forms/submit/route.ts`
+  - `app/api/webhook/meta-cloud/route.ts`
+  - `lib/channels/message-sender.ts`
+  - `lib/channels/meta-cloud.ts`
+  - `lib/__tests__/helpers/memory-db.ts` (adds `like`)
+  - `lib/__tests__/forms-send-591.test.ts` (new evidence format)
+  - `lib/__tests__/form-optin-confirmation-591.test.ts` (new)
+  - `lib/__tests__/optin-template-quick-reply-591.test.ts` (new)
+- **No migration.** `customer_consents` CHECKs already allow `source 'whatsapp'` and status `pending`/`granted`/`revoked`. `evidence_reference` is plain text. Writes use the service role.
+- **Owner action:** submit the `waaiio_updates_optin_v1` template on the platform account (definition in the PR). Until it is approved, only in-window confirmations go out. Dedicated numbers only ever get in-window confirmations.
+- **Could break:**
+  - Template buttons other than opt-in payloads are unchanged (still dropped).
+  - A customer who ticks the box on many businesses' forms in one day gets at most 3 requests.
+  - `sendButtons` keeps retrying by default; only callers that pass `noRetry` get a single attempt.
+
 ## 2026-11-06 — Broadcasts page shows only people who opted in (#591 Part B)
 
 **Problem:** the Broadcasts page built its audience and "Sending to N" count from `customer_profiles.notification_opt_in`, which defaults to true (migration 021). The send routes (`/api/broadcasts/send`, `/api/broadcasts/schedule`, the scheduled-broadcasts cron) only message people whose latest WhatsApp **marketing** consent for the business is granted, unexpired and not opted out (`hasRecipientPermission(..., 'marketing')`). So the page promised N people while the server sent to the granted subset, often none. People who opted in without a profile never appeared.

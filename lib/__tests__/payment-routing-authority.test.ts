@@ -61,6 +61,8 @@ vi.mock('@/lib/getPlatformFees', () => ({
 }));
 
 vi.mock('@/lib/trial-status', () => ({
+  resolveFeatureTrialEndsAt: vi.fn().mockResolvedValue(null),
+  resolveLimitTier: vi.fn(async (_s: unknown, _b: unknown, t?: string | null) => (t === 'growth' || t === 'business' ? t : 'free')),
   resolveTrialStatus: vi.fn(async () => false),
   resolveTrialCredit: vi.fn(async () => false),
 }));
@@ -257,7 +259,7 @@ describe('(3) Successful no-BYO platform path', () => {
       return makeChain({ data: null, error: null });
     });
 
-    const supabase = { from: fromMock, rpc: vi.fn(() => makeChain({ data: null, error: null })) };
+    const supabase = { from: fromMock, rpc: vi.fn((name: string) => makeChain({ data: name === 'reserve_merchant_tax_payment_980' ? { taxable: false } : null, error: null })) };
 
     const result = await initializePayment(supabase as any, BASE_OPTS);
 

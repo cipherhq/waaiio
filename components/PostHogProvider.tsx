@@ -7,6 +7,28 @@ import { createClient } from '@/lib/supabase/client';
 let posthogInitialized = false;
 
 /**
+ * Pages whose URL holds a private, single-use token and whose content may be
+ * health or other sensitive answers (#963 client intake). Analytics never
+ * starts there, and any event from such a page is dropped, so neither the
+ * token nor what the client taps reaches PostHog.
+ */
+export function isPrivateLinkPath(pathname: string): boolean {
+  return pathname === '/intake' || pathname.startsWith('/intake/');
+}
+
+/** posthog-js before_send hook: drop events from (or naming) a private link page. */
+export function dropPrivateLinkEvents<T extends { properties?: Record<string, unknown> } | null>(event: T): T | null {
+  if (!event) return event;
+  if (typeof window !== 'undefined' && isPrivateLinkPath(window.location.pathname)) return null;
+  const props = event.properties || {};
+  for (const key of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$prev_pageview_pathname']) {
+    const value = props[key];
+    if (typeof value === 'string' && /\/intake(\/|$|\?)/.test(value)) return null;
+  }
+  return event;
+}
+
+/**
  * PostHog provider that respects cookie consent.
  * Only initializes PostHog if analytics consent has been given.
  * Listens for consent changes to start/stop tracking dynamically.
@@ -23,6 +45,13 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function initIfConsented() {
+      if (isPrivateLinkPath(window.location.pathname)) {
+        // Never track a private intake link, even with analytics consent.
+        if (posthogInitialized) {
+          import('posthog-js').then(({ default: ph }) => { ph.opt_out_capturing(); });
+        }
+        return;
+      }
       const consent = getCookieConsent();
       if (!consent?.analytics) {
         // If PostHog was initialized but consent was revoked, opt out
@@ -44,6 +73,7 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
             capture_pageview: true,
             capture_pageleave: true,
             opt_out_capturing_by_default: true,
+            before_send: dropPrivateLinkEvents,
             loaded: (ph) => {
               if (process.env.NODE_ENV === 'development') ph.debug();
             },

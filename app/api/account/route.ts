@@ -15,12 +15,18 @@ import { logAdminAudit } from '@/lib/admin-audit';
  *
  * Supports:
  * - Immediate deletion (default)
- * - 30-day grace period (body: { gracePeriod: true })
+ * - 30-day grace period (body: { gracePeriod: true }) is NOT available yet
+ *   (#887): there is nowhere to store the schedule and nothing completes it.
+ *   It is refused before anything is changed. Owner decision 2026-11-10.
  * - Cancels active payment subscriptions
  * - Deactivates WhatsApp bot sessions
  * - Sends confirmation email
  * - Full audit logging
  */
+
+const GRACE_PERIOD_UNAVAILABLE_MESSAGE =
+  "We couldn't schedule a 30-day deletion. Nothing has been changed. "
+  + 'Please contact support@waaiio.com to delete your account.';
 
 export async function DELETE(request: NextRequest) {
   try {
@@ -37,6 +43,17 @@ export async function DELETE(request: NextRequest) {
       gracePeriod = body?.gracePeriod === true;
     } catch {
       // No body — immediate deletion
+    }
+
+    // #887: refuse a 30-day request BEFORE cancelling subscriptions, closing
+    // bot chats, writing the audit row or sending email. It used to report
+    // "scheduled" while saving nothing (profiles.metadata never existed).
+    if (gracePeriod) {
+      logger.warn(`[ACCOUNT-DELETE] 30-day deletion requested by ${user.id}; not available yet (#887)`);
+      return NextResponse.json({
+        error: GRACE_PERIOD_UNAVAILABLE_MESSAGE,
+        code: 'grace_period_unavailable',
+      }, { status: 409 });
     }
 
     const serviceClient = createServiceClient();
@@ -109,61 +126,6 @@ export async function DELETE(request: NextRequest) {
       },
     });
 
-    if (gracePeriod) {
-      // 30-day grace period: mark for deletion instead of immediate delete
-      const deletionDate = new Date();
-      deletionDate.setDate(deletionDate.getDate() + 30);
-
-      // Update profile metadata with scheduled deletion
-      const { data: profile } = await serviceClient
-        .from('profiles')
-        .select('metadata')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      const existingMetadata = (profile?.metadata || {}) as Record<string, unknown>;
-      await serviceClient
-        .from('profiles')
-        .update({
-          metadata: {
-            ...existingMetadata,
-            deletion_scheduled: true,
-            deletion_date: deletionDate.toISOString(),
-            deletion_requested_at: new Date().toISOString(),
-          },
-        })
-        .eq('id', user.id);
-
-      // Soft-delete all businesses
-      for (const bizId of businessIds) {
-        await serviceClient
-          .from('businesses')
-          .update({ status: 'deleted' })
-          .eq('id', bizId);
-      }
-
-      logger.info(`[ACCOUNT-DELETE] User ${user.id} scheduled for deletion on ${deletionDate.toISOString()} (30-day grace period)`);
-
-      // Send confirmation email
-      if (user.email) {
-        const emailContent = accountDeletionConfirmationEmail(
-          user.email.split('@')[0],
-          deletionDate.toISOString().split('T')[0],
-          true,
-        );
-        await sendEmail({ to: user.email, ...emailContent }).catch((e) =>
-          logger.error('[ACCOUNT-DELETE] Failed to send confirmation email:', e)
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-        gracePeriod: true,
-        deletionDate: deletionDate.toISOString(),
-        message: 'Your account has been scheduled for deletion in 30 days. You can cancel this by logging back in.',
-      });
-    }
-
     // Immediate deletion path
     // Soft-delete all businesses (preserves financial records)
     for (const bizId of businessIds) {
@@ -203,7 +165,9 @@ export async function DELETE(request: NextRequest) {
 
 /**
  * Cancel scheduled account deletion (grace period).
- * Removes deletion_scheduled metadata and reactivates businesses.
+ * No deletion can be scheduled yet (#887), so there is never anything to
+ * cancel. Answers honestly without reading the never-existing
+ * profiles.metadata column.
  */
 export async function PATCH() {
   try {
@@ -212,47 +176,7 @@ export async function PATCH() {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const serviceClient = createServiceClient();
-
-    // Check if deletion is actually scheduled
-    const { data: profile } = await serviceClient
-      .from('profiles')
-      .select('metadata')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    const metadata = (profile?.metadata || {}) as Record<string, unknown>;
-    if (!metadata.deletion_scheduled) {
-      return NextResponse.json({ error: 'No deletion scheduled' }, { status: 400 });
-    }
-
-    // Remove deletion metadata
-    const { deletion_scheduled, deletion_date, deletion_requested_at, ...cleanMetadata } = metadata;
-    await serviceClient
-      .from('profiles')
-      .update({ metadata: cleanMetadata })
-      .eq('id', user.id);
-
-    // Reactivate businesses that were soft-deleted
-    const { data: businesses } = await serviceClient
-      .from('businesses')
-      .select('id')
-      .eq('owner_id', user.id)
-      .eq('status', 'deleted');
-
-    if (businesses && businesses.length > 0) {
-      for (const biz of businesses) {
-        await serviceClient
-          .from('businesses')
-          .update({ status: 'active' })
-          .eq('id', biz.id);
-      }
-    }
-
-    logger.info(`[ACCOUNT] User ${user.id} cancelled scheduled deletion`);
-
-    return NextResponse.json({ success: true, message: 'Account deletion cancelled' });
+    return NextResponse.json({ error: 'No deletion scheduled' }, { status: 400 });
   } catch (error) {
     logger.error('[ACCOUNT] PATCH error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
