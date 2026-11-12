@@ -340,6 +340,19 @@ describe('BYO refund credential is decrypted before reaching the provider', () =
     expect(r.state).toBe('provider_ambiguous');
     vi.unstubAllEnvs();
   });
+
+  it('undecryptable key during reconciliation does not query the provider and stays pending', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const { supabase, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-byo', status: 'provider_pending', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-byo', provider_connection_id: 'cred-1', connect_account_id: null },
+      credential: { secret_key: 'aa:bb:cc', connect_account_id: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockQueryStatus).not.toHaveBeenCalled();
+    expect(r.state).toBe('provider_pending');
+    vi.unstubAllEnvs();
+  });
 });
 
 // #980: exercise the real refund handler; only DB/provider boundaries are mocked.
