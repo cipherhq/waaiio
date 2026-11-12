@@ -128,6 +128,10 @@
       "schedule": "0 */6 * * *"
     },
     {
+      "path": "/api/cron/messaging-spend-warnings",
+      "schedule": "40 * * * *"
+    },
+    {
       "path": "/api/cron/subscription-checkout-recovery",
       "schedule": "0 2,6,10,14,18,22 * * *"
     },
