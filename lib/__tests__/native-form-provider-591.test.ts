@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFlowAsset, uploadFlowJson, publishFlow, getFlowStatus, MetaFlowApiError } from '@/lib/whatsapp-forms/meta-flow-asset';
+import { MetaCloudService } from '@/lib/channels/meta-cloud';
 const request = vi.fn(); const token = 'server-only-test-token';
 beforeEach(() => { request.mockReset(); vi.stubEnv('WHATSAPP_NATIVE_FORMS_ENABLED','true'); vi.stubEnv('META_GRAPH_API_VERSION','v22.0'); vi.stubGlobal('fetch',request); });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -32,5 +33,40 @@ describe('#591 provider HTTP adapter contract (no external egress)', () => {
     vi.stubEnv('WHATSAPP_NATIVE_FORMS_ENABLED','false');
     await expect(publishFlow(token,'123')).rejects.toThrow('not authorized');
     await expect(getFlowStatus(token,'../123')).rejects.toThrow('valid flow ID'); expect(request).not.toHaveBeenCalled();
+  });
+});
+
+describe('#591 native Flow message HTTP body (no external egress)', () => {
+  const message = { to: '12025550123', bodyText: 'Complete this form.', flowId: '123', flowCta: 'Open form', screen: 'FORM', flowToken: 'signed-test-token' };
+  const service = () => new MetaCloudService({ accessToken: token, phoneNumberId: '456', wabaId: '987' });
+
+  it.each([
+    { label: 'native static form', overrides: {} },
+    { label: 'legacy onboarding', overrides: { screen: 'WELCOME', flowToken: 'onboarding-test-token' } },
+    { label: 'explicit empty data', overrides: { data: {} } },
+  ])('omits optional empty data for $label without changing the other message fields', async ({ overrides }) => {
+    request.mockResolvedValue(Response.json({ messages: [{ id: 'wamid.test' }] }));
+    const input = { ...message, ...overrides };
+    expect(await service().sendFlow(input)).toEqual({ messageId: 'wamid.test' });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0][0]).toBe('https://graph.facebook.com/v22.0/456/messages');
+    const body = JSON.parse(request.mock.calls[0][1].body);
+    expect(body).toEqual({
+      messaging_product: 'whatsapp', to: input.to, type: 'interactive',
+      interactive: { type: 'flow', body: { text: input.bodyText }, action: { name: 'flow', parameters: {
+        flow_message_version: '3', flow_id: input.flowId, flow_cta: input.flowCta,
+        flow_action: 'navigate', flow_token: input.flowToken, flow_action_payload: { screen: input.screen },
+      } } },
+    });
+  });
+
+  it('preserves populated screen data and sends only once', async () => {
+    request.mockResolvedValue(Response.json({ messages: [{ id: 'wamid.test' }] }));
+    const data = { product_name: 'Workshop', quantity: 1, optional_updates: false };
+    await service().sendFlow({ ...message, data });
+    expect(request).toHaveBeenCalledTimes(1);
+    const parameters = JSON.parse(request.mock.calls[0][1].body).interactive.action.parameters;
+    expect(parameters.flow_action_payload).toEqual({ screen: 'FORM', data });
+    expect(parameters.flow_token).toBe(message.flowToken);
   });
 });

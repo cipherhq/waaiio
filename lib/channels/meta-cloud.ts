@@ -509,7 +509,8 @@ export class MetaCloudService {
       flow_action: 'navigate',
       flow_action_payload: {
         screen: message.screen,
-        data: message.data || {},
+        // Meta requires optional screen data to be non-empty when supplied.
+        ...(message.data && Object.keys(message.data).length > 0 ? { data: message.data } : {}),
       },
     };
     if (message.flowToken) {
