@@ -22,7 +22,6 @@ import { getPlatformSettingsSync, loadPlatformSettings, type PlatformSettings } 
 import { logger } from '@/lib/logger';
 import { MetaCloudSender } from '@/lib/channels/message-sender';
 import { isConsentControlText } from '@/lib/bot/consent-words';
-import { parseQuoteResponseButton } from '@/lib/tax/quote-acceptance';
 
 /** Lowest daily limit a business may set for itself. */
 export const MIN_CUSTOMER_DAILY_REPLY_LIMIT = 10;
@@ -219,14 +218,16 @@ export interface InboundMessageKind {
 
 /**
  * True when this inbound message is never limited:
- * - a STOP or START command (consent replies are always answered);
- * - a catalog order or an accepted quote, whose reply is the payment link
- *   (a paying customer is never cut off; neither has a bot session to check).
+ * - a STOP or START command, or the STOP picker's own buttons (consent
+ *   replies are always answered);
+ * - a native catalog order, whose reply is the payment link (a paying
+ *   customer is never cut off; a catalog order has no bot session to check).
+ * An accepted quote is exempted at its payment-link send instead (see
+ * handleQuoteResponse), because the button text alone proves nothing.
  */
 export function isUnlimitedInbound(kind: InboundMessageKind): boolean {
   if (kind.isCatalogOrder) return true;
-  if (isConsentControlText(kind.text)) return true;
-  return parseQuoteResponseButton(kind.text?.trim() ?? '')?.action === 'accept';
+  return isConsentControlText(kind.text);
 }
 
 /**

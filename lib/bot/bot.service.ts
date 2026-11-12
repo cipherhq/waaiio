@@ -323,8 +323,9 @@ export class BotService {
       if (abuse.timeout) {
         const existingSession = await this.getActiveSession(from);
         if (existingSession) await this.deactivateSession(existingSession.id);
-        await this.sendPlatformText(from, abuse.message);
+        // Store the pause first: the warning send can be refused (daily limit).
         await pauseCustomer(this.supabase, from, getPlatformSettingsSync().abuse_cooldown_hard_minutes, true);
+        await this.sendPlatformText(from, abuse.message);
         return;
       }
       if (abuse.warn && abuse.message) {
@@ -4765,7 +4766,8 @@ export class BotService {
   // ── Quote Response Handler ──────────────────────────────
 
   private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject', digest?: string): Promise<void> {
-    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action, digest);
+    return _handleQuoteResponse(this.supabase, this.sendText.bind(this), from, quoteId, action, digest,
+      (to, text) => sendBotText(this.messageSender, to, text, { payingCustomer: true }));
   }
 
   // ── Ticket Check-in via WhatsApp ──────────────────────

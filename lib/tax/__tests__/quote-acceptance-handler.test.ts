@@ -92,3 +92,29 @@ it('canonical digest retains values/line order and ignores JSONB object-key orde
  expect(parseQuoteResponseButton(`accept_quote_${id}_bad`)).toBeNull();
  expect(parseQuoteResponseButton(`reject_quote_${id}_${'a'.repeat(64)}`)).toBeNull();
 });
+
+describe('#536 daily-limit exemption for the quote payment link', () => {
+ it('only a fresh acceptance sends its payment link through the paying sender', async () => {
+   const snap = snapshot(true), f = fixture(snap), paying = vi.fn(async (_to: string, _text: string) => {});
+   await handleQuoteResponse(f.db as never, f.send, from, id, 'accept', quoteAcceptanceDigest(id, snap), paying);
+   expect(paying).toHaveBeenCalledTimes(1);
+   expect(paying.mock.calls[0][1]).toContain('https://pay.example/980');
+   expect(f.send.mock.calls.map(c => c[1]).join('\n')).not.toContain('https://pay.example/980');
+ });
+ it('a re-tap of an accepted quote re-sends the link as an ordinary (limited) reply', async () => {
+   const snap = snapshot(true), paying = vi.fn(async (_to: string, _text: string) => {});
+   const f = fixture(snap, { result: { accepted: true, already_accepted: true, order_id: 'order', business_id: 'business', reference_code: 'O980', customer_phone: from, total: 10.75 } });
+   await handleQuoteResponse(f.db as never, f.send, from, id, 'accept', quoteAcceptanceDigest(id, snap), paying);
+   expect(paying).not.toHaveBeenCalled();
+   expect(f.send.mock.calls[0][1]).toContain('https://pay.example/980');
+ });
+ it.each([
+   ['unknown or expired quote', { accepted: false, reason: 'expired' }],
+   ['another customer', { accepted: false, reason: 'identity_mismatch' }],
+ ])('replies for %s never use the paying sender', async (_label, result) => {
+   const snap = snapshot(true), f = fixture(snap, { result }), paying = vi.fn(async (_to: string, _text: string) => {});
+   await handleQuoteResponse(f.db as never, f.send, from, id, 'accept', quoteAcceptanceDigest(id, snap), paying);
+   expect(paying).not.toHaveBeenCalled();
+   expect(f.send).toHaveBeenCalled();
+ });
+});

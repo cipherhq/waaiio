@@ -167,7 +167,7 @@ export interface MessageSender {
   enterPlatformDiscovery?(): void;
   /** S-1 (#256): Read the currently bound business identity. */
   readonly boundBusinessId?: string;
-  sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string }): Promise<{ success?: boolean; messageId?: string }>;
+  sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string; /** #536: payment-link reply, never daily-limited. */ payingCustomer?: boolean }): Promise<{ success?: boolean; messageId?: string }>;
   sendList(msg: {
     to: string;
     title: string;
@@ -310,7 +310,7 @@ export class MetaCloudSender implements MessageSender {
     providerCall: () => Promise<T>,
     params: Omit<AttemptParams, 'businessId' | 'attemptScope'> & { recipientPhone: string; messageCategory?: string },
     /** Platform-scoped sends skip the guard when no business is bound */
-    options?: { platformScopeAllowed?: boolean; reportSafePreEmissionFailure?: boolean },
+    options?: { platformScopeAllowed?: boolean; reportSafePreEmissionFailure?: boolean; payingCustomer?: boolean },
   ): Promise<T> {
     const isPlatform = !this._businessId && options?.platformScopeAllowed;
     const scope: 'business' | 'platform' = isPlatform ? 'platform' : 'business';
@@ -324,8 +324,9 @@ export class MetaCloudSender implements MessageSender {
 
     // Customer daily limit: refuse any business-billed send before an attempt
     // row or reservation exists, including platform-style replies sent while a
-    // business is bound (dedicated numbers). STOP/START messages get no guard.
-    if (!isPlatform && this._businessId && this.customerReplyGuard) {
+    // business is bound (dedicated numbers). STOP/START messages get no guard;
+    // a payment-link reply (payingCustomer) is never refused.
+    if (!isPlatform && !options?.payingCustomer && this._businessId && this.customerReplyGuard) {
       await this.customerReplyGuard(this._businessId, params.recipientPhone);
     }
 
@@ -571,12 +572,13 @@ export class MetaCloudSender implements MessageSender {
 
   // ── Business-scoped sends — require business identity, fail-closed ──
 
-  async sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string }) {
+  async sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string; payingCustomer?: boolean }) {
     // #257 lifecycle: attempt → deadline → #256 guard → deadline → sending → emission
     const textCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
         { recipientPhone: msg.to, messageCategory: msg.messageCategory },
+        msg.payingCustomer ? { payingCustomer: true } : undefined,
       );
     };
     const result = msg.noRetry ? await textCall() : await withRetry(textCall, 2, 1000, this.beforeEachAttempt);

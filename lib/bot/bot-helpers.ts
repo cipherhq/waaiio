@@ -75,10 +75,16 @@ export async function deactivateSession(supabase: SupabaseClient, sessionId: str
  * Send a text message via the message sender, with logging.
  * Renamed from sendText to avoid naming conflicts with class method.
  */
-export async function sendBotText(messageSender: MessageSender, to: string, text: string): Promise<void> {
+export async function sendBotText(
+  messageSender: MessageSender,
+  to: string,
+  text: string,
+  /** #536: payingCustomer = the reply carries a payment link and is never daily-limited. */
+  opts?: { payingCustomer?: boolean },
+): Promise<void> {
   try {
     logger.debug('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
-    const result = await messageSender.sendText({ to, text });
+    const result = await messageSender.sendText({ to, text, ...(opts?.payingCustomer ? { payingCustomer: true } : {}) });
     logger.debug('[BOT] sendText result:', JSON.stringify(result));
   } catch (err) {
     logger.error('[BOT] sendText FAILED to:', to, 'error:', err);

@@ -196,6 +196,20 @@ describe('#536 customer message guards in BotService', () => {
     expect(inboundCalls).toHaveLength(1);
   });
 
+  it('stores the swearing pause even when the warning send is refused', async () => {
+    const { supabase } = createTrackingSupabase({ pendingStopSession: null, channelForPhone: CHANNEL_A });
+    const { sender } = createSender();
+    sender.sendPlatformText = vi.fn(async () => { throw new CustomerDailyLimitError(); });
+    const intelligence = createMockIntelligence(false) as unknown as Record<string, unknown>;
+    intelligence.containsProfanity = vi.fn(() => true);
+    intelligence.recordProfanity = vi.fn(() => ({ timeout: true, warn: false, message: 'Taking a short break.' }));
+    const bot = new BotService(supabase, sender, createMockStandalone(), intelligence as never);
+    inboundAnswer = { repeat_count: 1, paused: false, cooldown_until: null, cooldown_notice_due: false };
+    await bot.handleMessage(PHONE, 'abusive words', 'text', 'phone-number-id-A', undefined);
+    const cooldown = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[0] === 'set_customer_cooldown');
+    expect(cooldown).toEqual([['set_customer_cooldown', { p_phone: PHONE, p_seconds: 1800, p_notice_sent: true }]]);
+  });
+
   it('ignores the same text after 3 in a row', async () => {
     const { supabase } = createTrackingSupabase({ pendingStopSession: null, channelForPhone: CHANNEL_A });
     const { sender, sent } = createSender();

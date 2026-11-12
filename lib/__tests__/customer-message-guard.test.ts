@@ -314,6 +314,16 @@ describe('MetaCloudSender with the customer reply guard', () => {
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
+  it('a payment-link reply (payingCustomer) is never refused; ordinary replies still are', async () => {
+    const guard = vi.fn().mockRejectedValue(new CustomerDailyLimitError());
+    const { s, cloud } = sender(guard);
+    await s.sendText({ to: CUSTOMER, text: 'Pay here: https://pay.example/q', payingCustomer: true });
+    expect(guard).not.toHaveBeenCalled();
+    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+    await expect(s.sendText({ to: CUSTOMER, text: 'This quote is no longer available.' })).rejects.toBeInstanceOf(CustomerDailyLimitError);
+    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+  });
+
   it('sends normally when the guard allows it', async () => {
     const { s, cloud } = sender(vi.fn().mockResolvedValue(undefined));
     await s.sendText({ to: CUSTOMER, text: 'hi' });
@@ -375,9 +385,9 @@ describe('installCustomerReplyGuard (webhook wiring)', () => {
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
-  it('never limits STOP/START, catalog orders or accepted quotes (their reply is consent or the payment link)', async () => {
+  it('never limits STOP/START, the STOP picker buttons or catalog orders', async () => {
     const quote = 'accept_quote_0b4ac1a2-1111-4222-8333-944455556666';
-    for (const inbound of [{ text: 'STOP' }, { text: ' start ' }, { text: 'opt-out' }, { isCatalogOrder: true }, { text: quote }]) {
+    for (const inbound of [{ text: 'STOP' }, { text: ' start ' }, { text: 'opt-out' }, { text: 'stop_merchant' }, { text: 'stop_platform' }, { isCatalogOrder: true }]) {
       const { s, cloud } = realSender();
       const installed = installCustomerReplyGuard(s, overLimit().db, CUSTOMER, inbound);
       expect(s.customerReplyGuard).toBeUndefined();
@@ -385,9 +395,12 @@ describe('installCustomerReplyGuard (webhook wiring)', () => {
       expect(cloud.sendText).toHaveBeenCalledTimes(1);
       await installed.finish(BIZ);
     }
-    const rejecting = realSender();
-    installCustomerReplyGuard(rejecting.s, overLimit().db, CUSTOMER, { text: quote.replace('accept', 'reject') });
-    expect(rejecting.s.customerReplyGuard).toBeTypeOf('function');
+    // A quote button proves nothing by its text: always guarded at message level.
+    for (const text of [quote, quote.replace('accept', 'reject'), 'biz_1']) {
+      const guarded = realSender();
+      installCustomerReplyGuard(guarded.s, overLimit().db, CUSTOMER, { text });
+      expect(guarded.s.customerReplyGuard).toBeTypeOf('function');
+    }
     const chatting = realSender();
     installCustomerReplyGuard(chatting.s, overLimit().db, CUSTOMER, { text: 'stop it please' });
     expect(chatting.s.customerReplyGuard).toBeTypeOf('function');
