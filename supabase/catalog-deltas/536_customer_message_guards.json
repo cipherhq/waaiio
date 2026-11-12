@@ -1,0 +1,670 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.customer_daily_reply_usage.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "false",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "8297533d5dfe9297714c79d7fce4b1991c9dba7a34f9ee58a3f8eada63fad6ea",
+   "identity": "column:public.customer_daily_reply_usage.notice_sent",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.customer_daily_reply_usage.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.customer_daily_reply_usage.reply_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.customer_daily_reply_usage.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "date"
+   },
+   "after_sha256": "418ba098cfcaddf294a1be9a7dd3359c92ea1a38e2a8045f8bc6a220febb984a",
+   "identity": "column:public.customer_daily_reply_usage.usage_date",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "false",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "8297533d5dfe9297714c79d7fce4b1991c9dba7a34f9ee58a3f8eada63fad6ea",
+   "identity": "column:public.customer_message_guard.cooldown_notice_sent",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.customer_message_guard.cooldown_until",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.customer_message_guard.invalid_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.customer_message_guard.invalid_step_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.customer_message_guard.last_invalid_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.customer_message_guard.last_text_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.customer_message_guard.last_text_hash",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.customer_message_guard.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.customer_message_guard.repeat_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.customer_message_guard.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.customer_daily_reply_usage.customer_daily_reply_usage_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (business_id, phone, usage_date)",
+    "validated": true
+   },
+   "after_sha256": "fd7378ac7bace72a2ec995e653e3b7d58170ce16e8bddaf0dbaf2d98a45a55b5",
+   "identity": "constraint:public.customer_daily_reply_usage.customer_daily_reply_usage_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (reply_count >= 0)",
+    "validated": true
+   },
+   "after_sha256": "db38e91dbd9173575614a478c22ddf1b699d48ee80614cbcedb18830b283022b",
+   "identity": "constraint:public.customer_daily_reply_usage.customer_daily_reply_usage_reply_count_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (invalid_count >= 0)",
+    "validated": true
+   },
+   "after_sha256": "55184940fd85b0e25c2ea9636ec00a5aa61f57834c6243ebaab1e7c931752ad0",
+   "identity": "constraint:public.customer_message_guard.customer_message_guard_invalid_count_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (phone)",
+    "validated": true
+   },
+   "after_sha256": "d1899343dc96534425e897f014dfba3bfd65d03f32f9607b60f3fa7570c3e1c2",
+   "identity": "constraint:public.customer_message_guard.customer_message_guard_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (repeat_count >= 0)",
+    "validated": true
+   },
+   "after_sha256": "b2d4ec19f8398de2f3efcbb98c3400db2f8ca9ba2c64741d1d0bbfa6acb464fa",
+   "identity": "constraint:public.customer_message_guard.customer_message_guard_repeat_count_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_phone text, p_limit integer",
+    "body_sha256": "027eb5b5a3183526d80ae109cde2377c16cff0fe6a76ffb4c9eb43faee431fd9",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "da1a1e1d289e704fedb09d9b92e47e0debff7ac66b6235a80ce5bcd9bdce58c1",
+   "identity": "function:public.record_customer_daily_reply(p_business_id uuid, p_phone text, p_limit integer)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_phone text, p_text_hash text, p_repeat_window_seconds integer",
+    "body_sha256": "d9667c096839e1e7a82b2ab4226a385f3609673ae6f93d8ff7cc6b24037c886b",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "c2c80c4d7d0ca4f832aa93b081d9c3bb0d846b504c6c9df41393ee707a998724",
+   "identity": "function:public.record_customer_inbound(p_phone text, p_text_hash text, p_repeat_window_seconds integer)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_phone text, p_step_key text, p_window_seconds integer",
+    "body_sha256": "496ec7758c6acd2b49a9ea603dba3630eb443cbbec71a58415e770ca23ca0fa5",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "integer",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "d589cfc842d3d342f1a47103cd486422ffa2c66ec6fc758a751e0dadd9c3085b",
+   "identity": "function:public.record_customer_invalid_input(p_phone text, p_step_key text, p_window_seconds integer)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_phone text, p_seconds integer, p_notice_sent boolean",
+    "body_sha256": "f21cdf699291f1696497cb4cd36c6d6f5cc2fb4cebeb909ba31aced2cd3b2ac1",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "timestamp with time zone",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "37f81159780db143d7d7ff38969a35c35951e12c772e8158ee31eed01627039f",
+   "identity": "function:public.set_customer_cooldown(p_phone text, p_seconds integer, p_notice_sent boolean)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX customer_daily_reply_usage_pkey ON public.customer_daily_reply_usage USING btree (business_id, phone, usage_date)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "2b071ce5ec988fe39f388ef05cb9a99257faf338665a45fd3ee7d2822fe89fe8",
+   "identity": "index:public.customer_daily_reply_usage.customer_daily_reply_usage_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX customer_message_guard_pkey ON public.customer_message_guard USING btree (phone)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "49a027a77eebd695857027253ff3af3b9c121d909ffb091bcc346427f9944fb8",
+   "identity": "index:public.customer_message_guard.customer_message_guard_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.customer_daily_reply_usage",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.customer_message_guard",
+   "operation": "add"
+  }
+ ],
+ "migration": "536_customer_message_guards.sql",
+ "migration_sha256": "950b5f123eecb6cdbd1897c647e4491f00b43312523827a84e4d887e18beed73",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
