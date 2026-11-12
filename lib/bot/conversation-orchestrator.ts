@@ -46,6 +46,8 @@ export class ConversationOrchestrator {
     subscriptionTier?: string,
     /** CAS-004: Pre-computed canonical result — skips parseSmartIntentHybrid */
     preComputedCanonical?: import('./canonical-understanding').CanonicalUnderstanding,
+    /** Regex only — the text is a typed answer to the current step, so the LLM fallback cannot help. */
+    options?: { skipLLM?: boolean },
   ): Promise<ConversationUnderstanding> {
     const normalizedText = text.trim();
 
@@ -107,7 +109,7 @@ export class ConversationOrchestrator {
       };
     } else {
       smartResult = await parseSmartIntentHybrid(
-        normalizedText, businessCategory, this.supabase, businessId, timezone, subscriptionTier,
+        normalizedText, businessCategory, this.supabase, businessId, timezone, subscriptionTier, options,
       );
     }
 

@@ -1757,10 +1757,13 @@ export class BotService {
       const [detection, profile] = await Promise.all([detectionPromise, profilePromise]);
 
       let deepLinkCapability: string | undefined;
+      // The whole message is the business code ("TESTBIZ"): a selection, nothing for the AI to read.
+      let textIsBareBotCode = false;
       if (detection) {
         // #266 R1/R2: Only exact bot_code match may bind directly
         if (detection.authority === 'exact' && detection.businessId) {
           businessId = detection.businessId;
+          textIsBareBotCode = !detection.deepLinkCapability && /^[a-z0-9-]{2,30}$/i.test(text.trim());
           if (!bizResolution) bizResolution = 'fuzzy'; // ACC-180: still not trusted for first-message promo
         } else {
           // Suggestion-only: do NOT bind businessId — feed to picker instead
@@ -2031,6 +2034,7 @@ export class BotService {
             text, businessId: business.id, businessCategory: business.category,
             subscriptionTier: business.subscription_tier, supabase: this.supabase,
             timezone: (waConfig?.business_hours as BusinessHours | undefined)?.timezone,
+            skipLLM: textIsBareBotCode,
           });
 
           // Language blocked → accurate recovery and return
@@ -3463,7 +3467,8 @@ export class BotService {
       this.sendText.bind(this),
       this.deactivateSession.bind(this),
       this.handleMessage.bind(this),
-      await this.resolveHandlerCopyLang(session),
+      // Lazy: the copy language costs three reads and only an exit reply uses it.
+      () => this.resolveHandlerCopyLang(session),
     );
     if (escapeResult.handled) return;
 
@@ -4352,24 +4357,36 @@ export class BotService {
     // Works from ANY step (not just greeting/select_capability) for high-confidence
     // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
     // Exclude free-text input steps where text should go to the flow validator.
-    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
+    const casFreeTextSteps = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'];
+    const isCasExcluded = isChatMode || casFreeTextSteps.includes(step);
+    // Typed answers (names, emails, addresses, amounts, notes) go to the step's own validator.
+    // The LLM intent fallback (~1 s) cannot add anything there, so those steps use regex only.
+    const skipIntentLLM = casFreeTextSteps.includes(step) || ['edit_name', 'edit_address', 'enter_donor_name', 'waitlist_collect_name', 'collect_guest_names', 'enter_donation_amount', 'collect_design_notes', 'collect_measurements', 'feedback_comment', 'rsvp_dietary', 'airport_pickup_flight'].includes(step);
     // Skip AI classification for deterministic postback IDs — these are button/list taps
     // that will be handled by the flow executor's step-specific validate() function
     const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|dir_result_\d+|dir_sug_\d+|dir_find|\d{1,2})$/.test(text)
       || (messageType === 'button' || messageType === 'list');
     let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
+    // CAS-004 and the AI layer below both need the session business's tier/category and
+    // conversation config. The revalidated business already has the tier; read the config once.
+    const resumedBizId = session.business_id;
+    const revalidatedBiz = _cachedBusiness?.id === resumedBizId ? _cachedBusiness : null;
+    const loadResumedBiz = async () => revalidatedBiz
+      ?? (await this.supabase.from('businesses').select('subscription_tier, category').eq('id', resumedBizId).single()).data;
+    let resumedConvConfigPromise: ReturnType<typeof loadConversationConfig> | null = null;
+    const loadResumedConvConfig = () => resumedConvConfigPromise ??= loadConversationConfig(this.supabase, resumedBizId!);
     _bmark(isDeterministicPostback ? 'cas004_skipped_deterministic' : 'cas004_start');
     if (session.business_id && text && !isCasExcluded && !isDeterministicPostback) {
       try {
         const { understandCanonicalMessage } = await import('./canonical-understanding');
         // Load business tier for language entitlement
-        const { data: bizForCas } = await this.supabase.from('businesses')
-          .select('subscription_tier, category').eq('id', session.business_id).single();
+        const bizForCas = await loadResumedBiz();
         resumedCanonical = await understandCanonicalMessage({
           text, businessId: session.business_id,
           businessCategory: bizForCas?.category || (session.session_data?.business_category as string) || null,
           subscriptionTier: bizForCas?.subscription_tier || 'free',
           supabase: this.supabase,
+          skipLLM: skipIntentLLM,
         });
 
         // Language blocked — use actual allowed language names
@@ -4380,8 +4397,7 @@ export class BotService {
         }
 
         // Non-CREATE_NEW action → dispatch ONLY with high confidence
-        const { loadConversationConfig: loadResumedConf } = await import('./confidence-policy');
-        const resumedConvConfig = await loadResumedConf(this.supabase, session.business_id);
+        const resumedConvConfig = await loadResumedConvConfig();
         if (resumedCanonical.requestedAction && resumedCanonical.requestedAction !== 'create_new' && resumedCanonical.requestedAction !== 'navigation'
             && resumedCanonical.confidence >= resumedConvConfig.autoRouteThreshold) {
           const { dispatchAction, sendActionRecovery } = await import('./action-dispatcher');
@@ -4410,14 +4426,13 @@ export class BotService {
     // in its conversation config.
     if (session.business_id && text && !isDeterministicPostback) {
       try {
-        const convConfig = await loadConversationConfig(this.supabase, session.business_id);
+        const convConfig = await loadResumedConvConfig();
         if (convConfig.aiEnabled) {
           const orchestrator = new ConversationOrchestrator(this.supabase, convConfig);
           // Load subscription tier from session or DB for LLM tier gating
           let sessionTier: string | undefined;
           if (session.business_id) {
-            const { data: bizTierData } = await this.supabase
-              .from('businesses').select('subscription_tier').eq('id', session.business_id).single();
+            const bizTierData = await loadResumedBiz();
             sessionTier = bizTierData?.subscription_tier || 'free';
           }
           const understanding = await orchestrator.understand(
@@ -4429,6 +4444,7 @@ export class BotService {
             undefined,
             sessionTier,
             resumedCanonical || undefined, // CAS-004: avoid second LLM call
+            { skipLLM: skipIntentLLM },
           );
 
           // Handle temporary questions (mid-flow "what are your hours?" etc.)

@@ -359,9 +359,12 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
     expect(casSessionData.capabilities).toContain('scheduling'); // free-tier, stays
     expect(casSessionData.capabilities).not.toContain('reservation'); // growth-tier, trial expired
 
-    // Assert: businesses table was queried (status/tier/trial)
-    const bizCalls = supabase.from.mock.calls.filter((c: string[]) => c[0] === 'businesses');
-    expect(bizCalls.length).toBeGreaterThan(0);
+    // Assert: status/tier/trial came from the get_bot_context business row. (The only separate
+    // businesses read on this path was the handler copy-language lookup, which now runs only
+    // when an exit reply needs it.)
+    const ctxCalls = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'get_bot_context');
+    expect(ctxCalls.length).toBeGreaterThan(0);
+    expect(ctxCalls[0][1].p_phone).toBe(TEST_PHONE);
 
     // Assert: business_capabilities was queried
     const capCalls = supabase.from.mock.calls.filter((c: string[]) => c[0] === 'business_capabilities');

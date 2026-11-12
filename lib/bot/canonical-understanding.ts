@@ -65,8 +65,10 @@ export async function understandCanonicalMessage(params: {
   subscriptionTier: string;
   supabase: SupabaseClient;
   timezone?: string;
+  /** Regex only — the text is a selection or a typed answer, so the LLM fallback cannot help. */
+  skipLLM?: boolean;
 }): Promise<CanonicalUnderstanding> {
-  const { text, businessId, businessCategory, subscriptionTier, supabase, timezone } = params;
+  const { text, businessId, businessCategory, subscriptionTier, supabase, timezone, skipLLM } = params;
 
   if (!text || text.length < 2) return EMPTY_RESULT;
 
@@ -129,7 +131,7 @@ export async function understandCanonicalMessage(params: {
     // 7. LLM hybrid fallback (Growth/Business only)
     const { parseSmartIntentHybrid } = await import('./smart-intent');
     const hybridResult = await parseSmartIntentHybrid(
-      text, businessCategory, supabase, businessId, timezone, subscriptionTier,
+      text, businessCategory, supabase, businessId, timezone, subscriptionTier, { skipLLM },
     );
 
     const llmConfidence = ('confidence' in hybridResult && typeof hybridResult.confidence === 'number')

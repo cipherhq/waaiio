@@ -1,3 +1,27 @@
+## 2026-11-12 — Faster bot replies: skip the AI intent guess where it cannot help, remove repeated lookups
+
+- **Why:** the Owner asked for faster chatbot replies. Staging measurements (webhook and bot timing logs, Supabase request logs, `llm_classifications`) showed:
+  - the Claude Haiku intent fallback ran on menu taps (`cap_scheduling`), bare business codes (`TESTBIZ`) and typed answers (names, emails, addresses, `Skip`), adding 1.0–1.25 s each time; every one of those calls found nothing (confidence 0);
+  - the menu's backing-data counts ran twice per menu;
+  - the escape-hatch copy language (3 reads) was computed on every resumed message, although only an exit reply uses it.
+- **What changed:**
+  - `lib/bot/smart-intent.ts`: `parseSmartIntentHybrid` takes an optional `{ skipLLM }`. When set, it returns the regex result, which is the same result the LLM path returns when it finds nothing. The PostHog flag check now runs only when the LLM may actually be called.
+  - `lib/bot/canonical-understanding.ts` and `lib/bot/conversation-orchestrator.ts` pass `skipLLM` through.
+  - `lib/bot/flows/capability-selection.flow.ts`: a capability postback or menu number skips the LLM (`isMenuSelectionToken`). `prepareCapabilityMenu` reuses its lookups within one `execute()` (keyed by ctx and capability set); a new message gets a new ctx and fresh lookups.
+  - `lib/bot/bot.service.ts`: first-message understanding skips the LLM when the message is exactly the business code. The resumed CAS-004 step and the AI layer skip the LLM at typed-answer steps: the existing CAS-004 free-text list plus `edit_name`, `edit_address`, `enter_donor_name`, `waitlist_collect_name`, `collect_guest_names`, `enter_donation_amount`, `collect_design_notes`, `collect_measurements`, `feedback_comment`, `rsvp_dietary` and `airport_pickup_flight`. The tier/category and conversation config are read once per message. The escape-hatch copy language is passed lazily.
+  - `lib/bot/handlers/escape-hatches.ts`: `lang` can be a resolver. It runs at most once, and only for an exit reply.
+- **Affects:** the bot's understanding step for paid-tier businesses (Growth/Business), the capability menu, and escape hatches. Payments, consent and sending are unchanged.
+- **Could break:**
+  - At the typed-answer steps listed above, a request that only the LLM could understand (no regex match) is no longer recognised there. Regex-understood requests, corrections and business questions still work.
+  - A menu number such as "2" no longer goes to the LLM.
+- **Measured (local harness, real `BotService.handleMessage`, 30 ms per DB call and 1.1 s per LLM call from staging medians; WhatsApp send time excluded):**
+  - typed answer: 1878 → 588 ms;
+  - menu tap: 1872 → 474 ms;
+  - menu number: 1827 → 541 ms;
+  - menu shown after "menu": 590 → 474 ms;
+  - open free text, where the LLM still runs: 1819 → 1607 ms.
+- **Tests:** `lib/bot/__tests__/bot-reply-latency.test.ts`, `lib/bot/__tests__/bot-reply-latency-botservice.test.ts`. The `cap-001-enforcement-wiring` assertion now checks that the business row comes from `get_bot_context`: the `businesses` read it relied on was the eager copy-language lookup.
+
 ## 2026-11-12 — RSVP by WhatsApp reaches the bot (deep link + guest phone format)
 
 - **Why:** an Owner test showed RSVP codes never reached the bot. There were two causes:

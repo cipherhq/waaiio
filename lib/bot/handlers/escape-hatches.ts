@@ -161,9 +161,15 @@ export async function handleEscapeHatch(
   sendText: (to: string, text: string) => Promise<void>,
   deactivateSession: (sessionId: string) => Promise<void>,
   handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string, mediaUrl?: string, messageId?: string, provenance?: string) => Promise<void>,
-  lang?: string,
+  /** Copy language, or a resolver for it. A resolver runs only when an exit reply needs the language. */
+  lang?: string | (() => Promise<string>),
 ): Promise<{ handled: boolean }> {
   const { supabase, messageSender, flowExecutor, intelligence } = ctx;
+  let resolvedLang: string | undefined;
+  const copyLang = async (): Promise<string> => {
+    if (resolvedLang === undefined) resolvedLang = (typeof lang === 'function' ? await lang() : lang) || 'en';
+    return resolvedLang;
+  };
 
   const isChatMode = step === 'chat_handoff' || step === 'chat_start';
   const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail' || step === 'list_subscriptions' || step === 'loyalty_menu' || step === 'invoice_list';
@@ -318,15 +324,16 @@ export async function handleEscapeHatch(
       if (earlySteps.includes(step) && session.business_id) {
         const { data: biz } = await supabase.from('businesses').select('name').eq('id', session.business_id).single();
         await deactivateSession(session.id);
+        const cl = await copyLang();
         const exitBody = biz?.name
-          ? fillFlowCopy(lang || 'en', 'nav.exit_what_next', { businessName: biz.name })
-          : getFlowCopy(lang || 'en', 'nav.exit_fallback');
+          ? fillFlowCopy(cl, 'nav.exit_what_next', { businessName: biz.name })
+          : getFlowCopy(cl, 'nav.exit_fallback');
         await messageSender.sendButtons({
           to: from,
           body: exitBody,
           buttons: [
-            { id: 'go_back_biz', title: getFlowCopy(lang || 'en', 'nav.back_to_menu') },
-            { id: 'switch_biz', title: getFlowCopy(lang || 'en', 'nav.switch_business') },
+            { id: 'go_back_biz', title: getFlowCopy(cl, 'nav.back_to_menu') },
+            { id: 'switch_biz', title: getFlowCopy(cl, 'nav.switch_business') },
           ],
         });
         return { handled: true };
@@ -385,20 +392,21 @@ export async function handleEscapeHatch(
       // Always show clear options — never dead-end text
       if (escBizId) {
         const { data: escBiz } = await supabase.from('businesses').select('name').eq('id', escBizId).single();
+        const cl = await copyLang();
         const exitBody = escBiz?.name
-          ? fillFlowCopy(lang || 'en', 'nav.exit_what_next', { businessName: escBiz.name })
-          : getFlowCopy(lang || 'en', 'nav.exit_fallback');
+          ? fillFlowCopy(cl, 'nav.exit_what_next', { businessName: escBiz.name })
+          : getFlowCopy(cl, 'nav.exit_fallback');
         await messageSender.sendButtons({
           to: from,
           body: exitBody,
           buttons: [
-            { id: 'go_back_biz', title: getFlowCopy(lang || 'en', 'nav.back_to_menu') },
-            { id: 'switch_biz', title: getFlowCopy(lang || 'en', 'nav.switch_business') },
+            { id: 'go_back_biz', title: getFlowCopy(cl, 'nav.back_to_menu') },
+            { id: 'switch_biz', title: getFlowCopy(cl, 'nav.switch_business') },
           ],
         });
       } else {
         // No business found at all — guide them
-        await sendText(from, getFlowCopy(lang || 'en', 'nav.no_business_guide'));
+        await sendText(from, getFlowCopy(await copyLang(), 'nav.no_business_guide'));
       }
       return { handled: true };
     }
