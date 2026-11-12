@@ -6,12 +6,12 @@ vi.mock('../saved-card-offer', () => ({ checkAndOfferSavedCard: m.offer, retryPe
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class { resolveByChannelIdForBusiness = m.resolve; } }));
 import { resumePaidTransactionFollowup, finishTransactionCardStep } from '../transaction-followup';
 
-function db(options: { state?: string; finalized?: boolean; delivered?: boolean; offer?: string; gateway?: string; pin?: boolean; errorTable?: string; missing?: boolean } = {}) {
+function db(options: { state?: string; finalized?: boolean; delivered?: boolean; offer?: string; gateway?: string; pin?: boolean; errorTable?: string; missing?: boolean; metadata?: Record<string, unknown> } = {}) {
   const queries: Array<{ table: string; filters: unknown[][] }> = [];
   return { queries, from: vi.fn((table: string) => {
     const query = { table, filters: [] as unknown[][] }; queries.push(query);
     const data = table === 'transaction_followups' ? options.missing ? null : { id: 'f1', business_id: 'biz', phone: '+2348012345678', channel_id: 'channel', state: options.state || 'waiting_card' }
-      : table === 'payments' ? { status: 'success', gateway: options.gateway || 'paystack', confirmation_sent_at: options.finalized === false ? null : '2026-11-11' }
+      : table === 'payments' ? { status: 'success', gateway: options.gateway || 'paystack', confirmation_sent_at: options.finalized === false ? null : '2026-11-11', metadata: options.metadata ?? { payment_origin: 'platform' } }
         : table === 'payment_saved_card_offers' ? options.offer ? { state: options.offer } : null
           : table === 'payment_confirmation_deliveries' ? options.delivered === false ? [] : [{ id: 'delivery' }]
           : table === 'bot_sessions' ? options.pin ? [{ id: 'pin' }] : [] : null;
@@ -91,5 +91,35 @@ describe('paid completion gates', () => {
   it('does not advance a missing or mismatched completion', async () => {
     await finishTransactionCardStep(db({ missing: true }) as any, 'pay', '2348012345678', 'biz');
     expect(m.resume).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['BYO', { payment_origin: 'byo', byo: true }],
+    ['Connect', { payment_origin: 'connect', connect: true }],
+    ['legacy BYO flag', { byo: true }],
+  ])('%s Paystack payment skips the card step and continues to opt-in/menu', async (_label, metadata) => {
+    const client = db({ metadata }); await resumePaidTransactionFollowup(client as any, 'pay');
+    expect(m.claim).not.toHaveBeenCalled(); expect(m.eligibility).not.toHaveBeenCalled(); expect(m.offer).not.toHaveBeenCalled();
+    expect(m.resume).toHaveBeenCalledWith(client, 'pay', { cardResolved: true });
+  });
+  it('releases a BYO follow-up already stuck in card_active (pre-fix rows)', async () => {
+    const client = db({ state: 'card_active', metadata: { payment_origin: 'byo' } });
+    await resumePaidTransactionFollowup(client as any, 'pay');
+    expect(m.claim).not.toHaveBeenCalled();
+    expect(m.resume).toHaveBeenCalledWith(client, 'pay', { cardResolved: true });
+  });
+  it('BYO still waits for the confirmation to be finalized and delivered', async () => {
+    await resumePaidTransactionFollowup(db({ metadata: { payment_origin: 'byo' }, finalized: false }) as any, 'pay');
+    await resumePaidTransactionFollowup(db({ metadata: { payment_origin: 'byo' }, delivered: false }) as any, 'pay');
+    expect(m.resume).not.toHaveBeenCalled();
+  });
+  it('Waaiio-collected Paystack payment keeps the card step', async () => {
+    const client = db(); await resumePaidTransactionFollowup(client as any, 'pay');
+    expect(m.claim).toHaveBeenCalledWith(client, 'pay'); expect(m.offer).toHaveBeenCalled();
+  });
+  it('a Stripe payment is not routed through the Paystack BYO skip', async () => {
+    m.stripe.mockResolvedValue('pending');
+    await resumePaidTransactionFollowup(db({ gateway: 'stripe', metadata: { payment_origin: 'connect' } }) as any, 'pay');
+    expect(m.claim).toHaveBeenCalled(); expect(m.stripe).toHaveBeenCalled(); expect(m.resume).not.toHaveBeenCalled();
   });
 });
