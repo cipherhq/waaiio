@@ -75,11 +75,25 @@ export async function POST(request: NextRequest) {
 
         // Cancel related booking
         if (transfer.booking_id) {
-          await service
+          const { data: cancelledBookings, error: bookingCancelErr } = await service
             .from('bookings')
             .update({ status: 'cancelled' })
             .eq('id', transfer.booking_id)
-            .in('status', ['pending']);
+            .in('status', ['pending'])
+            .select('id');
+
+          // Tell the customer only when this run really cancelled the booking.
+          // A booking paid another way (e.g. card) is no longer pending: its
+          // leftover transfer offer just expires, with no cancellation notice.
+          if (bookingCancelErr || !cancelledBookings || cancelledBookings.length === 0) {
+            if (bookingCancelErr) {
+              logger.error(`[EXPIRE_TRANSFERS] Failed to cancel booking for transfer ${transfer.id}:`, bookingCancelErr.message);
+            } else {
+              logger.info(`[EXPIRE_TRANSFERS] Booking for transfer ${transfer.id} is no longer pending; expired without notice`);
+            }
+            expiredCount++;
+            continue;
+          }
         }
       }
 

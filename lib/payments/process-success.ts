@@ -137,6 +137,19 @@ export async function processSuccessfulPayment(
       }
     }
 
+    // NONCRITICAL: the booking is paid, so close any bank-transfer offer still open
+    // for it, as orders already do (M393/M400). Left open, the expiry cron would
+    // tell this paying customer "your booking has been cancelled".
+    const { error: transferCloseErr } = await supabase
+      .from('pending_transfers')
+      .update({ status: 'cancelled' })
+      .eq('booking_id', payment.booking_id)
+      .eq('status', 'pending');
+    if (transferCloseErr) {
+      logger.withContext({ op: 'process-success.booking-transfer-close', ...safeLogErrorContext(transferCloseErr) })
+        .warn('[PROCESS-SUCCESS] Could not close pending bank transfer for paid booking');
+    }
+
     // Required booking promo consequences must complete before downstream effects.
     if (bookingPost.promo_code_id && bookingPost.metadata?.scheduling_authority_604) {
     const { data: promoResult, error: promoError } = await supabase.rpc('finalize_booking_promo_reservation', {
