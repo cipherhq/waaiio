@@ -588,6 +588,27 @@ export function hasTierLimitErrors(key: string, raw: string, stored: unknown): b
       field in tierVal && !isValidTierLimit((tierVal as Record<string, unknown>)[field], storedTierLimit(stored, tier, field))));
 }
 
+function storedFlatNumber(stored: unknown, field: string): number | undefined {
+  const value = stored && typeof stored === 'object' && !Array.isArray(stored) ? (stored as Record<string, unknown>)[field] : undefined;
+  return typeof value === 'number' ? value : undefined;
+}
+
+/** A flat field stored as a number must stay a number; conversation limits also follow the plan-limit rule. */
+function isValidFlatNumber(key: string, value: unknown, storedVal: unknown): boolean {
+  if (key === 'conversation_limits') return isValidTierLimit(value, storedVal);
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function hasFlatNumberErrors(key: string, raw: string, stored: unknown): boolean {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return false; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  return Object.entries(parsed as Record<string, unknown>).some(([field, value]) => {
+    const storedVal = storedFlatNumber(stored, field);
+    return storedVal !== undefined && !isValidFlatNumber(key, value, storedVal);
+  });
+}
+
 /** Render a friendly editor based on the setting's value type */
 export function renderSettingEditor(
   setting: PlatformSetting,
@@ -656,27 +677,38 @@ export function renderSettingEditor(
   const parsed = (() => { try { return JSON.parse(currentVal); } catch { return null; } })();
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const entries = Object.entries(parsed as Record<string, unknown>);
-    const isFlat = entries.every(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
+    // A cleared number field is held as null (never 0) until a valid number is typed.
+    const isNumberField = (k: string, v: unknown) => typeof v === 'number' || (v === null && storedFlatNumber(setting.value, k) !== undefined);
+    const isFlat = entries.every(([k, v]) => typeof v === 'string' || typeof v === 'boolean' || isNumberField(k, v));
 
     if (isFlat) {
       return (
         <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
-          {entries.map(([k, v]) => (
-            <div key={k} className="flex items-center gap-2">
+          {entries.map(([k, v]) => {
+            const numeric = isNumberField(k, v);
+            const storedVal = storedFlatNumber(setting.value, k);
+            const invalid = numeric && storedVal !== undefined && !isValidFlatNumber(setting.key, v, storedVal);
+            return (
+            <div key={k}>
+            <div className="flex items-center gap-2">
               <label className="w-32 text-xs font-medium text-gray-500 capitalize shrink-0">{k.replace(/_/g, ' ')}</label>
               <input
                 aria-label={k.replace(/_/g, ' ')}
-                type={typeof v === 'boolean' ? 'checkbox' : typeof v === 'number' ? 'number' : 'text'}
+                type={typeof v === 'boolean' ? 'checkbox' : numeric ? 'number' : 'text'}
                 checked={typeof v === 'boolean' ? v : undefined}
-                value={String(v)}
+                value={numeric ? (v as number | null) ?? '' : String(v)}
                 onChange={e => {
-                  const updated = { ...parsed, [k]: typeof v === 'boolean' ? e.target.checked : typeof v === 'number' ? Number(e.target.value) : e.target.value };
+                  const newVal = typeof v === 'boolean' ? e.target.checked : numeric ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value;
+                  const updated = { ...parsed, [k]: newVal };
                   onChange(JSON.stringify(updated, null, 2));
                 }}
                 className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
               />
             </div>
-          ))}
+            {invalid && <p role="alert" className="text-xs text-red-600">{setting.key === 'conversation_limits' ? 'Enter a whole number above 0.' : 'Enter a number.'}</p>}
+            </div>
+            );
+          })}
         </div>
       );
     }
@@ -1042,8 +1074,13 @@ export default function PlatformSettings() {
     try {
       const raw = edits[key];
       if (raw === undefined) return;
-      if (hasTierLimitErrors(key, raw, settings.find(s => s.key === key)?.value)) {
+      const storedValue = settings.find(s => s.key === key)?.value;
+      if (hasTierLimitErrors(key, raw, storedValue)) {
         alert('Enter a whole number above 0, or tick Unlimited, for every limit before saving.');
+        return;
+      }
+      if (hasFlatNumberErrors(key, raw, storedValue)) {
+        alert('Fill in every number field before saving. Conversation limits need a whole number above 0.');
         return;
       }
 
@@ -1355,7 +1392,7 @@ export default function PlatformSettings() {
                                 <>
                                   <button
                                     onClick={() => handleSave(setting.key)}
-                                    disabled={isSaving || hasTierLimitErrors(setting.key, val, setting.value) || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
+                                    disabled={isSaving || hasTierLimitErrors(setting.key, val, setting.value) || hasFlatNumberErrors(setting.key, val, setting.value) || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
                                     className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                                   >
                                     {isSaving ? 'Saving...' : 'Save'}

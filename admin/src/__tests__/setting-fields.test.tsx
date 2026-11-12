@@ -89,3 +89,27 @@ it('rejects new zero, negative, fractional or empty limits but keeps an existing
  expect(hasTierLimitErrors('broadcast_limits', JSON.stringify({ free: { maxBroadcasts: 5, maxRecipients: 50 } }), stored)).toBe(false);
  expect(hasTierLimitErrors('trial_days', '0', 14)).toBe(false);
 });
+import { hasFlatNumberErrors } from '@/pages/PlatformSettings';
+it('clearing a flat number field writes empty, not 0, and blocks saving', () => {
+ const stored = { free: 200, growth: 1000, business: 999999999 };
+ const change = vi.fn(); render(limitEditor('conversation_limits', stored, stored, change));
+ fireEvent.change(screen.getByLabelText('growth'), { target: { value: '' } });
+ const draft = change.mock.calls[0][0];
+ expect(JSON.parse(draft)).toEqual({ free: 200, growth: null, business: 999999999 });
+ expect(hasFlatNumberErrors('conversation_limits', draft, stored)).toBe(true);
+ cleanup(); render(limitEditor('conversation_limits', stored, JSON.parse(draft), vi.fn()));
+ expect(screen.getByLabelText('growth')).toHaveValue(null);
+ expect(screen.getByRole('alert')).toHaveTextContent('Enter a whole number above 0.');
+});
+it('conversation limits follow the plan-limit rule; other flat numbers only need a number', () => {
+ const stored = { free: 0, growth: 1000, business: 999999999 };
+ const check = (value: unknown) => hasFlatNumberErrors('conversation_limits', JSON.stringify(value), stored);
+ expect(check({ ...stored, growth: 0 })).toBe(true);
+ expect(check({ ...stored, growth: -1 })).toBe(true);
+ expect(check({ ...stored, growth: 1.5 })).toBe(true);
+ expect(check({ ...stored, growth: 1500 })).toBe(false);
+ expect(check(stored)).toBe(false);
+ expect(hasFlatNumberErrors('test', JSON.stringify({ count: 0, label: '' }), { count: 5, label: 'x' })).toBe(false);
+ expect(hasFlatNumberErrors('test', JSON.stringify({ count: null }), { count: 5 })).toBe(true);
+ expect(hasFlatNumberErrors('pricing_tiers', JSON.stringify({ growth: { maxBookings: 1000 } }), { growth: { maxBookings: 1000 } })).toBe(false);
+});
