@@ -5,12 +5,17 @@ import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
+import { hasProtectedProof, hasSuccessfulPayment } from '@/lib/payments/stale-transfers';
 
 /**
- * POST /api/cron/expire-transfers
+ * GET /api/cron/expire-transfers (Vercel Cron sends GET; POST kept for manual runs)
  * Expires unconfirmed pending transfers past their deadline.
  * Auth: CRON_SECRET (fail-closed).
  */
+export async function GET(request: NextRequest) {
+  return POST(request);
+}
+
 export async function POST(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
@@ -22,7 +27,7 @@ export async function POST(request: NextRequest) {
     // Fetch expired pending transfers
     const { data: expired, error: fetchErr } = await service
       .from('pending_transfers')
-      .select('id, booking_id, order_id, customer_phone, business_id, reference_code, metadata, businesses(name)')
+      .select('id, booking_id, order_id, reservation_id, invoice_id, customer_phone, business_id, reference_code, metadata, expires_at, proof_protected, proof_submitted_at, proof_image_url, proof_text, businesses(name)')
       .eq('status', 'pending')
       .lt('expires_at', now);
 
@@ -60,7 +65,40 @@ export async function POST(request: NextRequest) {
         // Canonical cancel succeeded — transfer was expired by the RPC
         // Fall through to notification
       } else {
-        // Non-order transfers: preserve existing behavior
+        // Non-order transfers.
+        // A receipt sent in time is held for the merchant, never expired (contract #736 §5.4;
+        // same rule cancel_stale_order_atomic applies to orders).
+        if (hasProtectedProof(transfer)) {
+          if (!transfer.proof_protected) {
+            const { error: protectErr } = await service
+              .from('pending_transfers')
+              .update({ proof_protected: true })
+              .eq('id', transfer.id)
+              .eq('status', 'pending');
+            if (protectErr) logger.error(`[EXPIRE_TRANSFERS] Failed to protect transfer ${transfer.id}:`, protectErr.message);
+          }
+          continue;
+        }
+
+        // Paid another way (e.g. card) meanwhile: close the unused offer quietly —
+        // no "expired" message, booking untouched (Owner Option A, 2026-11-12).
+        let paidOtherwise: boolean;
+        try {
+          paidOtherwise = await hasSuccessfulPayment(service, transfer);
+        } catch (payErr) {
+          logger.error(`[EXPIRE_TRANSFERS] Payment lookup failed for transfer ${transfer.id}:`, payErr);
+          continue;
+        }
+        if (paidOtherwise) {
+          const { error: cancelErr } = await service
+            .from('pending_transfers')
+            .update({ status: 'cancelled' })
+            .eq('id', transfer.id)
+            .eq('status', 'pending');
+          if (cancelErr) logger.error(`[EXPIRE_TRANSFERS] Failed to close paid transfer ${transfer.id}:`, cancelErr.message);
+          continue;
+        }
+
         // Mark transfer as expired
         const { error: updateErr } = await service
           .from('pending_transfers')

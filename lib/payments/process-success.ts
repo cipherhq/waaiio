@@ -9,6 +9,7 @@ import { isSafeIdentifier } from '@/lib/redact';
 import { markWaitlistConverted } from '@/lib/waitlist/auto-notify';
 import type { FinalizationResult } from './authority';
 import { resolveTrialStatus } from '@/lib/trial-status';
+import { supersedeUnusedTransfers } from './stale-transfers';
 
 interface PaymentRecord {
   id: string;
@@ -523,6 +524,16 @@ export async function processSuccessfulPayment(
     } catch (spendThrow) {
       criticalErrors.push('reservation_spend_threw');
       logger.withContext({ op: 'process-success.reservation-spend', ...safeLogErrorContext(spendThrow) }).error('[PROCESS-SUCCESS] Reservation spend threw');
+    }
+  }
+
+  // NONCRITICAL: close the unused bank-transfer offer now that this payment won
+  // (orders already do this in apply_order_stock_once). Transfers with a receipt stay.
+  if (criticalErrors.length === 0 && (payment.booking_id || payment.reservation_id || payment.invoice_id)) {
+    try {
+      await supersedeUnusedTransfers(supabase, payment);
+    } catch (err) {
+      logger.withContext({ op: 'process-success.supersede-transfers', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Closing unused bank transfer failed');
     }
   }
 

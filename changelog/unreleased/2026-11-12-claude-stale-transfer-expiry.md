@@ -1,0 +1,13 @@
+## 2026-11-12 — Bank transfers: expiry job runs, timely receipts held, card-paid offers closed quietly
+
+**What changed:** Fixes the leftover bank-transfer problems found in the staging TestBiz trace (7 overdue transfers on staging, none ever expired; three of them belonged to bookings already paid by card).
+
+1. **The expiry job never ran.** `app/api/cron/expire-transfers/route.ts` only answered POST, and Vercel Cron sends GET (the other 38 cron routes all answer GET). It now answers GET too.
+2. **Timely receipts are held, not expired.** For bookings, reservations and invoices the job used to expire every overdue transfer and cancel the booking, even when the customer had sent a receipt before the deadline and the merchant had not reviewed it yet. It now applies the same rule orders already use (`cancel_stale_order_atomic`, M479; contract #736 §5.4): a receipt sent in time (or a legacy receipt with no time) marks the transfer `proof_protected` and leaves it pending for the merchant.
+3. **Card-paid bookings no longer keep an open transfer.** Owner decision (Option A, 2026-11-12): when an online payment confirms a booking, reservation or invoice, `processSuccessfulPayment` cancels its unused transfer offer (no receipt of any kind), as orders already do in `apply_order_stock_once`. A transfer with a receipt stays pending so the merchant can see a possible double payment and refund it. The expiry job closes any such leftover the same way, with no "your transfer has expired" message and without touching the booking.
+
+**Files:** new `lib/payments/stale-transfers.ts` (`hasProtectedProof`, `hasSuccessfulPayment`, `supersedeUnusedTransfers`); `app/api/cron/expire-transfers/route.ts`; `lib/payments/process-success.ts` (one non-critical step at the end); tests `lib/payments/__tests__/stale-transfers.test.ts`, `lib/__tests__/expire-transfers-stale.test.ts`.
+
+**Affects:** pending bank transfers for bookings, reservations and invoices; the customer "transfer expired" WhatsApp/email; the merchant Pending Transfers list. Order transfers, campaign/donation transfers, proof submission, merchant confirm/approve, fees and payouts are unchanged. No migration.
+
+**What could break:** once deployed, the first job run will process every overdue transfer at once. On staging that is 7 rows: 3 card-paid → cancelled quietly, the rest expired with a customer message and their pending booking cancelled. An invoice paid partly online also closes its receipt-less transfer offer. Not fixed here: orders still cancel a transfer even when a receipt was sent (that rule lives in SQL, M400, and would need a migration).
