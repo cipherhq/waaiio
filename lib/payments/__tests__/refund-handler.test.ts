@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// lib/encryption reads the key at import time; set it before refund-handler loads.
+vi.hoisted(() => { process.env.TOKEN_ENCRYPTION_KEY = 'c'.repeat(64); });
+
 vi.mock('../factory', () => ({
   getPaymentGatewayByName: vi.fn(),
 }));
@@ -11,6 +14,7 @@ vi.mock('@/lib/supabase/service', () => ({
 
 import { processRefund } from '../refund-handler';
 import { getPaymentGatewayByName } from '../factory';
+import { encryptToken } from '@/lib/encryption';
 
 const mockGetGateway = getPaymentGatewayByName as ReturnType<typeof vi.fn>;
 
@@ -297,6 +301,44 @@ describe('processRefund', () => {
       byoSecretKey: 'test-byo-key-mock',
       connectAccountId: 'acct_byo',
     });
+  });
+});
+
+// BYO credentials are stored encrypted; the provider must receive the plaintext key.
+describe('BYO refund credential is decrypted before reaching the provider', () => {
+  beforeEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
+
+  it('new dispatch sends the decrypted merchant key', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      refundRow: { id: 'refund-1', amount: 5000, gateway: 'paystack', refund_type: 'full', reason: null, connect_account_id: null, provider_connection_id: 'cred-1', is_direct_split: false },
+      credential: { secret_key: encryptToken('sk_test_merchant_refund'), connect_account_id: null, connection_type: null },
+    });
+    await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockRefundPayment).toHaveBeenCalledTimes(1);
+    expect(mockRefundPayment.mock.calls[0][0].byoSecretKey).toBe('sk_test_merchant_refund');
+  });
+
+  it('reconciliation queries with the decrypted merchant key', async () => {
+    const { supabase, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-byo', status: 'provider_pending', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-byo', provider_connection_id: 'cred-1', connect_account_id: null },
+      credential: { secret_key: encryptToken('sk_test_merchant_refund'), connect_account_id: null },
+    });
+    await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockQueryStatus).toHaveBeenCalledWith('prov-byo', { byoSecretKey: 'sk_test_merchant_refund', connectAccountId: undefined });
+  });
+
+  it('undecryptable key never reaches the provider and parks the refund for reconciliation', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const { supabase, mockRefundPayment } = setupMocks({
+      refundRow: { id: 'refund-1', amount: 5000, gateway: 'paystack', refund_type: 'full', reason: null, connect_account_id: null, provider_connection_id: 'cred-1', is_direct_split: false },
+      credential: { secret_key: 'aa:bb:cc', connect_account_id: null, connection_type: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(mockRefundPayment).not.toHaveBeenCalled();
+    expect(r.success).toBe(false);
+    expect(r.state).toBe('provider_ambiguous');
+    vi.unstubAllEnvs();
   });
 });
 

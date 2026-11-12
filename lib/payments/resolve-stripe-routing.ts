@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { decryptToken } from '@/lib/encryption';
 
 export interface StripeRoutingAuthority {
   classification: 'platform' | 'platform_subaccount' | 'connect' | 'byo';
@@ -144,7 +145,14 @@ export async function resolvePaymentRoutingAuthority(
       result.classification = 'byo';
       result.paymentOrigin = 'byo';
       result.isByo = true;
-      result.byoSecretKey = byoCreds.secret_key;
+      // The stored key is encrypted at rest; the gateway needs the plaintext key.
+      try {
+        result.byoSecretKey = decryptToken(byoCreds.secret_key);
+      } catch (e) {
+        logger.withContext({ op: 'routing.byo-key-decrypt', ...safeLogErrorContext(e) })
+          .error('[ROUTING] BYO secret key could not be decrypted — fail closed');
+        return null;
+      }
       result.byoPlatformSubaccount = byoCreds.platform_subaccount_code;
       result.byoBusinessId = businessId;
       result.providerConnectionId = byoCreds.id;
