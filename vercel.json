@@ -132,6 +132,10 @@
       "schedule": "40 * * * *"
     },
     {
+      "path": "/api/cron/reservation-expiry",
+      "schedule": "50 * * * *"
+    },
+    {
       "path": "/api/cron/subscription-checkout-recovery",
       "schedule": "0 2,6,10,14,18,22 * * *"
     },
