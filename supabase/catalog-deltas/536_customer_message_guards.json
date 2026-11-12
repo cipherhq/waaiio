@@ -291,8 +291,43 @@
       "privilege": "EXECUTE"
      }
     ],
+    "arguments": "p_business_id uuid, p_phone text",
+    "body_sha256": "c3ea6d8cff24bc187bd3588977b6bd48f4623caa6379c6b68d2bb855c71d6c1b",
+    "config": [
+     "search_path=public, extensions"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b3e1f879dcd7ba61405e2af4d41fe389754954b6b1df3eadc49cc279e2b65c7c",
+   "identity": "function:public.claim_customer_daily_limit_notice(p_business_id uuid, p_phone text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
     "arguments": "p_business_id uuid, p_phone text, p_limit integer",
-    "body_sha256": "027eb5b5a3183526d80ae109cde2377c16cff0fe6a76ffb4c9eb43faee431fd9",
+    "body_sha256": "92087f4c44fc2f90dd3ca00db5ab3c80aae5b4907e493fa99ba101d093b3bd45",
     "config": [
      "search_path=public, extensions"
     ],
@@ -306,7 +341,7 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "da1a1e1d289e704fedb09d9b92e47e0debff7ac66b6235a80ce5bcd9bdce58c1",
+   "after_sha256": "636a965cb023384cb577091f64e9ddc0d4fedfe48785455b497345bad646c566",
    "identity": "function:public.record_customer_daily_reply(p_business_id uuid, p_phone text, p_limit integer)",
    "operation": "add"
   },
@@ -326,8 +361,8 @@
       "privilege": "EXECUTE"
      }
     ],
-    "arguments": "p_phone text, p_text_hash text, p_repeat_window_seconds integer",
-    "body_sha256": "d9667c096839e1e7a82b2ab4226a385f3609673ae6f93d8ff7cc6b24037c886b",
+    "arguments": "p_phone text, p_text_hash text, p_repeat_window_seconds integer, p_payment_steps text[]",
+    "body_sha256": "0ae76de587aabd6a67f51fe0a15e1545f1e65f3ed3a588fa614fe2a2e933825c",
     "config": [
      "search_path=public, extensions"
     ],
@@ -341,8 +376,8 @@
     "strict": false,
     "volatility": "v"
    },
-   "after_sha256": "c2c80c4d7d0ca4f832aa93b081d9c3bb0d846b504c6c9df41393ee707a998724",
-   "identity": "function:public.record_customer_inbound(p_phone text, p_text_hash text, p_repeat_window_seconds integer)",
+   "after_sha256": "6b89d7a994f276311b5d60ecdd60299c1710af0c58544bbed71a26681e4375fe",
+   "identity": "function:public.record_customer_inbound(p_phone text, p_text_hash text, p_repeat_window_seconds integer, p_payment_steps text[])",
    "operation": "add"
   },
   {
@@ -663,7 +698,7 @@
   }
  ],
  "migration": "536_customer_message_guards.sql",
- "migration_sha256": "950b5f123eecb6cdbd1897c647e4491f00b43312523827a84e4d887e18beed73",
+ "migration_sha256": "1067e8be1aeeadf5903d991d1d678b6f3e33b848b287e8a7232b4600fc1b6307",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
