@@ -1,4 +1,8 @@
-/** Exact (trimmed, lowercased) texts that opt a customer out of or back into messages. */
+/**
+ * Exact (trimmed, lowercased) texts that opt a customer out of or back into
+ * messages. The same words as the STOP_WORDS/START_WORDS lists in
+ * BotService.handleMessage (kept inline there; a test keeps them in step).
+ */
 export const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
 export const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
 

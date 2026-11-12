@@ -398,3 +398,13 @@ describe('installCustomerReplyGuard (webhook wiring)', () => {
     await expect(installed.finish(BIZ)).resolves.toBeUndefined();
   });
 });
+
+describe('consent words', () => {
+  it('match the STOP/START lists BotService answers', async () => {
+    const { readFileSync } = await import('fs');
+    const { STOP_WORDS, START_WORDS } = await import('@/lib/bot/consent-words');
+    const source = readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    expect(source).toContain(`const STOP_WORDS = ${JSON.stringify(STOP_WORDS).replace(/"/g, "'").replace(/,/g, ', ')};`);
+    expect(source).toContain(`const START_WORDS = ${JSON.stringify(START_WORDS).replace(/"/g, "'").replace(/,/g, ', ')};`);
+  });
+});
