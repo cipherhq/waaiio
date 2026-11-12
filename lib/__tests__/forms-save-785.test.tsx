@@ -5,7 +5,8 @@ import FormsPage from '@/app/dashboard/forms/page';
 const state = vi.hoisted(() => ({ rows: [] as unknown[], readError: null as unknown, saveError: null as unknown, insert: vi.fn() }));
 vi.mock('@/components/dashboard/DashboardProvider', () => ({ useBusiness: () => ({ id: 'biz', country_code: 'NG' }) }));
 vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
-vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ from: () => {
+vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ from: (table: string) => {
+  if (table === 'events') { const events = { select: () => events, eq: () => events, gte: () => events, order: () => events, limit: async () => ({ data: [], error: null }) }; return events; }
   const chain = { select: () => chain, eq: () => chain, order: async () => ({ data: state.rows, error: state.readError }), insert: async (row: unknown) => { state.insert(row); if (!state.saveError) state.rows = [{ ...(row as object), id: 'saved', response_count: 0, created_at: new Date().toISOString() }]; return { error: state.saveError }; } };
   return chain;
 } }) }));

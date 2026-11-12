@@ -1,0 +1,1580 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.customer_consents.email_address",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.form_responses.native_ack_claimed_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_email_batches.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.native_form_email_batches.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_email_batches.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.native_form_email_batches.request_hash",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.native_form_email_batches.result",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_email_unsubscribes.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.native_form_email_unsubscribes.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.native_form_email_unsubscribes.email_address",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_publications.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_publications.channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.native_form_publications.config",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.native_form_publications.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.native_form_publications.flow_json",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_publications.form_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.native_form_publications.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.native_form_publications.meta_flow_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.native_form_publications.phone_number_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.native_form_publications.published_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.native_form_publications.revision",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'creating'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "006f48aa8d8ec059b7148a2eba64a164d12d338787b8da4d3151262c950937c7",
+   "identity": "column:public.native_form_publications.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.native_form_publications.waba_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.native_form_registrations.booking_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_registrations.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_registrations.channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.native_form_registrations.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_registrations.event_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.native_form_registrations.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.native_form_registrations.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.native_form_registrations.response_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.native_form_registrations.session_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "7e7c93c4412aef9d74b882596804f284f10ec6a34994470362ea91d739019259",
+   "identity": "column:public.whatsapp_inbound_receipts.native_form_send_claimed_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (email_address IS NULL OR channel = 'email'::text AND email_address = lower(btrim(email_address)) AND length(email_address) <= 200 AND email_address ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'::text)",
+    "validated": true
+   },
+   "after_sha256": "aea18fe8ad92ffea51b5657a013ae16b1bed582006311f175c20c952b15ba8b3",
+   "identity": "constraint:public.customer_consents.customer_consents_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.native_form_email_batches.native_form_email_batches_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.native_form_email_batches.native_form_email_batches_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (request_hash ~ '^[a-f0-9]{64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "d25b7f37196d67ec818f6045aae709e36650c3dbc42739f5e0f81471a7ee7c20",
+   "identity": "constraint:public.native_form_email_batches.native_form_email_batches_request_hash_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.native_form_email_unsubscribes.native_form_email_unsubscribes_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (email_address = lower(btrim(email_address)) AND length(email_address) <= 200 AND email_address ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'::text)",
+    "validated": true
+   },
+   "after_sha256": "6263d2bb01fa1243b70b92acbf2c4ab64f76ffcccecc39b4aa3495bceb2fa157",
+   "identity": "constraint:public.native_form_email_unsubscribes.native_form_email_unsubscribes_email_address_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (business_id, email_address)",
+    "validated": true
+   },
+   "after_sha256": "44caacfd5ee4b602ebb6afa21ebb9c6dee37cb38078c857b0a1aeb18b07b70f7",
+   "identity": "constraint:public.native_form_email_unsubscribes.native_form_email_unsubscribes_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.native_form_publications.native_form_publications_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (channel_id) REFERENCES whatsapp_channels(id)",
+    "validated": true
+   },
+   "after_sha256": "ef2ba8bb6976ed47293b804c11fb084a0321dc796836eb8a1b2552aff4b146a0",
+   "identity": "constraint:public.native_form_publications.native_form_publications_channel_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status <> 'published'::text OR meta_flow_id IS NOT NULL AND published_at IS NOT NULL)",
+    "validated": true
+   },
+   "after_sha256": "8381e8ef935822b84cf1dba041a630f353365408c01ad7923ef429075cad51bb",
+   "identity": "constraint:public.native_form_publications.native_form_publications_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(config) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "546a86b74fbdb12019029f6155482abb378b8e13b2377629e02059be0ee9253d",
+   "identity": "constraint:public.native_form_publications.native_form_publications_config_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(flow_json) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "a39e51d864e765a3db7a5a3b6a4c20cb245fcccd1d09a9105e89e5ec9f43e752",
+   "identity": "constraint:public.native_form_publications.native_form_publications_flow_json_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "7142f92f0e4b23a2fd757d5f0dd03d4aeffacdffb226234feba4885bb88dcb34",
+   "identity": "constraint:public.native_form_publications.native_form_publications_form_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (form_id, revision, channel_id, phone_number_id, waba_id)",
+    "validated": true
+   },
+   "after_sha256": "59cec496858504dd960955fa3aacaee75fb2f1813ce545f22b272678a59a8373",
+   "identity": "constraint:public.native_form_publications.native_form_publications_form_id_revision_channel_id_phone__key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (meta_flow_id ~ '^[0-9]{1,64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "f14e6fb2856bf86ca982d4701db8048324627098cd8d69fbdc1b777d0f5601bc",
+   "identity": "constraint:public.native_form_publications.native_form_publications_meta_flow_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone_number_id ~ '^[0-9]{1,64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "ac8c8b6dde615d03f3576787fec6f938b2bc45830e0121dd7d6388b50f39f016",
+   "identity": "constraint:public.native_form_publications.native_form_publications_phone_number_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.native_form_publications.native_form_publications_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (revision ~ '^[a-f0-9]{64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "76eb10932cb438f74e64a9a64dc418384272afc408721de8cf2f72fb46958ec5",
+   "identity": "constraint:public.native_form_publications.native_form_publications_revision_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['creating'::text, 'draft'::text, 'published'::text, 'needs_review'::text]))",
+    "validated": true
+   },
+   "after_sha256": "99da866a262313c7acad3bf93758cd9d793a055fe47c8e1117af4f56913858df",
+   "identity": "constraint:public.native_form_publications.native_form_publications_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (waba_id ~ '^[0-9]{1,64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "8cafc4dd6cc867fc99f323c0614fe6a06b66248a6be8836c13909b91075546fd",
+   "identity": "constraint:public.native_form_publications.native_form_publications_waba_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (booking_id) REFERENCES bookings(id)",
+    "validated": true
+   },
+   "after_sha256": "7cebf32635b4394f53aeff97154d70e2f01088acb635571aab0adae2073cecd4",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_booking_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (channel_id) REFERENCES whatsapp_channels(id)",
+    "validated": true
+   },
+   "after_sha256": "ef2ba8bb6976ed47293b804c11fb084a0321dc796836eb8a1b2552aff4b146a0",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_channel_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (event_id) REFERENCES events(id)",
+    "validated": true
+   },
+   "after_sha256": "a90988ff88cb5f81c1c64324f94c79fcb6a44d26d5f0cbb5b22e5bd27cdc7598",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_event_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone ~ '^[1-9][0-9]{6,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "bd1afe20a16d93e9983a7d330aba5b9521bf280ade31c1f8a5dd4fd6a8190539",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_phone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (response_id) REFERENCES form_responses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "ab164002aff7af5d08e3276827caa8203d6a055fc784ad8e9702937628a861c9",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_response_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (response_id)",
+    "validated": true
+   },
+   "after_sha256": "4c3cdd3216de8b59d763765616d97446d46a9fd9bb62c251ebf0b6e6d2427430",
+   "identity": "constraint:public.native_form_registrations.native_form_registrations_response_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_registration_id uuid, p_booking_id uuid, p_session_id uuid",
+    "body_sha256": "ebd1e5f570ce725d61902fef2e7c772235e1b3518c83148d6a820cb1151dfeca",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "3f04d957ab22437f267e1dc66d75b9386cc0ae1b04b0bb39eaa106d1a3f939c0",
+   "identity": "function:public.attach_native_registration_591(p_registration_id uuid, p_booking_id uuid, p_session_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_registration_id uuid, p_business_id uuid, p_phone text, p_channel_id uuid, p_capabilities jsonb",
+    "body_sha256": "d11f0be9cbe366cddec2783412f139783c9f71b75ed0e873fb6b848385a7b7e1",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "9b35caf750428e16452c3031d08c68899a136c57098d332b1a766a4a3d0bd301",
+   "identity": "function:public.claim_native_registration_591(p_registration_id uuid, p_business_id uuid, p_phone text, p_channel_id uuid, p_capabilities jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_id uuid",
+    "body_sha256": "eb66a33bb5f6afe977b2f217e8fdba8418d5ae7162cc86e22e6002953f0b6cb0",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "79c303b152721665300d4319f915cd19dc2418b3295301edc77f312e61e632ab",
+   "identity": "function:public.complete_native_form_publication_591(p_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_publication_id uuid, p_business_id uuid, p_channel_id uuid, p_phone_number_id text, p_asset_id text, p_revision text, p_phone text, p_nonce_hash text, p_answers jsonb, p_name text DEFAULT NULL::text, p_email text DEFAULT NULL::text, p_consent boolean DEFAULT NULL::boolean, p_email_consent boolean DEFAULT false, p_message_id text DEFAULT NULL::text, p_provider_timestamp timestamp with time zone DEFAULT NULL::timestamp with time zone",
+    "body_sha256": "89ace520bacb0744e7e75cb8db276d45a30fe95bc9310433088819f4db5a6aae",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f5d6792258b4dee130bc2ff0086a0b1758553210fa339d554d827b00038e890f",
+   "identity": "function:public.save_native_form_response_591(p_publication_id uuid, p_business_id uuid, p_channel_id uuid, p_phone_number_id text, p_asset_id text, p_revision text, p_phone text, p_nonce_hash text, p_answers jsonb, p_name text, p_email text, p_consent boolean, p_email_consent boolean, p_message_id text, p_provider_timestamp timestamp with time zone)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX customer_consents_email_591 ON public.customer_consents USING btree (business_id, email_address, created_at DESC, id DESC) WHERE (email_address IS NOT NULL)",
+    "predicate": "(email_address IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "f284e38d816086c3c4e86831928e94996ab3620123b50f14fd13270db81df838",
+   "identity": "index:public.customer_consents.customer_consents_email_591",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX native_form_email_batches_business_591 ON public.native_form_email_batches USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "886907a80ea5ce1e4f847f889fda2848e6f7d7d8914cd7f66cc9e57d11907d9e",
+   "identity": "index:public.native_form_email_batches.native_form_email_batches_business_591",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX native_form_email_batches_pkey ON public.native_form_email_batches USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "012d859bf04329fae784dfabfe9d59484aac965f8348f6e7b752b103b3b002b5",
+   "identity": "index:public.native_form_email_batches.native_form_email_batches_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX native_form_email_unsubscribes_pkey ON public.native_form_email_unsubscribes USING btree (business_id, email_address)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "5eab8d5704e582f71606cbc2bb3014f6a328220a94b90030ef5074ea01d432c4",
+   "identity": "index:public.native_form_email_unsubscribes.native_form_email_unsubscribes_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX native_form_publications_business_idx ON public.native_form_publications USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "b20a325a1e0370a2181287189889c7a40258e751be7dae305bf376b56a6fa7f9",
+   "identity": "index:public.native_form_publications.native_form_publications_business_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX native_form_publications_form_id_revision_channel_id_phone__key ON public.native_form_publications USING btree (form_id, revision, channel_id, phone_number_id, waba_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "25fc1837142d344954d60a63f0d70750448990c29200264a3acb9000b7209453",
+   "identity": "index:public.native_form_publications.native_form_publications_form_id_revision_channel_id_phone__key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX native_form_publications_pkey ON public.native_form_publications USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "9542e3535daadfeb0434caebc31e62f70b3471def296be8fb39bc0210fe8e7ae",
+   "identity": "index:public.native_form_publications.native_form_publications_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX native_form_registrations_business_591 ON public.native_form_registrations USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "e011aa6721d4a0ab010be58f14c36be47a39aa11c3b2e5cd902e2dd36d1b1450",
+   "identity": "index:public.native_form_registrations.native_form_registrations_business_591",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX native_form_registrations_pkey ON public.native_form_registrations USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "07493246e0e1a13031c4a10f0cce1a2d6076785b78c37ab9ad1f633c6b24a639",
+   "identity": "index:public.native_form_registrations.native_form_registrations_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX native_form_registrations_response_id_key ON public.native_form_registrations USING btree (response_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "752e06794cf363ee4b5c1c8794799b4bba015a2bda9c3f0c954d040e3d2cc657",
+   "identity": "index:public.native_form_registrations.native_form_registrations_response_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "d995dc3aa4d3317b383ddc1d791f9e3afb8758153f9434c9f0ac9ba3eaa9231a",
+   "identity": "policy:public.native_form_email_batches.native_form_email_batches_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.native_form_email_batches.native_form_email_batches_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.native_form_email_unsubscribes.native_form_email_unsubscribes_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "d995dc3aa4d3317b383ddc1d791f9e3afb8758153f9434c9f0ac9ba3eaa9231a",
+   "identity": "policy:public.native_form_publications.native_form_publications_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.native_form_publications.native_form_publications_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "d995dc3aa4d3317b383ddc1d791f9e3afb8758153f9434c9f0ac9ba3eaa9231a",
+   "identity": "policy:public.native_form_registrations.native_form_registrations_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.native_form_registrations.native_form_registrations_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.native_form_email_batches",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.native_form_email_unsubscribes",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.native_form_publications",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9665b7857afe289aef32264d928319867179a3e50ddd27d9f6a02727c32d7f46",
+   "identity": "table:public.native_form_registrations",
+   "operation": "add"
+  }
+ ],
+ "migration": "535_native_form_lifecycle.sql",
+ "migration_sha256": "5c6638db628c6700f0861fa7322ef48c2d1243f1338ae16c4c4a5456146c1952",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

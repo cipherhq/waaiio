@@ -1123,21 +1123,13 @@ describe('Native Flow Send API', () => {
     });
   }
 
-  it('returns constructed payload with queued=false for published form', async () => {
+  it('fails closed with rollout disabled and never exposes a signed token or payload', async () => {
     const { POST } = await import('@/app/api/forms/native-flow/send/route');
     const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
+    expect(res.status).toBe(503);
     const json = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(json.queued).toBe(false);
-    expect(json.reason).toBe('provider_send_not_authorized');
-    expect(json.payload).toBeTruthy();
-    expect(json.payload.messaging_product).toBe('whatsapp');
-    expect(json.payload.to).toBe(PHONE);
-    expect(json.payload.interactive.type).toBe('flow');
-    expect(json.payload.interactive.action.parameters.flow_id).toBe('flow_asset_789');
-    expect(json.payload.interactive.action.parameters.flow_token).toBeTruthy();
-    expect(json.tokenExpiresAt).toBeGreaterThan(Date.now());
+    expect(json.payload).toBeUndefined();
+    expect(json.token).toBeUndefined();
   });
 
   it('rejects unauthenticated request', async () => {
@@ -1154,23 +1146,8 @@ describe('Native Flow Send API', () => {
     expect(res.status).toBe(403);
   });
 
-  it('rejects unpublished form', async () => {
-    mockServerForm = { ...mockServerForm, meta_flow_status: 'draft' } as Record<string, unknown>;
-    const { POST } = await import('@/app/api/forms/native-flow/send/route');
-    const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
-    const json = await res.json();
-    expect(res.status).toBe(422);
-    expect(json.error).toContain('published');
-  });
-
-  it('rejects form without meta_flow_id', async () => {
-    mockServerForm = { ...mockServerForm, meta_flow_status: 'published', meta_flow_id: null } as Record<string, unknown>;
-    const { POST } = await import('@/app/api/forms/native-flow/send/route');
-    const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
-    expect(res.status).toBe(422);
-  });
-
   it('rejects invalid phone number', async () => {
+    vi.stubEnv('WHATSAPP_NATIVE_FORMS_ENABLED', 'true');
     const { POST } = await import('@/app/api/forms/native-flow/send/route');
     const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: 'not-a-phone' }));
     expect(res.status).toBe(400);
@@ -1182,48 +1159,8 @@ describe('Native Flow Send API', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects inactive form', async () => {
-    mockServerForm = { ...mockServerForm, is_active: false } as Record<string, unknown>;
-    const { POST } = await import('@/app/api/forms/native-flow/send/route');
-    const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
-    expect(res.status).toBe(422);
-  });
-
-  // ── CTO R5-F1: JSONB key reordering resilience ──
-
-  it('does not false-alarm on JSONB key reordering of stored native_flow_json', async () => {
-    // Compile the expected Flow JSON from the form's fields
-    const { compileNativeFormFlow } = await import('@/lib/whatsapp-forms/native-flow');
-    const compiled = compileNativeFormFlow({
-      title: 'Contact Us',
-      description: null,
-      fields: [{ id: 'name', label: 'Name', type: 'text', required: true }],
-      settings: {},
-    });
-
-    // Simulate JSONB round-trip: reverse the top-level key order
-    const keys = Object.keys(compiled);
-    const reordered: Record<string, unknown> = {};
-    for (const k of keys.reverse()) {
-      reordered[k] = compiled[k];
-    }
-    // Verify they produce different naive JSON.stringify
-    expect(JSON.stringify(compiled)).not.toBe(JSON.stringify(reordered));
-
-    // Set the reordered object as native_flow_json (simulates PostgreSQL JSONB)
-    mockServerForm = {
-      ...mockServerForm,
-      native_flow_json: reordered,
-    } as Record<string, unknown>;
-
-    const { POST } = await import('@/app/api/forms/native-flow/send/route');
-    const res = await POST(makeRequest({ businessId: BIZ_ID, formId: FORM_ID, recipientPhone: PHONE }));
-    const json = await res.json();
-    // Should succeed (200), not false-alarm as schema drift
-    expect(res.status).toBe(200);
-    expect(json.queued).toBe(false);
-    expect(json.payload).toBeTruthy();
-  });
+  // Publication, inactive-form and JSONB drift behavior now runs through the
+  // real runtime in native-form-runtime-591.test.ts, rather than preview payloads.
 });
 
 // ═══════════════════════════════════════════════════════
@@ -1233,8 +1170,8 @@ describe('Native Flow Send API', () => {
 describe('Meta Flow Asset Service', () => {
   it('validates token parameter', async () => {
     const { createFlowAsset, MetaFlowApiError } = await import('@/lib/whatsapp-forms/meta-flow-asset');
-    await expect(createFlowAsset('', 'waba_1', 'Test', ['OTHER'])).rejects.toThrow(MetaFlowApiError);
-    await expect(createFlowAsset('x', 'waba_1', 'Test', ['OTHER'])).rejects.toThrow('Meta access token');
+    await expect(createFlowAsset('', '987654321', 'Test', ['OTHER'])).rejects.toThrow(MetaFlowApiError);
+    await expect(createFlowAsset('x', '987654321', 'Test', ['OTHER'])).rejects.toThrow('Meta access token');
   });
 
   it('validates WABA ID parameter', async () => {
@@ -1244,19 +1181,19 @@ describe('Meta Flow Asset Service', () => {
 
   it('validates flow name length', async () => {
     const { createFlowAsset } = await import('@/lib/whatsapp-forms/meta-flow-asset');
-    await expect(createFlowAsset('valid-token-1234567890', 'waba_1', '', ['OTHER'])).rejects.toThrow('1\u2013128');
-    await expect(createFlowAsset('valid-token-1234567890', 'waba_1', 'a'.repeat(129), ['OTHER'])).rejects.toThrow('1\u2013128');
+    await expect(createFlowAsset('valid-token-1234567890', '987654321', '', ['OTHER'])).rejects.toThrow('1\u2013128');
+    await expect(createFlowAsset('valid-token-1234567890', '987654321', 'a'.repeat(129), ['OTHER'])).rejects.toThrow('1\u2013128');
   });
 
   it('validates categories array is non-empty', async () => {
     const { createFlowAsset } = await import('@/lib/whatsapp-forms/meta-flow-asset');
-    await expect(createFlowAsset('valid-token-1234567890', 'waba_1', 'Test', [])).rejects.toThrow('category');
+    await expect(createFlowAsset('valid-token-1234567890', '987654321', 'Test', [])).rejects.toThrow('category');
   });
 
   it('throws provider not authorized after input validation passes', async () => {
     const { createFlowAsset, MetaFlowApiError } = await import('@/lib/whatsapp-forms/meta-flow-asset');
     try {
-      await createFlowAsset('valid-token-1234567890', 'waba_1', 'Test', ['OTHER']);
+      await createFlowAsset('valid-token-1234567890', '987654321', 'Test', ['OTHER']);
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
@@ -1268,7 +1205,7 @@ describe('Meta Flow Asset Service', () => {
   it('uploadFlowJson throws provider not authorized', async () => {
     const { uploadFlowJson, MetaFlowApiError } = await import('@/lib/whatsapp-forms/meta-flow-asset');
     try {
-      await uploadFlowJson('valid-token-1234567890', 'flow_1', { version: '7.3', screens: [] });
+      await uploadFlowJson('valid-token-1234567890', '123456789', { version: '7.3', screens: [] });
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
@@ -1279,7 +1216,7 @@ describe('Meta Flow Asset Service', () => {
   it('publishFlow throws provider not authorized', async () => {
     const { publishFlow, MetaFlowApiError } = await import('@/lib/whatsapp-forms/meta-flow-asset');
     try {
-      await publishFlow('valid-token-1234567890', 'flow_1');
+      await publishFlow('valid-token-1234567890', '123456789');
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
@@ -1290,7 +1227,7 @@ describe('Meta Flow Asset Service', () => {
   it('getFlowStatus throws provider not authorized', async () => {
     const { getFlowStatus, MetaFlowApiError } = await import('@/lib/whatsapp-forms/meta-flow-asset');
     try {
-      await getFlowStatus('valid-token-1234567890', 'flow_1');
+      await getFlowStatus('valid-token-1234567890', '123456789');
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
@@ -1301,7 +1238,7 @@ describe('Meta Flow Asset Service', () => {
   it('deprecateFlow throws provider not authorized', async () => {
     const { deprecateFlow, MetaFlowApiError } = await import('@/lib/whatsapp-forms/meta-flow-asset');
     try {
-      await deprecateFlow('valid-token-1234567890', 'flow_1');
+      await deprecateFlow('valid-token-1234567890', '123456789');
       expect.fail('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(MetaFlowApiError);
@@ -1311,8 +1248,8 @@ describe('Meta Flow Asset Service', () => {
 
   it('uploadFlowJson validates flow JSON structure', async () => {
     const { uploadFlowJson } = await import('@/lib/whatsapp-forms/meta-flow-asset');
-    await expect(uploadFlowJson('valid-token-1234567890', 'flow_1', {} as any)).rejects.toThrow('version and screens');
-    await expect(uploadFlowJson('valid-token-1234567890', 'flow_1', null as any)).rejects.toThrow('non-null object');
+    await expect(uploadFlowJson('valid-token-1234567890', '123456789', {} as any)).rejects.toThrow('version and screens');
+    await expect(uploadFlowJson('valid-token-1234567890', '123456789', null as any)).rejects.toThrow('non-null object');
   });
 
   it('validates flow ID parameter', async () => {

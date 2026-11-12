@@ -1,15 +1,5 @@
-/**
- * #591 Phase 2 — Meta Flow Asset Service.
- *
- * Service abstraction for the Meta WhatsApp Flows lifecycle API.
- * All functions are typed and validated, but NO live API calls are made
- * in this phase. Every function throws MetaFlowApiError with
- * "provider calls not authorized" if actually invoked — real fetch()
- * calls will be enabled in a future phase after provider authorization.
- *
- * Meta Flows API reference:
- * https://developers.facebook.com/docs/whatsapp/flows/reference/flowsapi
- */
+/** #591 — Server-side Meta Flow asset lifecycle. No mutation retries. */
+import { nativeFormsEnabled } from './release-gate';
 
 // ── Types ──
 
@@ -39,6 +29,7 @@ export interface FlowStatusResult {
   name: string;
   status: 'DRAFT' | 'PUBLISHED' | 'DEPRECATED' | 'BLOCKED' | 'THROTTLED';
   categories: FlowCategory[];
+  wabaId?: string;
   validationErrors?: Array<{ error: string; error_type: string; message: string }>;
 }
 
@@ -60,7 +51,7 @@ export interface FlowDeprecateResult {
 
 // ── Validation helpers ──
 
-const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const PROVIDER_ID = /^[0-9]{1,64}$/;
 
 function validateToken(metaAccessToken: string): void {
   if (!metaAccessToken || typeof metaAccessToken !== 'string' || metaAccessToken.trim().length < 10) {
@@ -69,22 +60,50 @@ function validateToken(metaAccessToken: string): void {
 }
 
 function validateFlowId(flowId: string): void {
-  if (!flowId || typeof flowId !== 'string' || flowId.trim().length === 0) {
+  if (!flowId || typeof flowId !== 'string' || !PROVIDER_ID.test(flowId)) {
     throw new MetaFlowApiError('A valid flow ID is required.');
   }
 }
 
 function validateWabaId(wabaId: string): void {
-  if (!wabaId || typeof wabaId !== 'string' || wabaId.trim().length === 0) {
+  if (!wabaId || typeof wabaId !== 'string' || !PROVIDER_ID.test(wabaId)) {
     throw new MetaFlowApiError('A valid WABA ID is required.');
   }
 }
 
-function notAuthorized(): never {
-  throw new MetaFlowApiError(
-    'Provider calls not authorized. Meta Flow API calls require separate provider authorization.',
-    403,
-  );
+async function request(token: string, path: string, body?: Record<string, unknown> | FormData): Promise<Record<string, unknown>> {
+  if (!nativeFormsEnabled()) {
+    throw new MetaFlowApiError('Provider calls not authorized. Native forms are not enabled.', 403);
+  }
+  const version = process.env.META_GRAPH_API_VERSION || 'v22.0';
+  if (!/^v\d+\.0$/.test(version)) throw new MetaFlowApiError('Invalid Graph API version.');
+  const multipart = body instanceof FormData;
+  let response: Response;
+  try {
+    response = await fetch(`https://graph.facebook.com/${version}/${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { Authorization: `Bearer ${token}`, ...(body && !multipart ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? (multipart ? body : JSON.stringify(body)) : undefined,
+      signal: AbortSignal.timeout(15_000),
+      cache: 'no-store',
+      redirect: 'error',
+    });
+  } catch {
+    // Ambiguous mutation outcomes must be inspected, never automatically retried.
+    throw new MetaFlowApiError('Meta Flow request did not complete. Check provider state before retrying.', 502);
+  }
+  let data: Record<string, unknown>;
+  try { data = await response.json(); } catch { throw new MetaFlowApiError('Invalid Meta Flow response.', 502); }
+  if (!response.ok || data.error) {
+    const code = (data.error as { code?: number } | undefined)?.code;
+    // Do not echo provider error text, request URLs, credentials or submitted data.
+    throw new MetaFlowApiError('Meta rejected the Flow request.', response.status, code);
+  }
+  return data;
+}
+
+function errors(data: Record<string, unknown>): FlowUploadResult['validationErrors'] {
+  return Array.isArray(data.validation_errors) ? data.validation_errors as FlowUploadResult['validationErrors'] : undefined;
 }
 
 // ── Public API ──
@@ -93,7 +112,7 @@ function notAuthorized(): never {
  * Create a new Flow asset under a WhatsApp Business Account.
  * POST /{WABA_ID}/flows
  *
- * @throws MetaFlowApiError — always in Phase 2 (provider calls not authorized)
+ * @throws MetaFlowApiError when disabled, invalid, or the provider rejects the request.
  */
 export async function createFlowAsset(
   metaAccessToken: string,
@@ -111,15 +130,18 @@ export async function createFlowAsset(
     throw new MetaFlowApiError('At least one flow category is required.');
   }
 
-  // Phase 2 gate: no live API calls
-  notAuthorized();
+  const allowed = new Set<FlowCategory>(['SIGN_UP', 'SIGN_IN', 'APPOINTMENT_BOOKING', 'LEAD_GENERATION', 'CONTACT_US', 'CUSTOMER_SUPPORT', 'SURVEY', 'OTHER']);
+  if (categories.some(category => !allowed.has(category))) throw new MetaFlowApiError('Invalid flow category.');
+  const data = await request(metaAccessToken, `${wabaId}/flows`, { name: name.trim(), categories });
+  if (typeof data.id !== 'string' || !PROVIDER_ID.test(data.id)) throw new MetaFlowApiError('Meta did not return a valid Flow ID.', 502);
+  return { flowId: data.id, name: name.trim(), status: 'DRAFT' };
 }
 
 /**
  * Upload Flow JSON to an existing Flow asset.
  * POST /{flow_id}/assets
  *
- * @throws MetaFlowApiError — always in Phase 2 (provider calls not authorized)
+ * @throws MetaFlowApiError when disabled, invalid, or the provider rejects the request.
  */
 export async function uploadFlowJson(
   metaAccessToken: string,
@@ -136,15 +158,19 @@ export async function uploadFlowJson(
     throw new MetaFlowApiError('Flow JSON must contain version and screens properties.');
   }
 
-  // Phase 2 gate: no live API calls
-  notAuthorized();
+  const body = new FormData();
+  body.set('name', 'flow.json');
+  body.set('asset_type', 'FLOW_JSON');
+  body.set('file', new Blob([JSON.stringify(flowJson)], { type: 'application/json' }), 'flow.json');
+  const data = await request(metaAccessToken, `${flowId}/assets`, body);
+  return { flowId, success: data.success === true && !errors(data)?.length, validationErrors: errors(data) };
 }
 
 /**
  * Publish a Flow asset (transitions DRAFT → PUBLISHED).
  * POST /{flow_id}/publish
  *
- * @throws MetaFlowApiError — always in Phase 2 (provider calls not authorized)
+ * @throws MetaFlowApiError when disabled, invalid, or the provider rejects the request.
  */
 export async function publishFlow(
   metaAccessToken: string,
@@ -153,15 +179,15 @@ export async function publishFlow(
   validateToken(metaAccessToken);
   validateFlowId(flowId);
 
-  // Phase 2 gate: no live API calls
-  notAuthorized();
+  const data = await request(metaAccessToken, `${flowId}/publish`, {});
+  return { flowId, success: data.success === true };
 }
 
 /**
  * Get the current status of a Flow asset.
  * GET /{flow_id}
  *
- * @throws MetaFlowApiError — always in Phase 2 (provider calls not authorized)
+ * @throws MetaFlowApiError when disabled, invalid, or the provider rejects the request.
  */
 export async function getFlowStatus(
   metaAccessToken: string,
@@ -170,15 +196,20 @@ export async function getFlowStatus(
   validateToken(metaAccessToken);
   validateFlowId(flowId);
 
-  // Phase 2 gate: no live API calls
-  notAuthorized();
+  const data = await request(metaAccessToken, `${flowId}?fields=id,name,status,categories,validation_errors,whatsapp_business_account`);
+  if (data.id !== flowId || !['DRAFT', 'PUBLISHED', 'DEPRECATED', 'BLOCKED', 'THROTTLED'].includes(String(data.status))) {
+    throw new MetaFlowApiError('Invalid Meta Flow status response.', 502);
+  }
+  return { flowId, name: String(data.name || ''), status: data.status as FlowStatusResult['status'],
+    categories: Array.isArray(data.categories) ? data.categories as FlowCategory[] : [], validationErrors: errors(data),
+    wabaId: (data.whatsapp_business_account as { id?: string } | undefined)?.id };
 }
 
 /**
  * Deprecate a published Flow asset.
  * POST /{flow_id}/deprecate
  *
- * @throws MetaFlowApiError — always in Phase 2 (provider calls not authorized)
+ * @throws MetaFlowApiError when disabled, invalid, or the provider rejects the request.
  */
 export async function deprecateFlow(
   metaAccessToken: string,
@@ -187,6 +218,6 @@ export async function deprecateFlow(
   validateToken(metaAccessToken);
   validateFlowId(flowId);
 
-  // Phase 2 gate: no live API calls
-  notAuthorized();
+  const data = await request(metaAccessToken, `${flowId}/deprecate`, {});
+  return { flowId, success: data.success === true };
 }

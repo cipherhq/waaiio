@@ -5,6 +5,9 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { FormSendPanel } from '@/components/dashboard/forms/FormSendPanel';
+import { NativeFormOptions } from '@/components/dashboard/forms/NativeFormOptions';
+import { NativeFormEmailComposer } from '@/components/dashboard/forms/NativeFormEmailComposer';
+import { NativeFormPanel } from '@/components/dashboard/forms/NativeFormPanel';
 
 interface FormField {
   id: string;
@@ -33,11 +36,10 @@ interface FormResponse {
   customer_name: string | null;
   customer_email: string | null;
   answers: Record<string, unknown>;
-  business_notes: string | null;
-  status: string;
-  channel: string | null;
+  submission_source: 'web' | 'native' | null;
   consent_given?: boolean | null;
   submitted_at: string;
+  metadata?: { form_config?: { fields?: FormField[] } };
 }
 
 type ViewMode = 'list' | 'add' | 'edit' | 'responses';
@@ -77,11 +79,13 @@ export default function FormsPage() {
   const [selectedForm, setSelectedForm] = useState<Form | null>(null);
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [copied, setCopied] = useState(false);
-  const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
-  const [savingNotes, setSavingNotes] = useState<string | null>(null);
+  const [responsesLoading, setResponsesLoading] = useState(false);
+  const [responsesError, setResponsesError] = useState<string | null>(null);
+  const responsesGenerationRef = useRef(0);
 
   // Which form's WhatsApp send panel is open
   const [sendFormId, setSendFormId] = useState<string | null>(null);
+  const [nativeFormId, setNativeFormId] = useState<string | null>(null);
   const [nativePreview, setNativePreview] = useState<{ businessId: string; formId: string; json: string } | null>(null);
   const [previewingNative, setPreviewingNative] = useState<string | null>(null);
   const [nativePreviewError, setNativePreviewError] = useState('');
@@ -127,12 +131,19 @@ export default function FormsPage() {
 
   // Clear stale preview when business context changes
   useEffect(() => {
+    responsesGenerationRef.current += 1;
+    setResponses([]);
+    setSelectedForm(null);
+    setResponsesError(null);
+    setResponsesLoading(false);
+    setView('list');
     previewGenerationRef.current += 1;
     setNativePreview(prev => {
       if (prev && prev.businessId !== business.id) return null;
       return prev;
     });
     setNativePreviewError('');
+    setNativeFormId(null);
     setPreviewingNative(null);
   }, [business.id]);
 
@@ -158,17 +169,27 @@ export default function FormsPage() {
   }
 
   async function openResponses(form: Form) {
+    const generation = ++responsesGenerationRef.current;
     setSelectedForm(form);
     setView('responses');
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('form_responses')
-      .select('id, customer_phone, customer_name, customer_email, answers, business_notes, status, channel, consent_given, submitted_at')
-      .eq('form_id', form.id)
-      // Older versions stored an empty "sent" row when a form was sent; those are not responses.
-      .neq('status', 'sent')
-      .order('submitted_at', { ascending: false });
-    setResponses((data || []) as FormResponse[]);
+    setResponses([]);
+    setResponsesError(null);
+    setResponsesLoading(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('form_responses')
+        .select('id, customer_phone, customer_name, customer_email, answers, submission_source, consent_given, submitted_at, metadata')
+        .eq('form_id', form.id)
+        .eq('business_id', business.id)
+        .order('submitted_at', { ascending: false });
+      if (error) throw error;
+      if (responsesGenerationRef.current === generation) setResponses((data || []) as FormResponse[]);
+    } catch {
+      if (responsesGenerationRef.current === generation) setResponsesError('Could not load responses. Please try again.');
+    } finally {
+      if (responsesGenerationRef.current === generation) setResponsesLoading(false);
+    }
   }
 
   function addField() {
@@ -216,7 +237,8 @@ export default function FormsPage() {
       description: description.trim() || null,
       fields,
       is_active: true,
-      settings: { ...editSettings, marketing_opt_in: askForUpdates && hasPhoneField },
+      settings: { ...editSettings, marketing_opt_in: askForUpdates && hasPhoneField,
+        email_marketing_opt_in: editSettings.email_marketing_opt_in === true && fields.some(f => f.type === 'email') },
     };
 
     setSaveError(null);
@@ -287,15 +309,6 @@ export default function FormsPage() {
     }
   }
 
-  async function saveNotes(responseId: string) {
-    setSavingNotes(responseId);
-    const supabase = createClient();
-    const notes = editingNotes[responseId] ?? '';
-    await supabase.from('form_responses').update({ business_notes: notes || null }).eq('id', responseId);
-    setResponses(prev => prev.map(r => r.id === responseId ? { ...r, business_notes: notes || null } : r));
-    setSavingNotes(null);
-  }
-
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -306,6 +319,12 @@ export default function FormsPage() {
 
   // ═══════════ RESPONSES VIEW ═══════════
   if (view === 'responses' && selectedForm) {
+    const historicalFields = new Map(selectedForm.fields.map(field => [field.id, field]));
+    for (const response of responses) {
+      for (const field of response.metadata?.form_config?.fields || []) if (!historicalFields.has(field.id)) historicalFields.set(field.id, field);
+      for (const id of Object.keys(response.answers)) if (!historicalFields.has(id)) historicalFields.set(id, { id, label: id, type: 'text', required: false });
+    }
+    const responseFields = [...historicalFields.values()];
     return (
       <div>
         <div className="flex items-center gap-3">
@@ -317,12 +336,14 @@ export default function FormsPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">{selectedForm.title}</h1>
             <p className="text-sm text-gray-500">
-              {responses.length} response{responses.length !== 1 ? 's' : ''}
+              {responsesLoading ? 'Loading responses…' : responsesError ? 'Responses unavailable' : `${responses.length} response${responses.length !== 1 ? 's' : ''}`}
             </p>
           </div>
         </div>
 
-        {responses.length === 0 ? (
+        {responsesError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{responsesError} <button onClick={() => openResponses(selectedForm)} className="underline">Try again</button></p>}
+        {!responsesLoading && !responsesError && <NativeFormEmailComposer key={`${business.id}:${selectedForm.id}`} businessId={business.id} responses={responses} />}
+        {responsesLoading ? <p role="status" className="mt-6 text-sm text-gray-500">Loading responses…</p> : responsesError ? null : responses.length === 0 ? (
           <div className="mt-8 text-center text-sm text-gray-400">No responses yet. Send the form to customers to start collecting data.</div>
         ) : (
           <div className="mt-6 overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -330,12 +351,11 @@ export default function FormsPage() {
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Respondent</th>
-                  {selectedForm.fields.slice(0, 5).map(f => (
+                  {responseFields.map(f => (
                     <th key={f.id} className="px-4 py-3 text-left font-medium text-gray-500">{f.label}</th>
                   ))}
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Submitted via</th>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Notes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -348,46 +368,23 @@ export default function FormsPage() {
                   };
 
                   return (
-                    <tr key={r.id} className={`hover:bg-gray-50 ${r.status === 'sent' ? 'bg-yellow-50/30' : ''}`}>
+                    <tr key={r.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900">{r.customer_name || 'Anonymous'}</p>
                         {r.customer_phone && <p className="text-xs text-gray-400">{r.customer_phone}</p>}
                         {r.customer_email && <p className="text-xs text-gray-400">{r.customer_email}</p>}
-                        {r.consent_given === true && <p className="text-xs text-gray-500">Ticked “send me updates” (not yet confirmed)</p>}
+                        {r.consent_given === true && <p className="text-xs text-gray-500">Requested WhatsApp updates; confirmation is tracked separately.</p>}
                       </td>
-                      {selectedForm.fields.slice(0, 5).map(f => (
-                        <td key={f.id} className="px-4 py-3 text-gray-700 max-w-[200px] truncate">
-                          {r.status === 'sent' && Object.keys(r.answers).length === 0 ? (
-                            <span className="text-yellow-500 text-xs">Pending</span>
-                          ) : formatValue(r.answers[f.id])}
+                      {responseFields.map(f => (
+                        <td key={f.id} className="px-4 py-3 text-gray-700 min-w-[120px] max-w-sm whitespace-pre-wrap break-words">
+                          {formatValue(r.answers[f.id])}
                         </td>
                       ))}
                       <td className="px-4 py-3">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          r.status === 'submitted' ? 'bg-green-100 text-green-700' :
-                          r.status === 'sent' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>{r.status === 'sent' ? 'Awaiting' : 'Done'}</span>
+                        {r.submission_source === 'native' ? 'WhatsApp' : 'Web'}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
                         {new Date(r.submitted_at).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={editingNotes[r.id] ?? r.business_notes ?? ''}
-                            onChange={e => setEditingNotes(prev => ({ ...prev, [r.id]: e.target.value }))}
-                            placeholder="Add note..."
-                            className="w-32 rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-brand"
-                          />
-                          {(editingNotes[r.id] ?? r.business_notes ?? '') !== (r.business_notes ?? '') && (
-                            <button onClick={() => saveNotes(r.id)} disabled={savingNotes === r.id}
-                              className="rounded bg-brand px-2 py-1 text-xs text-white disabled:opacity-50">
-                              {savingNotes === r.id ? '...' : '✓'}
-                            </button>
-                          )}
-                        </div>
                       </td>
                     </tr>
                   );
@@ -537,6 +534,8 @@ export default function FormsPage() {
           </label>
         </div>
 
+        <NativeFormOptions key={business.id} businessId={business.id} settings={editSettings} hasEmail={fields.some(f => f.type === 'email')} onChange={setEditSettings} />
+
         <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
           <button onClick={handleSave} disabled={saving || !title.trim() || fields.length === 0}
             className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
@@ -579,8 +578,7 @@ export default function FormsPage() {
             <button className="text-sm text-brand" onClick={() => setNativePreview(null)}>Close</button>
           </div>
           <p className="my-2 text-xs text-gray-500">
-            Preview only. This JSON is not published to Meta and cannot collect customer responses until
-            authorized asset provisioning, signed submission binding and webhook capture are completed.
+            Preview the saved form before publishing it in WhatsApp. Changes require a new publication.
           </p>
           <pre className="max-h-72 overflow-auto rounded-md bg-gray-100 p-3 text-xs text-gray-800">{nativePreview.json}</pre>
           <button onClick={() => navigator.clipboard.writeText(nativePreview.json)}
@@ -634,6 +632,7 @@ export default function FormsPage() {
                     {copied ? '✓ Copied!' : 'Copy Link'}
                   </button>
                 )}
+                <button onClick={() => setNativeFormId(nativeFormId === form.id ? null : form.id)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600">Manage WhatsApp form</button>
                 <button onClick={() => previewNativeForm(form)} disabled={previewingNative !== null}
                   className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                   {previewingNative === form.id ? 'Generating...' : 'Preview WhatsApp-native form'}
@@ -648,6 +647,7 @@ export default function FormsPage() {
                   Send on WhatsApp
                 </button>
               </div>
+              {nativeFormId === form.id && <NativeFormPanel key={`${business.id}:${form.id}`} businessId={business.id} formId={form.id} />}
               {sendFormId === form.id && form.is_active && (
                 <FormSendPanel businessId={business.id} formId={form.id} onClose={() => setSendFormId(null)} />
               )}

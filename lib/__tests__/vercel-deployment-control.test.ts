@@ -3,20 +3,21 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Vercel deployment control', () => {
-  it.each(['vercel.json', 'admin/vercel.json'])('preserves per-project deployment gating with only the approved tax, directory and admin review exceptions in %s', (file) => {
+  it.each(['vercel.json', 'admin/vercel.json'])('preserves per-project deployment gating with only the approved tax, directory, admin and native forms review exceptions in %s', (file) => {
     const configPath = resolve(process.cwd(), file);
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as {
       git?: { deploymentEnabled?: boolean | Record<string, boolean> };
       ignoreCommand?: string;
     };
 
-    // Owner-approved CI-only branch exceptions (tax, directory, admin fixes). Reject
+    // Owner-approved CI-only branch exceptions (#982 tax, #984 directory, admin fixes, #591 native forms). Reject
     // global switches, wildcard rules, and changes to any release branch. Unspecified
     // branches retain Vercel's default and their per-project Ignored Build Step (#614).
     expect(config.git?.deploymentEnabled).toEqual({
       'codex/merchant-tax-phase-a': false,
       'codex/directory-short-links': false,
       'codex/admin-audit-fixes': false,
+      'codex/native-forms-591': false,
     });
     expect(config.ignoreCommand).toBeUndefined();
   });

@@ -226,3 +226,51 @@ export function hashNonceForReplay(nonce: string): string {
   }
   return createHash('sha256').update(nonce).digest('hex');
 }
+
+/** Runtime v2 tokens bind the immutable provider publication and transport. */
+export interface NativeTokenClaims {
+  formId: string;
+  businessId: string;
+  publicationId: string;
+  channelId: string;
+  phoneNumberId: string;
+  assetId: string;
+  revision: string;
+  phone: string;
+  nonce: string;
+  expiresAt: number;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validNativeClaims(c: NativeTokenClaims): boolean {
+  return [c.formId, c.businessId, c.publicationId, c.channelId, c.nonce].every(v => UUID.test(v))
+    && /^[1-9]\d{6,14}$/.test(c.phone) && /^\d{1,64}$/.test(c.phoneNumberId)
+    && /^\d{1,64}$/.test(c.assetId) && /^[a-f0-9]{64}$/.test(c.revision)
+    && Number.isSafeInteger(c.expiresAt);
+}
+
+export function generateNativeFlowToken(input: Omit<NativeTokenClaims, 'nonce' | 'expiresAt'>): FlowTokenResult {
+  const claims: NativeTokenClaims = { ...input, phone: normalizePhone(input.phone), nonce: randomUUID(), expiresAt: Date.now() + TOKEN_TTL_MS };
+  if (!validNativeClaims(claims)) throw new FlowTokenError('Invalid native publication binding.');
+  const payload = `v2|${JSON.stringify(claims)}`;
+  return { token: `${Buffer.from(payload).toString('base64url')}.${sign(payload, getSecret())}`, expiresAt: claims.expiresAt };
+}
+
+/** Authenticate BEFORE using a business claim on a shared transport. Legacy tokens fail closed. */
+export function authenticateNativeFlowToken(token: unknown, senderPhone: string, channelId: string, phoneNumberId: string): NativeTokenClaims | null {
+  if (typeof token !== 'string' || token.length > 2048) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2 || parts.some(p => !/^[A-Za-z0-9_-]+$/.test(p))) return null;
+  try {
+    const payload = Buffer.from(parts[0], 'base64url').toString('utf8');
+    if (!payload.startsWith('v2|')) return null;
+    const a = Buffer.from(parts[1], 'base64url');
+    const b = Buffer.from(sign(payload, getSecret()), 'base64url');
+    const { timingSafeEqual } = require('crypto');
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    const c: NativeTokenClaims = JSON.parse(payload.slice(3));
+    if (!c || !validNativeClaims(c) || c.expiresAt <= Date.now() || c.expiresAt > Date.now() + TOKEN_TTL_MS
+      || c.phone !== normalizePhone(senderPhone) || c.channelId !== channelId || c.phoneNumberId !== phoneNumberId) return null;
+    return c;
+  } catch { return null; }
+}

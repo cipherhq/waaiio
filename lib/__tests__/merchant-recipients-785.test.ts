@@ -40,3 +40,22 @@ it('allows active team members with the same business scope as chat', async () =
   expect(m.scopes).toContainEqual(['business_members', 'eq', 'status', 'active']);
   expect(m.scopes).toContainEqual(['business_members', 'eq', 'business_id', 'biz']);
 });
+
+it('finds a confirmed utility-consent number without a customer profile or bot session', async () => {
+  m.from.mockImplementation(table => {
+    const data = table === 'businesses' ? { owner_id: 'owner' }
+      : table === 'customer_consents' ? [{ phone: '+12025550123' }] : [];
+    const chain: Record<string, unknown> = {};
+    for (const method of ['select', 'eq', 'or', 'limit', 'ilike', 'order']) chain[method] = (...args: unknown[]) => { m.scopes.push([table, method, ...args]); return chain; };
+    chain.maybeSingle = async () => ({ data, error: null });
+    chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data, error: null }).then(resolve);
+    return chain;
+  });
+  const response = await GET(new NextRequest('https://example.test/api/merchant-recipients?businessId=biz&q=1202555'));
+  expect((await response.json()).customers).toEqual([{ phone: '+12025550123', name: null }]);
+  expect(m.scopes).toContainEqual(['customer_consents', 'eq', 'business_id', 'biz']);
+  expect(m.scopes).toContainEqual(['customer_consents', 'eq', 'channel', 'whatsapp']);
+  expect(m.scopes).toContainEqual(['customer_consents', 'eq', 'purpose', 'utility']);
+  expect(m.permission).toHaveBeenCalledWith(expect.anything(), 'biz', '+12025550123', 'utility');
+  expect(m.from).not.toHaveBeenCalledWith('bot_sessions');
+});

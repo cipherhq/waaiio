@@ -30,7 +30,7 @@ function serviceFrom(table: string) {
   let phones: string[] = [];
   const chain: Record<string, unknown> = {};
   const self = () => chain;
-  for (const k of ['select', 'eq', 'or', 'is', 'order', 'limit']) chain[k] = vi.fn(self);
+  for (const k of ['select', 'eq', 'neq', 'or', 'is', 'order', 'limit']) chain[k] = vi.fn(self);
   chain.in = vi.fn((col: string, values: string[]) => { if (col === 'phone') phones = values; return chain; });
   const digits = () => (phones[0] ?? '').replace(/\D/g, '');
   if (table === 'messaging_opt_outs') {

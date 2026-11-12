@@ -97,7 +97,7 @@ beforeEach(() => {
       error: ['customer_consents', 'messaging_opt_outs'].includes(table) ? m.readError : null,
     });
     const query: Record<string, unknown> = {};
-    for (const method of ['select', 'eq', 'in', 'or', 'is', 'order', 'limit', 'lte']) {
+    for (const method of ['select', 'eq', 'neq', 'in', 'or', 'is', 'order', 'limit', 'lte']) {
       query[method] = (...args: unknown[]) => {
         m.calls.push([table, method, ...args]);
         if (method === 'in' && args[0] === 'phone') phones = args[1] as string[];

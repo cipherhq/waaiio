@@ -165,7 +165,7 @@ export class ChannelResolver {
    * Resolve a channel by Meta Cloud API phone_number_id.
    * Used by the Meta Cloud webhook to find the channel.
    */
-  async resolveByPhoneNumberId(phoneNumberId: string): Promise<ResolvedChannel | null> {
+  async resolveByPhoneNumberId(phoneNumberId: string, strictReads = false): Promise<ResolvedChannel | null> {
     if (!phoneNumberId) return null;
 
     const cacheKey = `pnid:${phoneNumberId}`;
@@ -175,13 +175,14 @@ export class ChannelResolver {
       return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
-    const { data } = await this.supabase
+    const query = this.supabase
       .from('whatsapp_channels')
       .select('*')
       .eq('phone_number_id', phoneNumberId)
       .eq('provider', 'meta_cloud')
-      .eq('is_active', true)
-      .single();
+      .eq('is_active', true);
+    const { data, error } = await (strictReads ? query.maybeSingle() : query.single());
+    if (strictReads && error) throw new Error('Inbound channel lookup unavailable.');
 
     const record = data as ChannelRecord | null;
     this.cacheSet(cacheKey, record);
@@ -215,7 +216,7 @@ export class ChannelResolver {
    * Resolve a channel by business_id.
    * Tries dedicated channel first, then falls back to the shared channel for the business's country.
    */
-  async resolveByBusinessId(businessId: string): Promise<ResolvedChannel | null> {
+  async resolveByBusinessId(businessId: string, strictReads = false): Promise<ResolvedChannel | null> {
     if (!businessId) return null;
 
     const cacheKey = `biz:${businessId}`;
@@ -229,20 +230,22 @@ export class ChannelResolver {
     }
 
     // 1. Check admin-assigned channel first (assigned_channel_id takes priority)
-    const { data: bizData } = await this.supabase
+    const { data: bizData, error: businessReadError } = await this.supabase
       .from('businesses')
       .select('country_code, assigned_channel_id, whatsapp_channel_id, wa_method')
       .eq('id', businessId)
       .single();
+    if (strictReads && businessReadError && businessReadError.code !== 'PGRST116') throw new Error('Channel business lookup unavailable.');
 
     const channelId = bizData?.assigned_channel_id || bizData?.whatsapp_channel_id;
     if (channelId) {
-      const { data: assigned } = await this.supabase
+      const { data: assigned, error: assignedReadError } = await this.supabase
         .from('whatsapp_channels')
         .select('*')
         .eq('id', channelId)
         .eq('is_active', true)
         .maybeSingle();
+    if (strictReads && assignedReadError) throw new Error('Assigned channel lookup unavailable.');
 
       // A business may only send through a shared platform number or a
       // non-shared channel it owns. A pointer to another business's channel
@@ -263,13 +266,14 @@ export class ChannelResolver {
     }
 
     // 2. Try dedicated channel
-    const { data } = await this.supabase
+    const { data, error: dedicatedReadError } = await this.supabase
       .from('whatsapp_channels')
       .select('*')
       .eq('business_id', businessId)
       .eq('channel_type', 'dedicated')
       .eq('is_active', true)
       .maybeSingle();
+    if (strictReads && dedicatedReadError) throw new Error('Dedicated channel lookup unavailable.');
 
     if (data) {
       const record = data as ChannelRecord;
@@ -290,7 +294,7 @@ export class ChannelResolver {
     // 3. Shared channel for the business's country (non-shared wa_method fallback,
     //    e.g. 'transfer' businesses that haven't been fully set up yet)
     if (bizData?.country_code) {
-      const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode);
+      const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode, strictReads);
       if (shared) {
         this.cacheSet(cacheKey, shared.channel);
         this.stampBusinessId(shared, businessId);
@@ -305,13 +309,14 @@ export class ChannelResolver {
     }
 
     // Final fallback: any active shared channel (for non-shared wa_method only)
-    const { data: anyShared } = await this.supabase
+    const { data: anyShared, error: sharedReadError } = await this.supabase
       .from('whatsapp_channels')
       .select('*')
       .eq('channel_type', 'shared')
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
+    if (strictReads && sharedReadError) throw new Error('Shared channel lookup unavailable.');
 
     if (anyShared) {
       const record = anyShared as ChannelRecord;
@@ -408,9 +413,9 @@ export class ChannelResolver {
   /**
    * Get the shared channel for a given country.
    */
-  async getSharedChannelForCountry(countryCode: CountryCode): Promise<ResolvedChannel | null> {
+  async getSharedChannelForCountry(countryCode: CountryCode, strictReads = false): Promise<ResolvedChannel | null> {
     // Staging: every country uses the designated US number; a local number never wins.
-    if (isStagingWhatsAppRouting()) return this.getStagingDesignatedSharedChannel();
+    if (isStagingWhatsAppRouting()) return this.getStagingDesignatedSharedChannel(strictReads);
 
     const cacheKey = `shared:${countryCode}`;
     const cached = this.cache.get(cacheKey);
@@ -419,7 +424,7 @@ export class ChannelResolver {
       return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
-    const { data } = await this.supabase
+    const { data, error } = await this.supabase
       .from('whatsapp_channels')
       .select('*')
       .eq('country_code', countryCode)
@@ -427,6 +432,7 @@ export class ChannelResolver {
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
+    if (strictReads && error) throw new Error('Shared channel lookup unavailable.');
 
     const record = data as ChannelRecord | null;
     this.cacheSet(cacheKey, record);
@@ -436,7 +442,7 @@ export class ChannelResolver {
   }
 
   /** Staging only: the designated shared number, or null (fail closed) if it is not usable. */
-  private async getStagingDesignatedSharedChannel(): Promise<ResolvedChannel | null> {
+  private async getStagingDesignatedSharedChannel(strictReads = false): Promise<ResolvedChannel | null> {
     const cacheKey = 'shared:staging-designated';
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
@@ -444,11 +450,12 @@ export class ChannelResolver {
       return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
-    const { data } = await this.supabase
+    const { data, error } = await this.supabase
       .from('whatsapp_channels')
       .select('*')
       .eq('id', STAGING_SHARED_WHATSAPP_CHANNEL.id)
       .maybeSingle();
+    if (strictReads && error) throw new Error('Shared channel lookup unavailable.');
 
     const record = data as ChannelRecord | null;
     const problem = stagingDesignatedChannelProblem(record);

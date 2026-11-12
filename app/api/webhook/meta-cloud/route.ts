@@ -1,3 +1,4 @@
+import { isNativeFormMessage, handleNativeFormWebhook } from '@/lib/whatsapp-forms/webhook';
 import { handleMerchantAlertOptIn, sendMerchantAlertControlReply } from '@/lib/bot/merchant-alert-optin';
 import { handleOptInConfirmation, isOptInPayload, sendOptInControlReply } from '@/lib/consent/optin-confirmation';
 import { NextResponse, type NextRequest } from 'next/server';
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
             text?: { body: string };
             interactive?: {
               type: string;
+              nfm_reply?: { response_json?: string; body?: string; name?: string };
               button_reply?: { id: string; title: string };
               list_reply?: { id: string; title: string; description?: string };
             };
@@ -537,7 +539,12 @@ export async function POST(request: NextRequest) {
         const resolver = new ChannelResolver(supabase);
 
         // Resolve channel by phone_number_id
-        const resolved = await resolver.resolveByPhoneNumberId(phoneNumberId);
+        let resolved;
+        try { resolved = await resolver.resolveByPhoneNumberId(phoneNumberId, messages.some(isNativeFormMessage)); }
+        catch (error) {
+          if (messages.some(isNativeFormMessage)) return NextResponse.json({ error: 'Native form channel lookup unavailable' }, { status: 503 });
+          throw error;
+        }
         mark('channel_resolved');
         log.debug('[META-WEBHOOK] Resolved channel:', resolved ? { channelId: resolved.channel.id, provider: resolved.channel.provider, phoneNumberId: resolved.channel.phone_number_id, hasToken: !!(resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN) } : 'NULL');
         if (!resolved) {
@@ -576,6 +583,9 @@ export async function POST(request: NextRequest) {
               p_event_type: whMsgType,
             });
 
+            if (isNativeFormMessage(msg) && (claimError || claimResult?.reason === 'active_processing')) {
+              return NextResponse.json({ error: 'Native form processing unavailable' }, { status: 503 });
+            }
             if (claimError || !claimResult?.claimed) {
               msgLog.debug('[META-WEBHOOK] Event not claimed:', metaMsgId, claimResult?.reason || claimError?.message);
               continue;
@@ -583,6 +593,24 @@ export async function POST(request: NextRequest) {
 
             const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
+            // Native persistence is retriable BEFORE the ordinary dispatch barrier.
+            // Its handler owns a fresh tenant-bound sender, not guardedSender.
+            if (isNativeFormMessage(msg)) {
+              const native = await handleNativeFormWebhook({ db: supabase, message: msg, phone: source,
+                channelId: resolved.channel.id, phoneNumberId,
+                guardSender: sender => createDeadlineGuardedSender(sender, t0),
+              });
+              if (native.retry) {
+                await supabase.rpc('fail_webhook_event', { p_event_id: eventId, p_claim_token: claimToken, p_error: 'native_persistence_unavailable' });
+                return NextResponse.json({ error: 'Native form persistence unavailable' }, { status: 503 });
+              }
+              const { error: nativeCompletionError } = await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
+              if (nativeCompletionError) return NextResponse.json({ error: 'Native form completion unavailable' }, { status: 503 });
+              continue;
+            }
+            // Native form submissions are handled (and their claim completed) above and
+            // `continue` before the reply guard is installed, so they are not limited and
+            // the guard is never left installed without its finally().
             // #536: every business-paid reply to this inbound message (media and
             // voice replies as well as the bot) counts toward the customer's daily
             // limit; STOP/START commands and native catalog orders are never
@@ -778,7 +806,7 @@ export async function POST(request: NextRequest) {
               }
 
               const standalone = new StandaloneService(supabase);
-              const bot = new BotService(supabase, guardedSender, standalone, intelligenceSvc);
+              const bot = new BotService(supabase, guardedSender, standalone, intelligenceSvc, sender => createDeadlineGuardedSender(sender, t0));
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);

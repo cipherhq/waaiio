@@ -1,3 +1,4 @@
+import { emailMarketingEligibility, normalizeConsentEmail } from '@/lib/whatsapp-forms/email-consent';
 /**
  * Audience Eligibility — E1 (#557)
  *
@@ -54,13 +55,16 @@ export async function computeAudienceEligibility(
   const consentMap = await loadConsents(service, businessId, phonesToCheck);
   const optOutMap = await loadOptOuts(service, businessId, phonesToCheck);
 
+  const legacyEligible = new Set([...audience.values()].filter(identity => checkEmailEligibility(identity, consentMap, optOutMap))
+    .map(identity => `${(identity.phone || '').replace(/^\+/, '')}|${normalizeConsentEmail(identity.email) || ''}`));
+  const emailGrants = await emailMarketingEligibility(service, businessId, [...audience.values()], legacyEligible);
   let whatsappCount = 0;
   let emailCount = 0;
   const results: EligibilityResult[] = [];
 
   for (const identity of audience.values()) {
     const whatsappEligible = checkWhatsAppEligibility(identity, consentMap, optOutMap);
-    const emailEligible = checkEmailEligibility(identity, consentMap, optOutMap);
+    const emailEligible = emailGrants.has(`${(identity.phone || '').replace(/^\+/, '')}|${normalizeConsentEmail(identity.email) || ''}`);
 
     if (whatsappEligible) whatsappCount++;
     if (emailEligible) emailCount++;
@@ -87,6 +91,7 @@ interface ConsentRecord {
   purpose: string;
   status: string;
   expires_at: string | null;
+  policy_version?: string | null;
 }
 
 /**
@@ -129,7 +134,7 @@ async function loadConsents(
     while (true) {
       const { data, error } = await service
         .from('customer_consents')
-        .select('phone, channel, purpose, status, expires_at')
+        .select('phone, channel, purpose, status, expires_at, policy_version')
         .eq('business_id', businessId)
         .in('phone', chunk)
         .order('phone', { ascending: true })
@@ -298,7 +303,7 @@ function checkEmailEligibility(
 
   for (const consent of consents) {
     if (
-      consent.channel === 'email' &&
+      consent.channel === 'email' && consent.policy_version !== 'native-email-marketing-v1-unverified' &&
       consent.purpose === 'marketing' &&
       consent.status === 'granted'
     ) {

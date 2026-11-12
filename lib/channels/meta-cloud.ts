@@ -10,6 +10,7 @@
 
 import { logger } from '@/lib/logger';
 import { MetaApiError } from './meta-api-error';
+import * as flowAssets from '@/lib/whatsapp-forms/meta-flow-asset';
 
 export interface MetaCloudCredentials {
   accessToken: string;
@@ -117,6 +118,17 @@ export class MetaCloudService {
     this.accessToken = (credentials?.accessToken || process.env.META_CLOUD_ACCESS_TOKEN || '').trim();
     this.phoneNumberId = (credentials?.phoneNumberId || process.env.META_CLOUD_PHONE_NUMBER_ID || '').trim();
     this.wabaId = (credentials?.wabaId || process.env.META_CLOUD_WABA_ID || '').trim();
+  }
+
+  /** The resolver supplies decrypted server credentials. They never leave this service. */
+  nativeFlowAssets(expectedWabaId: string) {
+    if (!expectedWabaId || this.wabaId !== expectedWabaId) throw new Error('Native Flow account mismatch.');
+    return {
+      create: (name: string) => flowAssets.createFlowAsset(this.accessToken, expectedWabaId, name, ['SIGN_UP']),
+      upload: (id: string, json: Record<string, unknown>) => flowAssets.uploadFlowJson(this.accessToken, id, json),
+      publish: (id: string) => flowAssets.publishFlow(this.accessToken, id),
+      status: (id: string) => flowAssets.getFlowStatus(this.accessToken, id),
+    };
   }
 
   // ── Send Text Message ──
@@ -497,7 +509,8 @@ export class MetaCloudService {
       flow_action: 'navigate',
       flow_action_payload: {
         screen: message.screen,
-        data: message.data || {},
+        // Meta requires optional screen data to be non-empty when supplied.
+        ...(message.data && Object.keys(message.data).length > 0 ? { data: message.data } : {}),
       },
     };
     if (message.flowToken) {
