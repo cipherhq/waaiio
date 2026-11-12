@@ -27,7 +27,7 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext, type TranslateOptions } from './translate';
 import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
-import { loadPlatformSettings } from '@/lib/platformSettings';
+import { loadPlatformSettings, getPlatformSettingsSync } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
@@ -40,6 +40,9 @@ import { evaluateRules } from './automation/rules-engine';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import type { BotSession, BusinessRecord, BotContext } from './bot-types';
 import { isFinancialDenial } from './financial-denial';
+import {
+  isCustomerDailyLimitError, pauseCustomer, pausedNotice, recordCustomerInbound,
+} from '@/lib/messaging/customer-message-guard';
 import { getActiveSession as _getActiveSession, deactivateSession as _deactivateSession, sendBotText, forwardToBusinessOwner as _forwardToBusinessOwner } from './bot-helpers';
 import { getFirstStep as _getFirstStep, getFirstStepFromCapabilities as _getFirstStepFromCapabilities, capabilityToFirstStep as _capabilityToFirstStep } from './handlers/flow-routing';
 import { handleQuoteResponse as _handleQuoteResponse } from './handlers/quote-response';
@@ -230,10 +233,20 @@ export class BotService {
     });
     if (updatesOptInHandled) return;
 
-    // Pre-check 1: Timeout — exempt verified same-channel pending STOP selections
+    // Pre-check 1: Pause and repeated messages, shared by every instance (#536).
+    // Exempt verified same-channel pending STOP selections. A paused customer
+    // is told once; later messages and repeats get no reply.
+    if (!_preResolvedPendingStop) {
+      const inbound = await recordCustomerInbound(this.supabase, from, text, messageType);
+      if (inbound.ignore) {
+        if (inbound.pausedNoticeDue) await this.sendPlatformText(from, pausedNotice(inbound.pausedMinutes));
+        return;
+      }
+    }
+    // This instance's own timeout still applies if the shared store is unavailable.
     const timeoutCheck = this.intelligence.isTimedOut(from);
     if (timeoutCheck.timedOut && !_preResolvedPendingStop) {
-      await this.sendPlatformText(from, `You can message again in ${timeoutCheck.remaining} minute${timeoutCheck.remaining !== 1 ? 's' : ''}. 🙏`);
+      await this.sendPlatformText(from, pausedNotice(timeoutCheck.remaining));
       return;
     }
 
@@ -307,6 +320,7 @@ export class BotService {
         const existingSession = await this.getActiveSession(from);
         if (existingSession) await this.deactivateSession(existingSession.id);
         await this.sendPlatformText(from, abuse.message);
+        await pauseCustomer(this.supabase, from, getPlatformSettingsSync().abuse_cooldown_hard_minutes, true);
         return;
       }
       if (abuse.warn && abuse.message) {
@@ -4611,6 +4625,12 @@ export class BotService {
     logger.info('[BOT-PERF] timings_ms', _btimings);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
+      // #536: the customer is over today's limit with this business. Nothing
+      // else is sent or charged; the webhook sends the one notice afterwards.
+      if (isCustomerDailyLimitError(err)) {
+        logger.info('[BOT] Customer daily reply limit reached for', from.slice(-4));
+        return;
+      }
       // #976: same check FlowExecutor uses to pass refused flow replies up to here.
       if (isFinancialDenial(err)) {
         // #682: Financial exhaustion — rate-limited customer-facing message via platform scope.

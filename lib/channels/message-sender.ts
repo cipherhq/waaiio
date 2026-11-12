@@ -25,6 +25,7 @@ import {
 import { resolveRecipientCountry } from '@/lib/channels/phone-country';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import type { CustomerReplyGuard } from '@/lib/messaging/customer-message-guard';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Suspension detection for retry logic — uses message-based matching
@@ -278,6 +279,13 @@ export class MetaCloudSender implements MessageSender {
   beforeEachAttempt?: () => void;
 
   /**
+   * Customer daily-limit guard for the inbound message being answered (#536).
+   * Set by the webhook around bot.handleMessage only. Called before any
+   * business-paid send; throws CustomerDailyLimitError to refuse it.
+   */
+  customerReplyGuard?: CustomerReplyGuard;
+
+  /**
    * S-1 (#256): Private business identity for the hard-stop guard.
    * Only modifiable through bindBusiness() and enterPlatformDiscovery().
    */
@@ -312,6 +320,11 @@ export class MetaCloudSender implements MessageSender {
     // be bypassed simply because #257 is OFF. GateBlockError is non-retryable.
     if (!isPlatform && !this._supabase) {
       throw new GateBlockError('Business send requires attempt authority (Supabase client unavailable) — zero Meta emission');
+    }
+
+    // Customer daily limit: refuse before any attempt row or reservation exists.
+    if (!isPlatform && this._businessId && this.customerReplyGuard) {
+      await this.customerReplyGuard(this._businessId, params.recipientPhone);
     }
 
     // 1. Create pre-WAMID attempt with authoritative pricing context.

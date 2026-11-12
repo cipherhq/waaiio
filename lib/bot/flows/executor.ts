@@ -19,6 +19,7 @@ import {
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import { safeFlowCleanup } from '@/lib/bot/handlers/escape-hatches';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
+import { invalidInputPauseNotice, PAYMENT_STEP_IDS, recordInvalidInput } from '@/lib/messaging/customer-message-guard';
 import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
@@ -809,6 +810,18 @@ export class FlowExecutor {
             }
           }
         }
+      }
+
+      // #536: a run of invalid replies at one step pauses the customer on
+      // every instance, with one notice instead of another paid re-prompt.
+      // Payment steps are never paused.
+      const invalidRun = PAYMENT_STEP_IDS.has(stepId)
+        ? { paused: false, minutes: 0 }
+        : await recordInvalidInput(this.supabase, from, `${session.id}:${stepId}`);
+      if (invalidRun.paused) {
+        await this.sendText(from, invalidInputPauseNotice(invalidRun.minutes), scopedSender);
+        executionReachedTerminal = true;
+        return;
       }
 
       // ── Standard validation failure: localized error + re-prompt ──

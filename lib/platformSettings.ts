@@ -67,6 +67,12 @@ export interface PlatformSettings {
   minimum_bank_transfer: Record<string, number> | null;
   /** Whether new public account creation is allowed. Defaults to false (closed before launch). */
   signup_open: boolean;
+  /** Paid bot replies per customer, per business, per UTC day (default: 50). A business may set its own, clamped by the max below. */
+  customer_daily_reply_limit: number;
+  /** Highest daily per-customer limit a business may set (default: 500) */
+  customer_daily_reply_limit_max: number;
+  /** Identical messages in a row that still get a reply; later repeats are ignored (default: 3) */
+  customer_repeat_message_limit: number;
 }
 
 // ── Sentinel Utility ──
@@ -125,6 +131,9 @@ function buildFallback(): PlatformSettings {
     payout_verification_limits: { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 },
     minimum_bank_transfer: null,
     signup_open: false,
+    customer_daily_reply_limit: 50,
+    customer_daily_reply_limit_max: 500,
+    customer_repeat_message_limit: 3,
   };
 }
 
@@ -163,6 +172,7 @@ export async function loadPlatformSettings(
         'max_businesses_per_user', 'ocr_confidence_threshold', 'invoice_expiry_days',
         'contract_signing_hours', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes',
         'payout_verification_limits', 'minimum_bank_transfer', 'signup_open',
+        'customer_daily_reply_limit', 'customer_daily_reply_limit_max', 'customer_repeat_message_limit',
       ]);
 
     if (error) throw error;
@@ -234,6 +244,15 @@ export async function loadPlatformSettings(
       signup_open: map.has('signup_open')
         ? (map.get('signup_open') as boolean)
         : false,
+      customer_daily_reply_limit: map.has('customer_daily_reply_limit')
+        ? (map.get('customer_daily_reply_limit') as number)
+        : fallback.customer_daily_reply_limit,
+      customer_daily_reply_limit_max: map.has('customer_daily_reply_limit_max')
+        ? (map.get('customer_daily_reply_limit_max') as number)
+        : fallback.customer_daily_reply_limit_max,
+      customer_repeat_message_limit: map.has('customer_repeat_message_limit')
+        ? (map.get('customer_repeat_message_limit') as number)
+        : fallback.customer_repeat_message_limit,
     };
     cacheTime = Date.now();
     return cache;
