@@ -95,6 +95,29 @@ describe('expire-transfers cron', () => {
     expect(mockSendOrEmail).toHaveBeenCalledTimes(1);
   });
 
+  it('expiry notice carries a WhatsApp message category, so the financial guard accepts it', async () => {
+    // Real sendOrEmail; the sender refuses a send with no category, as the
+    // financial authorization guard (M370/M371/M461) does on staging.
+    const actual = await vi.importActual<typeof import('@/lib/channels/send-or-email')>('@/lib/channels/send-or-email');
+    const sendText = vi.fn(async (msg: { messageCategory?: string }) => {
+      if (!msg.messageCategory) throw new Error('Financial authorization denied: missing_message_category');
+      return { success: true };
+    });
+    mockResolveByBusinessId.mockResolvedValue({ sender: { sendText } });
+    const results: unknown[] = [];
+    mockSendOrEmail.mockImplementation(async (opts: Parameters<typeof actual.sendOrEmail>[0]) => {
+      const r = await actual.sendOrEmail(opts);
+      results.push(r);
+      return r;
+    });
+    overdue = [{ ...base, id: 'xf-6', booking_id: 'bk-unpaid-2', reference_code: 'WA-71A9' }];
+    const body = await runCron();
+
+    expect(body.expired).toBe(1);
+    expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'service' }));
+    expect(results).toEqual([expect.objectContaining({ whatsapp: 'sent' })]);
+  });
+
   it('booking already paid by card, no receipt → transfer cancelled quietly, booking untouched', async () => {
     overdue = [{ ...base, id: 'xf-2', booking_id: 'bk-card-paid', reference_code: 'WA-2753' }];
     paidBookings = ['bk-card-paid'];
