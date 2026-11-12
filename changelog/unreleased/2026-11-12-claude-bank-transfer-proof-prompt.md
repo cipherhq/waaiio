@@ -1,0 +1,13 @@
+## 2026-11-12 — Bank transfer: one clear proof request, no false "Paid Online", no silent cancel
+
+**What changed:** Fixed three bot bugs found in a staging bank-transfer test (TestBiz, booking WA-BK-8012, transfer WA-53A0). They existed in every flow that offers direct bank transfer: payment/giving, scheduling, ticketing, ordering, reservation, invoice and crowdfunding.
+
+1. Tapping "I've Sent Transfer" sent "Please send a screenshot…" and then, straight after, "Complete your payment using the link or bank transfer above" with the payment buttons again. The handler sent the request itself and returned an empty error, and the executor always re-sends the step prompt after invalid input. The handler now only sets `_awaiting_transfer_proof` and returns `persistSessionDataOnFailure`, and the step prompt is the proof request (with Cancel, plus "I've Paid Online" only if an online link exists). The flag is now saved through the executor's version-checked save instead of a direct `bot_sessions` update, and the request appears in the conversation log.
+2. The payment-step prompt offered "I've Paid Online" even when no online payment link existed (transfer-only payment). It now shows "I've Sent Transfer" and Cancel with the existing transfer hint.
+3. "I've Paid" on a transfer-only payment (no `payment_reference`) silently ended the session in payment, scheduling, ticketing and ordering, leaving the booking/order and pending transfer open with no message, and showed "couldn't verify your payment" in reservation, invoice and crowdfunding. It now asks for the transfer receipt instead.
+
+**Files:** new `lib/bot/flows/shared/bank-transfer-proof.ts` (`awaitTransferProof`, `bankTransferPaymentPrompt`; kept out of `shared/bank-transfer.ts` because many tests mock that whole module); the payment step of `payment`, `scheduling`, `ticketing`, `ordering`, `reservation`, `invoice` and `crowdfunding` flows; new test `lib/bot/flows/__tests__/bank-transfer-proof-prompt.test.ts`.
+
+**Affects:** customer messages on the bank-transfer payment step only. Card/online payment, proof submission (`submit_transfer_proof`), OCR, owner notification and merchant approval are unchanged. Reservation and ordering prompts now use the shared localized copy instead of hard-coded English (same English text).
+
+**What could break:** a session that set `_awaiting_transfer_proof` now gets the proof request whenever the payment step re-prompts, so any typed text is still taken as a transfer reference (unchanged rule). Not fixed here: pending transfers left open after a card payment, and the `expire-transfers` cron (POST-only) never running.

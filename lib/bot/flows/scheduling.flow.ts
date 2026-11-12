@@ -23,6 +23,7 @@ import { notifyOwnerNewBooking, notifyOwnerNewPayment } from './shared/notify-ow
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
@@ -4474,15 +4475,7 @@ export const schedulingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const pRef = d.payment_reference as string | undefined;
         if (d.bank_transfer_offered) {
-          return [{
-            type: 'buttons',
-            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
-            buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
-              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
-              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
-            ],
-          }];
+          return [await bankTransferPaymentPrompt(d, ctx.copyLang, ctx.t)];
         }
         const buttons: Array<{ id: string; title: string }> = [
           { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
@@ -4642,17 +4635,7 @@ export const schedulingFlow: FlowDefinition = {
           if (!d.bank_transfer_reference) {
             return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
           }
-          d._awaiting_transfer_proof = true;
-          await ctx.supabase
-            .from('bot_sessions')
-            .update({ session_data: d })
-            .eq('id', ctx.session.id);
-
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
-          });
-          return { valid: false, errorMessage: '' }; // Keep at this step, wait for proof
+          return awaitTransferProof(d);
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
@@ -4695,6 +4678,8 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: false };
           }
 
+          // Transfer-only payment: nothing online to verify, so ask for the receipt.
+          if (!ref && d.bank_transfer_reference) return awaitTransferProof(d);
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
           // #375: If session has a saved-card payment ID, try centralized recovery first
