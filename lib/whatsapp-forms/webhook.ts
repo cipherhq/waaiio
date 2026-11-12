@@ -5,6 +5,8 @@ import { serviceWindowState } from '@/lib/forms/form-send';
 import { captureNativeResponse, resolveNativeChannel, nativeReplyAllowed, sendNativeForm, NativePersistenceError } from './runtime';
 import type { NfmReplyMessage } from './submission-handler';
 import { nativeFormsEnabled } from './release-gate';
+import { MetaApiError } from '@/lib/channels/meta-api-error';
+import { logger } from '@/lib/logger';
 
 export const NATIVE_FORM_ENTRY = /^waaiio_form:([A-Za-z0-9_-]{8,20})$/;
 export type NativeInbound = NfmReplyMessage & { text?: { body?: string }; timestamp?: string };
@@ -77,6 +79,16 @@ export async function handleNativeFormWebhook(input: {
     return { retry: false };
   } catch (error) {
     // No raw answers, tokens, phone numbers or provider errors in logs.
+    const numericCode = (value: unknown) => Number.isSafeInteger(value) ? value as number : undefined;
+    logger.warn('[NATIVE-FORM] Webhook failure', {
+      error_type: error instanceof MetaApiError ? 'meta_api' : error instanceof NativePersistenceError ? 'persistence' : 'other',
+      emission_started: emissionStarted,
+      ...(error instanceof MetaApiError ? {
+        http_status: numericCode(error.httpStatus),
+        meta_error_code: numericCode(error.metaErrorCode),
+        meta_error_subcode: numericCode(error.metaErrorSubcode),
+      } : {}),
+    });
     if (!emissionStarted && error instanceof NativePersistenceError) return { retry: true };
     return { retry: false };
   }

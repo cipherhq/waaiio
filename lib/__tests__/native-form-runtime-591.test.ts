@@ -4,9 +4,11 @@ import { generateNativeFlowToken, authenticateNativeFlowToken } from '@/lib/what
 import { compilePublication } from '@/lib/whatsapp-forms/publication';
 import { captureNativeResponse, NativePersistenceError, sendNativeForm } from '@/lib/whatsapp-forms/runtime';
 import { handleNativeFormWebhook } from '@/lib/whatsapp-forms/webhook';
+import { MetaApiError } from '@/lib/channels/meta-api-error';
 
-const mocks = vi.hoisted(() => ({ resolve: vi.fn() }));
+const mocks = vi.hoisted(() => ({ resolve: vi.fn(), warn: vi.fn() }));
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class { resolveByBusinessId = mocks.resolve; } }));
+vi.mock('@/lib/logger', () => ({ logger: { warn: mocks.warn, error: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
 const formId = '11111111-1111-4111-8111-111111111111';
 const businessId = '22222222-2222-4222-8222-222222222222';
 const channelId = '33333333-3333-4333-8333-333333333333';
@@ -183,5 +185,33 @@ describe('Native send and webhook lifecycle', () => {
     resolved.sender.sendText.mockRejectedValue(new Error('timeout'));
     expect(await handleNativeFormWebhook({ db, message: message(), phone, channelId, phoneNumberId, guardSender: s => s })).toEqual({ retry: false });
     expect(resolved.sender.sendText).toHaveBeenCalledTimes(1);
+  });
+  it('records only numeric Meta rejection codes without retrying or exposing the request', async () => {
+    const sensitive = `private-token private-answer ${phone}`;
+    resolved.sender.sendFlow.mockRejectedValue(new MetaApiError(sensitive, 400, 131009, 123));
+    const inbound = { id: 'wamid.fixture', text: { body: 'waaiio_form:abcdefgh' }, timestamp: String(Math.floor(Date.now() / 1000)) };
+    expect(await handleNativeFormWebhook({ db, message: inbound, phone, channelId, phoneNumberId, guardSender: s => s })).toEqual({ retry: false });
+    expect(resolved.sender.sendFlow).toHaveBeenCalledTimes(1);
+    expect(mocks.warn).toHaveBeenCalledWith('[NATIVE-FORM] Webhook failure', {
+      error_type: 'meta_api', emission_started: true, http_status: 400, meta_error_code: 131009, meta_error_subcode: 123,
+    });
+    const logs = JSON.stringify(mocks.warn.mock.calls);
+    for (const value of ['private-token', 'private-answer', phone, 'waaiio_form:', 'wamid.fixture']) expect(logs).not.toContain(value);
+  });
+  it('does not log arbitrary error names or messages on an ambiguous acknowledgement', async () => {
+    const error = new Error('private response payload'); error.name = 'private error name';
+    resolved.sender.sendText.mockRejectedValue(error);
+    expect(await handleNativeFormWebhook({ db, message: message(), phone, channelId, phoneNumberId, guardSender: s => s })).toEqual({ retry: false });
+    expect(mocks.warn).toHaveBeenCalledWith('[NATIVE-FORM] Webhook failure', { error_type: 'other', emission_started: true });
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('private');
+  });
+  it('omits nonnumeric provider diagnostics and preserves a single send attempt', async () => {
+    resolved.sender.sendFlow.mockRejectedValue(new MetaApiError('private', Number.NaN, Number.POSITIVE_INFINITY));
+    const inbound = { id: 'wamid.fixture', text: { body: 'waaiio_form:abcdefgh' }, timestamp: String(Math.floor(Date.now() / 1000)) };
+    expect(await handleNativeFormWebhook({ db, message: inbound, phone, channelId, phoneNumberId, guardSender: s => s })).toEqual({ retry: false });
+    expect(resolved.sender.sendFlow).toHaveBeenCalledTimes(1);
+    expect(mocks.warn).toHaveBeenCalledWith('[NATIVE-FORM] Webhook failure', {
+      error_type: 'meta_api', emission_started: true, http_status: undefined, meta_error_code: undefined, meta_error_subcode: undefined,
+    });
   });
 });
