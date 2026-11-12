@@ -53,3 +53,39 @@ it('routes site announcement editing to its canonical visual editor', () => {
  render(editor('site_announcement', { enabled: false }, vi.fn()));
  expect(screen.getByRole('link', { name: 'Edit announcement and preview' })).toHaveAttribute('href', '/site-announcement');
 });
+import { hasTierLimitErrors } from '@/pages/PlatformSettings';
+function limitEditor(key: string, stored: unknown, current: unknown, change: (value: string) => void) {
+ return renderSettingEditor({ key, value: stored, description: null, updated_by: null, updated_at: null, created_at: '' }, JSON.stringify(current), true, change);
+}
+it('unticking Unlimited restores the stored finite limit instead of writing 0', () => {
+ const change = vi.fn(); render(limitEditor('pricing_tiers', { growth: { maxBookings: 1000 } }, { growth: { maxBookings: 999999999 } }, change));
+ fireEvent.click(screen.getByLabelText('growth Max Bookings/mo unlimited'));
+ expect(JSON.parse(change.mock.calls[0][0])).toEqual({ growth: { maxBookings: 1000 } });
+});
+it('unticking Unlimited with no stored finite limit leaves it empty and blocks saving', () => {
+ const change = vi.fn(); render(limitEditor('pricing_tiers', { business: { maxBookings: 999999999 } }, { business: { maxBookings: 999999999 } }, change));
+ fireEvent.click(screen.getByLabelText('business Max Bookings/mo unlimited'));
+ const draft = change.mock.calls[0][0];
+ expect(JSON.parse(draft)).toEqual({ business: { maxBookings: null } });
+ expect(hasTierLimitErrors('pricing_tiers', draft, { business: { maxBookings: 999999999 } })).toBe(true);
+ cleanup(); render(limitEditor('pricing_tiers', { business: { maxBookings: 999999999 } }, JSON.parse(draft), vi.fn()));
+ expect(screen.getByRole('alert')).toHaveTextContent('Enter a whole number above 0, or tick Unlimited.');
+});
+it('clearing a limit field writes empty, not 0', () => {
+ const change = vi.fn(); render(limitEditor('broadcast_limits', { growth: { maxBroadcasts: 10 } }, { growth: { maxBroadcasts: 10 } }, change));
+ fireEvent.change(screen.getByLabelText('growth Max Broadcasts/mo'), { target: { value: '' } });
+ expect(JSON.parse(change.mock.calls[0][0])).toEqual({ growth: { maxBroadcasts: null } });
+});
+it('rejects new zero, negative, fractional or empty limits but keeps an existing zero policy', () => {
+ const stored = { free: { maxBroadcasts: 0, maxRecipients: 0 }, growth: { maxBookings: 1000 } };
+ const check = (value: unknown) => hasTierLimitErrors('pricing_tiers', JSON.stringify(value), stored);
+ expect(check({ growth: { maxBookings: 0 } })).toBe(true);
+ expect(check({ growth: { maxBookings: -5 } })).toBe(true);
+ expect(check({ growth: { maxBookings: 2.5 } })).toBe(true);
+ expect(check({ growth: { maxBookings: null } })).toBe(true);
+ expect(check({ growth: { maxBookings: 1500 } })).toBe(false);
+ expect(check({ growth: { maxBookings: 999999999 } })).toBe(false);
+ expect(hasTierLimitErrors('broadcast_limits', JSON.stringify(stored), stored)).toBe(false);
+ expect(hasTierLimitErrors('broadcast_limits', JSON.stringify({ free: { maxBroadcasts: 5, maxRecipients: 50 } }), stored)).toBe(false);
+ expect(hasTierLimitErrors('trial_days', '0', 14)).toBe(false);
+});

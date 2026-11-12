@@ -70,7 +70,7 @@ export default function ChannelChanges() {
       throw cause;
     } finally { setLoading(false); }
   }, []);
-  useEffect(() => { void refresh().catch(e => setError(e.message)); }, [refresh]);
+  useEffect(() => { void refresh().catch(() => undefined); }, [refresh]);
 
   async function fail(error: unknown) {
     setPreview(null); setReviewed(false); setBusy(false);

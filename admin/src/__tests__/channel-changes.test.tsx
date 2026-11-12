@@ -93,6 +93,7 @@ describe('channel changes mounted UI and actual step-up hook', () => {
   f.fetch.mockResolvedValueOnce(json({ error: 'Unavailable' }, 503));
   render(<ChannelChanges />);
   await screen.findByText('Unable to load requests. Please retry.');
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
   expect(screen.queryByText('No channel change requests.')).not.toBeInTheDocument();
   f.rows = [];
   await userEvent.click(screen.getByRole('button', { name: 'Retry loading requests' }));

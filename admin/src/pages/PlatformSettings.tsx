@@ -563,6 +563,31 @@ function TopupPackagesEditor({
   );
 }
 
+const TIER_LIMIT_FIELDS = ['maxBookings', 'maxBroadcasts', 'maxRecipients'];
+const UNLIMITED_LIMIT = 999999999;
+
+function storedTierLimit(stored: unknown, tier: string, field: string): unknown {
+  const tierVal = stored && typeof stored === 'object' ? (stored as Record<string, unknown>)[tier] : undefined;
+  return tierVal && typeof tierVal === 'object' ? (tierVal as Record<string, unknown>)[field] : undefined;
+}
+
+/** Unlimited or a positive whole number. 0 is accepted only where it is already the stored policy (e.g. Starter broadcasts). */
+function isValidTierLimit(value: unknown, storedVal: unknown): boolean {
+  if (value === UNLIMITED_LIMIT) return true;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return true;
+  return value === 0 && storedVal === 0;
+}
+
+export function hasTierLimitErrors(key: string, raw: string, stored: unknown): boolean {
+  if (!['pricing_tiers', 'broadcast_limits'].includes(key)) return false;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return true; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return true;
+  return Object.entries(parsed as Record<string, unknown>).some(([tier, tierVal]) =>
+    !!tierVal && typeof tierVal === 'object' && TIER_LIMIT_FIELDS.some(field =>
+      field in tierVal && !isValidTierLimit((tierVal as Record<string, unknown>)[field], storedTierLimit(stored, tier, field))));
+}
+
 /** Render a friendly editor based on the setting's value type */
 export function renderSettingEditor(
   setting: PlatformSetting,
@@ -704,10 +729,15 @@ export function renderSettingEditor(
                       );
                     }
 
-                    if (typeof val === 'number' && ['maxBookings', 'maxBroadcasts', 'maxRecipients'].includes(field)) {
+                    if ((typeof val === 'number' || val === null) && TIER_LIMIT_FIELDS.includes(field)) {
+                      const storedVal = storedTierLimit(setting.value, tier, field);
+                      // Unticking Unlimited restores the stored finite limit, never 0; with none, the admin must type one.
+                      const restore = typeof storedVal === 'number' && storedVal > 0 && storedVal !== UNLIMITED_LIMIT ? storedVal : null;
+                      const setLimit = (limit: number | null) => onChange(JSON.stringify({ ...parsed, [tier]: { ...tierVal, [field]: limit } }, null, 2));
                       return <div key={field}><label className="text-xs">{label}</label>
-                        <label className="block text-xs"><input type="checkbox" aria-label={`${tier} ${label} unlimited`} checked={val === 999999999} onChange={e => onChange(JSON.stringify({ ...parsed, [tier]: { ...tierVal, [field]: e.target.checked ? 999999999 : 0 } }, null, 2))} /> Unlimited</label>
-                        {val !== 999999999 && <input type="number" min="0" aria-label={`${tier} ${label}`} value={val} onChange={e => onChange(JSON.stringify({ ...parsed, [tier]: { ...tierVal, [field]: Number(e.target.value) } }, null, 2))} />}
+                        <label className="block text-xs"><input type="checkbox" aria-label={`${tier} ${label} unlimited`} checked={val === UNLIMITED_LIMIT} onChange={e => setLimit(e.target.checked ? UNLIMITED_LIMIT : restore)} /> Unlimited</label>
+                        {val !== UNLIMITED_LIMIT && <input type="number" min="0" step="1" aria-label={`${tier} ${label}`} value={val ?? ''} onChange={e => setLimit(e.target.value === '' ? null : Number(e.target.value))} />}
+                        {!isValidTierLimit(val, storedVal) && <p role="alert" className="text-xs text-red-600">Enter a whole number above 0, or tick Unlimited.</p>}
                       </div>;
                     }
                     return (
@@ -1012,6 +1042,10 @@ export default function PlatformSettings() {
     try {
       const raw = edits[key];
       if (raw === undefined) return;
+      if (hasTierLimitErrors(key, raw, settings.find(s => s.key === key)?.value)) {
+        alert('Enter a whole number above 0, or tick Unlimited, for every limit before saving.');
+        return;
+      }
 
       let parsedValue: unknown;
       try {
@@ -1321,7 +1355,7 @@ export default function PlatformSettings() {
                                 <>
                                   <button
                                     onClick={() => handleSave(setting.key)}
-                                    disabled={isSaving || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
+                                    disabled={isSaving || hasTierLimitErrors(setting.key, val, setting.value) || (isCountryAmountKey(setting.key) && hasCountryAmountErrors(setting.key, val)) || (isTopupPackagesKey(setting.key) && hasTopupPackagesErrors(val))}
                                     className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                                   >
                                     {isSaving ? 'Saving...' : 'Save'}
