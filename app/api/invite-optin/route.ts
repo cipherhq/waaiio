@@ -5,6 +5,7 @@ import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
+import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
 
 /**
  * POST /api/invite/optin
@@ -22,7 +23,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'eventId or partyId, and phone or email are required' }, { status: 400 });
     }
 
-    const cleanPhone = phone ? String(phone).replace(/\D/g, '') : '';
+    const rawDigits = phone ? String(phone).replace(/\D/g, '') : '';
+    let cleanPhone = rawDigits;
     if (cleanPhone && cleanPhone.length < 7) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
     }
@@ -57,18 +59,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
+    // Store international digits so the bot's RSVP lookup matches the WhatsApp sender
+    if (cleanPhone) {
+      const { data: phoneBiz } = await supabase.from('businesses').select('country_code').eq('id', target.business_id).single();
+      cleanPhone = toInviteGuestPhone(cleanPhone, phoneBiz?.country_code);
+    }
+
     // Check if already invited (only if we have a phone)
     if (cleanPhone) {
       const findQuery = supabase
         .from('event_invites')
-        .select('id, invite_token, status')
-        .eq('guest_phone', cleanPhone)
+        .select('id, invite_token, status, guest_phone')
+        .in('guest_phone', inviteGuestPhoneVariants(cleanPhone, rawDigits))
         .eq('business_id', target.business_id);
 
       if (partyId) findQuery.eq('party_id', partyId);
       else findQuery.eq('event_id', eventId);
 
-      const { data: existing } = await findQuery.maybeSingle();
+      const { data: existingRows } = await findQuery;
+      const existing = await adoptExistingInvite(supabase, existingRows, cleanPhone);
 
       if (existing && existing.status !== 'pending') {
         // Already responded — don't re-send

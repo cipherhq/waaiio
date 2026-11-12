@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
@@ -28,7 +29,7 @@ export async function GET(
   const { data, error } = await supabase
     .from('event_invites')
     .select(`
-      id, invite_token, guest_phone, guest_name, status, plus_ones, dietary_notes, custom_answers, saved_answer_revision, saved_question_snapshot,
+      id, business_id, invite_token, guest_phone, guest_name, status, plus_ones, dietary_notes, custom_answers, saved_answer_revision, saved_question_snapshot,
       events (
         id, name, description, date, time, venue, image_url,
         allow_plus_ones, max_plus_ones, ask_dietary, invite_message,
@@ -58,7 +59,16 @@ export async function GET(
   const biz = eventOrParty?.businesses as Record<string, unknown> | null;
   const subscriptionTier = (biz?.subscription_tier as string) || 'free';
 
-  return NextResponse.json({ invite: data, subscription_tier: subscriptionTier });
+  // Business WhatsApp number for the "Open in WhatsApp" RSVP deep link
+  let waNumber = '';
+  try {
+    const resolved = await new ChannelResolver(supabase).resolveByBusinessId(data.business_id);
+    waNumber = resolved?.channel?.phone_number?.replace(/\D/g, '') || '';
+  } catch { /* non-critical — page hides the WhatsApp button */ }
+
+  // business_id is only needed server-side for channel resolution
+  const { business_id: _businessId, ...invite } = data;
+  return NextResponse.json({ invite, subscription_tier: subscriptionTier, wa_number: waNumber });
 }
 
 /**
