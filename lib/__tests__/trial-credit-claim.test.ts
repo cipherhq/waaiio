@@ -20,7 +20,8 @@ const m = vi.hoisted(() => ({
   channels: [] as Array<{ phone_number: string | null }>,
   channelError: null as { message: string } | null,
   user: { phone: '', phone_confirmed_at: null as string | null },
-  updateError: null as { code?: string; message: string } | null,
+  updateError: null as { code?: string; status?: number; message: string } | null,
+  logs: [] as Array<{ ctx: Record<string, unknown>; msg: string }>,
   updates: [] as Array<{ id: string; attrs: Record<string, unknown> }>,
   rpc: vi.fn(),
 }));
@@ -28,6 +29,9 @@ const m = vi.hoisted(() => ({
 vi.mock('@/lib/api-auth', () => ({ authenticateRequest: m.auth }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: m.rateLimit }));
 vi.mock('@/lib/otp-phone-token', () => ({ verifyPhoneOtp: m.verify }));
+vi.mock('@/lib/logger', () => ({
+  logger: { withContext: (ctx: Record<string, unknown>) => ({ error: (msg: string) => { m.logs.push({ ctx, msg }); } }) },
+}));
 vi.mock('@/lib/brute-force', () => ({
   checkBruteForce: (key: string) => ({ blocked: m.bruteBlocked.has(key) }),
   recordFailure: (key: string) => { m.failures.push(key); },
@@ -69,7 +73,7 @@ const claim = (extra: Record<string, unknown> = {}) => POST(req({ business_id: B
 beforeEach(() => {
   vi.clearAllMocks();
   m.bruteBlocked.clear();
-  m.failures = []; m.cleared = []; m.updates = [];
+  m.failures = []; m.cleared = []; m.updates = []; m.logs = [];
   m.channels = [{ phone_number: '+1 (571) 274-6425' }, { phone_number: null }];
   m.channelError = null;
   m.user = { phone: '', phone_confirmed_at: null };
@@ -177,6 +181,23 @@ describe('POST /api/trial-credit/claim', () => {
     expect(m.rpc).not.toHaveBeenCalled();
   });
 
+  it('a number on another login reported as a generic auth failure (production, 2026-11-12): logged, no "wrong code", no trial check', async () => {
+    // Supabase Auth hit users_phone_key and answered 500 unexpected_failure.
+    m.updateError = { code: 'unexpected_failure', status: 500, message: 'Unexpected failure, please check server logs for more information' };
+    const r = await claim();
+    expect(r.status).toBe(500);
+    const body = await r.json();
+    expect(body.code).toBe('attach_failed');
+    expect(body.message).toContain('may already be linked to another Waaiio account');
+    expect(body.message).not.toMatch(/wrong|expired/i);
+    expect(m.rpc).not.toHaveBeenCalled();
+    expect(m.logs).toEqual([{
+      ctx: { op: 'trial-credit.claim.attach', step: 'update', errorCode: 'unexpected_failure', errorStatus: 500 },
+      msg: '[CLAIM] Could not save the verified phone',
+    }]);
+    expect(JSON.stringify(m.logs)).not.toContain('8012345678');
+  });
+
   it('never replaces a different phone already confirmed on this login', async () => {
     m.user = { phone: '2348099999999', phone_confirmed_at: '2026-11-01T00:00:00Z' };
     const r = await claim();
@@ -220,6 +241,10 @@ describe('verified-phone helpers', () => {
 
   it('attachVerifiedPhone reports a non-phone update failure as failed', async () => {
     m.updateError = { message: 'Database error updating user' };
-    expect(await attachVerifiedPhone(service() as never, 'owner', PHONE)).toEqual({ ok: false, reason: 'failed' });
+    expect(await attachVerifiedPhone(service() as never, 'owner', PHONE))
+      .toEqual({ ok: false, reason: 'failed', step: 'update', errorCode: undefined, errorStatus: undefined });
+    m.updateError = { code: 'unexpected_failure', status: 500, message: 'Unexpected failure' };
+    expect(await attachVerifiedPhone(service() as never, 'owner', PHONE))
+      .toEqual({ ok: false, reason: 'failed', step: 'update', errorCode: 'unexpected_failure', errorStatus: 500 });
   });
 });

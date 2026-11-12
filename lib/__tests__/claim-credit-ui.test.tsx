@@ -144,14 +144,29 @@ describe('/dashboard/claim-credit page', () => {
     expect(await screen.findByText('Phone verified. Your free credit will be added automatically when message billing starts.')).toBeTruthy();
   });
 
-  it('a number on another account shows the server message and stays on the code step', async () => {
-    state.responses['/api/trial-credit/claim'] = { status: 409, body: { code: 'phone_in_use', message: 'This number is already linked to another Waaiio account.' } };
+  it.each([
+    ['phone_in_use', 409, 'This number is already linked to another Waaiio account.'],
+    ['other_phone_already_verified', 409, 'Your account already has a verified phone number.'],
+    ['attach_failed', 500, "We couldn't link this number to your account. It may already be linked to another Waaiio account."],
+  ])('%s: shows the server message and goes back to the number step (the code is used up)', async (code, status, message) => {
+    state.responses['/api/trial-credit/claim'] = { status, body: { code, message } };
     await enterPhoneAndSend();
     await screen.findByText(/We sent a 6-digit code/);
     fireEvent.change(screen.getByLabelText('code'), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Verify & claim' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('already linked to another Waaiio account');
-    expect(screen.getByRole('button', { name: 'Use a different number' })).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toBe(message);
+    expect(screen.getByRole('button', { name: 'Send code on WhatsApp' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Verify & claim' })).toBeNull();
+  });
+
+  it('a wrong code keeps the code step so the owner can retype it', async () => {
+    state.responses['/api/trial-credit/claim'] = { status: 401, body: { code: 'invalid_code', message: 'That code is wrong or has expired. Please try again.' } };
+    await enterPhoneAndSend();
+    await screen.findByText(/We sent a 6-digit code/);
+    fireEvent.change(screen.getByLabelText('code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify & claim' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('wrong or has expired');
+    expect(screen.getByRole('button', { name: 'Verify & claim' })).toBeTruthy();
   });
 
   it('verified, but the credit was used on another of the owner\'s businesses: no false promise', async () => {

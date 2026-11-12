@@ -8,6 +8,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
 const PHONE_REGEX = /^\+[1-9][0-9]{6,14}$/;
+const ATTACH_FAILED_MESSAGE = "We couldn't link this number to your account. It may already be linked to another Waaiio account. Use a different number, or contact support.";
 const CONNECTED_NUMBER_MESSAGE = "This number is connected to Waaiio and can't receive codes. Use your personal or everyday business number.";
 
 /**
@@ -78,7 +79,11 @@ export async function POST(request: NextRequest) {
       if (attached.reason === 'other_phone_already_verified') {
         return NextResponse.json({ code: 'other_phone_already_verified', message: 'Your account already has a verified phone number.' }, { status: 409 });
       }
-      return NextResponse.json({ message: 'Could not verify your number. Please try again.' }, { status: 500 });
+      // The code is already used up at this point, so never send the owner
+      // back to retry it; the page returns them to the number step.
+      logger.withContext({ op: 'trial-credit.claim.attach', step: attached.step, errorCode: attached.errorCode, errorStatus: attached.errorStatus })
+        .error('[CLAIM] Could not save the verified phone');
+      return NextResponse.json({ code: 'attach_failed', message: ATTACH_FAILED_MESSAGE }, { status: 500 });
     }
 
     const { data: trial, error: trialError } = await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });

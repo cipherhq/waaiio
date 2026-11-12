@@ -110,7 +110,17 @@ export default function ClaimCreditPage() {
         body: JSON.stringify({ business_id: business.id, phone, otp, pin_id: pinId }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.message || 'Could not verify your number. Please try again.'); return; }
+      if (!res.ok) {
+        // The code was accepted but the number could not be saved: it is used
+        // up, so go back to the number step instead of inviting a retry.
+        if (data.code === 'phone_in_use' || data.code === 'other_phone_already_verified' || data.code === 'attach_failed') {
+          setStep('phone');
+          setOtp('');
+          setPinId('');
+        }
+        setError(data.message || 'Could not verify your number. Please try again.');
+        return;
+      }
       setDoneMessage(data.credited
         ? `Your free messaging credit${amount ? ` of ${amount}` : ''} has been added.`
         : verifiedWithoutCreditMessage(data.reason));
