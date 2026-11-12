@@ -34,9 +34,16 @@ export function isPhoneInUseError(error: { code?: string; message?: string } | n
   return message.includes('phone') && (message.includes('exist') || message.includes('registered') || message.includes('already'));
 }
 
+function authErrorDetails(error: { code?: string; status?: number } | null | undefined): { errorCode?: string; errorStatus?: number } {
+  return { errorCode: error?.code, errorStatus: error?.status };
+}
+
 export type AttachResult =
   | { ok: true; alreadyVerified: boolean }
-  | { ok: false; reason: 'phone_in_use' | 'other_phone_already_verified' | 'failed' };
+  | { ok: false; reason: 'phone_in_use' }
+  | { ok: false; reason: 'other_phone_already_verified' }
+  // Auth error details (no phone or message text) so the caller can log why.
+  | { ok: false; reason: 'failed'; step: 'read' | 'update'; errorCode?: string; errorStatus?: number };
 
 /**
  * Attach a phone the user has just proved they own (code checked by the
@@ -48,12 +55,17 @@ export type AttachResult =
  */
 export async function attachVerifiedPhone(service: Service, userId: string, phone: string): Promise<AttachResult> {
   const { data: current, error: readError } = await service.auth.admin.getUserById(userId);
-  if (readError || !current?.user) return { ok: false, reason: 'failed' };
+  if (readError || !current?.user) return { ok: false, reason: 'failed', step: 'read', ...authErrorDetails(readError) };
   const existing = digitsOf(current.user.phone);
   if (existing && current.user.phone_confirmed_at) {
     return existing === digitsOf(phone) ? { ok: true, alreadyVerified: true } : { ok: false, reason: 'other_phone_already_verified' };
   }
   const { error } = await service.auth.admin.updateUserById(userId, { phone, phone_confirm: true });
-  if (error) return { ok: false, reason: isPhoneInUseError(error) ? 'phone_in_use' : 'failed' };
+  if (error) {
+    // A number on another login can also come back as a generic 500
+    // `unexpected_failure` (the users_phone_key unique index fires inside
+    // Supabase Auth), so it is not always recognisable here.
+    return isPhoneInUseError(error) ? { ok: false, reason: 'phone_in_use' } : { ok: false, reason: 'failed', step: 'update', ...authErrorDetails(error) };
+  }
   return { ok: true, alreadyVerified: false };
 }
