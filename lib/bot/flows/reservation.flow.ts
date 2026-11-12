@@ -5,6 +5,7 @@ import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type Countr
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -1393,15 +1394,7 @@ export const reservationFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const pRef = d.payment_reference as string | undefined;
         if (d.bank_transfer_offered) {
-          return [{
-            type: 'buttons',
-            body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
-            buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
-            ],
-          }];
+          return [await bankTransferPaymentPrompt(d, ctx.copyLang, ctx.t)];
         }
         const buttons: Array<{ id: string; title: string }> = [
           { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
@@ -1557,13 +1550,7 @@ export const reservationFlow: FlowDefinition = {
           if (!d.bank_transfer_reference) {
             return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
           }
-          d._awaiting_transfer_proof = true;
-          await ctx.supabase.from('bot_sessions').update({ session_data: d }).eq('id', ctx.session.id);
-          await ctx.sender.sendText({
-            to: ctx.from,
-            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
-          });
-          return { valid: false, errorMessage: '' };
+          return awaitTransferProof(d);
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
@@ -1605,6 +1592,8 @@ export const reservationFlow: FlowDefinition = {
             return { valid: false };
           }
 
+          // Transfer-only payment: nothing online to verify, so ask for the receipt.
+          if (!ref && d.bank_transfer_reference) return awaitTransferProof(d);
           if (!ref) return { valid: false, errorMessage: "We couldn't verify your payment. If you've already paid, please contact the business." };
 
           // #375: If session has a saved-card payment ID, try payment-ID recovery first

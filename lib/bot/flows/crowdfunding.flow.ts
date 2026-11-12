@@ -4,6 +4,7 @@ import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constan
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
@@ -727,15 +728,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
     const sd = ctx.session.session_data;
     const pRef = sd.payment_reference as string | undefined;
     if (sd.bank_transfer_offered) {
-      return [{
-        type: 'buttons',
-        body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
-        buttons: [
-          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
-          { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
-          { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
-        ],
-      }];
+      return [await bankTransferPaymentPrompt(sd, ctx.copyLang, ctx.t)];
     }
     return [{
       type: 'buttons',
@@ -849,13 +842,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       if (!sd.bank_transfer_reference) {
         return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
       }
-      sd._awaiting_transfer_proof = true;
-      await ctx.supabase.from('bot_sessions').update({ session_data: sd }).eq('id', ctx.session.id);
-      await ctx.sender.sendText({
-        to: ctx.from,
-        text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${sd.bank_transfer_reference}*`),
-      });
-      return { valid: false, errorMessage: '' };
+      return awaitTransferProof(sd);
     }
 
     // ── Text proof after tapping "I've Sent Transfer" ──
@@ -896,6 +883,8 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         return { valid: false };
       }
 
+      // Transfer-only payment: nothing online to verify, so ask for the receipt.
+      if (!ref && sd.bank_transfer_reference) return awaitTransferProof(sd);
       if (!ref) return { valid: false, errorMessage: "We couldn't verify your donation. If you've already paid, please contact the organization." };
 
       // Converge through canonical Payment Authority (#173)
