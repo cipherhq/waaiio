@@ -166,6 +166,9 @@ export async function POST(request: NextRequest) {
               email: emailPayload,
               businessName: bizName,
               alwaysEmail: true,
+              // #721: free-form transactional notice; without a category the
+              // financial authorization guard refuses it (missing_message_category).
+              messageCategory: 'service',
             });
           }
         } catch (notifyErr) {
