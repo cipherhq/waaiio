@@ -41,11 +41,19 @@ export default function PartyQuestionsEditor({ partyId, onQuestions }: { partyId
     finally { setBusy(false); }
   }
   const change = (index: number, question: PartyQuestion) => setQuestions(old => old.map((q, i) => i === index ? question : q));
-  // One question at most tags guests: ticking one unticks the others. The flag is omitted when off.
+  // Any number of choice and yes/no questions may tag guests (M537). The flag is omitted when off;
+  // a yes/no question keeps its tag for Yes so re-ticking restores it.
   const setTagging = (index: number, on: boolean) => setQuestions(old => old.map((q, i) => {
+    if (i !== index) return q;
     const rest = { ...q };
     delete rest.tag_answers;
-    return on && i === index ? { ...rest, tag_answers: true } : rest;
+    return on ? { ...rest, tag_answers: true } : rest;
+  }));
+  const setYesTag = (index: number, value: string) => setQuestions(old => old.map((q, i) => {
+    if (i !== index) return q;
+    const rest = { ...q };
+    delete rest.yes_tag;
+    return value ? { ...rest, yes_tag: value } : rest;
   }));
   const field = 'rounded border p-2 text-sm dark:bg-gray-800';
   return <section className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
@@ -61,8 +69,11 @@ export default function PartyQuestionsEditor({ partyId, onQuestions }: { partyId
           change(index, { id: crypto.randomUUID(), label: q.label, required: q.required, type, ...(type === 'single_choice' ? { options: [{ id: crypto.randomUUID(), label: 'Option 1' }, { id: crypto.randomUUID(), label: 'Option 2' }] } : {}) });
         }}><option value="short_text">Short text</option><option value="single_choice">Single choice</option><option value="yes_no">Yes or no</option></select>
         <label className="ml-3 text-sm"><input type="checkbox" checked={q.required} onChange={e => change(index, { ...q, required: e.target.checked })} /> Required</label>
-        {q.type === 'single_choice' && <label className="ml-3 text-sm"><input type="checkbox" checked={q.tag_answers === true} onChange={e => setTagging(index, e.target.checked)} /> Tag guests with their answer</label>}
-        {q.tag_answers && <p className="text-xs text-gray-500">Each guest who answers gets their choice as a tag, for example to seat them at tables reserved for that tag. Saving also tags guests who already answered. Renaming an option creates a new tag.</p>}
+        {(q.type === 'single_choice' || q.type === 'yes_no') && <label className="ml-3 text-sm"><input type="checkbox" checked={q.tag_answers === true} onChange={e => setTagging(index, e.target.checked)} /> Tag guests with their answer</label>}
+        {q.tag_answers && q.type === 'yes_no' && <input className={`${field} ml-3`} aria-label={`Question ${index + 1} tag for Yes`} placeholder="Tag for Yes, e.g. Vegetarian" maxLength={100} value={q.yes_tag ?? ''} onChange={e => setYesTag(index, e.target.value)} />}
+        {q.tag_answers && <p className="text-xs text-gray-500">{q.type === 'yes_no'
+          ? 'Each guest who answers Yes gets this tag; No gives no tag. You can use it to seat them at tables reserved for that tag.'
+          : 'Each guest who answers gets their choice as a tag, for example to seat them at tables reserved for that tag. Renaming an option creates a new tag.'} Saving also tags guests who already answered.</p>}
         {q.options?.map((o, oi) => <div key={o.id} className="flex gap-2"><input className={field} aria-label={`Question ${index + 1} option ${oi + 1}`} maxLength={80} value={o.label} onChange={e => change(index, { ...q, options: q.options!.map(x => x.id === o.id ? { ...x, label: e.target.value } : x) })} /><button type="button" disabled={q.options!.length <= 2} onClick={() => change(index, { ...q, options: q.options!.filter(x => x.id !== o.id) })}>Remove option</button></div>)}
         {q.options && q.options.length < 10 && <button type="button" onClick={() => change(index, { ...q, options: [...q.options!, { id: crypto.randomUUID(), label: '' }] })}>Add option</button>}
         <div className="flex gap-3 text-sm"><button type="button" disabled={!index} onClick={() => setQuestions(old => { const next = [...old]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}>Move up</button><button type="button" onClick={() => setQuestions(old => old.filter(x => x.id !== q.id))}>Remove question</button></div>

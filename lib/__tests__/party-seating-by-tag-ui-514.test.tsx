@@ -93,19 +93,27 @@ async function open() {
 }
 
 describe('rendered Parties dashboard: seating by tag #874', () => {
-  it('questions editor: one question at a time tags guests, and only choice questions offer it', async () => {
-    questions = [sideQuestion(false), { ...sideQuestion(false), id: 'diet', label: 'Diet?' }, mealQuestion];
+  it('questions editor (M537): several choice and yes/no questions tag guests; yes/no needs a tag for Yes', async () => {
+    const veg = { id: 'veg', label: 'Vegetarian?', type: 'yes_no' as const, required: false };
+    questions = [sideQuestion(false), { ...sideQuestion(false), id: 'diet', label: 'Diet?' }, mealQuestion, veg];
     await open();
     const boxes = await screen.findAllByLabelText('Tag guests with their answer');
-    expect(boxes).toHaveLength(2);
+    expect(boxes).toHaveLength(3); // two choice questions and the yes/no question; not the text question
     fireEvent.click(boxes[0]);
     fireEvent.click(boxes[1]);
-    expect((boxes[0] as HTMLInputElement).checked).toBe(false);
-    expect((boxes[1] as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(boxes[2]);
+    expect(boxes.map(b => (b as HTMLInputElement).checked)).toEqual([true, true, true]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save questions' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Add a tag for Yes: Vegetarian?');
+    expect(savedQuestions).toBeNull();
+    fireEvent.change(screen.getByLabelText('Question 4 tag for Yes'), { target: { value: 'Vegetarian' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save questions' }));
     await waitFor(() => expect(savedQuestions).not.toBeNull());
-    expect(savedQuestions!.map(q => q.tag_answers)).toEqual([undefined, true, undefined]);
-    expect(Object.keys(savedQuestions![0])).not.toContain('tag_answers');
+    expect(savedQuestions!.map(q => q.tag_answers)).toEqual([true, true, undefined, true]);
+    expect(savedQuestions![3]).toMatchObject({ yes_tag: 'Vegetarian' });
+    expect(Object.keys(savedQuestions![2])).not.toContain('tag_answers');
   });
 
   it('questions editor: saving reloads the re-tagged guest list once; a type change drops the flag', async () => {

@@ -1,0 +1,165 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "'{}'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "0c0bca4211e8bff8dac8edacf710386b0b5172224b544a42742acbb07415e85c",
+   "identity": "column:public.event_invites.answer_tags",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(answer_tags) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "20cb14729a85d781f93253ac3d6614dddb012a36ff02d1dbc5f27a5b773c2fa9",
+   "identity": "constraint:public.event_invites.event_invites_answer_tags_537",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "163624a2f444b624e2378d98c59367a756286eb39151e082f39222cb8e715cb8",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "193e08f8359f91cf5269cc395522b041d0e5df77b9bca9f31e92170818521ee6",
+   "identity": "function:private.party_answer_tag_514()",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "defs jsonb, answers jsonb, tags text[], tracked jsonb, pinned boolean, OUT next_tags text[], OUT next_tracked jsonb, OUT next_answer_tag text",
+    "body_sha256": "c260aaf109618a7e3a8a685c674d471957ed2effcf6309eba19fa3c4c6a21b7b",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "record",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "652e9ba92025538f3f5e4e14d19d996d26d0cb13d56f799f2024aeb60fa74901",
+   "identity": "function:private.party_answer_tags_537(defs jsonb, answers jsonb, tags text[], tracked jsonb, pinned boolean, OUT next_tags text[], OUT next_tracked jsonb, OUT next_answer_tag text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_party uuid, p_actor uuid, p_payload jsonb DEFAULT NULL::jsonb",
+    "body_sha256": "ff3dd7b9f4c964aaf30f0f5ddf3babd17dad63911b3febfc4af552b32fd5190b",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "bd8ce1dca7d4e1041f07ffb9d740ec24050c837f28557516a2039918bb9994d6",
+   "identity": "function:private.party_questions_489(p_party uuid, p_actor uuid, p_payload jsonb)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "defs jsonb",
+    "body_sha256": "f636acd358dd5d3c99ac1c83dfe8e2bcbfae7c0ad23b67afeecae61e762b98d9",
+    "config": [
+     "search_path=pg_catalog"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "void",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "3e5086cbfebfe3b1348cca17222aa74946f3071f707658a4e0872a7a93b198b0",
+   "identity": "function:private.validate_party_questions_489(defs jsonb)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER party_answer_tag_514 BEFORE INSERT OR UPDATE OF custom_answers, saved_question_snapshot, answer_tag, answer_tags ON event_invites FOR EACH ROW EXECUTE FUNCTION private.party_answer_tag_514()",
+    "enabled": "O"
+   },
+   "after_sha256": "1ec48d54abec7776bf71ba1e26f5028b7b59492a1140c769d643fdfde2e4341b",
+   "identity": "trigger:public.event_invites.party_answer_tag_514",
+   "operation": "modify"
+  }
+ ],
+ "migration": "537_party_multi_question_seating_tags.sql",
+ "migration_sha256": "c90e90c3e60160f081e7ed203f4ec8773ccdc514ff10d53173cc20887ecb0094",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
