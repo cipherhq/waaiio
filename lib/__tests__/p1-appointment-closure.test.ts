@@ -31,15 +31,10 @@ describe('P1-APPT-1: appointment buffer_minutes', () => {
     expect(dashPage).toContain('buffer_minutes: form.buffer_minutes');
   });
 
-  it('3. appointment flow stores _service_buffer_minutes in session data (auto-select path)', () => {
-    // When only one appointment, auto-select should set buffer_minutes
-    expect(appointmentFlow).toContain('_service_buffer_minutes');
-    // Must appear in the auto-select block (appointments.length === 1)
-    const autoSelectBlock = appointmentFlow.slice(
-      appointmentFlow.indexOf('appointments.length === 1'),
-      appointmentFlow.indexOf('skip_service = true') + 50,
-    );
-    expect(autoSelectBlock).toContain('_service_buffer_minutes');
+  it('3. appointment flow has no single-appointment auto-select path (customer always picks)', () => {
+    // Owner decision: buffer_minutes now reaches the session only through validate() (test 4)
+    expect(appointmentFlow).not.toContain('appointments.length === 1');
+    expect(appointmentFlow).not.toContain('skip_service = true');
   });
 
   it('4. appointment flow stores _service_buffer_minutes in session data (validate path)', () => {

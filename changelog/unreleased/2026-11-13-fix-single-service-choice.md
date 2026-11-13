@@ -1,0 +1,24 @@
+## 2026-11-13 — Bot: customers always pick the service, even when there is only one
+
+- **Why:**
+  - On the production business Healing Labs, the bot never showed the services list. With only one active service, it picked that service and went straight to "pick a date".
+  - The date step does not name the service, so the customer first saw what they were booking on the final confirmation.
+  - The Owner decided that a customer must always select the service themselves, and chose Option A (always show the list) on 2026-11-13.
+- **What changed:**
+  - `lib/bot/flows/scheduling.flow.ts`, step `select_service`:
+    - `skipIf` no longer fills the service and skips the step when there is exactly one service.
+    - `prompt` no longer returns nothing for one service, so the normal list is shown with that one row (name, price, length).
+  - `lib/bot/flows/appointment.flow.ts`, step `select_appointment`: `skipIf` no longer auto-selects the only appointment type, so the existing list is shown.
+  - In both flows, tapping the row runs the existing `validate()`, which fills the same session fields as before, and then continues to `select_date` (or `select_class_session` for classes).
+- **Affects:** every business with exactly one active bookable service or appointment type, including classes.
+- **Unchanged:**
+  - With no services: the "General" fallback / "no appointments" buttons.
+  - With two or more services: the same list as before.
+  - An earlier explicit choice still skips the list (`skip_service`). This covers a customer typing the service name (smart intent, in the first message or at the menu) and rescheduling an existing booking from My Bookings.
+  - The main capability menu is still skipped when a business offers only one kind of thing.
+  - Single table, property, ticket type, location and staff are still picked automatically.
+  - Payment, confirmation and the next-steps menu after a booking.
+- **Could break:** customers of single-service businesses now see one extra tap (the one-row list) before the date step.
+- **Tests:**
+  - `lib/bot/flows/__tests__/appointment-singleton-reproduction.test.ts`: the singleton expectations now expect the one-row list, and new tests tap it through to `select_date`.
+  - `lib/__tests__/p1-appointment-closure.test.ts`: test 3 now asserts that the auto-select block is gone. The buffer still reaches the session through `validate()` (test 4).
