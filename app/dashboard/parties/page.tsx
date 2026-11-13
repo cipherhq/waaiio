@@ -56,6 +56,8 @@ interface InviteRow {
   seating_pinned: boolean;
   /** M514: the tag that came from the guest's RSVP answer. */
   answer_tag: string | null;
+  /** M537: question id -> the tag that question's answer added. */
+  answer_tags: Record<string, string> | null;
   custom_answers: PartyAnswers | null;
   saved_question_snapshot: PartyQuestion[] | null;
   created_at: string;
@@ -155,7 +157,7 @@ export default function PartiesPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('event_invites')
-      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, seating_group_id, seating_pinned, answer_tag, custom_answers, saved_question_snapshot, created_at')
+      .select('id, guest_phone, guest_name, status, plus_ones, dietary_notes, invite_token, responded_at, reminder_sent, tags, table_id, seat_number, seating_group_id, seating_pinned, answer_tag, answer_tags, custom_answers, saved_question_snapshot, created_at')
       .eq('party_id', partyId)
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
@@ -493,10 +495,12 @@ export default function PartiesPage() {
 
   // All unique tags across current guest list
   const allTags = [...new Set(invites.flatMap(i => i.tags || []))].sort();
-  // Tables can be reserved before anyone answers: offer the tagging question's options too.
-  // Labels are trimmed of spaces only, exactly as M514's btrim() makes the guests' auto-tags.
-  const tagQuestion = partyQuestions.find(q => q.type === 'single_choice' && q.tag_answers);
-  const reservableTags = [...new Set([...(tagQuestion?.options || []).map(o => o.label.replace(/^ +| +$/g, '')).filter(Boolean), ...allTags])].sort();
+  // Tables can be reserved before anyone answers: offer every tagging question's possible tags too.
+  // Labels are trimmed of spaces only, exactly as the database's btrim() makes the guests' auto-tags.
+  const answerTags = partyQuestions.filter(q => q.tag_answers).flatMap(q => q.type === 'yes_no'
+    ? (q.yes_tag ? [q.yes_tag] : [])
+    : (q.options || []).map(o => o.label.replace(/^ +| +$/g, '')));
+  const reservableTags = [...new Set([...answerTags.filter(Boolean), ...allTags])].sort();
 
   // Loading
   if (loading) {
@@ -1266,7 +1270,7 @@ export default function PartiesPage() {
                           {(invite.tags || []).map(tag => (
                             <span key={tag} className="inline-flex items-center gap-0.5 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
                               {tag}
-                              {tag === invite.answer_tag && <span className="text-[10px] font-normal text-brand/70">(from RSVP)</span>}
+                              {(Object.values(invite.answer_tags || {}).includes(tag) || tag === invite.answer_tag) && <span className="text-[10px] font-normal text-brand/70">(from RSVP)</span>}
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveTag(invite.id, tag); }}
                                 className="ml-0.5 text-brand/50 hover:text-brand"
