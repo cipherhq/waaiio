@@ -84,7 +84,7 @@ describe('publishPartyRsvpFlow', () => {
   it('a rejected layout is left for review with Meta\'s validation messages, and never retried on its own', async () => {
     const db = fakeDb(); const assets = fakeAssets();
     assets.upload.mockResolvedValueOnce({ flowId: '9001', success: false,
-      validationErrors: [{ error: 'INVALID_PROPERTY', error_type: 'INVALID_PROPERTY_VALUE', message: 'required must be boolean' }] });
+      validationErrors: [{ error: 'INVALID_PROPERTY', error_type: 'INVALID_PROPERTY_VALUE', message: 'required must be boolean' }] } as never);
     const out = await publishPartyRsvpFlow(db as never, WABA, assets);
     expect(out).toMatchObject({ status: 'needs_review', validationErrors: [{ type: 'INVALID_PROPERTY_VALUE', message: 'required must be boolean' }] });
     expect(assets.publish).not.toHaveBeenCalled();
@@ -130,11 +130,58 @@ describe('publishPartyRsvpFlow', () => {
     expect(blocked.upload).not.toHaveBeenCalled();
   });
 
+  it('an attempt in progress or interrupted (creating/draft) is never resumed; resume of a lost claim is refused', async () => {
+    for (const status of ['creating', 'draft']) {
+      const db = fakeDb(); const assets = fakeAssets();
+      db.rows.push({ id: 'pub-x', waba_id: WABA, revision: partyRsvpFlowRevision(), status, meta_flow_id: status === 'draft' ? '9001' : null });
+      expect(await publishPartyRsvpFlow(db as never, WABA, assets, { resume: true }))
+        .toMatchObject({ status: 'needs_review', reason: expect.stringContaining('in progress or was interrupted') });
+      expect(assets.status).not.toHaveBeenCalled(); expect(db.rows[0].status).toBe(status);
+    }
+    // Claim lost to another admin: the row is no longer needs_review when the conditional update runs.
+    const db = fakeDb();
+    db.rows.push({ id: 'pub-y', waba_id: WABA, revision: partyRsvpFlowRevision(), status: 'needs_review', meta_flow_id: '9001' });
+    const realFrom = db.from;
+    db.from = (t: string) => { const q = realFrom(t); const update = q.update; q.update = (v: Row) => { db.rows[0].status = 'draft'; return update(v); }; return q; };
+    expect(await publishPartyRsvpFlow(db as never, WABA, fakeAssets(), { resume: true })).toMatchObject({ status: 'unavailable', reason: expect.stringContaining('resume') });
+  });
+
+  it('logs the asset ID when Meta created it but the binding could not be saved; never resumable', async () => {
+    const { logger } = await import('@/lib/logger');
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined as never);
+    const db = fakeDb(); const assets = fakeAssets();
+    const realFrom = db.from;
+    db.from = (t: string) => { const q = realFrom(t); q.update = () => ({ eq: () => ({ eq: () => ({ select: async () => ({ data: [], error: null }) }), neq: async () => ({}) }) }); return q; };
+    expect(await publishPartyRsvpFlow(db as never, WABA, assets)).toMatchObject({ status: 'needs_review' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not saved'), { publicationId: 'pub-1', metaFlowId: '9001' });
+    expect(assets.upload).not.toHaveBeenCalled();
+  });
+
+  it('THROTTLED or DEPRECATED assets, a thrown upload, or a final save of zero rows are never recorded as published', async () => {
+    for (const status of ['THROTTLED', 'DEPRECATED']) {
+      const db = fakeDb(); const assets = fakeAssets({ status });
+      expect(await publishPartyRsvpFlow(db as never, WABA, assets)).toMatchObject({ status: 'needs_review' });
+      expect(assets.upload).not.toHaveBeenCalled(); expect(db.rows[0].status).toBe('needs_review');
+    }
+    const db = fakeDb(); const assets = fakeAssets();
+    assets.upload.mockRejectedValueOnce(new Error('500'));
+    expect(await publishPartyRsvpFlow(db as never, WABA, assets)).toMatchObject({ status: 'needs_review' });
+    expect(assets.publish).not.toHaveBeenCalled();
+    const db2 = fakeDb(); const live = fakeAssets();
+    // Someone else moved the row out of 'draft' while Meta published: the final save matches no row.
+    live.publish.mockImplementationOnce(async (flowId: string) => { db2.rows[0].status = 'needs_review'; return { flowId, success: true }; });
+    expect(await publishPartyRsvpFlow(db2 as never, WABA, live)).toMatchObject({ status: 'needs_review' });
+    expect(db2.rows[0].status).toBe('needs_review');
+  });
+
   it('fails closed on a lookup error, a concurrent attempt, or a bad account id', async () => {
     const assets = fakeAssets();
     expect(await publishPartyRsvpFlow(fakeDb({ failLookup: true }) as never, WABA, assets)).toMatchObject({ status: 'unavailable' });
     expect(await publishPartyRsvpFlow(fakeDb({ raceInsert: true }) as never, WABA, assets)).toMatchObject({ status: 'unavailable' });
     expect(await publishPartyRsvpFlow(fakeDb() as never, 'abc', assets)).toMatchObject({ status: 'unavailable' });
+    const broken = fakeDb(); const realFrom = broken.from;
+    broken.from = (t: string) => { const q = realFrom(t); q.single = async () => ({ data: null, error: { code: '42501' } }); return q; };
+    expect(await publishPartyRsvpFlow(broken as never, WABA, assets)).toMatchObject({ status: 'unavailable', reason: expect.stringContaining('reserved') });
     expect(assets.create).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // #1005 PR 3c: the admin publish route. Platform admins or the cron secret only, with no local
 // bypass; the platform account from server env; rate limited; never cached.
-const mocks = vi.hoisted(() => ({ admin: vi.fn(), publish: vi.fn(), status: vi.fn(), limited: vi.fn(), assets: vi.fn() }));
+const mocks = vi.hoisted(() => ({ admin: vi.fn(), publish: vi.fn(), status: vi.fn(), limited: vi.fn(), assets: vi.fn(), audit: vi.fn() }));
+vi.mock('@/lib/admin-audit', () => ({ logAdminAudit: mocks.audit }));
 vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: mocks.admin }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: mocks.limited }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ db: true }) }));
@@ -35,7 +36,7 @@ describe('/api/admin/party-rsvp-flow', () => {
   it('has no local bypass when the cron secret is unset', async () => {
     vi.stubEnv('CRON_SECRET', ''); mocks.admin.mockResolvedValue(null);
     expect((await POST(req('POST'))).status).toBe(403);
-    expect(mocks.publish).not.toHaveBeenCalled();
+    expect(mocks.publish).not.toHaveBeenCalled(); expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it('the cron secret or an admin publishes on the platform account; resume only when asked', async () => {
@@ -43,8 +44,11 @@ describe('/api/admin/party-rsvp-flow', () => {
     expect(res.status).toBe(200); expect(res.headers.get('cache-control')).toBe('no-store');
     expect(mocks.assets).toHaveBeenCalledWith('555000');
     expect(mocks.publish).toHaveBeenCalledWith({ db: true }, '555000', { assets: true }, { resume: false });
-    mocks.admin.mockResolvedValue({ id: 'admin' });
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ actorId: null, action: 'publish_party_rsvp_flow',
+      entityId: 'p', details: { via: 'cron_secret', resume: false, outcome: 'published', waba_id: '555000' } }));
+    mocks.admin.mockResolvedValue({ userId: 'admin-1' });
     await POST(req('POST', { authorization: 'Bearer admin-jwt' }, { resume: true }));
+    expect(mocks.audit).toHaveBeenLastCalledWith(expect.objectContaining({ actorId: 'admin-1', details: expect.objectContaining({ via: 'admin', resume: true }) }));
     expect(mocks.publish).toHaveBeenLastCalledWith({ db: true }, '555000', { assets: true }, { resume: true });
     await POST(req('POST', { authorization: 'Bearer admin-jwt' }, { resume: 'yes' }));
     expect(mocks.publish).toHaveBeenLastCalledWith({ db: true }, '555000', { assets: true }, { resume: false });
@@ -57,7 +61,8 @@ describe('/api/admin/party-rsvp-flow', () => {
     mocks.publish.mockResolvedValueOnce({ status: 'not_enabled' });
     expect((await POST(req('POST'))).status).toBe(503);
     mocks.limited.mockResolvedValueOnce(new Response('slow down', { status: 429 }));
-    expect((await POST(req('POST'))).status).toBe(429);
+    const slow = await POST(req('POST'));
+    expect(slow.status).toBe(429); expect(slow.headers.get('cache-control')).toBe('no-store');
     expect(mocks.limited).toHaveBeenLastCalledWith('party-rsvp-flow-publish:555000', 3, 60_000);
   });
 

@@ -15,10 +15,14 @@
     - Provider calls are never retried automatically.
     - Any unclear outcome is left as `needs_review`, together with Meta's validation messages when the layout is rejected.
     - An admin can resume only an attempt whose Meta asset is known, so a second asset is never created.
+    - An attempt left in `creating` or `draft` (in progress, or interrupted) is never resumed. Recovering it is manual: check Meta for `Waaiio party RSVP <revision>`, then set the row to `needs_review` by hand.
+    - If Meta created an asset but its ID could not be saved, the ID is logged.
   - `app/api/admin/party-rsvp-flow/route.ts`:
     - GET returns read-only status. POST publishes, and accepts `{"resume": true}`.
     - Access is limited to platform admins or the cron secret. Unlike `verifyCronAuth`, there is no local bypass.
     - It always uses the platform account from server env, and is rate limited to 3 per minute.
+    - Every attempt that reaches the publisher is written to `admin_audit_logs`, with the admin's ID or "cron secret" and the outcome.
+    - `maxDuration` is 60 seconds.
 - **Affects:** nothing until `WHATSAPP_PARTY_RSVP_FORMS_ENABLED=true` is set on a deployment and someone calls the route. Publishing on staging and on production each needs the Owner's approval.
 - **Unchanged:**
   - merchant native forms (their routes, their switch, and their default gate);

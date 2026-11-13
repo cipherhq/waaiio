@@ -10,6 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { partyRsvpFlowJson, partyRsvpFlowRevision } from './rsvp-flow';
 import { partyRsvpFormsEnabled } from '@/lib/whatsapp-forms/release-gate';
 import type { FlowAssetResult, FlowPublishResult, FlowStatusResult, FlowUploadResult } from '@/lib/whatsapp-forms/meta-flow-asset';
+import { logger } from '@/lib/logger';
 
 export interface PartyRsvpFlowAssets {
   create(name: string): Promise<FlowAssetResult>;
@@ -63,22 +64,33 @@ export async function publishPartyRsvpFlow(
       return { status: 'unavailable', reason: 'Another publication of this form is in progress. Check again shortly.' };
     }
     row = data as Row;
+    let created: string | undefined;
     try {
       const asset = await assets.create(`Waaiio party RSVP ${revision.slice(0, 12)}`);
-      flowId = asset.flowId;
+      flowId = created = asset.flowId;
       const { data: bound, error: bindError } = await db.from(TABLE).update({ meta_flow_id: flowId, status: 'draft' })
         .eq('id', row.id).eq('status', 'creating').select('id');
       if (bindError || !bound?.length) throw new Error('bind');
     } catch {
+      // Keep the asset ID (not secret) so an admin can find it in Meta if it was created but not saved.
+      if (created) logger.warn('[RSVP_FLOW] Meta asset created but not saved', { publicationId: row.id, metaFlowId: created });
       // The provider may or may not have created an asset. Never guess; an admin checks Meta first.
       await markNeedsReview(db, row.id);
       return { status: 'needs_review', publicationId: row.id, reason: 'The Meta form asset could not be confirmed. Check Meta before retrying.' };
     }
   } else {
     // An unfinished attempt is never repeated automatically.
-    if (!options.resume || row.status !== 'needs_review' || !row.meta_flow_id) {
+    if (row.status === 'creating' || row.status === 'draft') {
+      // Either in progress now, or interrupted mid-attempt. Resume cannot tell which, so it is refused.
       return { status: 'needs_review', publicationId: row.id,
-        reason: row.meta_flow_id ? 'A previous attempt did not finish. Resume it after checking Meta.' : 'A previous attempt did not finish and its Meta asset is unknown. Check Meta before retrying.' };
+        reason: 'An attempt is in progress or was interrupted. If it has not finished after a few minutes, check Meta and mark the row needs_review by hand before resuming.' };
+    }
+    if (!row.meta_flow_id) {
+      return { status: 'needs_review', publicationId: row.id,
+        reason: 'A previous attempt did not finish and its Meta asset is unknown. Check Meta before retrying.' };
+    }
+    if (!options.resume) {
+      return { status: 'needs_review', publicationId: row.id, reason: 'A previous attempt did not finish. Check Meta, then resume.' };
     }
     // Claim the resume so two admins cannot run it at once.
     const { data: claimed, error: claimError } = await db.from(TABLE).update({ status: 'draft' })
