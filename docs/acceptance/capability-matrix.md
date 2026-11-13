@@ -42,7 +42,7 @@ Generated from `shared/capabilities.ts` canonical registry + `CAPABILITY_TIER_RE
 
 ## Certification Status
 
-- [ ] All 32 capabilities dashboard-verified
+- [ ] All 33 capabilities dashboard-verified
 - [ ] All applicable WhatsApp flows verified
 - [ ] All payment paths sandbox-verified
 - [ ] All edge cases documented
