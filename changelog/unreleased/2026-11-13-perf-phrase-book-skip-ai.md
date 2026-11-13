@@ -6,21 +6,23 @@
   - It also called the AI for text where only a protected value was left, such as the business name in the menu title.
   - The Owner approved "Fix A" on 2026-11-13.
 - **What changed:**
-  - `lib/bot/flows/flow-localization.ts`: new `isPhraseBookText(lang, text)`. It returns true when every paragraph of the text is certified code-default copy for that language.
-    - Templates with `{placeholders}` are matched as anchored patterns. Templates with fewer than 6 letters of their own wording are ignored, so they can't match arbitrary text.
-    - The patterns are built only from `FLOW_COPY`, never from filled-in values, so no customer data is kept.
+  - `lib/bot/flows/flow-localization.ts`: new `isPhraseBookText(lang, text)`.
+    - It is true only when every paragraph of the text exactly equals a certified code-default `FLOW_COPY[lang]` paragraph that is distinctly that language.
+    - Templates with `{placeholders}` are never matched.
+    - A paragraph that is also English copy is never matched.
+    - The set is built only from `FLOW_COPY`, never from filled-in values, so no customer data is kept.
     - English and uncertified languages always return false. Today only `pcm` is certified.
+    - The first head matched templates as patterns. Both reviewers found that this let English and merchant text through (for example "Welcome to Mama Put! …"), so it was replaced.
   - `lib/bot/translate.ts`: `translateBotResponse` returns the text unchanged, with no PostHog flag check and no AI call, in two cases:
     - (a) `isPhraseBookText` is true;
     - (b) after the protected values (names, amounts, references, dates) are taken out, no letters are left.
-- **Affects:** outbound bot messages for Pidgin sessions. The capability menu goes from 8 AI calls to 0 in the local harness. Phrase-book paragraphs in other messages are also no longer AI-translated.
+- **Affects:** outbound bot messages for Pidgin sessions.
+  - The capability menu goes from 8 AI calls to 1 in the local harness. The one left is a label whose Pidgin copy equals English.
+  - Distinctly-Pidgin phrase-book paragraphs in other messages are also no longer AI-translated.
 - **Unchanged:**
   - English sessions.
   - Uncertified languages (yo, ig, ha, tw, fr, es), whose copy falls back to English and is still AI-translated.
-  - Merchant text, `ctx.t('English…')` strings, and any message containing a paragraph that is not phrase-book copy.
+  - Merchant text, `ctx.t('English…')` strings, filled-in templates, English-identical copy, and any message containing a paragraph that is not distinctly-Pidgin phrase-book copy.
   - Business and platform translation overrides, which are not recognised and are still AI-translated as before.
-- **Could break:**
-  - Pidgin customers now see the exact certified phrase-book wording instead of the AI's rewording of it.
-  - 107 pcm entries are deliberately identical to English (code-switching, e.g. `menu.title`, `nav.more_options`). Those are now sent exactly as the phrase book has them.
-  - A merchant or English paragraph that happens to equal a pcm phrase-book paragraph word for word is also sent as written.
+- **Could break:** Pidgin customers now see the exact certified phrase-book wording for distinctly-Pidgin paragraphs, instead of the AI's rewording of them.
 - **Tests:** `lib/bot/__tests__/phrase-book-skip-ai.test.ts`

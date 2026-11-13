@@ -22,7 +22,7 @@ vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn(() => ({ allowed: tru
 import { translateBotResponse, _clearTranslationCache, type TranslationContext } from '../translate';
 import { localizeMessage } from '../outbound-localizer';
 import {
-  getFlowCopy, fillFlowCopy, isPhraseBookText, PLACEHOLDER_SCHEMA, _FLOW_COPY_FOR_TESTS as COPY,
+  getFlowCopy, fillFlowCopy, isPhraseBookText, _FLOW_COPY_FOR_TESTS as COPY,
 } from '../flows/flow-localization';
 import { capabilitySelectionFlow } from '../flows/capability-selection.flow';
 
@@ -32,17 +32,6 @@ const tCtx = (lang: string): TranslationContext => ({
   supabase: null,
 });
 
-/** A pcm template with placeholders and enough fixed wording to be recognised. */
-function pcmTemplateKey(): { key: string; values: Record<string, string> } {
-  for (const [key, names] of PLACEHOLDER_SCHEMA) {
-    const raw = COPY.pcm[key];
-    if (!raw || names.length === 0 || raw.includes('\n')) continue;
-    if (raw.replace(/\{\w+\}/g, '').replace(/[^\p{L}]/gu, '').length < 12) continue;
-    return { key, values: Object.fromEntries(names.map(n => [n, `Value${n}`])) };
-  }
-  throw new Error('no pcm template found');
-}
-
 beforeEach(() => {
   aiCreate.mockReset();
   aiCreate.mockResolvedValue({ content: [{ type: 'text', text: 'AI TRANSLATION' }], usage: { input_tokens: 1, output_tokens: 1 } });
@@ -50,11 +39,35 @@ beforeEach(() => {
 });
 
 describe('isPhraseBookText', () => {
-  it('recognises certified Pidgin copy, filled templates and combinations of them', () => {
+  it('recognises distinctly-Pidgin certified copy and combinations of it', () => {
     expect(isPhraseBookText('pcm', getFlowCopy('pcm', 'menu.what_to_do'))).toBe(true);
-    const { key, values } = pcmTemplateKey();
-    expect(isPhraseBookText('pcm', fillFlowCopy('pcm', key, values))).toBe(true);
     expect(isPhraseBookText('pcm', `${getFlowCopy('pcm', 'nav.cancel_retry')}\n\n${getFlowCopy('pcm', 'menu.what_to_do')}`)).toBe(true);
+  });
+
+  it('never treats a filled-in template or English-identical copy as Pidgin', () => {
+    // Templates are not matched at all (reviewers' P1: "Welcome to {businessName}! {emoji}"
+    // would otherwise accept any "Welcome to X! ..." merchant greeting).
+    expect(isPhraseBookText('pcm', fillFlowCopy('pcm', 'ordering.welcome', { businessName: 'Mama Put', emoji: '🍲' }))).toBe(false);
+    // Copy that is identical in English could equally be an English sentence.
+    expect(COPY.pcm['menu.title']).toBe(COPY.en['menu.title']);
+    expect(isPhraseBookText('pcm', COPY.pcm['menu.title'])).toBe(false);
+  });
+
+  it.each([
+    'Welcome to Mama Put! How can I help you today?',
+    "Welcome to Mama Put! 🙏 We're glad you're here. How can we serve you today?",
+    'Welcome to our shop! We are open 9am to 5pm daily.',
+    'Your appointment is confirmed for Monday',
+    'Your order is ready for pickup',
+    'Your table for two is reserved for tonight',
+    'Your Monthly payment of *₦5,000* for *Tithe* is now active.',
+    'Your booking payment for *BK-1234* was refunded.',
+    'Pay with cash when you arrive',
+    'Pay with bank transfer to the account below',
+    'Amount: please pay the full balance before arrival',
+    'Your choice of soft drink for lunch, served chilled',
+  ])('English or merchant text shaped like a Pidgin template still needs the AI: %s', (text) => {
+    expect(isPhraseBookText('pcm', text)).toBe(false);
   });
 
   it('rejects merchant or English text, mixed messages, English and uncertified languages', () => {
@@ -77,6 +90,12 @@ describe('translateBotResponse', () => {
   it('skips the AI when only protected values are left (business name)', async () => {
     expect(await translateBotResponse('Test Biz', 'pcm', tCtx('pcm'), { protectedValues: ['Test Biz'] })).toBe('Test Biz');
     expect(aiCreate).not.toHaveBeenCalled();
+  });
+
+  it('a welcome menu body with the merchant greeting still goes to the AI', async () => {
+    const body = `Welcome to Mama Put! How can I help you today?\n\n${getFlowCopy('pcm', 'menu.what_to_do')}`;
+    await translateBotResponse(body, 'pcm', tCtx('pcm'));
+    expect(aiCreate).toHaveBeenCalledTimes(1);
   });
 
   it('still translates English and merchant text with the AI (unchanged)', async () => {
@@ -112,7 +131,7 @@ describe('Pidgin capability menu', () => {
     return { from, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) } as any;
   }
 
-  it('a Waaiio-worded menu goes out with no AI calls', async () => {
+  it('a Waaiio-worded menu only asks the AI about English-identical labels', async () => {
     const step = capabilitySelectionFlow.steps.find(s => s.id === 'select_capability')!;
     const ctx: any = {
       supabase: db(), sender: {}, standalone: {}, intelligence: {}, t: async (x: string) => x,
@@ -123,7 +142,12 @@ describe('Pidgin capability menu', () => {
     const [menu] = await step.prompt!(ctx);
     Object.assign(menu, { footer: getFlowCopy('pcm', 'nav.footer') });
     const sent = await localizeMessage(menu, 'pcm', tCtx('pcm'));
-    expect(aiCreate).not.toHaveBeenCalled();
-    expect(sent).toEqual(menu);
+    // Before this change: 8 AI calls (every label, the business name, the body, the footer).
+    // Now only labels whose Pidgin copy is identical to English still go to the AI.
+    const asked = aiCreate.mock.calls.map((c: any) => c[0].messages[0].content as string);
+    expect(asked.length).toBeLessThan(8);
+    const englishCopy = new Set(Object.values(COPY.en));
+    for (const text of asked) expect(englishCopy.has(text)).toBe(true);
+    expect(sent.type).toBe('list');
   });
 });
