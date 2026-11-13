@@ -808,6 +808,14 @@ describe('custom flow routing (tryHandleCustomFlow)', () => {
     expect(db.custom_flow_sessions).toHaveLength(0);
   });
 
+  it('does not start a flow when the entry keyword has trailing words', async () => {
+    const handled = await tryHandleCustomFlow({
+      supabase, sender, businessId: BUSINESS_A, from: PHONE, text: 'AFROFEST 2026',
+    });
+    expect(handled).toBe(false);
+    expect(db.custom_flow_sessions).toHaveLength(0);
+  });
+
   it('passes through a business code sent inside an active session', async () => {
     await startSession();
     const handled = await tryHandleCustomFlow({
