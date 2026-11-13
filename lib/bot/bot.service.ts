@@ -381,8 +381,13 @@ export class BotService {
           await this.sendText(from, 'Invitation unavailable.'); return;
         }
         const details = (Array.isArray(boundInvite.parties) ? boundInvite.parties[0] : boundInvite.parties) as unknown as { question_definitions: unknown[]; question_revision: number };
-        if (rsvpStatus === 'accepted' && details?.question_definitions?.length) partyButtonToken = boundInvite.invite_token;
-        else {
+        if (rsvpStatus === 'accepted' && details?.question_definitions?.length) {
+          // #1005 PR 3a (Owner decision 2026-11-13): send one link to the RSVP page, which asks guest
+          // count, dietary needs and every question at once. If the link cannot be sent, fall back to
+          // today's one-by-one questions in the bot.
+          if (await this.sendPartyRsvpLink(from, boundInvite.business_id, boundInvite.invite_token)) return;
+          partyButtonToken = boundInvite.invite_token;
+        } else {
           const saved = await completePartyRsvp(this.supabase, boundInvite.invite_token,
             { status: rsvpStatus, plus_ones: boundInvite.plus_ones, answers: {}, revision: details?.question_revision },
             { sender: from, businessId: boundInvite.business_id });
@@ -5045,6 +5050,23 @@ export class BotService {
 
   private async sendText(to: string, text: string): Promise<void> {
     return sendBotText(this.messageSender, to, text);
+  }
+
+  /** #1005 PR 3a: after Yes, one link to the RSVP page with Yes pre-selected. False when it could not be sent. */
+  private async sendPartyRsvpLink(to: string, businessId: string, inviteToken: string): Promise<boolean> {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+    const link = `${appUrl}/rsvp/${encodeURIComponent(inviteToken)}?rsvp=yes`;
+    try {
+      this.messageSender.bindBusiness?.(businessId);
+      await this.messageSender.sendText({
+        to,
+        text: `🎉 Great, you're coming!\n\nTo confirm, tap the link to say how many are coming and answer the host's questions. It takes under a minute:\n${link}`,
+      });
+      return true;
+    } catch (err) {
+      logger.warn('[BOT] RSVP link not sent; using the questions in chat:', (err as Error).message);
+      return false;
+    }
   }
 
   /**

@@ -25,6 +25,19 @@ describe('mounted Party Questions',()=>{
     render(<RSVPPage/>); fireEvent.click(await screen.findByText('Change response')); fireEvent.click(screen.getByText('Confirm RSVP'));
     await waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(2)); expect(JSON.parse(fetcher.mock.calls[1][1].body).status).toBe('maybe');
   });
+  it('#1005 PR 3a: the bot link ?rsvp=yes pre-selects Yes only for a guest who has not answered',async()=>{
+    window.history.pushState({},'','/rsvp/party-token?rsvp=yes');
+    try {
+      fetcher.mockImplementation(async (_url:string,init?:RequestInit)=>new Response(JSON.stringify(init?{success:true,saved:{status:'accepted',plus_ones:0}}:{invite:{...invite,status:'pending'}})));
+      render(<RSVPPage/>); fireEvent.change(await screen.findByLabelText('Need access? *'),{target:{value:'true'}});
+      fireEvent.click(screen.getByText('Confirm RSVP'));
+      await waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(2)); expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({status:'accepted',answers:{access:true}});
+      cleanup(); fetcher.mockReset();
+      fetcher.mockImplementation(async (_url:string,init?:RequestInit)=>new Response(JSON.stringify(init?{success:true,saved:{status:'maybe',plus_ones:0}}:{invite})));
+      render(<RSVPPage/>); fireEvent.click(await screen.findByText('Change response')); fireEvent.click(screen.getByText('Confirm RSVP'));
+      await waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(2)); expect(JSON.parse(fetcher.mock.calls[1][1].body).status).toBe('maybe');
+    } finally { window.history.pushState({},'','/'); }
+  });
   it('organizer saves stable question IDs and reads back the canonical revision',async()=>{
     fetcher.mockImplementation(async (_url:string,init?:RequestInit)=>new Response(JSON.stringify({questions:init?JSON.parse(String(init.body)).questions:questions,revision:init?2:1,responses:[]})));
     render(<Editor partyId="party"/>); fireEvent.change(await screen.findByLabelText('Question 1'),{target:{value:'Access required?'}}); fireEvent.click(screen.getByText('Save questions'));
