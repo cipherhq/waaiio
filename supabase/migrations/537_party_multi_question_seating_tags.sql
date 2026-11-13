@@ -117,14 +117,18 @@ BEGIN
     IF k = ANY(qids) AND wants[array_position(qids,k)] IS DISTINCT FROM v AND NOT (v = ANY(keep)) THEN
       next_tags := array_remove(next_tags,v); END IF;
   END LOOP;
-  -- 4. Add what is wanted. A tag the guest already has is tracked only when an answer added it
-  --    before: the organiser's own tag is never adopted.
+  -- 4. Add what is wanted.
+  --    - An unchanged answer never re-adds a tag the organiser removed by hand (as M514).
+  --    - A tag the guest already has is tracked only when a still-tagging question's answer
+  --      added it: the organiser's own tag, and a tag kept as ordinary under D7, are never adopted.
   FOR i IN 1..coalesce(array_length(qids,1),0) LOOP
     CONTINUE WHEN wants[i] IS NULL;
-    IF array_position(next_tags,wants[i]) IS NULL THEN
+    IF old_tracked->>qids[i] IS NOT DISTINCT FROM wants[i] THEN
+      next_tracked := next_tracked || jsonb_build_object(qids[i],wants[i]);
+    ELSIF array_position(next_tags,wants[i]) IS NULL THEN
       next_tags := array_append(next_tags,wants[i]);
       next_tracked := next_tracked || jsonb_build_object(qids[i],wants[i]);
-    ELSIF EXISTS (SELECT 1 FROM jsonb_each_text(old_tracked) e WHERE e.value=wants[i])
+    ELSIF EXISTS (SELECT 1 FROM jsonb_each_text(old_tracked) e WHERE e.value=wants[i] AND e.key = ANY(qids))
       OR EXISTS (SELECT 1 FROM jsonb_each_text(next_tracked) e WHERE e.value=wants[i]) THEN
       next_tracked := next_tracked || jsonb_build_object(qids[i],wants[i]);
     END IF;

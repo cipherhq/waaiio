@@ -175,6 +175,29 @@ suite('M537 several questions tag guests (real PostgreSQL)', () => {
     expect(await invite(g1)).toMatchObject({ tags: [VEG, BRIDE], answer_tags: { side: BRIDE } });
   });
 
+  it('never re-adds an auto-tag the organiser removed, on a question save or another question\'s RSVP change', async () => {
+    await saveQuestions([side(), veg()]);
+    await accept('tok-537-1', { side: 'groom', veg: false });
+    await pool.query('UPDATE public.event_invites SET tags=$2 WHERE id=$1', [g1, []]); // organiser removes "Groom's family"
+    await saveQuestions([side({ tag_answers: true, label: 'Which side? (edited)' }), veg()]);
+    expect((await invite(g1)).tags).toEqual([]);
+    await accept('tok-537-1', { side: 'groom', veg: true });
+    expect((await invite(g1)).tags).toEqual([VEG]);
+    await accept('tok-537-1', { side: 'bride', veg: true }); // a real answer change still tags
+    expect((await invite(g1)).tags).toEqual([VEG, BRIDE]);
+  });
+
+  it('a tag kept as ordinary under D7 is not taken over by another question', async () => {
+    const parking = { ...car(), id: 'park', label: 'Need parking?' };
+    await saveQuestions([car(), parking]);
+    await accept('tok-537-2', { car: true, park: false });
+    await saveQuestions([car({ yes_tag: CAR }), parking]); // car stops tagging: Parking stays as ordinary
+    expect(await invite(g2)).toMatchObject({ tags: [CAR], answer_tags: {} });
+    await accept('tok-537-2', { car: true, park: true });
+    await accept('tok-537-2', { car: true, park: false });
+    expect(await invite(g2)).toMatchObject({ tags: [CAR], answer_tags: {} });
+  });
+
   it('refuses a direct write to the answer-tag bookkeeping', async () => {
     const c = await pool.connect();
     try {
