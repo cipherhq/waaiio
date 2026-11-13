@@ -6616,6 +6616,55 @@ export function fillFlowCopy(
 }
 
 /**
+ * Paragraphs of the certified code-default copy for one language: exact texts,
+ * plus templates (with {placeholders}) as anchored patterns. Built once per language
+ * from FLOW_COPY only — never from filled-in values, so no customer data is kept.
+ */
+const phraseBookParagraphs = new Map<string, { exact: Set<string>; templates: RegExp[] }>();
+
+function splitParagraphs(text: string): string[] {
+  return text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+}
+
+function getPhraseBookParagraphs(lang: string): { exact: Set<string>; templates: RegExp[] } {
+  let entry = phraseBookParagraphs.get(lang);
+  if (entry) return entry;
+  entry = { exact: new Set(), templates: [] };
+  for (const value of Object.values(FLOW_COPY[lang] ?? {})) {
+    for (const paragraph of splitParagraphs(value)) {
+      if (!/\{\w+\}/.test(paragraph)) {
+        entry.exact.add(paragraph);
+        continue;
+      }
+      // A template must keep some wording of its own; one that is mostly
+      // placeholders (e.g. "{name}: {value}") would match arbitrary text.
+      const literalLetters = paragraph.replace(/\{\w+\}/g, '').replace(/[^\p{L}]/gu, '');
+      if (literalLetters.length < 6) continue;
+      const pattern = paragraph
+        .split(/\{\w+\}/)
+        .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[^\\n]+?');
+      entry.templates.push(new RegExp(`^${pattern}$`, 'u'));
+    }
+  }
+  phraseBookParagraphs.set(lang, entry);
+  return entry;
+}
+
+/**
+ * True when every paragraph of `text` is certified code-default copy for `lang`,
+ * so it is already in that language and needs no AI translation. English and
+ * uncertified languages (whose copy falls back to English) always return false.
+ */
+export function isPhraseBookText(lang: string | undefined, text: string): boolean {
+  if (!lang || lang === 'en' || !CERTIFIED_LANGUAGES.includes(lang)) return false;
+  const paragraphs = splitParagraphs(text);
+  if (paragraphs.length === 0) return false;
+  const { exact, templates } = getPhraseBookParagraphs(lang);
+  return paragraphs.every(p => exact.has(p) || templates.some(t => t.test(p)));
+}
+
+/**
  * Get the reroute prompt key for a broad intent.
  */
 export function getRerouteKey(intent: string | null): string {
