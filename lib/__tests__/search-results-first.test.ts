@@ -9,8 +9,10 @@
  * 3. Close name match → "No exact match for 'X'. This name is close:", then past businesses
  *    as a separate message; stored list keeps matches first.
  * 4. New customer → results only, no past-business message.
- * 5. Tapping a past business after a search enters that business.
- * 6. No message says "Did you mean".
+ * 5. Tapping a past business after a search enters exactly that business.
+ * 6. A category/area search the close-name check also matched ("salon in Lekki")
+ *    still gets labelled search results, not the close-name picker.
+ * No message says "Did you mean".
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createTestSupabase } from './helpers/mock-supabase';
@@ -130,7 +132,7 @@ function makeChain(tableData: unknown, thenable = true) {
 /** Supabase mock with no open chat; captures inserted bot_sessions rows. */
 function createSupabase(existingSession: Record<string, unknown> | null = null, business: Record<string, unknown> | null = null) {
   const inserted: Array<Record<string, any>> = [];
-  let rpcCalls = 0;
+  let contextReads = 0;
   const supabase = {
     _inserted: inserted,
     from: vi.fn().mockImplementation((table: string) => {
@@ -154,12 +156,15 @@ function createSupabase(existingSession: Record<string, unknown> | null = null, 
       }
       return makeChain(null);
     }),
-    rpc: vi.fn().mockImplementation(() => {
-      rpcCalls++;
-      if (existingSession && rpcCalls === 1) {
-        return Promise.resolve({ data: { has_session: true, session: existingSession, ambiguous: false }, error: null });
+    // The stored session answers the first context read; the re-entry for the picked business finds none.
+    rpc: vi.fn().mockImplementation((fn: string) => {
+      if (fn === 'get_bot_context') {
+        contextReads++;
+        if (existingSession && contextReads === 1) {
+          return Promise.resolve({ data: { has_session: true, session: existingSession, ambiguous: false }, error: null });
+        }
+        return Promise.resolve({ data: { has_session: false, ambiguous: false }, error: null });
       }
-      if (existingSession) return Promise.resolve({ data: { has_session: false, ambiguous: false }, error: null });
       return Promise.resolve({ data: { success: true, version: 1 }, error: null });
     }),
   };
@@ -271,21 +276,44 @@ describe('Business search: results first, past businesses labelled as past', () 
     expect(sent.some(s => s.body.includes(PAST_HEADER))).toBe(false);
   });
 
-  it('5. tapping a past business after a search enters that business', async () => {
+  it('5. tapping the second past business after a search enters exactly that business', async () => {
     const dirSession = {
       id: 'sess-dir', business_id: null, current_step: 'directory_results', is_active: true, version: 0,
       whatsapp_number: PHONE, expires_at: new Date(Date.now() + 1800000).toISOString(),
-      session_data: { _directory_mode: true, _directory_results: [], _directory_suggestions: [], suggestions: [OLD_SPA] },
+      session_data: { _directory_mode: true, _directory_results: [], _directory_suggestions: [], suggestions: [OLD_SPA, OLD_GYM] },
     };
-    const oldSpa = { id: 'biz-past-1', name: 'Old Spa', status: 'active', category: 'spa', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'OLDSPA', is_whitelabel: false };
-    mockDetectionResult = { businessId: 'biz-past-1', suggestions: [], authority: 'exact' };
-    const supabase = createSupabase(dirSession, oldSpa);
+    const oldGym = { id: 'biz-past-2', name: 'Old Gym', status: 'active', category: 'gym', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'OLDGYM', is_whitelabel: false };
+    // Detection never binds here: the business must come from the tapped button.
+    mockDetectionResult = { businessId: null, suggestions: [], authority: 'suggestion' };
+    const supabase = createSupabase(dirSession, oldGym);
     const { bot, cloud, sender } = makeBot(supabase);
 
-    await bot.handleMessage(PHONE, 'biz_0', 'text');
+    await bot.handleMessage(PHONE, 'biz_1', 'text');
 
-    expect((sender as any).boundBusinessId).toBe('biz-past-1');
+    expect((sender as any).boundBusinessId).toBe('biz-past-2');
+    // The tap was resolved from the stored session, not searched as text
+    expect(sentBodies(cloud).some(s => s.body.includes('biz_1'))).toBe(false);
     const fallback = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong'));
     expect(fallback).toHaveLength(0);
+  });
+
+  it.each([
+    ['category match', { businessId: null, suggestions: [{ id: 'biz-abuja', name: 'Abuja Hair Palace', bot_code: 'AHP' }], isCategory: true, authority: 'suggestion' }],
+    ['name-pool match', { businessId: null, suggestions: [{ id: 'biz-abuja', name: 'Abuja Hair Palace', bot_code: 'AHP' }], authority: 'suggestion' }],
+  ])('6. "salon in Lekki" with a %s from the close-name check still gets labelled search results', async (_label, detection) => {
+    mockDetectionResult = detection as typeof mockDetectionResult;
+    mockReturningBusinesses = [OLD_SPA];
+    mockSearchResults = [{ businessId: 'biz-new-1', name: 'Lekki Glow', botCode: 'LEKKIGLOW', category: 'salon', city: 'Lagos' }];
+    const supabase = createSupabase();
+    const { bot, cloud } = makeBot(supabase);
+
+    await bot.handleMessage(PHONE, 'salon in Lekki', 'text');
+
+    const sent = sentBodies(cloud);
+    expect(sent.map(s => s.kind)).toEqual(['list', 'buttons']);
+    expect(sent[0].body).toContain("Search results for 'salon in Lekki': I found 1 business. Tap below to choose one.");
+    expect(sent[1].body).toBe(PAST_HEADER);
+    expect(sent.some(s => s.body.includes('No exact match') || s.body.includes('might help'))).toBe(false);
+    expect(supabase._inserted.some(r => r.current_step === 'select_business_suggestion')).toBe(false);
   });
 });

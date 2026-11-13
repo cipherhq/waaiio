@@ -67,6 +67,7 @@ import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
+import { parseDirectoryQuery } from '@/lib/marketplace/query-parser';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
 import {
   sendDirectoryGreeting,
@@ -1827,7 +1828,14 @@ export class BotService {
         logger.debug('[BOT] detectBotCode("' + text + '") → authority:', detection.authority, 'biz:', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
       }
 
-      // Close name / category matches — search results come first; businesses the
+      // A category or area search ("salon in Lekki") is answered by the directory search
+      // below as labelled results, not by the close-name picker (Owner decision 2026-11-13).
+      if (!businessId && pendingSuggestions && pendingSuggestions.length > 0
+        && (isCategoryMatch || parseDirectoryQuery(text, sharedNumberCountry).locationText)) {
+        pendingSuggestions = undefined;
+      }
+
+      // Close name matches — search results come first; businesses the
       // customer used before follow in a separate message labelled as past (Owner
       // decision 2026-11-13). #266 R1: history is a labelled pick list, never tenant authority.
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0) {
