@@ -1,0 +1,2219 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_logs.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_logs.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_logs.direction",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_logs.flow_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.custom_flow_logs.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flow_logs.input",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flow_logs.node_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flow_logs.output",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.custom_flow_logs.session_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_sessions.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_sessions.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_sessions.current_node_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "(now() + '24:00:00'::interval)",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8d33cbf1de78ec672b4e0e3ebbfebc60a887ea05135277d0c5044dc54ab582dc",
+   "identity": "column:public.custom_flow_sessions.expires_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'{}'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "0c0bca4211e8bff8dac8edacf710386b0b5172224b544a42742acbb07415e85c",
+   "identity": "column:public.custom_flow_sessions.fields",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_sessions.flow_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "f6282d5dfbab4063a71d5ce7f9ac1632a87d79417d7dcacaced8e4a2e9509127",
+   "identity": "column:public.custom_flow_sessions.flow_version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.custom_flow_sessions.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "true",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "489fd649ed31db7c41d00ca75bea95bff10cee2d9e55ccce79a3d8bfad16b07b",
+   "identity": "column:public.custom_flow_sessions.is_active",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_sessions.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.custom_flow_sessions.version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_sessions.whatsapp_number",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_table_rows.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_table_rows.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'{}'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "0c0bca4211e8bff8dac8edacf710386b0b5172224b544a42742acbb07415e85c",
+   "identity": "column:public.custom_flow_table_rows.data",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "false",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "8297533d5dfe9297714c79d7fce4b1991c9dba7a34f9ee58a3f8eada63fad6ea",
+   "identity": "column:public.custom_flow_table_rows.hidden",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.custom_flow_table_rows.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "b8bc4c99d1437b74d7304389a05994da672bcd4e2837a0f171fa558eb13d5ee0",
+   "identity": "column:public.custom_flow_table_rows.position",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_table_rows.row_code",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_table_rows.table_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_table_rows.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_tables.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'[]'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "b2c79171ba6b50b1c1297b811e2753641e3b32f9bb9e8e410e3d3f65929f4fa5",
+   "identity": "column:public.custom_flow_tables.columns",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_tables.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_tables.flow_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.custom_flow_tables.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_tables.name",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_tables.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flows.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flows.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'NGN'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "c3cee147df069a39487bc3057b6f44ed0b15f50623b2162b8e9c8e54eeeb2627",
+   "identity": "column:public.custom_flows.currency",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'{}'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "0c0bca4211e8bff8dac8edacf710386b0b5172224b544a42742acbb07415e85c",
+   "identity": "column:public.custom_flows.definition",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flows.entry_keyword",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flows.fallback_message",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flows.greeting",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.custom_flows.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'en'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "22dbff0c71c80910278ceb178131df90d66e3fc705c779766d549b1053edae5c",
+   "identity": "column:public.custom_flows.language",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flows.name",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.custom_flows.published_definition",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "integer"
+   },
+   "after_sha256": "a09b5329cddcbfcdc9114baaafe3af969fe9dd2a5c6c95037a26837a0d29795a",
+   "identity": "column:public.custom_flows.published_version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'draft'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "124a6d1b7e8108782ccc646e5983ea15602edbd10cca3e6c2b6f181027ba6842",
+   "identity": "column:public.custom_flows.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'Africa/Lagos'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "e5960092306d0b3602862b8a595ab549823b2fa59178c2ccd3d2a1b304800c69",
+   "identity": "column:public.custom_flows.timezone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flows.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "1",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "5cbeb0b2d0e04c85a1ffaa82913501711ae209f35f5821ec4fa99c15380c6eb1",
+   "identity": "column:public.custom_flows.version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.custom_flow_logs.custom_flow_logs_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (direction = ANY (ARRAY['in'::text, 'out'::text]))",
+    "validated": true
+   },
+   "after_sha256": "130a5848bb456ccb0d050fd7fc4c55a5ce8fe183954870c4f86767d6660f651b",
+   "identity": "constraint:public.custom_flow_logs.custom_flow_logs_direction_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (flow_id, business_id) REFERENCES custom_flows(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "081c49cc34b35a21ecb030543e04b886be62580812ff309a6b278bb19009216f",
+   "identity": "constraint:public.custom_flow_logs.custom_flow_logs_flow_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (node_id IS NULL OR length(node_id) <= 80)",
+    "validated": true
+   },
+   "after_sha256": "bc65e4935d2b2298a7662dc675f6c58e402ab1aac03a68fc073b71927536db8a",
+   "identity": "constraint:public.custom_flow_logs.custom_flow_logs_node_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.custom_flow_logs.custom_flow_logs_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (session_id, business_id) REFERENCES custom_flow_sessions(id, business_id) ON DELETE SET NULL (session_id)",
+    "validated": true
+   },
+   "after_sha256": "01261dec52fe83195e1e2db01f56c2ca33be755b6b169aad71535f6f4816c4e2",
+   "identity": "constraint:public.custom_flow_logs.custom_flow_logs_session_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(current_node_id)) > 0 AND length(current_node_id) <= 80)",
+    "validated": true
+   },
+   "after_sha256": "28c5c58206872fdfd94a14b23fef50233e7c76552a9f1286e0aa2e93959d9e4a",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_current_node_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(fields) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "69dd2bec1874b61c8969390df40ee2a82b1b50e652502947f8de8611f98f36e3",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_fields_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (flow_id, business_id) REFERENCES custom_flows(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "081c49cc34b35a21ecb030543e04b886be62580812ff309a6b278bb19009216f",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_flow_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (flow_version >= 1)",
+    "validated": true
+   },
+   "after_sha256": "fcbf7511c2a2ba9e65d05cc065d5ca8775ddfe84441969c19ca26473911333d1",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_flow_version_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (id, business_id)",
+    "validated": true
+   },
+   "after_sha256": "f68e6e23befc8d82b658a3396fc80a8f463607b044441965174f6cfb33fb5517",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_id_business_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (version >= 0)",
+    "validated": true
+   },
+   "after_sha256": "a920bb384294ae492ccc1fefe12ac61e492f0a1b13f80334ea877290fef42662",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_version_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(whatsapp_number)) > 0 AND length(whatsapp_number) <= 20)",
+    "validated": true
+   },
+   "after_sha256": "02a8dba64cde9956e68a153e5893dfcaefbc6cc5354c472041029dd0e1806424",
+   "identity": "constraint:public.custom_flow_sessions.custom_flow_sessions_whatsapp_number_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.custom_flow_table_rows.custom_flow_table_rows_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(data) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "2b074310fb1e54660013b36b41ddeb31fefc898650cbd332029cc8565a8568e8",
+   "identity": "constraint:public.custom_flow_table_rows.custom_flow_table_rows_data_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.custom_flow_table_rows.custom_flow_table_rows_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(row_code)) > 0 AND length(row_code) <= 40)",
+    "validated": true
+   },
+   "after_sha256": "3768ec8d57a5ca9524ec4977461a95b65f8bce4064ed5e90bef2645023a6bd9c",
+   "identity": "constraint:public.custom_flow_table_rows.custom_flow_table_rows_row_code_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (table_id, business_id) REFERENCES custom_flow_tables(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "648ccbaa3732c310dce6ff0382bbd4cc728bac08927349ae519f30cbae2827f4",
+   "identity": "constraint:public.custom_flow_table_rows.custom_flow_table_rows_table_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (table_id, row_code)",
+    "validated": true
+   },
+   "after_sha256": "8508a42da5f647e98fbe3ff15ffa03ae6ff311dc798e8179f84477c592599686",
+   "identity": "constraint:public.custom_flow_table_rows.custom_flow_table_rows_table_id_row_code_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(columns) = 'array'::text)",
+    "validated": true
+   },
+   "after_sha256": "7b6c536737c168802881ccc74a62611bee299bdb2a6c689948d75b9b9c906139",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_columns_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (flow_id, business_id) REFERENCES custom_flows(id, business_id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "081c49cc34b35a21ecb030543e04b886be62580812ff309a6b278bb19009216f",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_flow_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (flow_id, name)",
+    "validated": true
+   },
+   "after_sha256": "9120489420ea9c58058e33d0efebeade338e74babb98465652148e9565b6553b",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_flow_id_name_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (id, business_id)",
+    "validated": true
+   },
+   "after_sha256": "f68e6e23befc8d82b658a3396fc80a8f463607b044441965174f6cfb33fb5517",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_id_business_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(name)) > 0 AND length(name) <= 80)",
+    "validated": true
+   },
+   "after_sha256": "9095ea80c6452270ffe82c679f0157d6102fe1af76166d05cec037769a6f1852",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_name_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.custom_flows.custom_flows_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status <> 'published'::text OR published_version IS NOT NULL AND published_definition IS NOT NULL)",
+    "validated": true
+   },
+   "after_sha256": "adef227f2a6f786d45552015a9ca91d8a2ec58372badf1c044f39c62b379fc2c",
+   "identity": "constraint:public.custom_flows.custom_flows_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(currency) = 3)",
+    "validated": true
+   },
+   "after_sha256": "f36c4bf1aad800243819c05e30161e6a3b9f5fc7c0b429a28a14d27cd7617ab7",
+   "identity": "constraint:public.custom_flows.custom_flows_currency_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(definition) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "a2de87c88b0092c7ceebc6f5c86ee3a91af68277906f9d36f828b8c90c05690f",
+   "identity": "constraint:public.custom_flows.custom_flows_definition_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (entry_keyword IS NULL OR entry_keyword = upper(btrim(entry_keyword)) AND length(entry_keyword) <= 40 AND entry_keyword !~~ '% %'::text AND (entry_keyword <> ALL (ARRAY['HI'::text, 'HELLO'::text, 'MENU'::text, 'STOP'::text, 'START'::text, 'HELP'::text, 'CANCEL'::text, 'YES'::text, 'NO'::text, 'PAY'::text, 'BOOK'::text, 'BACK'::text, 'RESTART'::text, 'CONTINUE'::text, 'HUMAN'::text, 'AGENT'::text, 'EXIT'::text, 'QUIT'::text, 'ORDER'::text, 'BUY'::text, 'TICKET'::text, 'TABLE'::text, 'DONATE'::text, 'GIVE'::text, 'RESERVE'::text, 'MY'::text, 'SWITCH'::text, 'CONNECT'::text, 'SAVE'::text, 'REMOVE'::text, 'UPDATES'::text, 'DIRECTORY'::text])))",
+    "validated": true
+   },
+   "after_sha256": "f3223928dfc6ba59bc97be6d08af6ec98714dc11569b2e8914c206a785833a1a",
+   "identity": "constraint:public.custom_flows.custom_flows_entry_keyword_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (fallback_message IS NULL OR length(fallback_message) <= 1000)",
+    "validated": true
+   },
+   "after_sha256": "5e5fff82a66eb125961dbfcdccd59a799de71bef29543bc362571bf5dc3de8a5",
+   "identity": "constraint:public.custom_flows.custom_flows_fallback_message_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (greeting IS NULL OR length(greeting) <= 1000)",
+    "validated": true
+   },
+   "after_sha256": "413cc568eb78628f088039261e2f2e72c528d7947fd5a1599f988cd3b02f0ff9",
+   "identity": "constraint:public.custom_flows.custom_flows_greeting_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (id, business_id)",
+    "validated": true
+   },
+   "after_sha256": "f68e6e23befc8d82b658a3396fc80a8f463607b044441965174f6cfb33fb5517",
+   "identity": "constraint:public.custom_flows.custom_flows_id_business_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(language) <= 10)",
+    "validated": true
+   },
+   "after_sha256": "24f233979fab8ca12e1291dab64a922b3bb579d882d56431388a6b305623cf87",
+   "identity": "constraint:public.custom_flows.custom_flows_language_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(name)) > 0 AND length(name) <= 120)",
+    "validated": true
+   },
+   "after_sha256": "ed0e326806af3d2009dc7841c064eb94af3b6f2b2e8f37126530e8452a41f990",
+   "identity": "constraint:public.custom_flows.custom_flows_name_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.custom_flows.custom_flows_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (published_definition IS NULL OR jsonb_typeof(published_definition) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "f9c875834609eca41adf257e7c163a80ab567e5d7aad7ec7ee5482c5bb4037fd",
+   "identity": "constraint:public.custom_flows.custom_flows_published_definition_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (published_version IS NULL OR published_version >= 1)",
+    "validated": true
+   },
+   "after_sha256": "f9a3a3ce752de157f7e786caf5b9473cef0ee4bd211e32e571c484386754d82c",
+   "identity": "constraint:public.custom_flows.custom_flows_published_version_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['draft'::text, 'published'::text]))",
+    "validated": true
+   },
+   "after_sha256": "53211f243d33a26aa75b784b136b2915d30ceb7357a801911a69e66271e1398d",
+   "identity": "constraint:public.custom_flows.custom_flows_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(timezone) <= 64)",
+    "validated": true
+   },
+   "after_sha256": "9b17429c616eb1d200a0728c0a97cfba4fa5c4b213acffca35c216793e3906f4",
+   "identity": "constraint:public.custom_flows.custom_flows_timezone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (version >= 1)",
+    "validated": true
+   },
+   "after_sha256": "9c5022b72bd7f0677d504c7218577b12504f3aeedf2146ff4edf83cf18867ecf",
+   "identity": "constraint:public.custom_flows.custom_flows_version_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_cutoff timestamp with time zone",
+    "body_sha256": "6cccdacf38e5c0082003d6761164d1f016741ba9307fe64afe532fabb88cb14c",
+    "config": null,
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "integer",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "7e0bc03d51f8dd3d98547996273c6e61cc3d4f7a2891dd50ede948fad68575a2",
+   "identity": "function:public.purge_custom_flow_logs(p_cutoff timestamp with time zone)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_logs_business_idx ON public.custom_flow_logs USING btree (business_id, created_at DESC)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "13d6ac7cb3ff1f7ce13d7a6ead8ef2c2a752c916b268b1b2d86cd575d5a48e8a",
+   "identity": "index:public.custom_flow_logs.custom_flow_logs_business_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_logs_pkey ON public.custom_flow_logs USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "7f152dfaf323582643544c32450c672138122faae0d1b2474b70af5957b65834",
+   "identity": "index:public.custom_flow_logs.custom_flow_logs_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_logs_session_idx ON public.custom_flow_logs USING btree (session_id, created_at)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "94e2840e1ceb6ca3aec93f7558b98d83fcd973a27524113acb5d2f5935a4805f",
+   "identity": "index:public.custom_flow_logs.custom_flow_logs_session_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_sessions_active_idx ON public.custom_flow_sessions USING btree (business_id, whatsapp_number) WHERE is_active",
+    "predicate": "is_active",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "f93975ad4eda31595f1c7f1c08d625acac708cabadad808643193fe9780ed9de",
+   "identity": "index:public.custom_flow_sessions.custom_flow_sessions_active_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_sessions_business_idx ON public.custom_flow_sessions USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "84d46af863022fc197e578a9a9709094e58d55c0fa3023f8c694e6368d33ee55",
+   "identity": "index:public.custom_flow_sessions.custom_flow_sessions_business_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_sessions_id_business_id_key ON public.custom_flow_sessions USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "4fad9f53938713c5de60fd4172266b3c3b520e1c4cd394f7252f114be6a04625",
+   "identity": "index:public.custom_flow_sessions.custom_flow_sessions_id_business_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_sessions_pkey ON public.custom_flow_sessions USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "30c81a6465212284bd2df2df30a681c56c8d86ee7c9dfcc310b1acd73d55a22a",
+   "identity": "index:public.custom_flow_sessions.custom_flow_sessions_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_table_rows_business_idx ON public.custom_flow_table_rows USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "bc4d7fec8dfeae104edcdeedfe8bf1ddde3b0c54800840a3f5e6451a70282335",
+   "identity": "index:public.custom_flow_table_rows.custom_flow_table_rows_business_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_table_rows_pkey ON public.custom_flow_table_rows USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "0b26dbda3ca409d23970af8b70e489d4d97b242f89fd0e2235d2ec57c89d8a1c",
+   "identity": "index:public.custom_flow_table_rows.custom_flow_table_rows_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_table_rows_table_id_row_code_key ON public.custom_flow_table_rows USING btree (table_id, row_code)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "d5b994392d5b9ca89519d835955d3c277e1a116d7d4aa49d4c7bc9a33b028b27",
+   "identity": "index:public.custom_flow_table_rows.custom_flow_table_rows_table_id_row_code_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_table_rows_table_idx ON public.custom_flow_table_rows USING btree (table_id, \"position\")",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "957f861aea23ad64c1ec47dbd719f76641b14000b7c23e79e523f6b52ba73677",
+   "identity": "index:public.custom_flow_table_rows.custom_flow_table_rows_table_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_tables_business_idx ON public.custom_flow_tables USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "d7edc4416c488a538d142cda1b7a4b92f49d647b36ad48e606650239a38d3aed",
+   "identity": "index:public.custom_flow_tables.custom_flow_tables_business_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_tables_flow_id_name_key ON public.custom_flow_tables USING btree (flow_id, name)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "1c87c66a6534bf548b372475533a38049356bc340b86b24715889ab2e632f49a",
+   "identity": "index:public.custom_flow_tables.custom_flow_tables_flow_id_name_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_tables_flow_idx ON public.custom_flow_tables USING btree (flow_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "621787294957907f360a94c053dbd1f72c1787176ff972130b84d9dad4602834",
+   "identity": "index:public.custom_flow_tables.custom_flow_tables_flow_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_tables_id_business_id_key ON public.custom_flow_tables USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "c8b9f8a0e7cd47212b9dae99fc15168d7a2fa0de6f8f04c9f40797ac9e6490e9",
+   "identity": "index:public.custom_flow_tables.custom_flow_tables_id_business_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_tables_pkey ON public.custom_flow_tables USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "51d83eda99a14c1a9918ec08c8fc482751587052717c5e8b69d0c38d9f3a8975",
+   "identity": "index:public.custom_flow_tables.custom_flow_tables_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flows_business_entry_keyword_idx ON public.custom_flows USING btree (business_id, entry_keyword) WHERE (entry_keyword IS NOT NULL)",
+    "predicate": "(entry_keyword IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "3f74b9a5849d5ef090d23aeead65ac83435e1dd9c7d1c9dc0a627e21ba7194bd",
+   "identity": "index:public.custom_flows.custom_flows_business_entry_keyword_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flows_business_idx ON public.custom_flows USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "6f29c579f169178bf286c0083148fa24465bc09870c8fecfafda076d15939b38",
+   "identity": "index:public.custom_flows.custom_flows_business_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flows_business_status_idx ON public.custom_flows USING btree (business_id, status)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "db39be9e5e820fe885eaa81213b64365436bdc3e4987eda9539215ca54677fda",
+   "identity": "index:public.custom_flows.custom_flows_business_status_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flows_id_business_id_key ON public.custom_flows USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "fc21d27c18da52dfb71b8ab0ff304c0547af9cf8aa06df6d2fe0ba1f60bf8062",
+   "identity": "index:public.custom_flows.custom_flows_id_business_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flows_pkey ON public.custom_flows USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "90e2fe3110e16e240e03195f4e26a19845d8b6618f2871e31cd4c8668f14c9db",
+   "identity": "index:public.custom_flows.custom_flows_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "d995dc3aa4d3317b383ddc1d791f9e3afb8758153f9434c9f0ac9ba3eaa9231a",
+   "identity": "policy:public.custom_flow_logs.custom_flow_logs_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.custom_flow_logs.custom_flow_logs_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "d995dc3aa4d3317b383ddc1d791f9e3afb8758153f9434c9f0ac9ba3eaa9231a",
+   "identity": "policy:public.custom_flow_sessions.custom_flow_sessions_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.custom_flow_sessions.custom_flow_sessions_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))"
+   },
+   "after_sha256": "aecef6d43c46e8da5a897b377a41f83c58b57104bbf37480e6f0f1445077ac9e",
+   "identity": "policy:public.custom_flow_table_rows.custom_flow_table_rows_owner",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.custom_flow_table_rows.custom_flow_table_rows_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))"
+   },
+   "after_sha256": "aecef6d43c46e8da5a897b377a41f83c58b57104bbf37480e6f0f1445077ac9e",
+   "identity": "policy:public.custom_flow_tables.custom_flow_tables_owner",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.custom_flow_tables.custom_flow_tables_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))"
+   },
+   "after_sha256": "aecef6d43c46e8da5a897b377a41f83c58b57104bbf37480e6f0f1445077ac9e",
+   "identity": "policy:public.custom_flows.custom_flows_owner",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.custom_flows.custom_flows_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "7c1c7d786298b49b2a7f48085b78e3d078c4fc38c44141c75a8b050164f32ec4",
+   "identity": "table:public.custom_flow_logs",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "eb9ddd8095d02cc59b1a42a728b84c5cfa449657e0f6f3fac5601f41ffc048fa",
+   "identity": "table:public.custom_flow_sessions",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "121285d737c0309d3b5ac9afa3429d2d580235a27233b8a9c3633025564e0611",
+   "identity": "table:public.custom_flow_table_rows",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "121285d737c0309d3b5ac9afa3429d2d580235a27233b8a9c3633025564e0611",
+   "identity": "table:public.custom_flow_tables",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "121285d737c0309d3b5ac9afa3429d2d580235a27233b8a9c3633025564e0611",
+   "identity": "table:public.custom_flows",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER update_custom_flow_sessions_updated_at BEFORE UPDATE ON custom_flow_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at()",
+    "enabled": "O"
+   },
+   "after_sha256": "1b8452dd02b04bfcd63ebabd96b1df50cc5afb11eeca73af122edea876eb2d97",
+   "identity": "trigger:public.custom_flow_sessions.update_custom_flow_sessions_updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER update_custom_flow_table_rows_updated_at BEFORE UPDATE ON custom_flow_table_rows FOR EACH ROW EXECUTE FUNCTION update_updated_at()",
+    "enabled": "O"
+   },
+   "after_sha256": "3d35d81fb4b3f249a8964b46aaa78a6eebbbd685a64a66381ab9dd14840f9356",
+   "identity": "trigger:public.custom_flow_table_rows.update_custom_flow_table_rows_updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER update_custom_flow_tables_updated_at BEFORE UPDATE ON custom_flow_tables FOR EACH ROW EXECUTE FUNCTION update_updated_at()",
+    "enabled": "O"
+   },
+   "after_sha256": "8391b87739d196b1c8fa926bca5a7d177baee877da3e9202a39d528b0fb68462",
+   "identity": "trigger:public.custom_flow_tables.update_custom_flow_tables_updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER update_custom_flows_updated_at BEFORE UPDATE ON custom_flows FOR EACH ROW EXECUTE FUNCTION update_updated_at()",
+    "enabled": "O"
+   },
+   "after_sha256": "5a64a633c0e7507f8db60999ae46921eb5a23fd12950b7e767869d093ca385ef",
+   "identity": "trigger:public.custom_flows.update_custom_flows_updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "base": null,
+    "domain_checks": null,
+    "kind": "e",
+    "labels": [
+     "scheduling",
+     "payment",
+     "ordering",
+     "ticketing",
+     "reminders",
+     "crowdfunding",
+     "feedback",
+     "loyalty",
+     "chat",
+     "waitlist",
+     "referral",
+     "staff",
+     "reservation",
+     "whatsapp_sign",
+     "invoice",
+     "giving",
+     "poll",
+     "survey",
+     "reports",
+     "queue",
+     "appointment",
+     "broadcast",
+     "recurring",
+     "auto_reply",
+     "membership",
+     "table_reservation",
+     "estimates",
+     "packages",
+     "class_booking",
+     "multi_location",
+     "waiver",
+     "promo_verification",
+     "custom_flow"
+    ],
+    "owner": "postgres"
+   },
+   "after_sha256": "b8baca5ba5c61a2bded9f60cd74b402de08ce75da5463326b4cf912b0fa6626e",
+   "identity": "type:public.capability_type",
+   "operation": "modify"
+  }
+ ],
+ "migration": "541_custom_flow_base.sql",
+ "migration_sha256": "ac1c37fd30b7b5e78df5bde8dd1f4dc823d29f4d6fee71ee1803d641f19eb4e8",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

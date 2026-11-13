@@ -4,7 +4,7 @@
   "_generated_from_main": "164b31b87fc8013dec65a55201ecaee30859a1b8",
   "_lifecycle_audit": "1c6ed9757d26ee849b9293c6c8ada67684e81ef3",
   "_lifecycle_ref": "docs/contracts/736-capability-e2e-contract.md",
-  "total": 32,
+  "total": 33,
   "capabilities": [
     {
       "id": "scheduling",
@@ -197,6 +197,12 @@
       "id": "promo_verification",
       "subscriptionTier": "growth",
       "riskTier": "tier-3",
+      "contractStatus": "index-only"
+    },
+    {
+      "id": "custom_flow",
+      "subscriptionTier": "business",
+      "riskTier": "tier-1",
       "contractStatus": "index-only"
     }
   ]

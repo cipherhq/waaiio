@@ -1,4 +1,4 @@
-# Waaiio 32-Capability Certification Matrix
+# Waaiio 33-Capability Certification Matrix
 
 Generated from `shared/capabilities.ts` canonical registry + `CAPABILITY_TIER_REQUIREMENTS`.
 
@@ -38,10 +38,11 @@ Generated from `shared/capabilities.ts` canonical registry + `CAPABILITY_TIER_RE
 | 30 | `multi_location` | Multi-Location | Pro | /dashboard/locations | Customer selects location | `business_locations` | N/A | Location inactive | Location list |
 | 31 | `waiver` | Waivers | Pro | /dashboard/waivers | Customer signs waiver | `waivers`, `signatures` | N/A | Expired, declined | Waiver list |
 | 32 | `promo_verification` | Promotions | Pro | /dashboard/promotions | Customer submits code | `promo_campaigns`, `promo_redemptions` | N/A | Max wins, invalid code | Campaign detail |
+| 33 | `custom_flow` | Custom Flows | Premium | /dashboard/custom-flows | Customer follows a merchant-built flow | `custom_flows`, `custom_flow_sessions` | Payment Link (Phase 4) | No match, expired session | Flow builder |
 
 ## Certification Status
 
-- [ ] All 32 capabilities dashboard-verified
+- [ ] All 33 capabilities dashboard-verified
 - [ ] All applicable WhatsApp flows verified
 - [ ] All payment paths sandbox-verified
 - [ ] All edge cases documented

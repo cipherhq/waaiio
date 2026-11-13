@@ -35,7 +35,7 @@ export function getFirstStep(flowType: FlowType): string {
  * first step via getFirstStepFromCapabilities().
  */
 export function getUserFacingCapabilities(capabilities: CapabilityId[]): CapabilityId[] {
-  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location', 'promo_verification']);
+  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'multi_location', 'promo_verification', 'custom_flow']);
   if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
     nonUserFacing.add('payment');
     nonUserFacing.add('invoice');
