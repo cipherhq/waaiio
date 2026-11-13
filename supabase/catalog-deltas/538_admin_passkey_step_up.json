@@ -1,0 +1,269 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.admin_passkey_approvals.admin_user_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.admin_passkey_approvals.approved_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.admin_passkey_approvals.factor_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.admin_passkey_approvals.step_up_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (admin_user_id) REFERENCES auth.users(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "135b02e0a383b174892770691f9e2b32b09b18d28aea72632cff846a35f40877",
+   "identity": "constraint:public.admin_passkey_approvals.admin_passkey_approvals_admin_user_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (factor_id)",
+    "validated": true
+   },
+   "after_sha256": "d3ab18f917a5295b7b18fc5842079e50b30de1c7bd3722377cbfdc8ab9e51a82",
+   "identity": "constraint:public.admin_passkey_approvals.admin_passkey_approvals_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (step_up_id) REFERENCES admin_step_up_authorizations(id)",
+    "validated": true
+   },
+   "after_sha256": "8037f30687e5f856dcc80601b1fde4286b19d14a18d6d49a65132faad00d58f2",
+   "identity": "constraint:public.admin_passkey_approvals.admin_passkey_approvals_step_up_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text, 'channel_change_execute'::text, 'passkey_approve'::text, 'passkey_remove'::text]))",
+    "validated": true
+   },
+   "after_sha256": "1a878c15a9957b9860a7002dafb7905d5fb0497e30a46e2b3e991cb9480c7740",
+   "identity": "constraint:public.admin_step_up_authorizations.admin_step_up_authorizations_action_type_check",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX admin_passkey_approvals_pkey ON public.admin_passkey_approvals USING btree (factor_id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "14ca84f552503ea7f7ae993c444042453cfd2fcfd3709b78af9344138c9ee7cd",
+   "identity": "index:public.admin_passkey_approvals.admin_passkey_approvals_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX idx_admin_passkey_approvals_admin ON public.admin_passkey_approvals USING btree (admin_user_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "a12ebe81814257592fa65cca09c626cad9bb80147b1334dbca40c24d66e18a02",
+   "identity": "index:public.admin_passkey_approvals.idx_admin_passkey_approvals_admin",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX uq_admin_step_up_challenge_id ON public.admin_step_up_authorizations USING btree (challenge_id) WHERE (challenge_id IS NOT NULL)",
+    "predicate": "(challenge_id IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "f7d103f206b5e7d671d45b62e6612a6037e7550c7e6007cd5e44e6dc3b163e4d",
+   "identity": "index:public.admin_step_up_authorizations.uq_admin_step_up_challenge_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "public"
+    ],
+    "using": "false",
+    "with_check": "false"
+   },
+   "after_sha256": "6462477c6c36ac19d46569c6f7297bf8d3e7556c39b46dcb0fb5b0749b5f42a1",
+   "identity": "policy:public.admin_passkey_approvals.admin_passkey_approvals_deny_all",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.admin_passkey_approvals",
+   "operation": "add"
+  }
+ ],
+ "migration": "538_admin_passkey_step_up.sql",
+ "migration_sha256": "990eeaa6dae64cf38267332ba91d53acd872cc2cd9b3b3b3621e32d196ad4f40",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

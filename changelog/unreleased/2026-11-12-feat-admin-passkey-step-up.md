@@ -31,7 +31,7 @@
     - new "My Passkeys" page and sidebar item;
     - all 14 `StepUpDialog` uses pass `method`.
   - `RELEASE_GATE_V2.md` §1.5: SEC-005 amended with the passkey rules.
-  - CI: registers the new pg test.
+  - CI: registers the new pg test. `supabase/catalog-deltas/538_admin_passkey_step_up.json` is the PostgreSQL 17 catalog delta that CI's oracle generated for M538.
 - **Affects:** admin sign-in and every admin step-up dialog.
 - **Could break:**
   - Passkeys need WebAuthn MFA turned on in Supabase Auth settings. That is a separate Owner-approved production change. Until then the passkey buttons fail, and code sign-in works as before.
