@@ -749,10 +749,10 @@
    "after": {
     "deferrable": false,
     "deferred": false,
-    "definition": "FOREIGN KEY (session_id, business_id) REFERENCES custom_flow_sessions(id, business_id) ON DELETE SET NULL",
+    "definition": "FOREIGN KEY (session_id, business_id) REFERENCES custom_flow_sessions(id, business_id) ON DELETE SET NULL (session_id)",
     "validated": true
    },
-   "after_sha256": "e7795d6b09229f7c70607c8223cb8f4e6795a798a6526f7e85f077c524787fa1",
+   "after_sha256": "01261dec52fe83195e1e2db01f56c2ca33be755b6b169aad71535f6f4816c4e2",
    "identity": "constraint:public.custom_flow_logs.custom_flow_logs_session_id_business_id_fkey",
    "operation": "add"
   },
@@ -1681,6 +1681,12 @@
       "grantable": false,
       "grantee": "service_role",
       "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
       "privilege": "INSERT"
      },
      {
@@ -1696,7 +1702,7 @@
     "rls": true,
     "view": null
    },
-   "after_sha256": "61a96b0432cea23642daf9c5d04d785deb8aa768b88b5598f16e00c9bd31976a",
+   "after_sha256": "7c1c7d786298b49b2a7f48085b78e3d078c4fc38c44141c75a8b050164f32ec4",
    "identity": "table:public.custom_flow_logs",
    "operation": "add"
   },
@@ -2206,7 +2212,7 @@
   }
  ],
  "migration": "541_custom_flow_base.sql",
- "migration_sha256": "f48b1cc7970b2dcf1ef26592efea91ef3aad34cc137f853c81053ace2641eb48",
+ "migration_sha256": "48d7ae035e93f324d6321563ef4d541865c19e4c5c0cdca43edbacf00e73f1c3",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1

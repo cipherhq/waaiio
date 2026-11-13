@@ -165,14 +165,14 @@ CREATE TABLE public.custom_flow_logs (
   -- Composite FKs (P1 fix, PR #1016 review): log rows can only reference
   -- flows and sessions of the same business.
   FOREIGN KEY (flow_id, business_id) REFERENCES public.custom_flows(id, business_id) ON DELETE CASCADE,
-  FOREIGN KEY (session_id, business_id) REFERENCES public.custom_flow_sessions(id, business_id) ON DELETE SET NULL
+  FOREIGN KEY (session_id, business_id) REFERENCES public.custom_flow_sessions(id, business_id) ON DELETE SET NULL (session_id)
 );
 CREATE INDEX custom_flow_logs_business_idx ON public.custom_flow_logs(business_id, created_at DESC);
 CREATE INDEX custom_flow_logs_session_idx ON public.custom_flow_logs(session_id, created_at);
 ALTER TABLE public.custom_flow_logs ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.custom_flow_logs FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.custom_flow_logs TO authenticated;
-GRANT SELECT, INSERT ON public.custom_flow_logs TO service_role;
+GRANT SELECT, INSERT, DELETE ON public.custom_flow_logs TO service_role;
 CREATE POLICY custom_flow_logs_owner_read ON public.custom_flow_logs FOR SELECT TO authenticated
   USING (business_id IN (SELECT id FROM public.businesses WHERE owner_id = auth.uid()));
 CREATE POLICY custom_flow_logs_service ON public.custom_flow_logs FOR ALL TO service_role USING (true) WITH CHECK (true);

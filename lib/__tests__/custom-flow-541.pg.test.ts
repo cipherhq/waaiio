@@ -106,7 +106,7 @@ describe('M541 custom flow base tables (real PostgreSQL)', () => {
     ]);
     expect(await acl('custom_flow_logs')).toEqual([
       { grantee: 'authenticated', p: 'SELECT' },
-      { grantee: 'service_role', p: 'INSERT,SELECT' },
+      { grantee: 'service_role', p: 'DELETE,INSERT,SELECT' },
     ]);
     const exec = async (role: string) => (await db.query(
       `SELECT has_function_privilege($1,'public.purge_custom_flow_logs(timestamptz)','EXECUTE') v`, [role])).rows[0].v;
@@ -163,13 +163,35 @@ describe('M541 custom flow base tables (real PostgreSQL)', () => {
     await db.query(`INSERT INTO custom_flows(business_id, name, entry_keyword) VALUES($1,'Good','AFROFEST2')`, [biz]);
   });
 
+  it('deleting a session with log rows clears only session_id (business_id stays)', async () => {
+    await db.query(`INSERT INTO custom_flow_logs(business_id, flow_id, session_id, direction)
+      VALUES($1,$2,$3,'in')`, [biz, flow, session]);
+    await db.query(`DELETE FROM custom_flow_sessions WHERE id=$1`, [session]);
+    const sessions = await db.query(`SELECT id FROM custom_flow_sessions WHERE id=$1`, [session]);
+    expect(sessions.rows).toEqual([]);
+    const logs = await db.query(`SELECT session_id, business_id FROM custom_flow_logs`);
+    expect(logs.rows).toEqual([{ session_id: null, business_id: biz }]);
+  });
+
   it('purge_custom_flow_logs deletes only rows older than the cutoff and returns the count', async () => {
     await db.query(`INSERT INTO custom_flow_logs(business_id, flow_id, session_id, direction, created_at)
       VALUES($1,$2,$3,'in', now() - interval '100 days'),($1,$2,$3,'out', now())`, [biz, flow, session]);
-    const purged = await db.query(`SELECT public.purge_custom_flow_logs(now() - interval '90 days') n`);
-    expect(purged.rows[0].n).toBe(1);
-    const remaining = await db.query(`SELECT direction FROM custom_flow_logs ORDER BY created_at`);
-    expect(remaining.rows.map((r) => r.direction)).toEqual(['out']);
+    // The purge runs as service_role (SET LOCAL ROLE), not as superuser:
+    // as superuser the DELETE would succeed even without the grant, so the
+    // missing-grant failure the re-review found would stay hidden.
+    let committed = false;
+    await db.query('BEGIN');
+    try {
+      await db.query('SET LOCAL ROLE service_role');
+      const purged = await db.query(`SELECT public.purge_custom_flow_logs(now() - interval '90 days') n`);
+      const remaining = await db.query(`SELECT direction FROM custom_flow_logs ORDER BY created_at`);
+      await db.query('COMMIT');
+      committed = true;
+      expect(purged.rows[0].n).toBe(1);
+      expect(remaining.rows.map((r) => r.direction)).toEqual(['out']);
+    } finally {
+      if (!committed) await db.query('ROLLBACK').catch(() => {});
+    }
     // A merchant cannot run the purge: EXECUTE is service_role only.
     await expect(roleQuery('authenticated', owner, `SELECT public.purge_custom_flow_logs(now())`))
       .rejects.toMatchObject({ code: '42501' });
