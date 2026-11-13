@@ -787,11 +787,6 @@ export const schedulingFlow: FlowDefinition = {
           return [{ type: 'text' as const, text: getFlowCopy(ctx.copyLang, 'booking.no_services') }];
         }
 
-        if (services.length === 1) {
-          // Single service — skipIf handles auto-selection, prompt is a no-op
-          return [];
-        }
-
         // Pre-fetch upcoming booking counts for class services to show spots left
         const classServices = services.filter(s => (s as Record<string, unknown>).is_class && s.max_capacity && s.max_capacity > 1);
         const spotsMap = new Map<string, number>();
@@ -995,32 +990,7 @@ export const schedulingFlow: FlowDefinition = {
           return true;
         }
 
-        if (services.length === 1) {
-          const s = services[0];
-          ctx.session.session_data.service_id = s.id;
-          ctx.session.session_data.service_name = s.name;
-          ctx.session.session_data.service_price = s.price;
-          ctx.session.session_data._service_price_is_variable = (s as Record<string, unknown>).price_is_variable === true;
-          ctx.session.session_data.service_duration = s.duration_minutes;
-          ctx.session.session_data.service_deposit = s.deposit_amount;
-          ctx.session.session_data.service_billing_type = s.billing_type || 'one_time';
-          ctx.session.session_data.service_recurring_interval = s.recurring_interval || null;
-          ctx.session.session_data._service_available_days = s.available_days || [];
-          ctx.session.session_data._service_available_from = s.available_from || null;
-          ctx.session.session_data._service_available_to = s.available_to || null;
-          ctx.session.session_data._service_max_capacity = s.max_capacity || 1;
-          ctx.session.session_data._service_buffer_minutes = s.buffer_minutes || 0;
-          ctx.session.session_data._service_metadata = s.metadata || null;
-          ctx.session.session_data._auto_approve = s.auto_approve !== false;
-          ctx.session.session_data._service_requires_staff = s.requires_staff || false;
-          ctx.session.session_data._service_staff_ids = s.staff_ids || [];
-          ctx.session.session_data._service_allow_staff_selection = s.allow_staff_selection || false;
-          ctx.session.session_data._service_is_class = (s as Record<string, unknown>).is_class || false;
-          ctx.session.session_data._service_class_schedule = (s as Record<string, unknown>).class_schedule || [];
-          ctx.session.session_data.skip_service = true;
-          return true;
-        }
-
+        // Owner decision: the customer always picks the service, even when there is only one
         return false;
       },
     },

@@ -116,23 +116,38 @@ beforeEach(() => {
 });
 
 describe('Appointment singleton reproduction', () => {
-  it('emits a prompt when advancing into singleton appointment selection', async () => {
+  it('shows the only appointment for the customer to pick instead of auto-selecting it', async () => {
     const sb = buildExecutorSupabase();
     const sender = buildSender();
     const executor = new FlowExecutor(sb as any, sender as any, {} as any, {} as any);
-    const session = { id: 'repro', user_id: 'user-1', business_id: 'biz-1', current_step: 'select_capability', session_data: { active_capability: 'appointment' }, version: 1 };
+    const session = { id: 'repro', user_id: 'user-1', business_id: 'biz-1', current_step: 'select_capability', session_data: { active_capability: 'appointment' } as Record<string, unknown>, version: 1 };
     const business = { id: 'biz-1', name: 'Test', country_code: 'NG', flow_type: 'scheduling' };
     const ctx = { session, business, supabase: sb };
     await (executor as any).advanceToStep(session, 'select_appointment', '+2341234567890', ctx, {}, sender);
-    expect(session.session_data).toMatchObject({ service_id: 'appt-1', skip_service: true });
-    expect(sentMessages.length).toBeGreaterThan(0);
-    expect(session.current_step).toBe('select_date');
+    expect(session.current_step).toBe('select_appointment');
+    expect(session.session_data.service_id).toBeUndefined();
+    expect(session.session_data.skip_service).toBe(false);
+    const list = sentMessages.find(m => m.type === 'list') as any;
+    const rows = (list?.sections ?? [{ rows: list?.items }]).flatMap((sec: any) => sec.rows ?? sec.items ?? []);
+    expect(rows.map((r: any) => r.id ?? r.postbackText)).toEqual(['appt-1']);
+  });
+
+  it('books the only appointment once the customer taps it', async () => {
+    const appt = { id: 'appt-1', name: 'Test appointment', price: 100, deposit_amount: 0, duration_minutes: 30, buffer_minutes: 5, max_capacity: 1, auto_approve: true, requires_staff: false, staff_ids: [], allow_staff_selection: false, available_days: [], available_from: null, available_to: null };
+    const chain: any = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: appt }) };
+    const ctx: any = { business: { id: 'biz-1', name: 'Test', country_code: 'NG' }, session: { session_data: {} }, supabase: { from: vi.fn().mockReturnValue(chain) } };
+    const step = appointmentFlow.steps[0];
+    const result = await step.validate('appt-1', ctx);
+    expect(result).toMatchObject({ valid: true, data: { service_id: 'appt-1', _is_appointment: true, _service_buffer_minutes: 5 } });
+    expect(chain.eq).toHaveBeenCalledWith('business_id', 'biz-1');
+    Object.assign(ctx.session.session_data, (result as any).data);
+    expect(await step.next(ctx)).toBe('select_date');
   });
 });
 
 import { appointmentFlow } from '../appointment.flow';
 describe('appointment selection boundaries', () => {
-  it.each([0, 2])('preserves selection with %i active appointments despite stale skip flag', async (count) => {
+  it.each([0, 1, 2])('preserves selection with %i active appointments despite stale skip flag', async (count) => {
     const rows = Array.from({ length: count }, (_, i) => ({ id: `appt-${i}`, name: `Appointment ${i}`, price: 100 }));
     const chain: any = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), order: vi.fn().mockResolvedValue({ data: rows }) };
     const ctx: any = { business: { id: 'biz-1', name: 'Test', country_code: 'NG' }, session: { session_data: { skip_service: true } }, supabase: { from: vi.fn().mockReturnValue(chain) } };
@@ -150,8 +165,9 @@ describe('other singleton capability executor responses', () => {
     ['rsvp', 'rsvp_welcome', 'unused', 'rsvp_welcome'],
     ['ordering', 'select_variant', 'product_variants', 'select_variant'],
     ['ticketing', 'select_ticket_type', 'event_ticket_types', 'select_ticket_type'],
-    ['scheduling', 'select_service', 'services', 'select_date'],
-    ['class_booking', 'select_service', 'services', 'select_class_session'],
+    // Owner decision: one service is still shown for the customer to pick
+    ['scheduling', 'select_service', 'services', 'select_service'],
+    ['class_booking', 'select_service', 'services', 'select_service'],
     ['payment', 'select_category', 'services', 'select_category'],
     ['ticketing', 'select_event', 'events', 'select_event'],
     ['reservation', 'select_apartment', 'properties', 'select_checkin'],
@@ -199,5 +215,45 @@ describe('single waiver inline response', () => {
     const step = getExtendedFlowDefinition('capability-selection')!.steps[0];
     expect((await step.validate('cap_waiver', ctx)).valid).toBe(true);
     expect(sentMessages.some(m => m.text?.includes('/w/test-token'))).toBe(true);
+  });
+});
+
+import { schedulingFlow } from '../scheduling.flow';
+describe('single service is shown for the customer to pick (Owner decision)', () => {
+  function singleServiceCtx() {
+    const service = { id: 'svc-1', name: 'Consultation', price: 5000, duration_minutes: 60, deposit_amount: 0, is_class: false, class_schedule: [] };
+    const chain: any = {};
+    for (const m of ['select', 'eq', 'neq', 'is', 'order', 'or', 'in']) chain[m] = vi.fn().mockReturnValue(chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({ data: service });
+    chain.then = (resolve: any) => resolve({ data: [service], error: null });
+    const ctx: any = { business: { id: 'biz-1', name: 'Healing', country_code: 'NG', category: 'health' }, session: { session_data: { active_capability: 'scheduling' } }, supabase: { from: vi.fn().mockReturnValue(chain) }, copyLang: 'en' };
+    return { ctx, chain };
+  }
+  const step = () => schedulingFlow.steps.find(s => s.id === 'select_service')!;
+
+  it('does not skip select_service or fill the service for the customer', async () => {
+    const { ctx } = singleServiceCtx();
+    expect(await step().skipIf!(ctx)).toBe(false);
+    expect(ctx.session.session_data.service_id).toBeUndefined();
+    expect(ctx.session.session_data.skip_service).toBeUndefined();
+  });
+
+  it('lists the one service, and tapping it continues to the date step', async () => {
+    const { ctx, chain } = singleServiceCtx();
+    const messages = await step().prompt(ctx);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('list');
+    expect((messages[0] as any).items.map((i: any) => i.postbackText)).toEqual(['svc-1']);
+    const result = await step().validate('svc-1', ctx);
+    expect(result).toMatchObject({ valid: true, data: { service_id: 'svc-1', service_name: 'Consultation' } });
+    expect(chain.eq).toHaveBeenCalledWith('business_id', 'biz-1');
+    Object.assign(ctx.session.session_data, (result as any).data);
+    expect(await step().next(ctx)).toBe('select_date');
+  });
+
+  it('still honours an explicit service choice made earlier (e.g. "book consultation")', async () => {
+    const { ctx } = singleServiceCtx();
+    ctx.session.session_data.skip_service = true;
+    expect(await step().skipIf!(ctx)).toBe(true);
   });
 });

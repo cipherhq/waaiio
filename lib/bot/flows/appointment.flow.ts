@@ -158,31 +158,8 @@ const selectAppointmentStep: FlowStepConfig = {
 
   async skipIf(ctx: FlowContext) {
     if (ctx.session.session_data._repeat_selection_id) return false;
-    const appointments = await loadActiveAppointments(ctx);
     ctx.session.session_data.skip_service = false;
-    // Auto-select if only one appointment type
-    if (appointments.length === 1) {
-      const a = appointments[0];
-      ctx.session.session_data.service_id = a.id;
-      ctx.session.session_data.service_name = a.name;
-      ctx.session.session_data.service_price = a.price;
-      ctx.session.session_data._service_price_is_variable = a.price_is_variable === true;
-      ctx.session.session_data.service_deposit = a.deposit_amount || 0;
-      ctx.session.session_data.service_duration = a.duration_minutes;
-      ctx.session.session_data._service_requires_staff = a.requires_staff;
-      ctx.session.session_data._service_staff_ids = a.staff_ids;
-      ctx.session.session_data._service_allow_staff_selection = a.allow_staff_selection;
-      ctx.session.session_data._service_available_days = a.available_days;
-      ctx.session.session_data._service_available_from = a.available_from;
-      ctx.session.session_data._service_available_to = a.available_to;
-      ctx.session.session_data._service_max_capacity = a.max_capacity || 1;
-      ctx.session.session_data._service_buffer_minutes = a.buffer_minutes || 0;
-      ctx.session.session_data._auto_approve = a.auto_approve !== false;
-      ctx.session.session_data._is_appointment = true;
-      ctx.session.session_data.skip_service = true;
-      return true;
-    }
-
+    // Owner decision: the customer always picks the appointment, even when there is only one
     return false;
   },
 };
