@@ -11,6 +11,7 @@
 import { logger } from '@/lib/logger';
 import { MetaApiError } from './meta-api-error';
 import * as flowAssets from '@/lib/whatsapp-forms/meta-flow-asset';
+import { partyRsvpFormsEnabled } from '@/lib/whatsapp-forms/release-gate';
 
 export interface MetaCloudCredentials {
   accessToken: string;
@@ -128,6 +129,17 @@ export class MetaCloudService {
       upload: (id: string, json: Record<string, unknown>) => flowAssets.uploadFlowJson(this.accessToken, id, json),
       publish: (id: string) => flowAssets.publishFlow(this.accessToken, id),
       status: (id: string) => flowAssets.getFlowStatus(this.accessToken, id),
+    };
+  }
+
+  /** #1005: the reusable party RSVP form, authorized by its own switch, not merchant native forms. */
+  partyRsvpFlowAssets(expectedWabaId: string) {
+    if (!expectedWabaId || this.wabaId !== expectedWabaId) throw new Error('Party RSVP Flow account mismatch.');
+    return {
+      create: (name: string) => flowAssets.createFlowAsset(this.accessToken, expectedWabaId, name, ['OTHER'], partyRsvpFormsEnabled),
+      upload: (id: string, json: Record<string, unknown>) => flowAssets.uploadFlowJson(this.accessToken, id, json, partyRsvpFormsEnabled),
+      publish: (id: string) => flowAssets.publishFlow(this.accessToken, id, partyRsvpFormsEnabled),
+      status: (id: string) => flowAssets.getFlowStatus(this.accessToken, id, partyRsvpFormsEnabled),
     };
   }
 

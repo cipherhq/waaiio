@@ -71,9 +71,12 @@ function validateWabaId(wabaId: string): void {
   }
 }
 
-async function request(token: string, path: string, body?: Record<string, unknown> | FormData): Promise<Record<string, unknown>> {
-  if (!nativeFormsEnabled()) {
-    throw new MetaFlowApiError('Provider calls not authorized. Native forms are not enabled.', 403);
+/** Which rollout switch authorizes provider calls. Merchant native forms by default; #1005 party RSVP forms pass their own. */
+export type FlowProviderGate = () => boolean;
+
+async function request(token: string, path: string, body: Record<string, unknown> | FormData | undefined, enabled: FlowProviderGate): Promise<Record<string, unknown>> {
+  if (!enabled()) {
+    throw new MetaFlowApiError('Provider calls not authorized. This WhatsApp form type is not enabled.', 403);
   }
   const version = process.env.META_GRAPH_API_VERSION || 'v22.0';
   if (!/^v\d+\.0$/.test(version)) throw new MetaFlowApiError('Invalid Graph API version.');
@@ -119,6 +122,7 @@ export async function createFlowAsset(
   wabaId: string,
   name: string,
   categories: FlowCategory[],
+  enabled: FlowProviderGate = nativeFormsEnabled,
 ): Promise<FlowAssetResult> {
   validateToken(metaAccessToken);
   validateWabaId(wabaId);
@@ -132,7 +136,7 @@ export async function createFlowAsset(
 
   const allowed = new Set<FlowCategory>(['SIGN_UP', 'SIGN_IN', 'APPOINTMENT_BOOKING', 'LEAD_GENERATION', 'CONTACT_US', 'CUSTOMER_SUPPORT', 'SURVEY', 'OTHER']);
   if (categories.some(category => !allowed.has(category))) throw new MetaFlowApiError('Invalid flow category.');
-  const data = await request(metaAccessToken, `${wabaId}/flows`, { name: name.trim(), categories });
+  const data = await request(metaAccessToken, `${wabaId}/flows`, { name: name.trim(), categories }, enabled);
   if (typeof data.id !== 'string' || !PROVIDER_ID.test(data.id)) throw new MetaFlowApiError('Meta did not return a valid Flow ID.', 502);
   return { flowId: data.id, name: name.trim(), status: 'DRAFT' };
 }
@@ -147,6 +151,7 @@ export async function uploadFlowJson(
   metaAccessToken: string,
   flowId: string,
   flowJson: Record<string, unknown>,
+  enabled: FlowProviderGate = nativeFormsEnabled,
 ): Promise<FlowUploadResult> {
   validateToken(metaAccessToken);
   validateFlowId(flowId);
@@ -162,7 +167,7 @@ export async function uploadFlowJson(
   body.set('name', 'flow.json');
   body.set('asset_type', 'FLOW_JSON');
   body.set('file', new Blob([JSON.stringify(flowJson)], { type: 'application/json' }), 'flow.json');
-  const data = await request(metaAccessToken, `${flowId}/assets`, body);
+  const data = await request(metaAccessToken, `${flowId}/assets`, body, enabled);
   return { flowId, success: data.success === true && !errors(data)?.length, validationErrors: errors(data) };
 }
 
@@ -175,11 +180,12 @@ export async function uploadFlowJson(
 export async function publishFlow(
   metaAccessToken: string,
   flowId: string,
+  enabled: FlowProviderGate = nativeFormsEnabled,
 ): Promise<FlowPublishResult> {
   validateToken(metaAccessToken);
   validateFlowId(flowId);
 
-  const data = await request(metaAccessToken, `${flowId}/publish`, {});
+  const data = await request(metaAccessToken, `${flowId}/publish`, {}, enabled);
   return { flowId, success: data.success === true };
 }
 
@@ -192,11 +198,12 @@ export async function publishFlow(
 export async function getFlowStatus(
   metaAccessToken: string,
   flowId: string,
+  enabled: FlowProviderGate = nativeFormsEnabled,
 ): Promise<FlowStatusResult> {
   validateToken(metaAccessToken);
   validateFlowId(flowId);
 
-  const data = await request(metaAccessToken, `${flowId}?fields=id,name,status,categories,validation_errors,whatsapp_business_account`);
+  const data = await request(metaAccessToken, `${flowId}?fields=id,name,status,categories,validation_errors,whatsapp_business_account`, undefined, enabled);
   if (data.id !== flowId || !['DRAFT', 'PUBLISHED', 'DEPRECATED', 'BLOCKED', 'THROTTLED'].includes(String(data.status))) {
     throw new MetaFlowApiError('Invalid Meta Flow status response.', 502);
   }
@@ -218,6 +225,6 @@ export async function deprecateFlow(
   validateToken(metaAccessToken);
   validateFlowId(flowId);
 
-  const data = await request(metaAccessToken, `${flowId}/deprecate`, {});
+  const data = await request(metaAccessToken, `${flowId}/deprecate`, {}, nativeFormsEnabled);
   return { flowId, success: data.success === true };
 }

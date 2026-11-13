@@ -1,0 +1,32 @@
+## 2026-11-13 — Party RSVP WhatsApp form: publisher behind its own switch (#1005 PR 3c)
+
+- **Why:**
+  - The reusable RSVP form (M540, PR 3b) has to be published to Meta once per WhatsApp account before guests can be sent it.
+  - The Owner decided it has its own switch, separate from merchant native forms.
+- **What changed:**
+  - `lib/whatsapp-forms/meta-flow-asset.ts`: the create, upload, publish and status calls take an optional switch.
+    - The default is still `nativeFormsEnabled`, so merchant native forms are unchanged.
+    - Deprecate is always native.
+  - `lib/channels/meta-cloud.ts`: new `partyRsvpFlowAssets(wabaId)`.
+    - It is bound to the service's own account and uses the RSVP switch.
+    - Its Meta category is OTHER.
+  - `lib/parties/rsvp-flow-publisher.ts`: creates, uploads, publishes and verifies the static RSVP Flow on one account.
+    - A unique `(waba_id, revision)` row claims each attempt.
+    - Provider calls are never retried automatically.
+    - Any unclear outcome is left as `needs_review`, together with Meta's validation messages when the layout is rejected.
+    - An admin can resume only an attempt whose Meta asset is known, so a second asset is never created.
+    - An attempt left in `creating` or `draft` (in progress, or interrupted) is never resumed. Recovering it is manual: check Meta for `Waaiio party RSVP <revision>`, then set the row to `needs_review` by hand.
+    - If Meta created an asset but its ID could not be saved, the ID is logged.
+  - `app/api/admin/party-rsvp-flow/route.ts`:
+    - GET returns read-only status. POST publishes, and accepts `{"resume": true}`.
+    - Access is limited to platform admins or the cron secret. Unlike `verifyCronAuth`, there is no local bypass.
+    - It always uses the platform account from server env, and is rate limited to 3 per minute.
+    - Every attempt that reaches the publisher is written to `admin_audit_logs`, with the admin's ID or "cron secret" and the outcome.
+    - `maxDuration` is 60 seconds.
+- **Affects:** nothing until `WHATSAPP_PARTY_RSVP_FORMS_ENABLED=true` is set on a deployment and someone calls the route. Publishing on staging and on production each needs the Owner's approval.
+- **Unchanged:**
+  - merchant native forms (their routes, their switch, and their default gate);
+  - the bot and the RSVP page;
+  - all migrations.
+- **Could break:** nothing at runtime while the switch is off. Dedicated WhatsApp numbers on their own Meta account are not covered yet; PR 3d falls back to the web link for them.
+- **Tests:** `lib/__tests__/party-rsvp-flow-publisher-1005.test.ts`, `lib/__tests__/party-rsvp-flow-route-1005.test.ts`
