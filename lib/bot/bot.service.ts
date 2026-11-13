@@ -3132,11 +3132,12 @@ export class BotService {
           this.supabase, dirSend, from, text, sharedNumberCountry,
         );
         // Returning customer: past businesses after the results, labelled as past (biz_N).
+        // Not when the search was refused (rate limit / unavailable): one reply per message.
         const shownIds = new Set([
           ...(searchData?._directory_results || []).map(r => r.businessId),
           ...(searchData?._directory_suggestions || []).map(s => s.id),
         ]);
-        const pastBusinesses = recentBusinesses.filter(b => !shownIds.has(b.id)).slice(0, 3);
+        const pastBusinesses = searchData ? recentBusinesses.filter(b => !shownIds.has(b.id)).slice(0, 3) : [];
         await sendPastBusinesses(dirSend, from, pastBusinesses, 0);
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         const dirSearchSess = await this.createDirectorySession(

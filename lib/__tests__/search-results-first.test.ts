@@ -18,7 +18,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createTestSupabase } from './helpers/mock-supabase';
 
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
-vi.mock('@/lib/rate-limit', () => ({ checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }) }));
+let searchRateLimited = false;
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimitAsync: vi.fn().mockImplementation(async (key: string) => (
+    key.startsWith('dir-search:') && searchRateLimited ? { allowed: false, remaining: 0 } : { allowed: true, remaining: 10 })),
+}));
 vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30, abuse_cooldown_soft_minutes: 5, abuse_cooldown_hard_minutes: 30, conversation_limits: { free: 200, growth: 1000, business: 5000 } }) }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 vi.mock('@/lib/bot/translate', () => ({ translateBotResponse: vi.fn(async (t: string) => t), detectLanguage: vi.fn(async () => 'en'), getLanguageName: vi.fn(() => 'English') }));
@@ -196,6 +200,7 @@ describe('Business search: results first, past businesses labelled as past', () 
     mockDetectionResult = { businessId: null, suggestions: [] };
     mockReturningBusinesses = [];
     mockSearchResults = [];
+    searchRateLimited = false;
     vi.clearAllMocks();
     const { findReturningCustomerBusinesses, detectBotCodeWithSuggestions } = await import('@/lib/bot/handlers/bot-code-detection');
     vi.mocked(findReturningCustomerBusinesses).mockImplementation(async () => mockReturningBusinesses);
@@ -315,5 +320,18 @@ describe('Business search: results first, past businesses labelled as past', () 
     expect(sent[1].body).toBe(PAST_HEADER);
     expect(sent.some(s => s.body.includes('No exact match') || s.body.includes('might help'))).toBe(false);
     expect(supabase._inserted.some(r => r.current_step === 'select_business_suggestion')).toBe(false);
+  });
+
+  it('7. rate-limited search: one "searching too fast" reply, no past-business buttons', async () => {
+    mockReturningBusinesses = [OLD_SPA];
+    searchRateLimited = true;
+    const supabase = createSupabase();
+    const { bot, cloud } = makeBot(supabase);
+
+    await bot.handleMessage(PHONE, 'salon in Lekki', 'text');
+
+    const sent = sentBodies(cloud);
+    expect(sent.map(s => s.kind)).toEqual(['text']);
+    expect(sent[0].body).toContain('searching too fast');
   });
 });
