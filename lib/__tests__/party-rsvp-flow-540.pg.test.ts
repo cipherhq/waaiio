@@ -75,7 +75,8 @@ suite('M540 party RSVP form authority (real PostgreSQL)', () => {
       GRANT SELECT, INSERT, UPDATE, DELETE ON businesses, parties, event_invites, whatsapp_channels TO service_role;
       GRANT SELECT, INSERT ON whatsapp_inbound_receipts TO service_role;
     `);
-    for (const file of ['457_party_tables_seats.sql', '486_party_seating_groups_pins_atomic_plans.sql', '489_party_rsvp_questions.sql'])
+    for (const file of ['457_party_tables_seats.sql', '486_party_seating_groups_pins_atomic_plans.sql', '489_party_rsvp_questions.sql',
+      '514_party_seating_by_tag.sql', '537_party_multi_question_seating_tags.sql'])
       await db.query(migration(file));
     // Production's drift: new tables and functions default to every right for every API role.
     await db.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;

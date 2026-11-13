@@ -110,6 +110,8 @@ describe('reading the response', () => {
     expect(() => readPartyRsvpFlowResponse({ ...ok, guests: '-1' }, questions, true)).toThrow('how many');
     expect(readPartyRsvpFlowResponse({ ...ok, guests: '' }, questions, true).plus_ones).toBe(0);
     expect(readPartyRsvpFlowResponse(ok, questions, false)).not.toHaveProperty('dietary_notes');
+    expect(readPartyRsvpFlowResponse({ ...ok, dietary: '  ' }, questions, true).dietary_notes).toBeNull();
+    expect(readPartyRsvpFlowResponse({ ...ok, dietary: undefined }, questions, true).dietary_notes).toBeNull();
   });
 });
 

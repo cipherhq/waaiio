@@ -122,7 +122,7 @@ export interface PartyRsvpFlowPayload {
   status: 'accepted';
   plus_ones: number;
   answers: PartyAnswers;
-  dietary_notes?: string;
+  dietary_notes?: string | null;
 }
 
 /**
@@ -147,10 +147,11 @@ export function readPartyRsvpFlowResponse(
     plusOnes = Number(guests);
   }
   const payload: PartyRsvpFlowPayload = { status: 'accepted', plus_ones: plusOnes, answers };
-  const dietary = response.dietary;
-  if (askDietary && typeof dietary === 'string' && dietary.trim()) {
-    if (dietary.trim().length > DIETARY_MAX) throw new Error('Use at most 500 characters for dietary needs.');
-    payload.dietary_notes = dietary.trim();
+  // Like the RSVP page and the bot, a blank box clears an earlier note when the party asks.
+  const dietary = typeof response.dietary === 'string' ? response.dietary.trim() : '';
+  if (askDietary) {
+    if (dietary.length > DIETARY_MAX) throw new Error('Use at most 500 characters for dietary needs.');
+    payload.dietary_notes = dietary || null;
   }
   return payload;
 }

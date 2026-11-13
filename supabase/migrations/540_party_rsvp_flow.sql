@@ -97,10 +97,11 @@ BEGIN
   BEGIN
     v_saved := private.complete_party_rsvp_489(inv.invite_token,
       p_payload || jsonb_build_object('status', 'accepted', 'revision', p_question_revision), p_phone, p_business_id);
+  -- Only the guest-facing outcomes M489/M457 raise are mapped. Anything else (including a
+  -- permission error, which the checks above make unreachable) propagates as an error.
   EXCEPTION WHEN SQLSTATE '40001' THEN RETURN jsonb_build_object('error', 'questions_changed');
-    WHEN SQLSTATE '23514' OR SQLSTATE 'P0001' THEN RETURN jsonb_build_object('error', 'capacity');
+    WHEN SQLSTATE '23514' THEN RETURN jsonb_build_object('error', 'capacity');
     WHEN SQLSTATE '22023' OR SQLSTATE '22P02' OR SQLSTATE '22003' THEN RETURN jsonb_build_object('error', 'invalid_answers');
-    WHEN SQLSTATE '42501' THEN RETURN jsonb_build_object('error', 'invitation_unavailable');
   END;
   INSERT INTO public.party_rsvp_flow_receipts(nonce_hash, invite_id, business_id, publication_id, channel_id, phone, message_id)
     VALUES (p_nonce_hash, inv.id, p_business_id, pub.id, p_channel_id, p_phone, p_message_id);
