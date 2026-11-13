@@ -75,7 +75,9 @@ export default function RSVPPage() {
         setWaNumber(wa_number || '');
         setPlusOnes(inviteData.plus_ones || 0);
         setDietary(inviteData.dietary_notes || '');
-        setResponse(inviteData.status === 'pending' ? '' : inviteData.status);
+        // #1005 PR 3a: the bot's "Yes" link pre-selects Yes for a guest who has not answered yet.
+        const preselectYes = inviteData.status === 'pending' && new URLSearchParams(window.location.search).get('rsvp') === 'yes';
+        setResponse(inviteData.status === 'pending' ? (preselectYes ? 'accepted' : '') : inviteData.status);
         setAnswers(currentAnswers(inviteData.parties?.question_definitions || [], inviteData.custom_answers || {}));
 
         if (inviteData.status !== 'pending') {

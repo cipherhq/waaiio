@@ -32,8 +32,17 @@ describe('real BotService Party RSVP entry',()=>{
    expect(h.rpc.mock.calls.filter((call: unknown[]) => call[0] !== 'record_customer_inbound')).toEqual([]); expect(h.calls).toHaveLength(0); expect(mocks.execute).not.toHaveBeenCalled();
    expect(h.sender.sendText).toHaveBeenCalledWith(expect.objectContaining({text:expect.stringContaining('Invitation unavailable')}));
  });
- it('routes Accepted button through question collection without direct RSVP mutation',async()=>{
+ it('#1005 PR 3a: Accepted button on a party with questions sends one RSVP page link and starts no chat questions',async()=>{
    const h=harness(); await h.bot.handleMessage('15551234567','rsvp_yes_00000000-0000-4000-a489-000000000007','text');
+   expect(h.rpc.mock.calls.filter((call: unknown[]) => call[0] !== 'record_customer_inbound')).toEqual([]); expect(h.updates).not.toContain('event_invites');
+   expect(h.calls).toHaveLength(0); expect(mocks.execute).not.toHaveBeenCalled();
+   expect(h.sender.bindBusiness).toHaveBeenCalledWith('business');
+   expect(h.sender.sendText).toHaveBeenCalledTimes(1);
+   expect(h.sender.sendText).toHaveBeenCalledWith({to:'15551234567',text:expect.stringContaining(`/rsvp/${'a'.repeat(24)}?rsvp=yes`)});
+ });
+ it('#1005 PR 3a: if the link cannot be sent, falls back to question collection without direct RSVP mutation',async()=>{
+   const h=harness(); h.sender.sendText.mockRejectedValueOnce(new Error('send failed'));
+   await h.bot.handleMessage('15551234567','rsvp_yes_00000000-0000-4000-a489-000000000007','text');
    expect(h.rpc.mock.calls.filter((call: unknown[]) => call[0] !== 'record_customer_inbound')).toEqual([]); expect(mocks.execute).toHaveBeenCalledTimes(1); expect(h.updates).not.toContain('event_invites');
    expect(h.calls[0]).toMatchObject({business_id:'business',current_step:'rsvp_plus_ones',session_data:{rsvp_token:'a'.repeat(24),rsvp_response:'accepted',rsvp_revision:1,rsvp_questions:party.question_definitions}});
  });
