@@ -1,0 +1,27 @@
+## 2026-11-13 — Party invites with Yes / Maybe / No buttons for guests who never messaged the business (#1005)
+
+- **Owner decision (2026-11-12, issue #1005):** when the host ticks "These guests agreed to receive WhatsApp messages from me", a party guest who has never messaged the business gets a WhatsApp invite template with Yes / Maybe / No buttons. It is charged as a marketing message from the host's messaging balance. An opt-out (STOP) or a "No thanks" to the business's WhatsApp updates always wins, as for every other marketing send.
+- **What changed:**
+  - `lib/parties/cold-invite.ts` (new):
+    - the template name;
+    - an RSVP payload check;
+    - a fail-closed check that blocks STOP opt-outs and revoked WhatsApp marketing consent;
+    - `sendColdPartyInvite`, which sends with quick-reply payloads `rsvp_<choice>_<inviteId>`, marketing category, and a single attempt.
+  - `lib/channels/provision-templates.ts`: new template `waaiio_party_invite_v1` (MARKETING, three QUICK_REPLY buttons).
+  - `app/api/events/invite/route.ts`:
+    - new `guests_consented` flag;
+    - for party invites, a non-opted-in guest who has not opted out gets the template;
+    - if it cannot be sent (for example while Meta has not approved it yet), the existing email, SMS or share-link fallbacks apply unchanged.
+  - `app/api/webhook/meta-cloud/route.ts`: template quick-reply taps with an RSVP payload now reach the bot's existing `rsvp_*` handler.
+  - `app/dashboard/parties/page.tsx`: consent checkbox on the single and bulk invite forms.
+- **Unchanged:**
+  - guests who already messaged the business (interactive buttons, as before);
+  - event invites;
+  - the self-opt-in page;
+  - inbound RSVP handling;
+  - the opt-in confirmation template.
+- **Tests:**
+  - `lib/__tests__/party-cold-invite-1005.test.ts`;
+  - two webhook cases in `lib/__tests__/form-optin-confirmation-591.test.ts`.
+- **Needs an Owner-approved provider action:** the template must be created on the WhatsApp Business Account(s) and approved by Meta. Until then the old fallbacks are used.
+- **Could break:** a host who ticks consent for guests who did not agree risks WhatsApp quality or spam reports on the number.
