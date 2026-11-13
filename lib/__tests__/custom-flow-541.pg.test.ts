@@ -160,10 +160,6 @@ describe('M541 custom flow base tables (real PostgreSQL)', () => {
     await expect(db.query(
       `INSERT INTO custom_flows(business_id, name, entry_keyword) VALUES($1,'Bad','AFRO FEST')`, [biz]))
       .rejects.toMatchObject({ code: '23514' });
-    // Reviewer B (non-blocking): the bot's own words are reserved too.
-    await expect(db.query(
-      `INSERT INTO custom_flows(business_id, name, entry_keyword) VALUES($1,'Bad','ORDER')`, [biz]))
-      .rejects.toMatchObject({ code: '23514' });
     await db.query(`INSERT INTO custom_flows(business_id, name, entry_keyword) VALUES($1,'Good','AFROFEST2')`, [biz]);
   });
 

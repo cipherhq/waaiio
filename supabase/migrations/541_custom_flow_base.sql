@@ -26,7 +26,7 @@ CREATE TABLE public.custom_flows (
   status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
   greeting text CHECK (greeting IS NULL OR length(greeting) <= 1000),
   fallback_message text CHECK (fallback_message IS NULL OR length(fallback_message) <= 1000),
-  entry_keyword text CHECK (entry_keyword IS NULL OR (entry_keyword = upper(btrim(entry_keyword)) AND length(entry_keyword) <= 40 AND entry_keyword NOT LIKE '% %' AND entry_keyword NOT IN ('HI', 'HELLO', 'MENU', 'STOP', 'START', 'HELP', 'CANCEL', 'YES', 'NO', 'PAY', 'BOOK', 'BACK', 'RESTART', 'CONTINUE', 'HUMAN', 'AGENT', 'EXIT', 'QUIT', 'ORDER', 'BUY', 'TICKET', 'TABLE', 'DONATE', 'GIVE', 'RESERVE', 'MY', 'SWITCH', 'CONNECT', 'SAVE', 'REMOVE', 'UPDATES', 'DIRECTORY'))),
+  entry_keyword text CHECK (entry_keyword IS NULL OR (entry_keyword = upper(btrim(entry_keyword)) AND length(entry_keyword) <= 40 AND entry_keyword NOT LIKE '% %' AND entry_keyword NOT IN ('HI', 'HELLO', 'MENU', 'STOP', 'START', 'HELP', 'CANCEL', 'YES', 'NO', 'PAY', 'BOOK', 'BACK', 'RESTART', 'CONTINUE', 'HUMAN', 'AGENT', 'EXIT', 'QUIT'))),
   language text NOT NULL DEFAULT 'en' CHECK (length(language) <= 10),
   timezone text NOT NULL DEFAULT 'Africa/Lagos' CHECK (length(timezone) <= 64),
   currency text NOT NULL DEFAULT 'NGN' CHECK (length(currency) = 3),

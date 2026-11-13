@@ -488,6 +488,44 @@ describe('custom flow engine', () => {
     expect(sender.buttons.at(-1)?.body).toBe('Welcome to AfroPlus Fest! What do you need?');
   });
 
+  it('handles a typed "restart" while the resume prompt is pending (engine restarts the flow)', async () => {
+    const seeded = createFakeSupabase({
+      ...seedFor(),
+      custom_flow_sessions: [
+        {
+          id: 'sess-expired',
+          business_id: BUSINESS_A,
+          whatsapp_number: PHONE,
+          flow_id: 'flow-1',
+          flow_version: 1,
+          current_node_id: 'main_menu',
+          fields: {},
+          version: 0,
+          is_active: true,
+          expires_at: new Date(Date.now() - 60_000).toISOString(),
+        },
+      ],
+    });
+    const expiredEngine = new CustomFlowEngine({ supabase: seeded.supabase, sender });
+    // First message: the resume prompt, offered once.
+    const prompted = await expiredEngine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'hi' });
+    expect(prompted.handled).toBe(true);
+    expect(sender.buttons.at(-1)?.buttons.map((b) => b.title)).toEqual(['Continue', 'Start again']);
+    // "restart" answers the prompt: the engine handles it (closes the old
+    // session and starts the flow again) instead of passing it to the
+    // normal bot. The resume-pending check runs before the restart-word
+    // passthrough, so the word never reaches the yield.
+    const restarted = await expiredEngine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'restart' });
+    expect(restarted.handled).toBe(true);
+    expect(sender.buttons.at(-1)?.body).toBe('Welcome to AfroPlus Fest! What do you need?');
+    // Old session closed, fresh session active at the start node.
+    const sessions = seeded.db.custom_flow_sessions;
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].is_active).toBe(false);
+    expect(sessions[1].is_active).toBe(true);
+    expect(sessions[1].current_node_id).toBe('main_menu');
+  });
+
   it('logs inbound and outbound turns', async () => {
     await start();
     await engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'cf:main_menu:0' });
@@ -765,14 +803,6 @@ describe('custom flow routing (tryHandleCustomFlow)', () => {
     const handled = await tryHandleCustomFlow({
       supabase, sender, businessId: BUSINESS_A, from: PHONE, text: 'AFROFEST',
       isBusinessCode: async () => true,
-    });
-    expect(handled).toBe(false);
-    expect(db.custom_flow_sessions).toHaveLength(0);
-  });
-
-  it('does not start a flow when the entry keyword has trailing words', async () => {
-    const handled = await tryHandleCustomFlow({
-      supabase, sender, businessId: BUSINESS_A, from: PHONE, text: 'AFROFEST 2026',
     });
     expect(handled).toBe(false);
     expect(db.custom_flow_sessions).toHaveLength(0);

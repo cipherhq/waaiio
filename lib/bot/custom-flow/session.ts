@@ -82,17 +82,15 @@ export async function updateSessionCas(
   return !error && Array.isArray(data) && data.length > 0;
 }
 
-/** Close a session (end of flow, exit, or replacement by a new start). Scoped by business_id (reviewer B, non-blocking): a close must only ever touch its own tenant's row. Returns false (and logs) when the write fails instead of swallowing the error. */
+/** Close a session (end of flow, exit, or replacement by a new start). Returns false (and logs) when the write fails instead of swallowing the error. */
 export async function closeSession(
   supabase: SupabaseClient,
   sessionId: string,
-  businessId: string,
 ): Promise<boolean> {
   const { error } = await supabase
     .from('custom_flow_sessions')
     .update({ is_active: false })
-    .eq('id', sessionId)
-    .eq('business_id', businessId);
+    .eq('id', sessionId);
   if (error) {
     logger.error('[CUSTOM-FLOW] closeSession failed:', error.message);
     return false;

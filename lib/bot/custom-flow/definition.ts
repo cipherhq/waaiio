@@ -13,17 +13,12 @@ import type { CustomFlowDefinition, CustomFlowNode } from './types';
  * that claimed one would hijack routing that belongs to the existing bot:
  * greetings and restart words, STOP/START, HELP, YES/NO (opt-in), PAY/BOOK
  * (capability routing), BACK/MENU/CONTINUE (navigation), HUMAN/AGENT
- * (handoff), CANCEL/EXIT/QUIT (leaving a flow), ORDER/BUY/TICKET/TABLE/
- * DONATE/GIVE/RESERVE (booking and payment words), MY/SWITCH/CONNECT
- * (discovery and switching), SAVE/REMOVE (saved cards), UPDATES/DIRECTORY
- * (platform features). Mirrored by a DB CHECK on
+ * (handoff), CANCEL/EXIT/QUIT (leaving a flow). Mirrored by a DB CHECK on
  * custom_flows.entry_keyword (migration 541).
  */
 export const RESERVED_ENTRY_KEYWORDS: ReadonlySet<string> = new Set([
   'HI', 'HELLO', 'MENU', 'STOP', 'START', 'HELP', 'CANCEL', 'YES', 'NO',
   'PAY', 'BOOK', 'BACK', 'RESTART', 'CONTINUE', 'HUMAN', 'AGENT', 'EXIT', 'QUIT',
-  'ORDER', 'BUY', 'TICKET', 'TABLE', 'DONATE', 'GIVE', 'RESERVE', 'MY',
-  'SWITCH', 'CONNECT', 'SAVE', 'REMOVE', 'UPDATES', 'DIRECTORY',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,8 +52,8 @@ export function validateDefinition(definition: unknown): string[] {
     } else if (def.entry_keyword !== def.entry_keyword.toUpperCase()) {
       errors.push('The entry keyword must be uppercase (for example AFROFEST).');
     } else if (/\s/.test(def.entry_keyword)) {
-      // The engine matches the whole message, so a multi-word keyword
-      // could never trigger the flow.
+      // The engine matches the first word of the message only, so a
+      // multi-word keyword could never trigger the flow.
       errors.push('The entry keyword must be a single word (no spaces).');
     } else if (RESERVED_ENTRY_KEYWORDS.has(def.entry_keyword)) {
       errors.push(`The entry keyword "${def.entry_keyword}" is reserved for the platform. Choose a different starter word.`);

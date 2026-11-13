@@ -1046,10 +1046,10 @@
    "after": {
     "deferrable": false,
     "deferred": false,
-    "definition": "CHECK (entry_keyword IS NULL OR entry_keyword = upper(btrim(entry_keyword)) AND length(entry_keyword) <= 40 AND entry_keyword !~~ '% %'::text AND (entry_keyword <> ALL (ARRAY['HI'::text, 'HELLO'::text, 'MENU'::text, 'STOP'::text, 'START'::text, 'HELP'::text, 'CANCEL'::text, 'YES'::text, 'NO'::text, 'PAY'::text, 'BOOK'::text, 'BACK'::text, 'RESTART'::text, 'CONTINUE'::text, 'HUMAN'::text, 'AGENT'::text, 'EXIT'::text, 'QUIT'::text, 'ORDER'::text, 'BUY'::text, 'TICKET'::text, 'TABLE'::text, 'DONATE'::text, 'GIVE'::text, 'RESERVE'::text, 'MY'::text, 'SWITCH'::text, 'CONNECT'::text, 'SAVE'::text, 'REMOVE'::text, 'UPDATES'::text, 'DIRECTORY'::text])))",
+    "definition": "CHECK (entry_keyword IS NULL OR entry_keyword = upper(btrim(entry_keyword)) AND length(entry_keyword) <= 40 AND entry_keyword !~~ '% %'::text AND (entry_keyword <> ALL (ARRAY['HI'::text, 'HELLO'::text, 'MENU'::text, 'STOP'::text, 'START'::text, 'HELP'::text, 'CANCEL'::text, 'YES'::text, 'NO'::text, 'PAY'::text, 'BOOK'::text, 'BACK'::text, 'RESTART'::text, 'CONTINUE'::text, 'HUMAN'::text, 'AGENT'::text, 'EXIT'::text, 'QUIT'::text])))",
     "validated": true
    },
-   "after_sha256": "f3223928dfc6ba59bc97be6d08af6ec98714dc11569b2e8914c206a785833a1a",
+   "after_sha256": "9c0834914f9e5f8a996930c457d65c3f6e346c3c48bf0c0378c9e75f1e74c21a",
    "identity": "constraint:public.custom_flows.custom_flows_entry_keyword_check",
    "operation": "add"
   },
@@ -2212,7 +2212,7 @@
   }
  ],
  "migration": "541_custom_flow_base.sql",
- "migration_sha256": "ac1c37fd30b7b5e78df5bde8dd1f4dc823d29f4d6fee71ee1803d641f19eb4e8",
+ "migration_sha256": "48d7ae035e93f324d6321563ef4d541865c19e4c5c0cdca43edbacf00e73f1c3",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
