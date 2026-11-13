@@ -1,0 +1,28 @@
+## 2026-11-13 — Party RSVP WhatsApp form: database, token and form layout (M540, #1005 PR 3b)
+
+- **Why:**
+  - Owner decisions on #1005 (2026-11-13): after Yes, a guest answers every party question in one reusable WhatsApp form.
+  - The form is filled in at send time, with the web RSVP link as the fallback and a separate on/off switch.
+  - This PR is the groundwork only. Nothing sends, publishes or receives a form yet (PRs 3c and 3d).
+- **What changed:**
+  - `supabase/migrations/540_party_rsvp_flow.sql`, which adds:
+    - `party_rsvp_flow_publications`: one Meta Flow per WhatsApp Business Account and Flow revision.
+    - `party_rsvp_flow_receipts`: one row per accepted submission, keyed by the hashed token nonce.
+    - `save_party_rsvp_flow_response_540`. It re-checks the publication, channel, guest phone, business, question revision and the inbound WhatsApp message. It saves only through `complete_party_rsvp_489`, then records the receipt.
+    - Only guest-facing outcomes are mapped to error codes (`questions_changed`, `capacity`, `invalid_answers`). Any other database error propagates.
+    - Every ACL is explicit, service_role included, so production and staging end up identical. Guests and hosts cannot read either table.
+  - `lib/parties/rsvp-flow.ts`:
+    - the static Flow JSON (10 question slots);
+    - its revision;
+    - the send-time data builder, which returns null, meaning "use the web link", when a choice label is over 30 characters;
+    - the response reader. When the party asks for dietary needs, a blank box clears an earlier note, as the RSVP page and bot do.
+  - `lib/parties/guest-capacity.ts`: how many companions to offer, by the M489 and M457 rules.
+  - `lib/whatsapp-forms/flow-token.ts`: v3 party RSVP tokens.
+    - Each token is bound to one invitation, publication, channel, number, Meta asset and question revision, and is valid for 24 hours.
+    - v2 and v3 tokens never authenticate as each other.
+  - `lib/whatsapp-forms/release-gate.ts`: `partyRsvpFormsEnabled()` (`WHATSAPP_PARTY_RSVP_FORMS_ENABLED`, off by default).
+  - `.github/workflows/ci.yml`: runs the new PG test in the disposable-PG job, where it is required, and excludes it from Main App.
+- **Affects:** nothing at runtime yet. The new code is not called, and the switch is off.
+- **Unchanged:** the bot, the RSVP page, merchant native forms (v2 tokens and their switch), and M489.
+- **Could break:** applying M540 needs `event_invites`, `whatsapp_channels`, `whatsapp_inbound_receipts` and M489 to be present (all are on staging and production).
+- **Tests:** `lib/__tests__/party-rsvp-flow-1005.test.ts`, `lib/__tests__/party-rsvp-flow-540.pg.test.ts`

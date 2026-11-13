@@ -1,0 +1,676 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.party_rsvp_flow_publications.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "553dfbe2a96c17cad340f60b95218f4c55be49626a1eb8acdba7e25e83436074",
+   "identity": "column:public.party_rsvp_flow_publications.flow_json",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.party_rsvp_flow_publications.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.party_rsvp_flow_publications.meta_flow_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.party_rsvp_flow_publications.published_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.party_rsvp_flow_publications.revision",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'creating'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "006f48aa8d8ec059b7148a2eba64a164d12d338787b8da4d3151262c950937c7",
+   "identity": "column:public.party_rsvp_flow_publications.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.party_rsvp_flow_publications.waba_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.party_rsvp_flow_receipts.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.party_rsvp_flow_receipts.channel_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.party_rsvp_flow_receipts.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.party_rsvp_flow_receipts.invite_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.party_rsvp_flow_receipts.message_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.party_rsvp_flow_receipts.nonce_hash",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.party_rsvp_flow_receipts.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.party_rsvp_flow_receipts.publication_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status <> 'published'::text OR meta_flow_id IS NOT NULL AND published_at IS NOT NULL)",
+    "validated": true
+   },
+   "after_sha256": "8381e8ef935822b84cf1dba041a630f353365408c01ad7923ef429075cad51bb",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (jsonb_typeof(flow_json) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "a39e51d864e765a3db7a5a3b6a4c20cb245fcccd1d09a9105e89e5ec9f43e752",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_flow_json_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (meta_flow_id ~ '^[0-9]{1,64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "f14e6fb2856bf86ca982d4701db8048324627098cd8d69fbdc1b777d0f5601bc",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_meta_flow_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (revision ~ '^[a-f0-9]{64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "76eb10932cb438f74e64a9a64dc418384272afc408721de8cf2f72fb46958ec5",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_revision_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['creating'::text, 'draft'::text, 'published'::text, 'needs_review'::text]))",
+    "validated": true
+   },
+   "after_sha256": "99da866a262313c7acad3bf93758cd9d793a055fe47c8e1117af4f56913858df",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (waba_id ~ '^[0-9]{1,64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "8cafc4dd6cc867fc99f323c0614fe6a06b66248a6be8836c13909b91075546fd",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_waba_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (waba_id, revision)",
+    "validated": true
+   },
+   "after_sha256": "ce6db38e7d4cd0c5012e3071a5e149927752b0e6b7c0c6681b0b65759f1a1461",
+   "identity": "constraint:public.party_rsvp_flow_publications.party_rsvp_flow_publications_waba_id_revision_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (channel_id) REFERENCES whatsapp_channels(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "370a028156eeea9e031bac972f1fe28af5493046782064d7eb8ad9efa9c00d88",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_channel_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (invite_id) REFERENCES event_invites(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "5f0365efb42bae1f5adb4bb02704bbe5d4f5563ae2d5ad6ede28a9bc33b90628",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_invite_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(message_id) >= 1 AND length(message_id) <= 512)",
+    "validated": true
+   },
+   "after_sha256": "ecfe2adacc9ae79f6a8116728202fcff702aa24eb339ba4d5aa61fce95f6fe22",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_message_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (nonce_hash ~ '^[a-f0-9]{64}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "9e4080c0724aca8785176f02d35ca20b575c9cbb2da525df5d3b570a89382c95",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_nonce_hash_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone ~ '^[1-9][0-9]{6,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "bd1afe20a16d93e9983a7d330aba5b9521bf280ade31c1f8a5dd4fd6a8190539",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_phone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (nonce_hash)",
+    "validated": true
+   },
+   "after_sha256": "3dffb5b7139cd4f4f39e849bdc9c2a4c7480db403696667e70cc1dfc96e651c9",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (publication_id) REFERENCES party_rsvp_flow_publications(id)",
+    "validated": true
+   },
+   "after_sha256": "d461297e176727721caaa788e2c79c978fb308ad6f6afe4b1200de9b722d010f",
+   "identity": "constraint:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_publication_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_publication_id uuid, p_invite_id uuid, p_business_id uuid, p_channel_id uuid, p_phone_number_id text, p_asset_id text, p_question_revision integer, p_phone text, p_nonce_hash text, p_message_id text, p_provider_timestamp timestamp with time zone, p_payload jsonb",
+    "body_sha256": "278251bc6dd4e81ee18a8b4cd5193c6758a048845fe338e3c1cc69033f1b6a98",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "2de16cd2d1ec19824b968687a53bebe97c357f590603ac6445616d6642b82380",
+   "identity": "function:public.save_party_rsvp_flow_response_540(p_publication_id uuid, p_invite_id uuid, p_business_id uuid, p_channel_id uuid, p_phone_number_id text, p_asset_id text, p_question_revision integer, p_phone text, p_nonce_hash text, p_message_id text, p_provider_timestamp timestamp with time zone, p_payload jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX party_rsvp_flow_publications_pkey ON public.party_rsvp_flow_publications USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "e1fc1c748625b01125a5a968f7ded0744b31cdf2d161626b9d80991278423537",
+   "identity": "index:public.party_rsvp_flow_publications.party_rsvp_flow_publications_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX party_rsvp_flow_publications_waba_id_revision_key ON public.party_rsvp_flow_publications USING btree (waba_id, revision)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "641deec932f0d01b695a78d2f70876fd000b8e16f36cf06a135fef13decf87b8",
+   "identity": "index:public.party_rsvp_flow_publications.party_rsvp_flow_publications_waba_id_revision_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX party_rsvp_flow_receipts_business_540 ON public.party_rsvp_flow_receipts USING btree (business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "1394d66c1a1e0a2dc1785186912b971f74ed7a1ce80f2f43eb788230397786b9",
+   "identity": "index:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_business_540",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX party_rsvp_flow_receipts_invite_540 ON public.party_rsvp_flow_receipts USING btree (invite_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "44961a421d91def93dc967e1cb182cd87f2199ca2301f881de43fc488ea525e9",
+   "identity": "index:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_invite_540",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX party_rsvp_flow_receipts_pkey ON public.party_rsvp_flow_receipts USING btree (nonce_hash)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "99e7447afa86fa8c265e5a1704bc1c6da1468966090fded2e452ce02cf3f71c6",
+   "identity": "index:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.party_rsvp_flow_publications.party_rsvp_flow_publications_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.party_rsvp_flow_receipts.party_rsvp_flow_receipts_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "f2fe515ce7cb36576c0b89be5cb24ceaab7d8875f00cfe8dd3cab3149c1d08de",
+   "identity": "table:public.party_rsvp_flow_publications",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "fe96dc4db0104aaac0c5d53ae62725421e0a13efaedc23c44833a35e1de5aea2",
+   "identity": "table:public.party_rsvp_flow_receipts",
+   "operation": "add"
+  }
+ ],
+ "migration": "540_party_rsvp_flow.sql",
+ "migration_sha256": "9a5d34efa344c92b87fb5158fb7afd536047dba8df0fb09f8cc77c96323d31ad",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
