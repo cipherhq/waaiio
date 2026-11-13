@@ -32,6 +32,10 @@ export interface PlatformAdmin {
   bearerToken: string;
   /** Session ID extracted from the verified access token. */
   sessionId?: string;
+  /** Verified amr claim (sign-in methods with Unix-second timestamps). */
+  amr?: Array<{ method: string; timestamp: number }>;
+  /** MFA factors from the server-validated user record (getUser). */
+  factors?: Array<{ id: string; factor_type: string; status: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +62,7 @@ interface VerifiedClaims {
   aal: string | undefined;
   sessionId: string | undefined;
   amr: Array<{ method: string; timestamp: number }> | undefined;
+  factors: Array<{ id: string; factor_type: string; status: string }>;
 }
 
 type SupabaseClient = ReturnType<typeof import('@/lib/supabase/service').createServiceClient>;
@@ -120,6 +125,7 @@ async function getVerifiedClaims(
     aal: claims.aal as string | undefined,
     sessionId,
     amr: claims.amr as Array<{ method: string; timestamp: number }> | undefined,
+    factors: (userData.user.factors ?? []).map(f => ({ id: f.id, factor_type: f.factor_type, status: f.status })),
   };
 }
 
@@ -235,7 +241,10 @@ export async function requirePlatformAdmin(
     return null;
   }
 
-  return { id: userId, userId, email: email || '', role, aal: jwtAal, bearerToken: token, sessionId: claims.sessionId };
+  return {
+    id: userId, userId, email: email || '', role, aal: jwtAal, bearerToken: token, sessionId: claims.sessionId,
+    amr: claims.amr, factors: claims.factors,
+  };
 }
 
 /**

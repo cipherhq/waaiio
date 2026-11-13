@@ -23,6 +23,7 @@ import Businesses from './pages/Businesses';
 import Payouts from './pages/Payouts';
 import Finance from './pages/Finance';
 import AuditLog from './pages/AuditLog';
+import Passkeys from './pages/Passkeys';
 import Users from './pages/Users';
 import AdminTeam from './pages/AdminTeam';
 import Bookings from './pages/Bookings';
@@ -146,6 +147,7 @@ export const router = createBrowserRouter([
       { path: 'conversation-usage', element: <RoleGuard roles={ADMIN_PERMISSIONS['conversation-usage']}><ConversationUsage /></RoleGuard> },
       { path: 'messaging-credits', element: <RoleGuard roles={ADMIN_PERMISSIONS['messaging-credits']}><MessagingCredits /></RoleGuard> },
       { path: 'platform-settings', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><PlatformSettings /></RoleGuard> },
+      { path: 'passkeys', element: <RoleGuard roles={ADMIN_PERMISSIONS['passkeys']}><Passkeys /></RoleGuard> },
       { path: 'audit-log', element: <RoleGuard roles={ADMIN_PERMISSIONS['audit-log']}><AuditLog /></RoleGuard> },
       { path: 'system-health', element: <RoleGuard roles={ADMIN_PERMISSIONS['system-health']}><SystemHealth /></RoleGuard> },
       { path: 'permissions', element: <RoleGuard roles={ADMIN_PERMISSIONS['permissions']}><AdminPermissions /></RoleGuard> },

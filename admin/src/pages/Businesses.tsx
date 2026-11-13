@@ -1393,7 +1393,7 @@ export default function Businesses() {
       </DetailModal>
       <StepUpDialog
         open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
-        description={stepUp.state.description}
+        description={stepUp.state.description} method={stepUp.state.method}
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
         onSubmit={async (code) => {

@@ -58,13 +58,21 @@ Every invariant has a unique ID, an owner (the PR/issue that established it), a 
 
 #### Invariant
 
-Every privileged admin access path — API routes via `requirePlatformAdmin`, direct Supabase/PostgREST queries through admin RLS policies, and admin-scoped helper functions (`is_admin()`, `is_support()`, `has_admin_role()`) — MUST require server-verified `aal2` from Supabase native TOTP MFA. Password-only (`aal1`) sessions MUST NOT access privileged admin data or operations in any environment.
+Every privileged admin access path — API routes via `requirePlatformAdmin`, direct Supabase/PostgREST queries through admin RLS policies, and admin-scoped helper functions (`is_admin()`, `is_support()`, `has_admin_role()`) — MUST require server-verified `aal2` from Supabase native MFA (TOTP, or an approved passkey — see "Passkey sessions" below). Password-only (`aal1`) sessions MUST NOT access privileged admin data or operations in any environment.
 
 Sensitive operations (payout approval/generation, provider config mutations, team role grants/revocations, impersonation initiation, refunds) additionally require operation-bound, single-use step-up authorization consumed atomically at the mutation boundary.
 
+#### Passkey sessions (Owner decision 2026-11-12)
+
+- An admin may sign in with password + passkey (Supabase native WebAuthn MFA factor) instead of password + TOTP. TOTP stays enrolled as the recovery factor; password + TOTP sign-in is unchanged.
+- A passkey earns passkey privileges only after the admin approves it with a TOTP step-up (`admin_passkey_approvals`, M538). If any verified passkey on the account is unapproved, the session is treated as TOTP-only. Adding or removing a passkey always needs a TOTP step-up.
+- For 12 hours after the session's latest passkey verification, these financial actions that move no money skip step-up, with an audit entry: payout generation, payout rejection, reseller payout approval, reseller payout rejection, reseller payout generation (`PASSKEY_WAIVABLE_ACTIONS`, `lib/admin-passkey.ts`). Each route enforces this server-side through `consumeStepUpOrPasskeyWaiver`.
+- **Money moving out always needs step-up**, in every session: payout approval, settlement confirmation, force-settle, refunds, reseller mark-paid, and changes to where money goes (provider config including the platform fee bank account, commercial fee settings). These routes call `consumeStepUp` directly and never consult the waiver. All other existing step-up actions are unchanged.
+- In a trusted passkey session, step-up is confirmed with a fresh passkey tap instead of a code. The tap must be later than the grant, in the same session, and one tap verifies at most one grant (unique `challenge_id`, M538). Code-prepared and passkey-prepared grants cannot be verified by the other method.
+
 #### Enforcement layers
 
-1. **Authentication:** Supabase native TOTP MFA enrollment required for all admin-role users. Session upgrades to `aal2` after successful MFA verification.
+1. **Authentication:** Supabase native TOTP MFA enrollment required for all admin-role users (passkeys are an additional, approved factor). Session upgrades to `aal2` after successful MFA verification.
 2. **API authorization:** `requirePlatformAdmin` (`lib/admin-auth.ts`) reads verified `aal` claim from the cryptographically validated JWT. Rejects `aal1` with 403. All admin route handlers inherit this gate. Bearer-to-cookie fallback is prohibited after an invalid explicit Bearer token.
 3. **PostgreSQL/RLS:** Admin-scoped RLS policies use `auth.jwt() ->> 'aal' = 'aal2'` via `is_admin()`, `is_support()`, and `has_admin_role()` helper functions. Blocks direct PostgREST access with `aal1`. Normal merchant/customer RLS paths are unaffected.
 4. **Step-up:** Sensitive operations require a fresh MFA challenge verified server-side and bound to the exact admin, session, action type, target, and canonical parameters. The authorization is single-use, concurrency-safe (atomic consumption), and expires after 5 minutes. A valid step-up for operation X cannot authorize operation Y.
@@ -80,6 +88,7 @@ All environments enforce identical admin MFA policy. No staging MFA skip exists.
 - `profiles.role` self-escalation cannot grant admin access (trigger + grant-level block verified)
 - Stale, consumed, or operation-mismatched step-up rejected on all sensitive routes
 - Client-declared `aal2` headers/cookies cannot bypass JWT verification
+- Trusted, fresh passkey session without a consumable step-up rejected on every money-out route; waiver refused for TOTP sessions, passkey taps older than 12 hours, unapproved passkeys and unreadable approvals
 - Invalid Bearer token does not fall back to cookie auth
 
 #### Expected ALLOW evidence (CI-required)
@@ -89,6 +98,7 @@ All environments enforce identical admin MFA policy. No staging MFA skip exists.
 - Fresh, unconsumed, correctly-bound step-up accepted on sensitive routes
 - Normal merchant/customer access unaffected by admin MFA policies
 - TOTP enrollment and challenge/verify flow produces valid `aal2` session
+- Trusted, fresh passkey session skips step-up on exactly the five no-money-out actions (audited)
 
 #### Rollback policy
 

@@ -75,7 +75,7 @@ describe('payouts/generate: merchant-local period', () => {
 
     vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', userId: 'admin-1', email: 'a@t.com', role: 'admin', aal: 'aal2', bearerToken: 'b' }) }));
     vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue(undefined) }));
-    vi.doMock('@/lib/admin-step-up', () => ({ consumeStepUp: vi.fn().mockResolvedValue(true), StepUpError: class extends Error { constructor(m: string) { super(m); } } }));
+    vi.doMock('@/lib/admin-step-up', () => ({ consumeStepUp: vi.fn().mockResolvedValue(true), consumeStepUpOrPasskeyWaiver: vi.fn().mockResolvedValue(true), StepUpError: class extends Error { constructor(m: string) { super(m); } } }));
     vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
     vi.doMock('@/lib/constants', () => ({ getCurrencyCode: vi.fn((cc: string) => { const m: Record<string,string> = { NG:'NGN', US:'USD' }; if (m[cc]) return m[cc]; throw new Error('unknown'); }), CountryCode: {}, VerificationLevel: {} }));
     vi.doMock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockResolvedValue({ payout_cooling_period_days: 7, fraud_velocity_threshold: 50, minimum_payout: { NG: 100 } }) }));

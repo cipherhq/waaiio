@@ -84,7 +84,7 @@ vi.mock('@/lib/errors', () => ({
   safeLogErrorContext: vi.fn(() => ({})),
 }));
 vi.mock('@/lib/admin-step-up', () => ({
-  consumeStepUp: vi.fn().mockResolvedValue(true),
+  consumeStepUp: vi.fn().mockResolvedValue(true), consumeStepUpOrPasskeyWaiver: vi.fn().mockResolvedValue(true),
   StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
 }));
 vi.mock('@/lib/platformSettings', () => ({
@@ -589,7 +589,7 @@ describe('payouts/generate: failure counting and three-phase adjustment linking'
     }));
     vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/admin-step-up', () => ({
-      consumeStepUp: vi.fn().mockResolvedValue(true),
+      consumeStepUp: vi.fn().mockResolvedValue(true), consumeStepUpOrPasskeyWaiver: vi.fn().mockResolvedValue(true),
       StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
     }));
     vi.doMock('@/lib/countries', () => ({ loadCountries: vi.fn() }));
@@ -1438,7 +1438,7 @@ describe('payouts/approve: flagged held payout rejection', () => {
     }));
     vi.doMock('@/lib/admin-audit', () => ({ logAdminAudit: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/admin-step-up', () => ({
-      consumeStepUp: vi.fn().mockResolvedValue(true),
+      consumeStepUp: vi.fn().mockResolvedValue(true), consumeStepUpOrPasskeyWaiver: vi.fn().mockResolvedValue(true),
       StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
     }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));

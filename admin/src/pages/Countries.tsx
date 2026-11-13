@@ -621,7 +621,7 @@ export default function Countries() {
 
       <StepUpDialog
         open={countryStepUp.state.phase === 'awaiting-code' || countryStepUp.state.phase === 'verifying'}
-        description={countryStepUp.state.description}
+        description={countryStepUp.state.description} method={countryStepUp.state.method}
         error={countryStepUp.state.error}
         loading={countryStepUp.state.phase === 'verifying'}
         onSubmit={(code) => {
@@ -1093,7 +1093,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
 
       <StepUpDialog
         open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
-        description={stepUp.state.description}
+        description={stepUp.state.description} method={stepUp.state.method}
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
         onSubmit={(code) => {
@@ -1489,7 +1489,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
       </div>
       <StepUpDialog
         open={msgStepUp.state.phase === 'awaiting-code' || msgStepUp.state.phase === 'verifying'}
-        description={msgStepUp.state.description}
+        description={msgStepUp.state.description} method={msgStepUp.state.method}
         error={msgStepUp.state.error}
         loading={msgStepUp.state.phase === 'verifying'}
         onSubmit={(code) => { if (msgStepUpCallbackRef.current) msgStepUp.submitCode(code, msgStepUpCallbackRef.current); }}

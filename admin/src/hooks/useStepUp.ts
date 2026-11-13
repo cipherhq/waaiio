@@ -4,6 +4,10 @@
  * SEC-005 Layer 4: Provides a reusable flow for preparing, verifying,
  * and retrying operations that require fresh MFA confirmation.
  *
+ * The server decides how to confirm (Owner decision 2026-11-12): an
+ * authenticator code, a fresh passkey tap, or — for a passkey session and an
+ * action that moves no money — nothing at all. The UI only follows that answer.
+ *
  * Usage:
  *   const stepUp = useStepUp();
  *
@@ -42,6 +46,7 @@ interface StepUpState {
   stepUpId: string;
   challengeId: string;
   factorId: string;
+  method: 'totp' | 'passkey';
 }
 
 export function useStepUp() {
@@ -52,6 +57,7 @@ export function useStepUp() {
     stepUpId: '',
     challengeId: '',
     factorId: '',
+    method: 'totp',
   });
 
   const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -85,7 +91,15 @@ export function useStepUp() {
         throw new Error(err.error || 'Failed to prepare step-up');
       }
 
-      const { stepUpId, factorId, challengeId } = await prepareRes.json();
+      const { stepUpId, factorId, challengeId, method, notRequired } = await prepareRes.json();
+
+      if (notRequired === true) {
+        // The mutation route re-checks this server-side.
+        setState(s => ({ ...s, phase: 'executing', stepUpId: '', method: 'passkey' }));
+        await onAuthorized('');
+        setState(s => ({ ...s, phase: 'done' }));
+        return { stepUpId: '', factorId: '', challengeId: '' };
+      }
 
       setState(s => ({
         ...s,
@@ -93,6 +107,7 @@ export function useStepUp() {
         stepUpId,
         factorId,
         challengeId,
+        method: method === 'passkey' ? 'passkey' : 'totp',
       }));
 
       // Return a promise that resolves when the user submits the code
@@ -105,6 +120,40 @@ export function useStepUp() {
     }
   }, [apiUrl, getToken]);
 
+  /** Passkey path: tap through Supabase Auth, then send the refreshed token. */
+  const confirmWithPasskey = useCallback(async (onAuthorized: (stepUpId: string) => Promise<void>) => {
+    const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+    const passkey = factors?.all?.find(f => f.factor_type === 'webauthn' && f.status === 'verified');
+    if (factorsError || !passkey) throw new Error('No passkey found on this account. Use your authenticator code instead.');
+
+    const { error: tapError } = await supabase.auth.mfa.webauthn.authenticate({ factorId: passkey.id });
+    if (tapError) {
+      setState(s => ({ ...s, phase: 'awaiting-code', error: 'Passkey was not confirmed. Try again.' }));
+      return;
+    }
+
+    const token = await getToken();
+    if (!token) throw new Error('No active session');
+    const verifyRes = await fetch(`${apiUrl}/api/admin/step-up/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ stepUpId: state.stepUpId, method: 'passkey' }),
+    });
+    if (!verifyRes.ok) {
+      const err = await verifyRes.json().catch(() => ({}));
+      const restart = err.code === 'STEP_UP_RESTART_REQUIRED';
+      setState(s => ({ ...s, phase: 'awaiting-code',
+        stepUpId: restart ? '' : s.stepUpId,
+        error: restart ? 'Verification failed. Cancel and restart this operation.' : err.error || 'Verification failed',
+      }));
+      return;
+    }
+
+    setState(s => ({ ...s, phase: 'executing' }));
+    await onAuthorized(state.stepUpId);
+    setState(s => ({ ...s, phase: 'done' }));
+  }, [state.stepUpId, apiUrl, getToken]);
+
   const submitCode = useCallback(async (
     code: string,
     onAuthorized: (stepUpId: string) => Promise<void>,
@@ -112,6 +161,16 @@ export function useStepUp() {
     if (state.phase !== 'awaiting-code' || !state.stepUpId) return;
 
     setState(s => ({ ...s, phase: 'verifying', error: '' }));
+
+    if (state.method === 'passkey') {
+      try {
+        await confirmWithPasskey(onAuthorized);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Operation failed';
+        setState(s => ({ ...s, phase: 'error', error: msg }));
+      }
+      return;
+    }
 
     try {
       const token = await getToken();
@@ -159,7 +218,7 @@ export function useStepUp() {
       const msg = err instanceof Error ? err.message : 'Operation failed';
       setState(s => ({ ...s, phase: 'error', error: msg }));
     }
-  }, [state.phase, state.stepUpId, apiUrl, getToken]);
+  }, [state.phase, state.stepUpId, state.method, apiUrl, getToken, confirmWithPasskey]);
 
   const reset = useCallback(() => {
     setState({
@@ -169,6 +228,7 @@ export function useStepUp() {
       stepUpId: '',
       challengeId: '',
       factorId: '',
+      method: 'totp',
     });
   }, []);
 

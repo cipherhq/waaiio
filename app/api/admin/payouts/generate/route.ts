@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
-import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
+import { consumeStepUpOrPasskeyWaiver, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
 
   // SEC-005 Layer 4: Consume operation-bound step-up authorization
   try {
-    await consumeStepUp(admin, body.stepUpId, 'payout_generate', null, { action: 'generate' });
+    await consumeStepUpOrPasskeyWaiver(admin, body.stepUpId, 'payout_generate', null, { action: 'generate' });
   } catch (err) {
     const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });

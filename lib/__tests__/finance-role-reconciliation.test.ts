@@ -32,10 +32,14 @@ vi.mock('@/lib/admin-auth', () => ({
   }),
 }));
 
-vi.mock('@/lib/admin-step-up', () => ({
-  consumeStepUp: vi.fn().mockResolvedValue(true),
-  StepUpError: class StepUpError extends Error { constructor(msg: string) { super(msg); this.name = 'StepUpError'; } },
-}));
+vi.mock('@/lib/admin-step-up', () => {
+  // One mock behind both gates, so denial tests cover the no-money-out routes too.
+  const consume = vi.fn().mockResolvedValue(true);
+  return {
+    consumeStepUp: consume, consumeStepUpOrPasskeyWaiver: consume,
+    StepUpError: class StepUpError extends Error { constructor(msg: string) { super(msg); this.name = 'StepUpError'; } },
+  };
+});
 
 const mockSelectResult = vi.fn();
 const mockInsertResult = vi.fn();

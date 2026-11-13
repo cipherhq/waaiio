@@ -240,7 +240,7 @@ const mockUpdateChain = {
 const mockInsertResult = vi.fn();
 
 vi.mock('@/lib/admin-step-up', () => ({
-  consumeStepUp: vi.fn().mockResolvedValue(true),
+  consumeStepUp: vi.fn().mockResolvedValue(true), consumeStepUpOrPasskeyWaiver: vi.fn().mockResolvedValue(true),
   StepUpError: class StepUpError extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
 }));
 

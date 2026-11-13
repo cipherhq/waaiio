@@ -1,7 +1,8 @@
 /**
  * Step-up MFA verification dialog for sensitive admin operations.
  *
- * Shows what operation is being authorized and prompts for a TOTP code.
+ * Shows what operation is being authorized and prompts for a TOTP code,
+ * or (method="passkey") for a passkey tap.
  * Used by admin pages for payouts, provider config, team, impersonation,
  * and refunds.
  */
@@ -15,15 +16,21 @@ interface StepUpDialogProps {
   loading: boolean;
   onSubmit: (code: string) => void;
   onCancel: () => void;
+  /** From useStepUp state: the server chose a passkey tap for this operation. */
+  method?: 'totp' | 'passkey';
 }
 
-export function StepUpDialog({ open, description, error, loading, onSubmit, onCancel }: StepUpDialogProps) {
+export function StepUpDialog({ open, description, error, loading, onSubmit, onCancel, method = 'totp' }: StepUpDialogProps) {
   const [code, setCode] = useState('');
 
   if (!open) return null;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (method === 'passkey') {
+      onSubmit('');
+      return;
+    }
     if (code.length === 6) {
       onSubmit(code);
       setCode('');
@@ -50,6 +57,11 @@ export function StepUpDialog({ open, description, error, loading, onSubmit, onCa
         )}
 
         <form onSubmit={handleSubmit}>
+          {method === 'passkey' ? (
+            <p className="text-sm text-gray-700 dark:text-gray-300">
+              Tap your passkey to confirm this operation.
+            </p>
+          ) : (<>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Enter your authenticator code
           </label>
@@ -65,6 +77,7 @@ export function StepUpDialog({ open, description, error, loading, onSubmit, onCa
             className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-center text-lg tracking-[0.3em] font-mono text-gray-900 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50 dark:bg-gray-800 dark:border-gray-600 dark:text-white"
             placeholder="000000"
           />
+          </>)}
 
           <div className="mt-4 flex gap-3">
             <button
@@ -77,10 +90,10 @@ export function StepUpDialog({ open, description, error, loading, onSubmit, onCa
             </button>
             <button
               type="submit"
-              disabled={loading || code.length !== 6}
+              disabled={loading || (method !== 'passkey' && code.length !== 6)}
               className="flex-1 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-purple-700 disabled:opacity-50"
             >
-              {loading ? 'Verifying...' : 'Authorize'}
+              {loading ? 'Verifying...' : method === 'passkey' ? 'Use passkey' : 'Authorize'}
             </button>
           </div>
         </form>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
-import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
+import { consumeStepUpOrPasskeyWaiver, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { logAdminAudit } from '@/lib/admin-audit';
 
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
 
     // SEC-005 Layer 4: Consume operation-bound step-up authorization
     try {
-      await consumeStepUp(auth, stepUpId, 'reseller_payout_generate', reseller_id ?? '', {
+      await consumeStepUpOrPasskeyWaiver(auth, stepUpId, 'reseller_payout_generate', reseller_id ?? '', {
         reseller_id: reseller_id ?? null, period_start: period_start ?? null,
         period_end: period_end ?? null, holdback_percent: holdback_percent ?? null,
         deductions: deductions ?? null, notes: notes ?? null,
