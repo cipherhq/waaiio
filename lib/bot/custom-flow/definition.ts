@@ -7,6 +7,20 @@
 
 import type { CustomFlowDefinition, CustomFlowNode } from './types';
 
+/**
+ * Words a flow may not claim as its entry keyword. They already mean
+ * something to the platform or to the engine's own navigation, so a flow
+ * that claimed one would hijack routing that belongs to the existing bot:
+ * greetings and restart words, STOP/START, HELP, YES/NO (opt-in), PAY/BOOK
+ * (capability routing), BACK/MENU/CONTINUE (navigation), HUMAN/AGENT
+ * (handoff), CANCEL/EXIT/QUIT (leaving a flow). Mirrored by a DB CHECK on
+ * custom_flows.entry_keyword (migration 541).
+ */
+export const RESERVED_ENTRY_KEYWORDS: ReadonlySet<string> = new Set([
+  'HI', 'HELLO', 'MENU', 'STOP', 'START', 'HELP', 'CANCEL', 'YES', 'NO',
+  'PAY', 'BOOK', 'BACK', 'RESTART', 'CONTINUE', 'HUMAN', 'AGENT', 'EXIT', 'QUIT',
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -37,6 +51,12 @@ export function validateDefinition(definition: unknown): string[] {
       errors.push('The entry keyword must be a word, or left empty.');
     } else if (def.entry_keyword !== def.entry_keyword.toUpperCase()) {
       errors.push('The entry keyword must be uppercase (for example AFROFEST).');
+    } else if (/\s/.test(def.entry_keyword)) {
+      // The engine matches the first word of the message only, so a
+      // multi-word keyword could never trigger the flow.
+      errors.push('The entry keyword must be a single word (no spaces).');
+    } else if (RESERVED_ENTRY_KEYWORDS.has(def.entry_keyword)) {
+      errors.push(`The entry keyword "${def.entry_keyword}" is reserved for the platform. Choose a different starter word.`);
     }
   }
   if (!Array.isArray(def.nodes) || def.nodes.length === 0) {
@@ -128,6 +148,29 @@ export function validateDefinition(definition: unknown): string[] {
         errors.push(`Node "${(node as { id?: string }).id ?? '?'}" has an unknown type "${(node as { type?: string }).type}".`);
         break;
       }
+    }
+  }
+
+  // Message nodes auto-advance without waiting for the customer, so a
+  // message -> message chain that loops would send forever (one WhatsApp
+  // send + one session write per hop). Menu and lookup nodes wait for
+  // input, so only message-to-message links can loop unboundedly.
+  const byId = new Map<string, CustomFlowNode>();
+  for (const node of def.nodes as CustomFlowNode[]) {
+    if (isRecord(node) && typeof node.id === 'string') byId.set(node.id, node);
+  }
+  for (const node of def.nodes as CustomFlowNode[]) {
+    if (!isRecord(node) || node.type !== 'message') continue;
+    if (typeof node.next !== 'string' || !ids.has(node.next)) continue;
+    const visited = new Set<string>([node.id]);
+    let current = byId.get(node.next);
+    while (current && current.type === 'message' && typeof current.next === 'string' && ids.has(current.next)) {
+      if (visited.has(current.id)) {
+        errors.push(`Message node "${node.id}" loops back to "${current.id}". Message steps must lead somewhere new.`);
+        break;
+      }
+      visited.add(current.id);
+      current = byId.get(current.next);
     }
   }
 

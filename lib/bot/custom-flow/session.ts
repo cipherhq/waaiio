@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 import type { CustomFlowSessionRow } from './types';
 
 export const CUSTOM_FLOW_SESSION_TTL_HOURS = 24;
@@ -68,7 +69,7 @@ export async function createSession(
 export async function updateSessionCas(
   supabase: SupabaseClient,
   session: CustomFlowSessionRow,
-  patch: { current_node_id?: string; fields?: Record<string, unknown>; expires_at?: string },
+  patch: { current_node_id?: string; fields?: Record<string, unknown>; expires_at?: string; flow_version?: number },
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from('custom_flow_sessions')
@@ -81,15 +82,20 @@ export async function updateSessionCas(
   return !error && Array.isArray(data) && data.length > 0;
 }
 
-/** Close a session (end of flow, exit, or replacement by a new start). */
+/** Close a session (end of flow, exit, or replacement by a new start). Returns false (and logs) when the write fails instead of swallowing the error. */
 export async function closeSession(
   supabase: SupabaseClient,
   sessionId: string,
-): Promise<void> {
-  await supabase
+): Promise<boolean> {
+  const { error } = await supabase
     .from('custom_flow_sessions')
     .update({ is_active: false })
     .eq('id', sessionId);
+  if (error) {
+    logger.error('[CUSTOM-FLOW] closeSession failed:', error.message);
+    return false;
+  }
+  return true;
 }
 
 /** True when the session's 24h window has passed. */
