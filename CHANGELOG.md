@@ -1,3 +1,671 @@
+## 2026-11-12 — Bank transfers: expiry job runs, timely receipts held, card-paid offers closed quietly
+
+**What changed:** Fixes the leftover bank-transfer problems found in the staging TestBiz trace (7 overdue transfers on staging, none ever expired; three of them belonged to bookings already paid by card).
+
+1. **The expiry job never ran.** `app/api/cron/expire-transfers/route.ts` only answered POST, and Vercel Cron sends GET (the other 38 cron routes all answer GET). It now answers GET too.
+2. **Timely receipts are held, not expired.** For bookings, reservations and invoices the job used to expire every overdue transfer and cancel the booking, even when the customer had sent a receipt before the deadline and the merchant had not reviewed it yet. It now applies the same rule orders already use (`cancel_stale_order_atomic`, M479; contract #736 §5.4): a receipt sent in time (or a legacy receipt with no time) marks the transfer `proof_protected` and leaves it pending for the merchant.
+3. **Card-paid bookings no longer keep an open transfer.** Owner decision (Option A, 2026-11-12): when an online payment confirms a booking, reservation or invoice, `processSuccessfulPayment` cancels its unused transfer offer (no receipt of any kind), as orders already do in `apply_order_stock_once`. A transfer with a receipt stays pending so the merchant can see a possible double payment and refund it. The expiry job closes any such leftover the same way, with no "your transfer has expired" message and without touching the booking.
+
+**Files:** new `lib/payments/stale-transfers.ts` (`hasProtectedProof`, `hasSuccessfulPayment`, `supersedeUnusedTransfers`); `app/api/cron/expire-transfers/route.ts`; `lib/payments/process-success.ts` (one non-critical step at the end); tests `lib/payments/__tests__/stale-transfers.test.ts`, `lib/__tests__/expire-transfers-stale.test.ts`.
+
+**Affects:** pending bank transfers for bookings, reservations and invoices; the customer "transfer expired" WhatsApp/email; the merchant Pending Transfers list. Order transfers, campaign/donation transfers, proof submission, merchant confirm/approve, fees and payouts are unchanged. No migration.
+
+**What could break:** once deployed, the first job run will process every overdue transfer at once. On staging that is 7 rows: 3 card-paid → cancelled quietly, the rest expired with a customer message and their pending booking cancelled. An invoice paid partly online also closes its receipt-less transfer offer. Not fixed here: orders still cancel a transfer even when a receipt was sent (that rule lives in SQL, M400, and would need a migration).
+
+## 2026-11-12 — Merchants get monthly messaging-limit alerts at 50/75/90/100% (#992)
+
+- **What changed:** Merchants never saw the monthly messaging spend-cap warnings. The bot's check after each reply wrote only the "already warned" row (`messaging_spend_threshold_alerts`), never the merchant `alerts` row. The cron that did write the alert was not scheduled, and it skipped every level the bot had already marked. Both now use one shared function. It writes the `alerts` row first, with an id derived from business, currency, month and level, so it can never be duplicated, and writes the "already warned" row after it. The cron now runs hourly to catch caps used up by broadcasts, reminders and other non-bot sends. Owner decisions (2026-11-12): the approved wording, with amounts shown as currency (₦56,250, never minor units); 50% and 75% are warnings, 90% and 100% are critical. Owners are also emailed at 90% and 100%. "Limit reached" fires when there is no longer room for one bot reply, because billing refuses the reply that would cross the cap (NGN stops at ₦74,997 of ₦75,000), so a strict 100% never happened for NGN, GBP or GHS. Only the highest level reached is alerted. No alert while the financial gate is off.
+- **Files:** `lib/messaging/spend-cap-alerts.ts` (new), `lib/bot/conversation-guard.ts` (`checkSpendThresholds` delegates; same signature), `app/api/cron/messaging-spend-warnings/route.ts` (delegates), `vercel.json` (hourly cron at :40); tests in `lib/__tests__/messaging-spend-cap-alerts.test.ts`.
+- **Affects:** merchant dashboard alerts (bell, banner, alerts page) and owner email. Billing, prices, caps, the financial gate, `authorize_message_send` and the low-balance alerts (#974) are unchanged. No migration.
+- **Could break:** each bot reply at 50% or more of the cap adds a config read, a business read and an alert-id read (none below 50%). Deleting a spend-cap alert in admin lets the next check raise it again (and email again at 90/100%). For the current month, levels already marked by the old code get their alert on the next check, but only the highest level reached.
+
+## 2026-11-12 — The messaging reservation-expiry job now runs hourly (#1000)
+
+- **What changed:** `/api/cron/reservation-expiry` was added in #302 but never scheduled, and nothing else did its job (`recover-reservations` only handles growth-credit campaign reservations). A send that stopped between authorization and sending left its reservation holding the merchant's prepaid messaging balance and spend-cap room indefinitely. It now runs hourly at :50 (Owner decision 2026-11-12). The route and `safe_release_expired_reservation` (M371) are unchanged: they release only attempts still `pending_authorization`, with no WhatsApp message id, not flagged and past their deadline, and only set `needs_reconciliation` on everything else (no admin screen reads that flag yet).
+- **Files:** `vercel.json`; test `lib/__tests__/reservation-expiry-cron-schedule.test.ts`.
+- **Affects:** merchant messaging balances and monthly spend-cap usage, which are given back when a reservation expires unsent. Production had 0 stuck reservations on 2026-11-12. Staging has 4 (US$0.04, "Waaiio test", 2026-10-07). That business's October spend-period row had been reset outside billing (reserved 0 while 4 reservations were open), which would have made every release fail the `reserved_minor >= 0` CHECK. With the Owner's approval (2026-11-12) the staging row was set back to its ledger values (reserved 4, spent 3; #1000). So after deploy the first staging run should report `released: 3, flagged: 1` and return US$0.03 to that balance; the ambiguous attempt only gets `needs_reconciliation`.
+- **Could break:** nothing new runs in the send path. Errors are only logged (the route returns 200 with an `errors` count), so a failing release does not alert anyone. A bug in the existing route or function would now actually execute hourly; the function rechecks every safety condition under a row lock, and a trigger blocks a later send on a released reservation.
+
+## 2026-11-12 — Stop one customer draining a business's paid messages
+
+- **What changed:** Every bot reply is paid by the business, and one customer could use up its whole month. Owner decision (2026-11-12, "Build A+B"):
+  - **Daily limit per customer.** Each business pays for at most 50 bot replies per customer per UTC day (admin default `customer_daily_reply_limit`). A business can set its own limit (dashboard → Settings → Features → Messaging Protection), between 10 and the admin ceiling `customer_daily_reply_limit_max` (500). Over the limit the bot stops answering that customer for that business until the next UTC day and sends one free notice, claimed only when a reply is actually refused. A paying customer is never cut off: one at a payment step (including the order, ticket and reservation checkout steps with the saved-card PIN and transfer buttons) or with a card PIN, payment or bank transfer under way in the session. It counts one inbound message once, at its first paid reply, and covers every business-paid reply: the bot's (including platform-style replies on a dedicated number) and the webhook's own ("can't process images", voice-not-supported). Never limited: STOP/START commands, native catalog orders (their reply is the payment link), the payment-link reply to a freshly accepted quote (exempted at that one send, after the database accepts the quote), payment confirmations from webhooks, and sends to the business owner. Every other quote reply, including a re-tap of an already accepted quote, is limited.
+  - **Repeats ignored.** The same text more than 3 times in a row at the same conversation step within 10 minutes (admin `customer_repeat_message_limit`) gets no reply. The same answer at a new step is not a repeat. Taps, media and paying customers never count. Each inbound message is checked once, even when the bot re-routes it internally.
+  - **Junk pauses.** 5 invalid replies in a row at one flow step (never while paying) send one "take a short break, then reply *menu*" message and pause the customer for the soft abuse cooldown (5 min).
+  - **Pauses hold on every server.** The swearing timeout and junk pause are now stored in the database. Production has no Redis, so the old in-memory timeout reset whenever another server took the message. A paused customer is told once, not on every message.
+- **Files:** `supabase/migrations/536_customer_message_guards.sql` (new tables `customer_daily_reply_usage`, `customer_message_guard`, five service-role-only functions, three platform settings), `supabase/catalog-deltas/536_customer_message_guards.json` (generated by the CI catalog oracle), `lib/messaging/customer-message-guard.ts` (new), `lib/channels/message-sender.ts` (guard runs before any attempt row or charge), `app/api/webhook/meta-cloud/route.ts` (installs the guard for the whole handling of each inbound message, sends the notice in `finally`), `lib/bot/bot.service.ts` (shared pause and repeat check once per inbound message, in-memory timeout kept as fallback, stored swearing pause, a refused reply ends the message quietly), `lib/bot/flows/executor.ts` (junk pause), `lib/platformSettings.ts`, `admin/src/pages/PlatformSettings.tsx`, `app/dashboard/settings/tabs/FeaturesTab.tsx`, `.github/workflows/ci.yml` (registers the PostgreSQL test). Tests: `lib/__tests__/customer-message-guard.test.ts`, `lib/__tests__/customer-message-guard-botservice.test.ts`, `lib/__tests__/customer-junk-pause-executor.test.ts`, `lib/__tests__/customer-message-guards-536.pg.test.ts`.
+- **Affects:** bot replies on every channel, the admin Bot & Automation settings and the merchant Features settings. Billing, prices, spend caps, the financial gate, STOP/START and payment confirmations are unchanged.
+- **Could break:** each inbound message adds one database call, and each paid reply's first send adds two (business settings and daily count). A third, the payment-step check, runs only once a customer is over the limit. All guards fail open on a database error (the spend cap still applies). Sends made from a separately resolved channel inside a flow (for example a quote reply on another channel) are not counted. A customer alternating STOP and START on a dedicated number still gets a business-paid reply each time, bounded only by the spend cap (unchanged from before; consent replies are never refused). A paused customer still gets the webhook's media and voice replies (counted toward the daily limit). Messages sent during a pause never build a repeat count. At steps that ask again (promo code, survey, RSVP questions), a valid reply does not reset the invalid count, and the same answer 4 times in a row is ignored (Owner decision pending). The swearing pause is stored before its warning is sent. Over the limit, the STOP picker buttons (whose ids can be typed) stay limited: the opt-out is still saved, but the "unsubscribed" confirmation may be replaced by the limit notice. "I've paid" recovery and saved-card taps outside a payment step are limited too (webhooks still confirm the payment). The limit day is UTC, not the business's time zone. Needs migration 536 applied before deploy; without it every guard fails open and nothing is limited.
+
+## 2026-11-12 — Bank transfer "expired" WhatsApp notice is no longer refused
+
+**What changed:** The customer's "your bank transfer has expired" WhatsApp message now goes out with message category `service`. Before this, the expiry job sent it with no category, and Waaiio's financial authorization guard (M370/M371/M461 `check_or_authorize_send`) refused it with `missing_message_category`. Customers only got the email copy. The defect showed up in the first staging run after cron jobs were switched back on (2026-11-12 15:48 UTC). `service` follows the rule #721 set for free-form transactional sends (payment confirmations, event cancellation notices).
+
+**Files:** `app/api/cron/expire-transfers/route.ts` (one option on the `sendOrEmail` call); test `lib/__tests__/expire-transfers-stale.test.ts`. The new test runs the real `sendOrEmail` against a sender that refuses a missing category.
+
+**Affects:** the WhatsApp copy of the transfer-expired notice for bookings, reservations, invoices and orders. Each one now reserves messaging credit at the configured `service` rate, as other transactional notices do. Email copy, expiry rules, booking/order cancellation, fees and payouts are unchanged. No migration.
+
+**What could break:** nothing else. The message is now actually sent, so it counts against the merchant's messaging balance and spend cap. Not fixed here: 9 other business-scoped cron sends also pass no category (balance, booking/reservation and subscription reminders, low-stock alerts, quote expiry). Choosing `service` or `utility` for them changes what merchants are charged, so that needs an Owner decision.
+
+## 2026-11-12 — Claim-credit: a number on another login no longer ends in "wrong code"
+
+- **What changed:** In production on 2026-11-12, a merchant typed a correct WhatsApp code on "Claim your free messaging credit" and got a server error. Saving the number to the owner's login failed because the number was already on another Waaiio login. Supabase Auth reported this as a generic 500 `unexpected_failure` (the `users_phone_key` unique index), not `phone_exists`. The claim route returned a 500 with no log line. The code had already been used up, so a retry with the same code said "That code is wrong or has expired." Now that failure is logged (step, auth error code and status; no phone or message text). The owner is told: "We couldn't link this number to your account. It may already be linked to another Waaiio account. Use a different number, or contact support." The page goes back to the number step for this case, `phone_in_use` and `other_phone_already_verified` (all three come after the code is used up), so a used-up code is never retried. Owner decision 2026-11-12: code-only fix, no database check.
+- **Files:** `app/api/trial-credit/claim/route.ts`, `lib/trial-credit/verified-phone.ts`, `app/dashboard/claim-credit/page.tsx`; tests in `lib/__tests__/trial-credit-claim.test.ts` and `lib/__tests__/claim-credit-ui.test.tsx`.
+- **Affects:** only the free messaging credit claim. The trial rules (`activate_trial_if_eligible`, M465), OTP sending and checking, rate limits and the `phone_in_use` / `other_phone_already_verified` 409 responses are unchanged. No migration. No credit granted to anyone.
+- **Could break:** any other unexpected Supabase Auth failure while saving the number now shows the "may already be linked" message instead of "Could not verify your number. Please try again."
+
+## 2026-11-12 — Merchant-connected Paystack checkout and refunds use the decrypted key
+
+- **What changed:** For businesses connected with their own Paystack/Flutterwave keys (BYO), the stored secret key (encrypted at rest) was passed to the provider without decrypting it. Paystack rejected checkout with `invalid_Key`, so the bot showed bank transfer only (staging, TestBiz booking WA-BK-8012). Routing now decrypts the key before checkout; refund dispatch and refund reconciliation decrypt it too.
+- **Files:** `lib/payments/resolve-stripe-routing.ts`, `lib/payments/refund-handler.ts`; tests in `lib/payments/__tests__/byo-key-decrypt.test.ts` and `lib/payments/__tests__/refund-handler.test.ts`.
+- **Affects:** BYO checkout links in every bot flow that uses the shared `initializePayment`, and BYO refunds. Platform, platform-subaccount and Connect routes are unchanged. No fee, split or custody rule changed.
+- **Could break:** If a stored key cannot be decrypted (wrong `TOKEN_ENCRYPTION_KEY`), BYO checkout now fails closed (no link, no fallback to the platform key) and a BYO refund is parked as `provider_ambiguous` without contacting the provider.
+
+## 2026-11-12 — Merchant-connected Paystack payments get the updates opt-in and next-steps menu
+
+- **What changed:** After a payment on a merchant's own Paystack (BYO) or a Paystack Connect account, the follow-up still claimed the "save your card?" step even though such a payment can never be saved as a Waaiio card. On staging (TestBiz, order WA-OR-8043) that follow-up stopped at the card step and, because only one follow-up can own a conversation, it also blocked the next booking's (WA-BK-0782). Neither customer got the updates opt-in or the next-steps menu. Now: (1) BYO/Connect Paystack payments skip the card step and go straight to opt-in and menu, after the same confirmation-delivered gate; rows already stuck at the card step are released the same way on the next retry; (2) when the customer navigates away, a claimed card step with no offer is released if its payment can never save a card (Waaiio-collected card steps stay fenced as before); (3) a follow-up blocked by another follow-up now logs a warning instead of failing silently.
+- **Files:** `lib/payments/transaction-followup.ts`, `lib/bot/transaction-followups.ts`, `lib/payments/saved-card-compat.ts` (new `paystackPaymentCannotSaveCard`, reusing `resolvePaymentOrigin`); tests in `lib/payments/__tests__/transaction-followup.test.ts` and `lib/bot/__tests__/transaction-followups.test.ts`.
+- **Affects:** Post-payment follow-up for Paystack payments with `payment_origin` `byo` or `connect` (or legacy `byo`/`connect` flags). Waaiio-collected Paystack payments and all Stripe payments keep the existing card-offer path. No payment, fee, split, settlement or custody rule changed.
+- **Could break:** A Paystack payment whose metadata wrongly says `byo`/`connect` would no longer be offered card saving. Navigation now reads the payment row for a claimed card step with no offer; a read failure there throws like the other dismissal reads.
+
+## 2026-11-12 — Bank transfer: one clear proof request, no false "Paid Online", no silent cancel
+
+**What changed:** Fixed three bot bugs found in a staging bank-transfer test (TestBiz, booking WA-BK-8012, transfer WA-53A0). They existed in every flow that offers direct bank transfer: payment/giving, scheduling, ticketing, ordering, reservation, invoice and crowdfunding.
+
+1. Tapping "I've Sent Transfer" sent "Please send a screenshot…" and then, straight after, "Complete your payment using the link or bank transfer above" with the payment buttons again. The handler sent the request itself and returned an empty error, and the executor always re-sends the step prompt after invalid input. The handler now only sets `_awaiting_transfer_proof` and returns `persistSessionDataOnFailure`, and the step prompt is the proof request (with Cancel, plus "I've Paid Online" only if an online link exists). The flag is now saved through the executor's version-checked save instead of a direct `bot_sessions` update, and the request appears in the conversation log.
+2. The payment-step prompt offered "I've Paid Online" even when no online payment link existed (transfer-only payment). It now shows "I've Sent Transfer" and Cancel with the existing transfer hint.
+3. "I've Paid" on a transfer-only payment (no `payment_reference`) silently ended the session in payment, scheduling, ticketing and ordering, leaving the booking/order and pending transfer open with no message, and showed "couldn't verify your payment" in reservation, invoice and crowdfunding. It now asks for the transfer receipt instead.
+
+**Files:** new `lib/bot/flows/shared/bank-transfer-proof.ts` (`awaitTransferProof`, `bankTransferPaymentPrompt`; kept out of `shared/bank-transfer.ts` because many tests mock that whole module); the payment step of `payment`, `scheduling`, `ticketing`, `ordering`, `reservation`, `invoice` and `crowdfunding` flows; new test `lib/bot/flows/__tests__/bank-transfer-proof-prompt.test.ts`.
+
+**Affects:** customer messages on the bank-transfer payment step only. Card/online payment, proof submission (`submit_transfer_proof`), OCR, owner notification and merchant approval are unchanged. Reservation and ordering prompts now use the shared localized copy instead of hard-coded English (same English text).
+
+**What could break:** a session that set `_awaiting_transfer_proof` now gets the proof request whenever the payment step re-prompts, so any typed text is still taken as a transfer reference (unchanged rule). Not fixed here: pending transfers left open after a card payment, and the `expire-transfers` cron (POST-only) never running.
+
+## 2026-11-11 — Sequence transaction completion prompts
+
+- Deliver transaction confirmation and customer deliverables before save-card steps, then ask eligible customers explicitly about updates before showing business options. Covers shared paid completion and successful free capability completion.
+- Implements the Owner-requested prompt order; preserves existing consent and STOP decisions. Adds service-only migration 534 and scoped card-setup cancellation.
+- Tests: 383 targeted local tests across 20 files, zero failed/skipped; 26 disposable PostgreSQL checks (including inherited-default ACL regression); targeted production TypeScript check. Full PR CI evidence is tracked in the PR.
+- Could break: shared completion, saved-card continuation, consent routing, and final-menu delivery; staged WhatsApp acceptance remains required.
+- CI: run admin and smoke browser jobs in matching official Playwright images with preinstalled system dependencies; verify version and browser presence, preserving all test and environment guards.
+- Pre-merge review: preserve the updates recorder's transport phone key for STOP compatibility; skip redundant Stripe card setup for payments already made with a saved method. Added composed regression tests at both integration boundaries.
+
+## 2026-11-11 — Remember customer email at the same store
+
+- Implements the Owner's repeat-customer rule in scheduling, ordering and reservation email collection, using business-and-phone-scoped customer records and prior booking/reservation email where available.
+- Explicitly entered email is remembered without granting notification consent or changing saved-card, payment or transaction-follow-up routing.
+- Tests cover fresh-session reuse, store/phone isolation, invalid email, lookup failures and consent-preserving persistence.
+- Could break: email prompts may be skipped when a valid same-store email exists; missing or ambiguous records retain the prompt. No migration is required.
+
+## 2026-11-11 — Restore gateway settings and Paystack key entry
+
+- Restore the Payment Gateway settings section for eligible merchants and add private Paystack API-key connection through the existing credential verification endpoint.
+
+## 2026-11-11 — Complete the native WhatsApp form lifecycle
+
+- Add owner-controlled publication, current-revision status and guarded sending in `app/api/forms/native-flow`, with a customer WhatsApp form link and signature-verified submission handling in `app/api/webhook/meta-cloud/route.ts` and `lib/whatsapp-forms`.
+- Add native form controls and response history in the merchant Forms dashboard. Optional event registrations continue through existing ticket checkout; payment custody, tax, fees and refunds keep their existing authorities.
+- Keep WhatsApp Yes/No confirmation separate from optional address-specific, unverified email marketing consent. Add explicit email updates for selected form respondents and address-specific unsubscribe, preserving existing broadcast limits and existing email grants.
+- Add M535 for publication, atomic response/registration persistence, email batch history and unsubscribe. Add local HTTP, runtime, rendered UI and PostgreSQL tests and the CI database-file guard.
+- Affects Forms, native webhook dispatch, event association, consent and email eligibility. Regression risks include channel changes, duplicate delivery, changed form revisions and existing checkout navigation. The strict channel-read option is opt-in and does not change country routing.
+- Use consent-based recipients in poll/survey selectors and the native form panel, including numbers without profiles or bot sessions; align pending marketing requests with existing effective-permission rules. Send-time consent, tenant and chat-window checks remain authoritative. Picker regressions include stale business selections, failed loads and truncated lists.
+- Record allowlisted native-webhook failure classes and numeric Meta codes for pilot diagnosis, without logging customer data or changing retries, sends or billing authority.
+- Omit absent or empty optional screen data in `lib/channels/meta-cloud.ts` to match Meta's Flow message contract. Preserve populated data and all other message fields; HTTP-body regressions cover native forms and legacy onboarding. This corrects a documented request mismatch; live delivery still requires pilot verification.
+- M535 must precede application deployment, including when the native feature switch is off. Both project configs disable automatic deployment for this branch. The Owner-authorized staging M535 application was independently verified; deployment and provider acceptance remain separate. Post-consent rollback must preserve address-bound email checks or pause email sends. See `docs/contracts/591-native-forms-lifecycle.md`.
+- 2026-11-12, Owner decision after the #988 review: native form messages now get #536's per-customer protections. In `lib/whatsapp-forms/webhook.ts`:
+  - The `waaiio_form:` entry text goes through the shared pause/repeat check, and its form send counts toward the daily reply limit.
+  - A submission receipt counts toward the daily limit and is not sent to a paused customer. The response is still saved.
+  - Over the limit, the send is refused and today's free notice is sent. Every guard fails open on a database error, as in #536.
+  - Affects native form entry and receipt sends only.
+  - Could break: a legitimate customer who is paused or over the limit no longer receives the form or the receipt.
+  - Tests: `lib/__tests__/native-form-message-guard-536.test.ts`.
+
+## 2026-11-11 — Merchant-configured purchase tax (unreleased)
+
+- PR982 CI follow-up keeps legacy booking/payment regression fixtures aligned with explicit untaxed authority responses, sanitizes tax-preview log metadata, and verifies the Owner-approved CI-only deployment exception. Disposable replay restores the existing lock-verified accounting entrypoints; historical M518 HTTP compatibility stays bounded to its original schema versions, while current-schema tests assert the intentional numeric-money signatures. No live migration or deployment is included.
+
+- Adds `lib/tax/calculation.ts` and focused tests for optional merchant tax, item overrides/exemptions, inclusive/exclusive prices, discount allocation, payment allocation and item refunds. Validates stored snapshot arithmetic before allocation.
+- Extends `lib/payments/calculateFee.ts` with an optional pre-tax percentage basis. Existing callers retain their current behavior; gross still controls the flat-fee microtransaction threshold. Records Owner-approved rules in `docs/contracts/980-merchant-tax-phase-a.md`.
+- Adds whitelisted settings parsing, explicit major/minor conversion for NGN/USD/GBP/CAD, and an unapplied draft configuration migration. No existing amount is rescaled.
+- Local regression verification: 147 tests passed, zero skipped across six files. Independent reviewer separately ran 81 tests across five files, zero skipped; reviewed the refund rounding correction and settings/schema tenant boundaries. These are local results, not CI or database policy execution evidence.
+- The subsequent integration adds merchant settings under Payments, catalog overrides/exemptions, authoritative order and service quotes, itemized negotiated quotes, invoices, receipts and refund controls. New tax configuration is limited to NGN/USD/GBP/CAD; legacy invoices in other currencies retain their existing single-rate behavior. Unsupported paid capabilities direct tax-enabled merchants to an itemized invoice or order.
+- Draft migrations528–533 add configuration, decimal money precision without rescaling, calculation authority, immutable transaction terms, and payment/refund allocation ledgers. Percentage fees use pre-tax amounts; existing flat-fee rules and both payment custody routes remain intact. Provider failures release allocation only with a confirmed outcome; uncertain outcomes remain held.
+- Merchant/admin refunds support explicit line amounts and zero-value quantity returns. Admin authorization binds the selection and request identity. Zero-value returns do not contact a payment provider. Receipts use stored tax terms, including partial payments and refunds.
+- Tax refunds account for refunded principal through immutable adjustment records. Affected merchant/currency pairs use lifetime balances and atomic payout creation so refunds before or after settlement reconcile correctly. Other legacy payout paths remain unchanged; merchant-connected funds stay outside the platform-held pool.
+- Invoice sends freeze reviewed financial terms before dispatch without claiming delivery. Recurring copies retain their original terms; existing cron-to-send authentication was not changed and automatic delivery is not certified by this work.
+- Supabase MCP read-only catalogs in staging and production confirm integer major-unit payment/order/booking/fee columns. Exact decimal persistence and corresponding RPC arguments, locals and return types are prerequisites for fractional tax totals. Independent review confirmed this feature-integration constraint, not an active-payment-defect claim.
+- Verification includes disposable PostgreSQL17 migration replay and generated catalog deltas, SQL authority tests, rendered merchant/admin forms, HTTP handlers with mocked providers, and independent draft reviews. Final revision evidence is maintained in `docs/contracts/980-merchant-tax-phase-a.md`; earlier test counts above are historical foundation checkpoints, not cumulative unique coverage or CI claims.
+- No deployment, staging/production migration, notification or real provider transaction occurred. Required CI and final release approval remain separate gates.
+
+### CI and quote compatibility follow-up
+- Scope: RefundModal type adapter, legacy reseller/ordering fixture compatibility, actual quote button/parser/handler snapshot binding, and draft M531/M533 untaxed negotiated-price compatibility with regenerated catalogs.
+- Verification: scoped independent review; 31 reseller SQL tests plus four concurrency scenarios, 42 ordering SQL tests, 35 quote/route/logging tests, 18 invoice SQL tests and five refund UI tests passed locally with zero targeted skips. Groups are not a unique combined count. Fresh remote CI remains required.
+- Risk: quote messages with non-null snapshots need the new terms-bound button; old snapshot-null quote behavior is preserved. Existing tax-unsupported currencies remain untaxed. Both payment custody routes and production deployment configuration remain unchanged.
+
+### Later migration-fixture compatibility
+- Updated only refund convergence and recurring finalization test fixtures to preserve immutable accounting provenance. All original assertions and runtime guards remain intact.
+- Restored the historical M356 projection signatures only within its existing migration replay fixture; current tax migrations are unchanged.
+- Disposable PG17 evidence: refund convergence 30 passed/zero skipped; recurring finalization 34 passed/zero skipped. Independent reviewer verified fixture boundaries. Existing dedicated CI teardown disposes retained rows; recurring suite requires a fresh database.
+
+### Payment identity test fixtures
+- Three existing database suites now seed payments with their owning business; entity ACL checks use exact current M531 signatures. Runtime code, accounting guards and assertion expectations remain unchanged.
+- Fresh disposable PG17: saved-card session 11, saved-card ACL 1, entity commit 70 passed, all zero skips. Historical replay tests require fresh databases; contaminated same-database reruns are excluded from evidence.
+
+### Offline approval fixture
+- M479 database test keeps its exact 5000 amount assertion numeric after money precision changes and leaves immutable accounting rows for existing dedicated database teardown.
+- Fresh disposable PG17: 21 passed, zero skipped; independently reviewed. Runtime payment behavior and guards unchanged.
+
+### Payout fixture currency compatibility
+- M440/M444 test fixtures now supply consistent NGN business/payout/adjustment identity and retain immutable provenance with isolated IDs. Assertions and runtime code are unchanged.
+- Fresh disposable PG17: M440 18 and M444 5 tests passed, zero skipped. Bounded later database suites also passed; remote verification remains required.
+
+### DB delta replay setup
+- Separate advisory replay now restores the approved M501 accounting entrypoints using the exact applied Git blob, through the existing local-only guarded helper. Both base/candidate paths are covered; default bootstrap behavior and catalog locks remain unchanged.
+- Full disposable PG17 CLI replay completed; 24 new/existing tests passed with zero skips. Advisory findings remain visible and are not release approval.
+
+### Taxed checkout retry (release review P1, Owner decision 2026-11-11)
+- What changed: a customer can pay again after a taxed checkout. While the earlier checkout is still open, a retry returns the same link (`openTaxCheckout` in `lib/payments/tax-authority.ts`, used by `initializePayment` in `lib/bot/flows/shared/payment.ts`). No second provider charge is created. When Stripe proves a checkout expired, the hold is released in one database step (`confirm_merchant_tax_payment_failure_980`). That release now happens in the `checkout.session.expired` webhook, and in the reconciliation cron when a webhook was missed. A new attempt is then allowed. No SQL changed.
+- What it affects: every hosted-checkout start for taxed orders, bookings and invoices (bot, `/api/invoices/pay`, public booking, balance requests, quotes, catalog orders). Untaxed payments keep the plain expiry update.
+- What could break: a retry within Stripe's expiry window gets the original (still valid) link. Taxed attempts now use a per-attempt Stripe idempotency key (`checkout_<reference>_<payment id>`, set only through `taxAttemptId` in `lib/payments/stripe.ts`), so a new attempt after expiry gets a new session instead of Stripe's cached expired one; a replay of the same attempt keeps its key. Untaxed payments keep `checkout_<reference>` because nothing else stops a second open session for them. The expiry webhook returns 500 (Stripe resends) if the payment lookup fails, instead of failing a taxed row without its release. Merged main (#981) and registered M528–M533 in `docs/MIGRATION_REGISTRY.md`.
+- Scope limit (Phase A): a *fresh* attempt after a failure works only for Stripe hosted checkout. Paystack and Flutterwave reuse the sale's reference as the provider reference, and Square/PayPal/Paystack `charge.failed` webhook failures do not release the hold, so on those gateways the customer keeps the same open link. The existing cron dispatched-recovery may release a Paystack attempt reported `abandoned` only when its link was never confirmed to the customer.
+
+## 2026-11-11 — Short WhatsApp links in the public directory (#984)
+
+- Owner request: directory WhatsApp buttons use the existing `/m/BOT_CODE` format, with the existing UUID fallback for missing or noncanonical codes. This updates the directory-only exception recorded on 2026-11-03.
+- `app/(marketing)/directory/DirectoryClient.tsx` now calls `buildShortMerchantLink`; the helper, API, channel readiness checks, routing and QR links are unchanged.
+- Updated directory surface and API-to-UI tests cover short links, fallback and unavailable assignments. Staging merchant-link tests also check that short codes and UUIDs reach the same designated US number across countries.
+- Owner-authorized CI-only publication: `vercel.json` and `admin/vercel.json` disable Git deployments only for `codex/directory-short-links`; the deployment-control test checks both exact exceptions. Other branches retain their existing deployment controls.
+- Could break: a changed canonical bot code would invalidate its short URL, so existing bot-code locking remains required. This branch cannot create Git preview deployments while its exception is present. No schema changes or deployments.
+
+## 2026-11-11 — Preserve channel routing during card setup
+
+- Preserve the verified originating WhatsApp channel when establishing Paystack save/replacement and Stripe activation PIN sessions, including activation recovery. This shared path serves every capability using post-payment card saving.
+- Fixes the staging case where accepting Save replaced session data and the next reply entered business discovery instead of PIN handling.
+- No migration, payment authority, shared-session selection, or consent-policy change. Risk: card-session continuation; tests cover the real PostgreSQL session-establishment/resolver boundary and wrong-channel rejection. Full CI and handset acceptance are tracked in the PR.
+
+## 2026-11-11 — Admin order reads and readable settings
+
+- Correct order customer/amount/item displays through an order-scoped protected read endpoint for admin, support and operations.
+- Correct Class Sessions pagination and detail rendering, and distinguish channel loading failures from empty results.
+- Replace supported raw settings/payload editing with labelled controls while preserving storage and authorization contracts.
+- Plan limit controls (max bookings, broadcasts, recipients) never write 0 when "Unlimited" is unticked: they restore the stored limit or require a whole number above 0 before saving. An existing 0 (Starter broadcasts) is kept.
+- Flat number settings (e.g. monthly conversation limits) never save 0 when a field is cleared: the field stays empty and Save is blocked until a number is entered; conversation limits need a whole number above 0 or 999999999 (unlimited).
+
+No payment writes, migrations, provider operations or deployment. See docs/contracts/admin-read-settings-fixes.md for acceptance scope.
+
+## 2026-11-11 — The messaging top-up popup scrolls, ready for longer package lists
+
+**Why:** the Owner asked on 2026-11-11 for more messaging-credit top-up options in every currency (for example ₦50,000 to ₦200,000 and $20 to $500). The packages themselves are the `messaging_topup_packages` setting, changed through the admin Platform Settings editor (up to 10 per currency), so no code is needed to add them. The top-up popup on the billing page could not scroll, though. With 7 options it is about 575px tall: on a 548px phone screen its title is cut off, and on a landscape phone (375px) "Continue to Payment" sits below the screen with no way to reach it.
+
+**What changed**
+- **`app/dashboard/billing/page.tsx`:** the top-up popup is limited to the screen height (with a 16px margin) and scrolls inside itself. It also has `role="dialog"` and an accessible name. Nothing else about the popup changed.
+- **`lib/__tests__/billing-topup-package-ladder.test.tsx` (new):** renders the billing page with 7 Nigerian packages. It checks that every package is shown, that the popup scrolls, and that choosing ₦200,000 sends exactly `20000000` kobo to `/api/messaging/topup`.
+
+**What it affects:** only the top-up popup layout on the merchant billing page.
+
+**Unchanged:** the package list, checkout validation (only a listed amount is accepted), Paystack/Stripe checkout, the credit grant, refunds, price per message, the monthly spend cap, fees and payment custody.
+
+**What could break:** nothing expected. On tall screens the popup looks the same as before.
+
+## 2026-11-11 — A bot reply refused for lack of messaging balance now tells the customer, and is no longer logged as sent (#976)
+
+**Why:** on TestBiz staging (2026-11-10/11) replies refused with `insufficient_allowance_balance` left the customer in silence. They also showed as sent in the saved transcript, and were still counted as outbound usage. The billing itself was correct.
+
+**The Owner decided on 2026-11-11 (#976):**
+- send the existing #682 notice (text unchanged, at most once per customer per 5 minutes);
+- remove refused replies from `conversation_log`;
+- refused `message_send_attempts` rows stay `pending_authorization`, which is now documented;
+- merchant spend-cap warnings are a separate follow-up PR.
+
+**What changed**
+- **`lib/bot/flows/executor.ts`:**
+  - **Refusal:** `sendMessages` stops the batch at a financial refusal and passes it up as `RefusedSendError`. The message is unchanged, so the #682 branch in `BotService.handleMessage` sends its notice. Other send errors (Meta 4xx/5xx and the rest) are still logged and the next message is still sent.
+  - **Plain text sends:** the executor's own text sends (validation errors, cancel/restart, back, step-not-found, media hints, custom step-override prompts and the rest) also carry a refusal up.
+  - **Transcript:** on a refusal, `execute()` removes the refused reply's line from `conversation_log`, together with every later bot line written in the same execution. It takes one extra session save, only on refusal; the save before sending is unchanged and a stale save writes nothing. Each bot line is written just before it is sent, and sends go in the same order, so none of the later lines reached the customer either. The refused line is found by the logged message object, or by its text among this execution's new bot lines. Lines that were already in the transcript when the execution started are never removed.
+  - **Usage tracking:** outbound usage is counted only when at least one message was sent. Usage tracking and the spend-threshold check are now kept alive with `after()`, like the #974 low-balance check.
+- **`lib/bot/financial-denial.ts` (new):** `isFinancialDenial` (the same three conditions as before) and `RefusedSendError`.
+- **`lib/bot/bot.service.ts`:** the #682 catch uses `isFinancialDenial`, same behaviour as before. The welcome-button catch now passes a refusal on instead of treating it as a non-fatal error.
+- **`lib/bot/handlers/keyword-actions.ts`:** same change for the keyword-action catch. Before this, these two catches would have swallowed the now-surfaced refusal, and the same message would have been routed a second time (reviewer finding on `4772109`).
+- **`lib/channels/attempt-recording.ts`:** comment only. It documents that `pending_authorization` with no `sent_at` and disposition `pending_authorization` means "blocked before sending".
+- **Tests:** `lib/__tests__/refused-reply-executor-976.test.ts` and `lib/__tests__/refused-reply-botservice-976.test.ts` (real BotService → executor → MetaCloudSender, with only the financial RPC faked). In `messaging-low-balance-executor-hook.test.ts`, the refused case now expects the refusal to be passed up.
+
+**What it affects:** customers of a business with no messaging balance (or at its spend cap) now get the #682 notice on platform scope, which Waaiio pays for. Admin Chat History no longer shows the undelivered replies. Billing, pricing, the financial gate and the attempt rows are unchanged.
+
+**What could break:**
+- **Callers:** there are 25 production `flowExecutor.execute` call sites, all under `lib/bot` and all inside `BotService.handleMessage`. Graphify indexed only 3–4 of them, so the list came from grep and an AST scan. The two catches that swallowed errors around them now pass a refusal on. No payment, webhook or cron path calls `FlowExecutor`.
+- **Sends outside `execute`:** catches that wrap plain business sends rather than `execute` (the conversational-AI layer, the default reply, action-dispatcher handlers) still treat a refusal as non-fatal, as before this change. A follow-up will look at them.
+- **Session step:** the session still moves to the step the customer never saw, as before.
+
+## 2026-11-11 — Receipts list what was bought, show deposits and the buyer's name, and broken receipt paths work again (#889)
+
+**Why:** the #889 audit found that receipts never listed the items bought, often printed "Customer" instead of the buyer's name, and that three paths were broken.
+
+**The Owner decided on 2026-11-11 (option B with i):**
+- receipts list what was bought;
+- a deposit shows the total, the amount paid and the balance due;
+- the buyer's own name is used;
+- the seller shown is the business name only.
+
+Re-checked at `c26cb3f7`, on staging and production:
+- `invoices.description`, `orders.delivery_name`, `order_items.product_name` and `campaigns.name` do not exist, but the code still selected them.
+- Bug B (orders without receipts) was already fixed: all 8 paid card orders on staging since 2026-11-02 have a receipt.
+- Bug D (WebP logos) was fixed in #901.
+
+**What changed**
+- **`lib/pdf/receipt-generator.ts`:**
+  - **Item table:** an optional `items` list adds a table with Description, Qty, Unit price and Amount. It shows up to 6 rows; any more are summed up as "+N …". Amounts and headers shrink to fit their column, so they never wrap into the next row.
+  - **Deposits:** the optional `totalDue` and `balanceDue` print Total, Amount paid and Balance due, but only when the balance is above 0.
+  - **Long receipts:** a safety guard moves the totals to a second page if they would run into the footer. No current caller produces a receipt that long.
+  - **Unchanged:** without these fields, the receipt prints exactly as before.
+- **`lib/pdf/localize-pdf.ts`:** the new receipt labels reuse each language's existing invoice wording (`makeBundle`), so there are no new translations.
+- **`lib/receipts/line-items.ts`** (new, read-only):
+  - order lines: product name plus variant, quantity, unit price and line total;
+  - invoice lines from `invoice_items`;
+  - ticket lines: the event name, with ticket type × quantity once issuance state exists.
+  - A failed lookup (an error or a throw) gives no items, and the receipt still goes out.
+- **`lib/payments/entity-balance.ts`:** `getEntityBalance` also accepts `orderId`, using the same #381 payment-history rule. Existing booking and reservation callers are unchanged. Order deposit lines are shown only when the payment is linked by `payments.order_id`; a legacy link through metadata only is missing from that history.
+- **`lib/payments/send-confirmation.ts`:**
+  - **Invoices:** the invoice lookup no longer selects the missing `description`, so online invoice payments resolve their business again. Before this, they returned `no_business_resolved` and sent nothing. The service line is now "Invoice <ref>".
+  - **Tickets:** they name the event instead of "Payment". This also changes the "📋" line of the customer's WhatsApp confirmation and the owner's payment email.
+  - **What the receipt receives:**
+    - the items for orders, invoices and tickets;
+    - deposit lines for bookings, reservations and orders;
+    - the buyer's name, taken from the booking guest, reservation guest, invoice customer or donor, and otherwise from the account profile.
+  - **The owner's order alert** (both the manifest and the legacy path) now selects existing columns and lists product names. Before, its query failed and the alert was skipped.
+- **`lib/bot/flows/shared/post-completion.ts`:**
+  - **New receipt-only options:** `receiptCustomerName`, `receiptItems`, `receiptTotalDue` and `receiptBalanceDue`.
+  - **Unchanged:** `customerName` still drives the CRM profile and loyalty name.
+- **`lib/receipts/generate-direct.ts`** (the "receipt" command):
+  - **Donations:** it uses `campaigns.title`, so a paid donation can be found.
+  - **Subscriptions:** it no longer selects the missing `subscription_charges.reference_code`, so subscription receipts are found again. The ref is `gateway_reference`.
+  - **Buyer's name:** the name given on the booking, or on the booking linked to a payment, or the donor name comes first, then the account name.
+  - **Unpaid bookings:** pending (unpaid) bookings are no longer offered as receipts.
+  - **Currency:** it uses the payment's or donation's own currency.
+  - **Logo:** payment receipts include the logo.
+  - **Items:** order and ticket receipts list items.
+  - **Part-paid bookings:** these show the amount paid so far and the balance due, instead of the full price as if it were paid. A booking with nothing paid online (walk-in, pay at venue) prints as before.
+- **Tests:**
+  - new:
+    - `lib/pdf/__tests__/receipt-items-889.test.ts`
+    - `lib/__tests__/receipts-confirmation-889.test.ts`
+    - `lib/__tests__/receipt-command-889.test.ts`
+    - `lib/__tests__/receipt-line-items-889.test.ts`
+  - extended: `lib/pdf/__tests__/receipt-caller-level.test.ts`
+
+**Affects:**
+- Every payment receipt PDF.
+- The customer's WhatsApp confirmation for tickets and invoices (the "📋" line).
+- The owner's new-order WhatsApp alert.
+- The "receipt" command.
+
+**Unchanged:**
+- Amounts charged, currency, fees and payment routes.
+- The set of effects each payment type registers (`computeApplicableEffects` is untouched). But online invoice payments now get past `no_business_resolved`, so their customer WhatsApp, receipt and owner alerts run for the first time. Production had 0 payment rows on 2026-11-11, so there is no backlog that could be confirmed late.
+- The CRM and loyalty names.
+
+**Could break:**
+- **Item totals:** the item lines may not add up to the total paid when an order has delivery, add-ons or a discount, or an invoice has tax or a discount. The total printed is still the amount actually paid.
+- **"Amount paid":** on the automatic receipt it is this payment; on the "receipt" command it is everything paid so far. With three or more instalments, Total minus Amount paid will not equal Balance due on the automatic receipt.
+- **Partial refunds:** the refunded amount shows as Balance due, which follows the #381 rule.
+- **Ticket type:** this shows only once ticket issuance state exists. Until then, the ticket line uses the event name.
+- **Rounding:** the ticket unit price is the booking total divided by the quantity.
+- **"Receipt" command:**
+  - it still has no items for invoices;
+  - booking rows have no currency column, so they use the business country, as before.
+- **Unchanged pre-existing gaps, recorded on #889 as follow-ups:**
+  - the `.or()` phone filter in `generate-direct.ts` still does not use `sanitizeFilterValue`;
+  - transaction history and the annual statement still select `campaigns(name)` and `invoices.invoice_number`, so donations and invoices are missing there;
+  - the duplicate route `app/api/receipts/generate/route.ts`, which has no in-repo caller, keeps the old bugs;
+  - orders have no buyer-name column, so order receipts use the account name.
+
+## 2026-11-11 — 30-day account deletion stops pretending, and rule tags are saved on the merchant's customer list (#887)
+
+**Why:** code read and wrote `profiles.metadata`, a column that has never existed on staging or production. As a result:
+- a 30-day account deletion said "scheduled" but saved nothing, while still cancelling the merchant's customer subscriptions and closing bot chats;
+- the dashboard's "Cancel Deletion" button and banner could never work;
+- the "Assign tag" rule never saved its tag.
+
+Re-checked at `647d887b`. In both databases `profiles` has no `metadata` column and no deletion, status or tag column. `customer_profiles.tags` exists, unique by (business, phone).
+
+**The Owner decided on 2026-11-10** ("Yes, all three", recorded on #887):
+- (1B) refuse a 30-day deletion until it is really built;
+- (3A) save rule tags on that business's own customer record, creating the record if it is missing;
+- (2A) make admin Suspend a real sign-in ban. This is **not in this change** (see below).
+
+**What changed**
+- **`app/api/account/route.ts`:**
+  - **30-day deletion:** `DELETE` with `{ gracePeriod: true }` now returns `409` with code `grace_period_unavailable` and the message "We couldn't schedule a 30-day deletion. Nothing has been changed. Please contact support@waaiio.com to delete your account." It returns before any subscription is cancelled, any bot chat is closed, any audit row is written or any email is sent. The never-working scheduling block is removed.
+  - **Cancel deletion:** `PATCH` now answers `400 No deletion scheduled` for a signed-in user without reading the missing column.
+  - **Immediate deletion:** unchanged. Its own problems remain recorded on #887 for a separate lane.
+- **`app/dashboard/page.tsx`:** removed the scheduled-deletion check (a `profiles.metadata` read), the banner and the Cancel Deletion button. They could never show, because nothing can be scheduled.
+- **Settings → Delete account:** no change. It already shows the server's error inside the modal, so an owner who picks the 30-day option now sees the message above and stays signed in.
+- **`lib/bot/automation/rules-engine.ts`:** `assign_tag` now adds the tag to `customer_profiles.tags` for the rule's own business, matched by business and the "+" phone number, without duplicates.
+  - If there is no record, it creates one (business, phone, tags). If the record was created at the same moment (unique-key `23505`), it tags that record instead.
+  - A failed lookup, create or update throws (`assign_tag_lookup_failed`, `assign_tag_create_failed` or `assign_tag_update_failed`), so `evaluateRules` logs it per rule as before.
+  - It no longer looks a person up across the whole platform `profiles` table. The unused `sanitizeFilterValue` import is removed.
+- **Tests:**
+  - new: `lib/__tests__/account-deletion-grace-887.test.ts` (route handlers) and `lib/__tests__/dashboard-no-deletion-banner-887.test.tsx` (rendered dashboard);
+  - `lib/bot/automation/__tests__/rules-engine-actions.test.ts`: the old "persists the tag in profiles.metadata" test is replaced by 10 `customer_profiles` tests;
+  - `lib/__tests__/data-deletion-page-402.test.ts`: two source assertions that expected the removed banner and the `deletion_scheduled` code now assert the new behaviour.
+
+**Not changed / follow-ups**
+- **Admin Suspend (2A)** comes in the next lane. The step-up table only accepts a fixed list of action names, enforced by the database (`admin_step_up_authorizations_action_type_check`), so the Owner chose (2026-11-11) one small migration that adds `user_suspension`, kept in step with the source-only M496 (#799).
+- **The public `/data-deletion` page** still describes the 30-day option and the Cancel Deletion button. Changing that wording on a page Meta requires is a separate Owner copy decision.
+- **The real 30-day deletion (1A)** gets its own migration-first lane. The Owner answered its three product questions on 2026-11-11: pause the bot during the wait; cancel subscriptions at request time; keep money records after deletion.
+
+**What could break:** an owner who picks the 30-day option now gets an error instead of a false "scheduled" message. That is intended. A rule with "Assign tag" now creates a customer record for a phone the business has never seen. This matches what the bot does when someone chats. No migration, and no change to RLS, grants or payments.
+
+## 2026-11-10 — Validate launch templates before confirmation and delivery
+
+- Changed `lib/launch/delivery.ts`, added `lib/launch/template-readiness.ts`, and updated `app/api/admin/launch-notify/route.ts` to require the configured template name, language, and approved status on each selected sender before confirmation and delivery. Provider and sender lookup errors fail closed; claimed lookup failures complete as failed.
+- Preview and delivery share a bounded, deterministic candidate query, including same-campaign failed recipients when retrying. Existing admin authorization, consent, confirmation scope, and claim fencing remain enforced.
+- Added provider-readiness, retry-count, claim-error, and HTTP-handler tests. Focused local suite: 108 passed, zero skipped. Provider calls are mocked; no live messages sent.
+- Affects launch notifications only. Meta catalog outages now block preview/send, and additional catalog reads can increase batch latency. No migration, deployment, template creation, production setting change, or notification is included.
+
+## 2026-11-10 — Staging: every business uses the one US WhatsApp number (migration 527)
+
+**Why:** Owner rule 2026-11-10: every staging business, whatever its country, uses the existing US shared number +1 240 471 2139; the business keeps its country for currency, pricing, gateway, fees and messaging costs; production is unchanged. Incident: TestBiz's staging merchant links showed "WhatsApp Unavailable" because the staging shared channel row carried a `business_id`. The row was repaired separately (Owner-authorized). How the value got there is not provable from history; no code path in the repository writes it, and the row was most likely made by hand on 2026-09-25 with the "Waaiio test" business.
+
+**What changed**
+- `lib/channels/staging-whatsapp-routing.ts` (new): the single staging policy. Gate = server-only `WAAIIO_ENVIRONMENT=staging` plus staging Vercel/Supabase identity. Designated channel pinned by row id and phone number; fails closed if missing, inactive, disconnected, not shared, business-owned or mismatched.
+- `lib/onboarding/whatsapp-readiness.ts`: removed the finite staging fallback list (NG/GB/CA/GH → US). `SHARED_CHANNEL_FALLBACK_COUNTRIES` is production-only (GH → NG). Staging readiness accepts only the designated number, for any business country. Both allocation paths (`allocateSharedChannelWithFallback`, `assignFirstSharedChannel`) assign only the designated number in staging and never search by country.
+- `lib/channels/channel-resolver.ts`: in staging, shared lookups return only the designated number; a business pointer to another shared number is ignored; no "any shared number" fallback.
+- `app/m/resolve.ts`: passes the channel id and number to the readiness check.
+- `supabase/migrations/527_shared_channel_has_no_owner.sql`: CHECK constraint `chk_shared_channel_has_no_owner` (a shared channel can never have a `business_id`). Refuses to apply, changing nothing, if any shared row still has one.
+- Tests: `lib/onboarding/__tests__/staging-shared-us-routing.test.ts` (rewritten for the new rule), `lib/channels/__tests__/staging-designated-channel-resolver.test.ts`, `lib/__tests__/staging-merchant-links.test.ts`, `lib/__tests__/flow-onboarding-staging-confirmation.test.ts`, `lib/__tests__/shared-channel-has-no-owner-527.pg.test.ts`; CI wiring in `.github/workflows/ci.yml`; `supabase/catalog-deltas/527_shared_channel_has_no_owner.json`.
+- `docs/WHATSAPP_ENVIRONMENT_ROUTING.md`: universal staging rule, enforcement map, invariant and incident record.
+
+**Affects:** staging only at runtime (allocation, readiness, `/m/` links, sign-up confirmations, outbound shared sending). Production code paths are unchanged. M527 affects both databases once applied.
+
+**Could break:**
+- In staging, a business assigned to any shared number other than the designated one is now "not ready" and cannot send until moved (read-only inventory on 2026-11-10: none).
+- If the designated staging row is ever replaced, `STAGING_SHARED_WHATSAPP_CHANNEL` must be updated in the same change.
+- M527 fails on any database that still has an owned shared channel; check read-only before applying.
+- Staging allocation still needs one of the server-only switches (`ENABLE_CHANNEL_ALLOCATION_OPERATIONS` or `ENABLE_FIRST_SHARED_ASSIGNMENT`); neither is set on the staging project today.
+
+## 2026-11-10 — Staging: the remaining direct shared-number lookups use the designated US number
+
+**Why:** follow-up to PR #970 (Owner rule 2026-11-10: every staging business, whatever its country, uses the US shared number +1 240 471 2139; production unchanged). Both #970 reviewers flagged server paths that still picked "a shared WhatsApp number" themselves (`channel_type = 'shared'` plus a country filter or `limit(1)`), bypassing the staging rule. While staging has a single shared channel most of these paths already landed on it; the exception found by code trace is merchant-notification WhatsApp invitations, which returned "not ready" for every non-US staging business (they looked for a shared number in the business's own country).
+
+**What changed** (staging only; each production query is left exactly as it was)
+- `lib/channels/staging-whatsapp-routing.ts`: new `loadStagingDesignatedChannel()` — reads the designated row by its pinned id and returns it only if `stagingDesignatedChannelProblem()` passes; the token columns are read only when asked for.
+- `lib/channels/channel-resolver.ts`: `resolveByChannelIdForBusiness` refuses a shared channel other than the usable designated one in staging (every caller already handles `null`: it skips the send, or, for non-WhatsApp-origin confirmations, uses `resolveByBusinessId`, which #970 already made staging-safe).
+- `app/api/auth/otp/send/route.ts`: the primary OTP sender is the designated number (Meta provider). If it is unusable the primary refuses and the existing env-credential fallback runs, as before.
+- Links shown to customers: `app/api/checkin/route.ts`, `app/api/forms/public/[token]/route.ts`, `app/api/invoices/public/[token]/route.ts`, `app/payment-success/page.tsx` — the shared fallback is the designated number for any country; if it is unusable they fall back to the business phone, as they already did when no channel exists.
+- `app/api/launch/regions/route.ts`: lists only the designated number (as a US region).
+- `lib/launch/delivery.ts`: `resolveChannelCredentials` returns the designated number's credentials only when the subscriber signed up on it; otherwise none (delivery records `no_channel_credentials`, as before).
+- `lib/merchant-notifications/enrollment.ts`: `sharedChannel` returns the designated number for any business country; a business pointed at another shared number gets none.
+- `lib/bot/customer-updates-optin.ts`: the Waaiio sender recorded for a new launch subscriber is the designated number.
+- Tests: `lib/__tests__/staging-direct-shared-lookups.test.ts`, `lib/__tests__/staging-payment-success-shared.test.tsx`, fixtures in `lib/__tests__/helpers/staging-channels.ts`.
+
+**Not changed, on purpose:** inbound identification (`lib/bot/launch-optin.ts` market label, `lib/bot/bot.service.ts` shared-number country) — the number a message arrived on identifies the channel, as documented in `docs/WHATSAPP_ENVIRONMENT_ROUTING.md`; the dashboard shared-target preview (`app/api/settings/whatsapp-channel/route.ts`, authority is the `channel_change_shared_target` RPC); the admin campaign channel list; the `whatsapp_channels_public` fallback; the payment-success exact-origin path.
+
+**Residual (follow-up, not in this PR):** the `supabase/functions/chat-timeout` edge function picks its own channel (dedicated → country shared → any shared) and does not apply the staging rule. No effect today: staging has one shared channel and no `cron.job` schedules the function (read-only check, 2026-11-10). Likewise the browser-side number lookups in `app/dashboard/keyword-campaigns/page.tsx` and `app/get-started/OnboardingWizard.tsx` (display only). Staging OTP: the designated row has no stored token, so OTP still goes out through the env fallback, as before.
+
+**Affects:** staging only at runtime. Production code paths run the same queries in the same order with the same results (tests record and compare the exact query chains).
+
+**Could break:**
+- In staging, if the designated row is missing, inactive, disconnected, owned or mismatched, these paths now show the business phone / send nothing instead of another shared number.
+- Staging launch subscribers recorded on a number other than the designated one are no longer sent to (none expected: staging has one shared number).
+
+## 2026-11-10 — Release oracle models the M501 accounting finalizers; M525 catalog delta regenerated
+
+**Why:** the release #7 prepare run (42833727053) stopped on M525. Findings are on PR #961.
+- Production and staging ran the M501 accounting installer through an Owner-approved packet. That installer swapped in new bodies for `finalize_token_recurring_charge` and `finalize_stripe_recurring_charge`.
+- The release oracle replays migration files only, so it kept the older M335/M339 bodies.
+- M525 rewrites those functions in place. As a result, the committed M525 catalog delta expected after-values that neither environment can have.
+- Production and staging are correct: the M501 body plus M525's rewrite reproduces their live bodies exactly.
+
+**What changed**
+- `scripts/release-v3/catalog-oracle.mjs`
+  - After replaying M501, `installAccountingFinalizers` runs the installer's own SQL for those two finalizers. The SQL comes from the `EXECUTE $recurring_finalize_…$` blocks in the M501 file.
+  - It then requires each function's catalog digest to equal the object recorded in both approved locks (`lock-catalog-production.json` and `lock-catalog-staging.json`). If either differs, generation fails.
+  - It also fails if M501 is missing.
+- `supabase/catalog-deltas/525_feature_trial_clock_and_no_trial_fee_waiver.json`: regenerated by the oracle in CI. Only the two finalizers' after-values change.
+- `scripts/__tests__/release-v3-oracle-accounting.test.ts`: covers the block extraction (exactly once, closed, one CREATE each), the order of the installs and the catalog read, and fail-closed results when a digest differs or a lock lacks the object.
+- `.github/workflows/ci.yml`: the Main App job now requires that test file to exist.
+
+**Unchanged:** no migration, no production or staging change, and no change to admission rules. The gate still compares the lock plus deltas against the live catalog, so a wrong oracle can only cause a false failure.
+
+**Could break:**
+- If a future migration rewrites another function that the M501 installer swapped, that function must be added to `ACCOUNTING_INSTALLED`.
+- If the locks are re-bootstrapped with different finalizer digests, oracle generation fails until this list is reconciled.
+
+## 2026-11-10 — Low messaging-balance alerts for merchants (dashboard + email)
+
+**Why:** TestBiz staging, 10 Nov 2026. A non-expiring NGN top-up (₦15,000) ran down to 900 minor units while each reply cost 1300 (₦13, config version 6205a7a2). Every later reply was refused with `insufficient_allowance_balance` and the merchant got no warning. The ledger, the price and the refusal were verified as correct; no merchant or admin low-balance alert existed (`checkSpendThresholds` covers the monthly spend cap only). Owner request: alerts at 200, 100 and 50 estimated messages plus a money threshold per country/currency, starting with ₦250 for Nigeria.
+
+**What changed**
+- `lib/messaging/low-balance-alerts.ts` (new): `checkLowBalanceAlerts(supabase, businessId)`.
+  - Billing facts are read where billing reads them (`check_or_authorize_send` / `authorize_message_send`): the newest effective `platform_config_versions` snapshot. No alert while its `messaging_financial_gate` is not `true` (balances are not enforced then). Currency = the one currency whose `rates` name the business country (none or two: no alert, as billing refuses). Rate for a bot reply = `rates[country].service`, then `rates[country]['*']`, then `default_cost_minor`.
+  - Balance = `remaining_minor` of the business's non-expired allowances in that currency (as authorization spends them). Allowances in other currencies are ignored.
+  - Estimated messages = balance / that rate (marketing templates cost more, so it is an upper bound).
+  - Levels: `platform_settings` key `messaging_low_balance_alerts` (`message_thresholds`, `money_thresholds_minor`). Code defaults `[200, 100, 50]` and `{ NGN: 25000 }` (₦250) apply while no row exists; malformed parts fall back to the default. No settings row is written by this change.
+  - Only the most urgent level reached is raised; passed levels are not sent late.
+  - Record: an `alerts` row, type `messaging_low_balance`, on the existing merchant dashboard alerts (bell, banner, alerts page). Severity `warning` at 200/100, `critical` at 50 and the money level.
+  - Email to the owner (Resend via `sendEmail`, no immediate resend). The outcome is written on the alert as `provider_accepted` (with the provider id), `failed`, or `not_sent` (`no_owner_email` / `email_not_configured`). It is never recorded as delivered.
+  - An email left `pending` (the function stopped before recording) or `failed` is sent again by a later check after 10 minutes, at most 3 attempts in all. The retry first claims the row (an update that applies only while `claimed_at` is unchanged), so two checks cannot both send it. `not_sent` is not retried.
+  - Deduplication: the alert id is a fixed UUID derived from business, currency, newest allowance and level. The existing `alerts` primary key refuses a second copy (23505), also from two sends at once; only the inserting send emails.
+  - Reset on top-up: every top-up or other credit grant creates a new allowance row (verified on staging), which gives new ids, so the levels alert again.
+- `lib/bot/flows/executor.ts`: `sendMessages` runs the check after each batch of bot replies, next to the existing spend-cap check, also when a send was refused. Non-blocking: it never throws into the reply, never sends WhatsApp and never changes a balance. The check is not awaited (the reply is not delayed) but is registered with Next's `after()`, so it keeps running after the webhook responds; outside a request (crons, tests) `after()` throws and is ignored.
+
+**Unchanged:** billing and authorization (`authorize_message_send`, allowances, ledger), prices, top-up packages, spend caps and their alerts. No migration, no data change.
+
+**Tests:** `lib/__tests__/messaging-low-balance-alerts.test.ts` (levels incl. the TestBiz numbers, config override and fallback, dedupe, two sends at once, falling through every level, big drop, top-up reset, expired credit, healthy balance, no credit ever, every email outcome, unreadable settings, id format; gate off/absent, config snapshot over live settings, rate order, no/ambiguous currency, foreign-currency allowance; stuck pending email resent after 10 minutes, failed email at most 3 attempts, no retry of not_sent, two retries at once send once); `lib/__tests__/messaging-low-balance-executor-hook.test.ts` (real `FlowExecutor.sendMessages`: check runs after an accepted send and after a refused one; a failing check does not break the reply).
+
+**Could break:**
+- Each bot reply batch does one business read and one `messaging_allowances` read (config version and thresholds are cached for 60 s per instance); once a level is reached, one primary-key read of `alerts` per batch.
+- When an allowance expires (e.g. an unused trial credit) the balance can drop to 0 and the owner is told to top up, although subscribing may be their next step. Any new allowance (including a small promotional or monthly included grant) re-arms the levels, so a still-low balance can alert again. Two checks that reach different levels at the same moment can both alert.
+- Only bot replies trigger the check. Balance used by broadcasts, reminders or other senders is noticed on the next bot reply.
+- The email ignores the merchant notification preferences (there is no low-balance toggle in Settings yet), like other billing notices.
+- Merchants can update their own `alerts` rows (existing RLS), so the recorded email outcome is not tamper-proof; it is not a delivery or billing record.
+
+## 2026-11-10 — Client intake forms: services setting, client page and booking status (#963 lane 2)
+
+**Why:** Owner decisions (2026-11-10, #963) let a Pro, Premium or trial business link one of its forms to a service. The client answers on a private page, and the business sees the answers on the booking. This lane uses the M526 database objects (PR #966). Sending the link is lane 3.
+
+**What changed**
+- **Services page** (`app/dashboard/services/page.tsx` and the new `components/dashboard/ServiceIntakeSettings.tsx`):
+  - New "Client intake form" setting: pick the form, when (before or after the booking is confirmed) and how often (first booking only or every booking).
+  - It is shown only to businesses on Pro or Premium or in their trial (`getLimitTier`).
+  - A business that is no longer entitled sees its link marked paused and can remove it.
+  - Forms with a file question can't be chosen (Owner decision 2026-11-10: not for now).
+  - A failed save now shows a message and keeps the form open. It used to fail silently.
+- **Service payload** (`lib/services/payload-builders.ts`): `buildServicePayload` accepts an optional `intake`. If the caller leaves it out, no intake columns are sent, so other callers are unchanged.
+- **Client intake page** (`app/intake/[token]/page.tsx` and `components/intake/IntakeFormView.tsx`): a private page for one client's link. Search engines don't index it and browsers don't pass its address to other sites (no-referrer).
+- **Intake API** (`app/api/intake/[token]/route.ts`):
+  - `GET` and `POST`, rate limited. The record is looked up by the sha256 of the link token.
+  - The response never includes the client's phone or their saved answers.
+  - Answers are checked on the server first (`lib/intake/answers.ts`: field ids, types, options, lengths), then saved through `submit_booking_intake_526`.
+- **Bookings page** (`app/dashboard/reservations/page.tsx` and the new `components/dashboard/BookingIntakePanel.tsx`): the booking detail shows "Done" with the answers, "Intake not done" or "Not sent". "Not sent" appears only on upcoming bookings that are not cancelled (Owner decision 2026-11-10). It reads only through the owner's RLS.
+- **Analytics never runs on intake links** (`components/PostHogProvider.tsx`): PostHog doesn't start on `/intake/` pages, and a `before_send` hook drops any event that names an intake URL. The intake page also carries `ph-no-capture`, so no click, answer or link token can reach analytics (review finding P1).
+- **Sentry never receives intake link tokens** (`lib/sentry-redact.ts`, `sentry.client.config.ts`, `sentry.server.config.ts`, `sentry.edge.config.ts`): errors, spans and breadcrumbs are scrubbed. `/intake/{token}` and `/api/intake/{token}` become `[token]` (tokens are 32+ characters, so code paths are untouched). Scrubbing works on copies, so the app's own logged objects are never changed. Nothing else in Sentry changes (Codex review P1).
+- **Tests:**
+  - `lib/__tests__/intake-answers-963.test.ts`: answer checks and payload.
+  - `lib/__tests__/intake-route-963.test.ts`: route handlers.
+  - `lib/__tests__/intake-ui-963.test.tsx`: the three screens, rendered.
+  - A one-line type fix in `lib/__tests__/booking-intakes-526.pg.test.ts`.
+
+**Could break:**
+- A save that the database used to reject without anyone noticing now shows an alert.
+- If a form's questions change after a link is sent, the client is asked to reload the page.
+- Nothing sends intake links yet, so no client sees the page until lane 3 ships.
+
+## 2026-11-10 — Client intake forms: sending links, the bot step and reminders (#963 lane 3)
+
+**Why:** this is the last lane of #963. A service's linked intake form now reaches the client on WhatsApp.
+
+The Owner decided on 2026-11-10:
+- a before-booking link lasts 24 hours;
+- an after-booking link lasts until the session starts;
+- links are sent only inside the client's 24-hour window, never by template;
+- a booking that needs approval gets its form when the business approves it;
+- this covers services only, not Appointments.
+
+Later the same day the Owner also decided:
+- a database glitch never blocks a booking;
+- a team member's confirmation sends the form;
+- an unticked "send confirmation" sends no form;
+- the public booking page is included:
+  - a before-booking form is answered inside the page;
+  - an after-booking link goes by email, with an on-screen button for free bookings;
+  - the phone is required only for services with a form.
+
+**What changed**
+- **`lib/intake/send.ts`** (new): creates intake links and sends them.
+  - It checks the plan (`resolveLimitTier`), first-booking-only, STOP opt-outs and the 24-hour window (`businessChatWindowState`). It also checks that the form is usable on the intake page.
+  - Only the sha256 of the 43-character token is stored. The token is never logged.
+  - If WhatsApp refuses the send, the intake row is removed, so the booking shows "Not sent".
+  - The reminder claims `reminder_sent_at` before sending. If the send fails, it releases the claim and restores the link the client already has.
+  - The reminder checks the booking first. It skips cancelled or deleted bookings. For a rescheduled booking it moves the link's expiry to the new start instead of reminding at the old time. It also skips a link that was first sent less than 25 hours before the session, because that first message already is the reminder.
+  - Session start is converted from the business timezone in two passes, so it stays correct across daylight-saving changes.
+- **`lib/bot/flows/scheduling.flow.ts`:**
+  - **New `intake_form` step** after the pre-booking questions. It skips appointments, table bookings, classes, reschedules, unentitled businesses and clients who already answered. For first-booking-only forms, the client's own answer in this booking does not count as an earlier one.
+    - It sends the link with "I've filled it" and "Send a new link" buttons, then waits until the answers arrive. The booking and payment start only after that.
+    - The link is kept while still valid, and is replaced only on request or once it expires.
+    - The link is protected from translation.
+    - "Back" into the step after answering shows "We already have your answers" instead of an error. If the intake cannot be read just now, the open link is kept.
+  - **`create_booking`** attaches the answered intake to the new booking, but only for the same service. `linkIntakeToBooking` also checks `service_id`. For a free, confirmed booking, it adds the after-booking link to the confirmation reply, just above the next-steps menu, which stays last. The intake row is saved only after that reply reaches WhatsApp. A bot reschedule moves a pending link's expiry to the new start.
+- **`lib/payments/send-confirmation.ts`:** after a finalized payment confirmation, sends the after-booking form, non-blocking and on the same channel.
+- **`app/api/bookings/create-manual/route.ts`:** sends the form for bookings the business makes by hand, non-blocking, only when "send confirmation" is ticked. Per the #963 decision, a before-booking form is sent here as in after mode.
+- **`app/api/dashboard/pending-transfers/[id]/route.ts`** and **`.../[id]/approve/route.ts`:** a bank-transfer booking that becomes confirmed (in one step, or approved later) sends its after-booking form, non-blocking.
+- **`lib/bot/flows/types.ts`** and **`lib/bot/flows/executor.ts`:**
+  - new optional `_afterSend` on a prompt message. It runs once after that message was handed to WhatsApp, and never when the message is not sent.
+  - the saved bot transcript (`conversation_log`) records intake links as `/intake/[token]`, so the token is never stored there. The client still receives the full link.
+- **`app/api/intake/after-confirm/route.ts`** (new; owner or active team member, via `resolveBusinessRole`): the Bookings and Calendar pages (`app/dashboard/reservations/page.tsx`, `app/dashboard/calendar/page.tsx`) call it when the business confirms a booking.
+- **Public booking page:**
+  - **`app/api/bookings/public/intake/route.ts`** (new): for an OTP-verified client, opens the service's before-booking intake and returns its token once.
+  - **`app/api/bookings/public/create/route.ts`:**
+    - a service with a form needs the phone number;
+    - a before-booking form must be answered first (409 `intake_required`), then it is linked to the booking;
+    - a free booking emails the after-booking link and returns it for the confirmation screen.
+  - **`app/b/[slug]/page.tsx`** and **`BookingForm.tsx`:** the phone is required for services with a form. The form is shown inside the page before "Book", and Back then Continue keeps the form already answered. The free-booking confirmation shows "Fill in your form".
+  - **`components/intake/IntakeFormView.tsx`:** new `onDone` option to show the form inside the booking page. A link from a booking-page booking says "You can close this page now." instead of "go back to WhatsApp".
+  - **`app/api/intake/[token]/route.ts`:** returns `from_web`.
+  - **`lib/intake/send.ts`:**
+    - a booking-page booking is recognised by its `source: 'public'` marker (M518);
+    - its after-booking link goes by email, never WhatsApp, and it gets no WhatsApp reminder;
+    - "answered before" is kept apart by channel:
+      - on the web it counts only answers on booking-page bookings, by verified email, never by the typed phone;
+      - on WhatsApp it counts only answers linked to a non-web booking, by phone;
+    - new `webBeforeBookingForm` and `findWebIntake`.
+- **`app/api/bookings/[id]/reschedule/route.ts`:** a dashboard reschedule moves a pending after-booking link's expiry to the new start (`syncIntakeExpiry`). A new start that has already passed ends the link at once.
+- **`app/api/cron/intake-reminders/route.ts`** (new, hourly in `vercel.json`): one reminder for unanswered after-booking forms whose session is 22–25 hours away. It works through due intakes page by page, within a 45-second time budget.
+- **Tests:**
+  - `lib/__tests__/intake-send-963.test.ts`
+  - `lib/__tests__/intake-bot-963.test.ts`
+  - `lib/__tests__/intake-routes-963.test.ts`
+  - `lib/__tests__/intake-create-booking-963.test.ts`
+  - `lib/__tests__/intake-transfer-hooks-963.test.ts`
+  - `lib/__tests__/intake-manual-963.test.ts`
+  - `lib/__tests__/intake-public-963.test.ts`
+  - `lib/__tests__/intake-public-create-963.test.ts`
+  - `lib/__tests__/intake-booking-page-963.test.tsx`
+  - `lib/__tests__/intake-reschedule-963.test.ts`
+  - additions to `lib/__tests__/intake-ui-963.test.tsx`
+  - the shared helper `lib/__tests__/helpers/intake-fake-db.ts`
+
+**Affects:**
+- Services that link an intake form, on Pro/Premium/trial businesses.
+- On the public booking page, a service with a linked form now needs the client's phone number.
+- Everything else is unchanged.
+
+**Could break:**
+- A before-booking service now needs the client to answer before the booking is made.
+- After-booking forms and reminders are skipped whenever the client's 24-hour window is closed (by design).
+- A booking rescheduled through any path other than the bot or the dashboard reschedule route keeps the old link expiry.
+- Other paths that confirm bookings (external-booking integration, automation rules, recurring charges) do not send intake forms yet.
+- Team members cannot confirm bookings in the dashboard today, because the bookings table lets only owners update. The send route already accepts them for when that opens up.
+- Booking-page clients get no reminder: the email is their only link.
+- The email and the new page text are in English only.
+- Session start uses `businesses.timezone`, which defaults to Africa/Lagos and is often unset. The existing booking reminders share this limit.
+
+## 2026-11-10 — Client intake forms: database (migration 526, #963 lane 1)
+
+**Why:** Owner decision 2026-11-10 (#963). A business can link one of its forms to a service. It picks when the form is sent (before or after the booking is confirmed) and how often (first booking per client, or every booking). Pro and Premium only, including the trial.
+
+**What changed**
+- `supabase/migrations/526_booking_intake_forms.sql`:
+  - `services.intake_form_id`, `intake_timing`, `intake_frequency`. The form must belong to the same business, and deleting the form unlinks it.
+  - A plan guard trigger: setting or changing a link needs Pro, Premium or an active trial. Clearing a link, or editing other fields, is always allowed.
+  - A new `booking_intakes` table (one row per intake link). RLS lets only the owner read; only the server writes. Only the sha256 of the link token is stored. It has one row per booking and form.
+  - `submit_booking_intake_526(token, answers)` (service_role only). It saves one `form_responses` row with the intake's phone, and is idempotent.
+- `lib/__tests__/booking-intakes-526.pg.test.ts`: real-PostgreSQL proof of the guard, integrity, RLS and grants, submit (wrong or expired token, required answers, double and concurrent submit), and the final catalog.
+- `.github/workflows/ci.yml`: the pg test step requires the new test file, and the unit test run excludes it.
+
+**Affects:** nothing yet. No app code reads or writes the new objects until lanes 2 and 3.
+
+**Could break:**
+- Saving a service with a new intake link fails for Starter businesses after the trial. This is intended, and the dashboard UI (lane 2) must hide the option for them.
+- Adding unique indexes on `services (id, business_id)` and `bookings (id, business_id)` is a no-op for data, because `id` is already unique.
+
+## 2026-11-10 — "Any available" staff books a staff member instead of "time just booked"
+
+**Why:** TestBiz staging, 10 Nov 2026 ("Lashes Refil": `requires_staff`, two eligible staff). A customer chose "Any available". The bot sent no staff member; `book_slot_atomic` refuses a booking with no staff member for a service that requires staff and answers exactly like a full slot, so the customer was told "Sorry, this time slot just got booked" for a free time. This was a known "could break" item of the #919 entry. Evidence (staging DB, Vercel logs, Graphify at c26cb3f) was independently verified before this change.
+
+**What changed** (`lib/bot/flows/scheduling.flow.ts`, shared by scheduling and appointment bookings)
+- `select_staff.validate`: "Any available" (tapped, or typed "any" / "anyone") now stores `staff_id: null`, `staff_name: null` and `_staff_any: true`, so a staff member kept from an earlier pass (e.g. before "Change date") is dropped. A named pick stores `_staff_any: false`. `select_staff.skipIf` clears `_staff_any` on every new pass.
+- `create_booking` (standard `book_slot_authoritative_604` and package `book_with_package_authoritative_604` calls): when `_staff_any` is set and the service requires staff, the time is offered to each staff member shown on the staff step, least busy that day first (same rule as the staff step's own assignment), one booking-function call each, until one is accepted. Only a plain refusal (`slot_available: false` / `slot_full`) moves on; any error stops at once. Whenever no booking was made (every staff member refused, or an error), `staff_id` / `staff_name` are cleared again, so the next time list, confirmation or retry starts from "Any available". A booking this session already made is tried first with its own staff member, so a retry after a lost answer repeats the same request and gets that booking. When every staff member refuses, the existing "time just booked" message and time list are shown, now truthfully.
+- The expected terms sent with each try (`p_expected_terms`) always say `staff: null` for "Any available" (the confirmed choice) and match the confirmation claim (`_604_confirmation`); `p_staff_id` names the staff member being tried. (`private.scheduling_604_create_booking` refuses a request whose terms differ from the claim; `scheduling_604_quote` does not read `staff`.) Found by the independent reviews (first: terms rebuilt per try; second: a staff member kept after an error broke the retry).
+- Staff members kept from an earlier service (e.g. the staff step skipped by a merchant override) are only tried when the service's `staff_ids` names them.
+- `lib/bot/flows/shared/capability-transition.ts`: `_staff_any` is cleared on a capability switch.
+
+**Unchanged:** the database authority (`book_slot_atomic`, `check_staff_availability`, `private.scheduling_604_create_booking`): staff schedule, per-staff capacity and buffer, the slot lock and the confirmation-claim check run on every try; the claim itself still records what the customer confirmed. No migration. Named staff (one call, as before), services that do not require staff ("Any available" still books without a staff member), auto-assignment, tables, classes, reschedule, payments and prices.
+
+**Tests:** `lib/__tests__/any-staff-booking.test.ts` (real `select_staff` and `create_booking` steps): named staff, named staff refused, any staff (least busy first), first staff member unavailable then the next booked, every staff member refused after availability changed, never a call without staff, error stops the loop, retry after a lost answer, service without required staff, package booking, appointment-type service, no staff list, a list from an earlier service. Every booking test first runs the real confirmation step, and the mocked booking function refuses terms that differ from the stored claim, as the live one does; it also refuses a retry whose request differs from the one stored with the session's booking. Two-round tests: error then retry, booked with the answer lost then retry, error then a new confirmation. With per-try terms 7 of 18 fail; with the staff member kept after an error the 3 two-round tests fail.
+
+**Could break:**
+- "Any available" on a service that requires staff can now make up to one booking-function call per listed staff member (two for TestBiz).
+- A duplicate-session conflict (23505) during "Any available" is matched against the staff member tried last; if another staff member holds the session's booking it fails closed with the generic error, and the next retry finds that booking.
+- Which times the time list shows for "Any available" is unchanged: it still counts every booking on the day, not per staff member, so a time can be hidden although one staff member is free.
+
+## 2026-11-06 — Check plan price before activating a paid plan
+
+- **What changed:** `app/api/onboarding/verify/route.ts` now checks a Paystack plan payment against the server-side plan price before it writes anything. The price comes from the same source the subscribe route uses:
+  - the currency is the business's country currency (`resolveCountryGateway`);
+  - the price is `countries.pricing[plan].price` (monthly), converted to minor units.
+- **The rule:** the paid amount must equal that price exactly and the currency must match. Otherwise the route returns 400 (`amount_mismatch` or `currency_mismatch`), or 503 when the price cannot be read. In every rejection, no subscription row, payment evidence, activation RPC call, tier change or business status change happens. The subscription amount and currency are now written only after the payment has passed this check.
+- **Files:**
+  - `lib/payments/subscription-expected-price.ts` (new): `resolveExpectedPlanPrice`, the price lookup.
+  - `app/api/onboarding/verify/route.ts`: runs the check right after the ownership check. The service client is created a few lines earlier for this.
+  - `lib/__tests__/onboarding-verify-plan-price.test.ts` (new): behavioural route tests.
+  - `lib/__tests__/issue-496-paid-onboarding-route.test.ts` and `lib/__tests__/onboarding-activation-recovery-682.test.ts`: these now mock the price lookup with the price that matches their existing Paystack fixture amount. No assertion changed.
+- **Unchanged:**
+  - The Stripe path. Stripe Checkout sessions are created only by the subscribe route, with server prices.
+  - The free plan and trial path.
+  - Monthly-only billing. Annual payments are still rejected.
+  - Repeat verify of the same reference (idempotent).
+  - The messaging allowance grant.
+  - `activate_paid_subscription` and every migration.
+  - Merchant payments, fees, refunds and payouts. This is Waaiio's own subscription revenue.
+- **Could break:** a real Paystack plan payment is rejected if its amount differs from `countries.pricing[plan].price`. This would happen if the Paystack plan amount differs from the regional price, if the customer is charged Paystack fees on top, or if the regional price changed between checkout and verify.
+
+## 2026-11-06 — Bot check (Cloudflare Turnstile) on public web forms
+
+- **What changed:**
+  - The public form page (`/form/<token>`) now runs a Cloudflare Turnstile check. It is set to show only when Cloudflare wants a click ("interaction-only"), so most people see no extra step.
+  - `POST /api/forms/submit` verifies the Turnstile token with Cloudflare on the server before it reads or saves anything. It fails closed: no token, a bad token, Cloudflare unreachable, or no secret key in production all return 403/503 and save nothing.
+  - Tokens are single-use. After a refused submission the page asks Cloudflare for a new one.
+  - Site security headers (`middleware.ts`, Content-Security-Policy) now allow `https://challenges.cloudflare.com` in `script-src` and `frame-src`, as Cloudflare documents for the widget.
+- **Env vars (Owner adds in Vercel, production and staging):** `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (public) and `TURNSTILE_SECRET_KEY` (server only). These are the same names the contact page already reads. Local dev and tests use Cloudflare's documented always-pass test keys when these are unset (never in production builds).
+- **Files:**
+  - `lib/security/turnstile.ts` (new server-side verifier)
+  - `app/api/forms/submit/route.ts`
+  - `app/form/[token]/page.tsx`, `app/form/[token]/TurnstileWidget.tsx` (new)
+  - `middleware.ts` (CSP only)
+  - `.env.example`
+  - `lib/__tests__/form-submit-turnstile.test.ts`, `lib/__tests__/form-turnstile-ui.test.tsx` (new)
+  - `lib/__tests__/forms-send-591.test.ts`, `lib/__tests__/forms-send-ui-591.test.tsx` (bot check made to pass so their existing checks still run)
+- **Unchanged:**
+  - Form loading (`GET /api/forms/public/[token]`), field validation, the "Yes, send me updates" opt-in, rate limits and how responses are saved.
+  - WhatsApp native forms (`lib/whatsapp-forms/`) do not use this route and are not affected.
+  - The contact page's own Turnstile code (`/api/contact`) is not changed.
+- **Could break:**
+  - **If the two env vars are not set in production, every public web form submission is refused** ("This form cannot accept responses right now"). The keys must be added before this is deployed.
+  - Visitors whose browser blocks `challenges.cloudflare.com` cannot submit a form; they see a message to refresh.
+  - Automated staging tests that submit a public form need staging to use Cloudflare's test keys, or must pass a real check.
+
 ## 2026-11-12 — Faster bot replies: skip the AI intent guess where it cannot help, remove repeated lookups
 
 - **Why:** the Owner asked for faster chatbot replies. Staging measurements (webhook and bot timing logs, Supabase request logs, `llm_classifications`) showed:
