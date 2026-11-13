@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
-import { verifyStepUp, StepUpError } from '@/lib/admin-step-up';
+import { verifyPasskeyStepUp, verifyStepUp, StepUpError } from '@/lib/admin-step-up';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 
 export async function OPTIONS(request: NextRequest) {
@@ -14,7 +14,17 @@ export async function POST(request: NextRequest) {
     if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: cors });
 
     const body = await request.json();
-    const { stepUpId, code } = body;
+    const { stepUpId, code, method } = body;
+
+    // Passkey: the browser has just tapped the passkey through Supabase Auth;
+    // this request carries the refreshed token. No session is returned.
+    if (method === 'passkey') {
+      if (!stepUpId || typeof stepUpId !== 'string') {
+        return NextResponse.json({ error: 'stepUpId required' }, { status: 400, headers: cors });
+      }
+      await verifyPasskeyStepUp(admin, stepUpId);
+      return NextResponse.json({ verified: true }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
 
     if (!stepUpId || !code || typeof code !== 'string' || code.length !== 6) {
       return NextResponse.json({ error: 'stepUpId and 6-digit code required' }, { status: 400, headers: cors });

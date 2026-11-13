@@ -9,7 +9,7 @@ import { GET as cron } from '@/app/api/cron/auto-payout/route';
 const f = vi.hoisted(() => ({ hold: vi.fn(), consume: vi.fn(), audit: vi.fn(), provider: vi.fn(), writes: vi.fn(), rpc: vi.fn(), taxReads: vi.fn(), reads: [] as string[], mode: 'single', seedRelease: false }));
 vi.mock('@/lib/payouts/accounting-hold', () => ({ getMerchantAccountingHold: f.hold }));
 vi.mock('@/lib/admin-auth', () => ({ requirePlatformAdmin: async () => ({ id: 'admin', userId: 'admin', role: 'admin', aal: 'aal2' }) }));
-vi.mock('@/lib/admin-step-up', () => ({ consumeStepUp: f.consume, StepUpError: class extends Error {} }));
+vi.mock('@/lib/admin-step-up', () => ({ consumeStepUp: f.consume, consumeStepUpOrPasskeyWaiver: f.consume, StepUpError: class extends Error {} }));
 vi.mock('@/lib/admin-audit', () => ({ logAdminAudit: f.audit }));
 vi.mock('@/lib/cron-auth', () => ({ verifyCronAuth: () => null }));
 vi.mock('@/lib/observability/cron', () => ({ createCronLogger: () => ({ started: vi.fn(), completed: vi.fn(), failed: vi.fn() }) }));

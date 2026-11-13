@@ -71,6 +71,8 @@ export const ADMIN_PERMISSIONS: Record<string, AdminRole[]> = {
   'system-health': ['admin'],
   'permissions': ['admin'],
   'ai-marketplace': ['admin'],
+  // Every admin manages their own passkeys
+  'passkeys': ['admin', 'support', 'finance', 'operations'],
 };
 
 /** Check if a role has access to a page */

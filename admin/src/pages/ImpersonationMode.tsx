@@ -402,7 +402,7 @@ export default function ImpersonationMode() {
 
       <StepUpDialog
         open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
-        description={stepUp.state.description}
+        description={stepUp.state.description} method={stepUp.state.method}
         error={stepUp.state.error}
         loading={stepUp.state.phase === 'verifying'}
         onSubmit={(code) => {

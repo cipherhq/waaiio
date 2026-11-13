@@ -18,6 +18,8 @@ export default function Login() {
   const [mfaSecret, setMfaSecret] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [enrolling, setEnrolling] = useState(false);
+  // Verified passkey (WebAuthn MFA factor), offered instead of the code.
+  const [passkeyFactorId, setPasskeyFactorId] = useState('');
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,7 +75,10 @@ export default function Login() {
         }
         await startEnrollment();
       } else {
-        // Existing factor — go straight to verify.
+        // Existing factor — go straight to verify. A verified passkey is
+        // offered as an alternative to the code (Owner decision 2026-11-12).
+        const passkey = factorsData?.all?.find(f => f.factor_type === 'webauthn' && f.status === 'verified');
+        setPasskeyFactorId(passkey?.id ?? '');
         setFactorId(verifiedTotp.id);
         await startChallenge(verifiedTotp.id);
       }
@@ -196,6 +201,24 @@ export default function Login() {
     }
   }
 
+  // Step 3 alternative: tap a passkey instead of typing the code.
+  async function handlePasskeyVerify() {
+    setError('');
+    setLoading(true);
+    try {
+      const { error: passkeyError } = await supabase.auth.mfa.webauthn.authenticate({ factorId: passkeyFactorId });
+      if (passkeyError) {
+        setError('Passkey was not confirmed. Try again or use your authenticator code.');
+        setLoading(false);
+        return;
+      }
+      navigate(from, { replace: true });
+    } catch {
+      setError('Passkey sign-in failed. Use your authenticator code instead.');
+      setLoading(false);
+    }
+  }
+
   // Sign out and reset to the credentials step.
   async function handleBackToLogin() {
     if (step === 'mfa-enroll' && factorId) {
@@ -210,6 +233,7 @@ export default function Login() {
     setQrCode('');
     setMfaSecret('');
     setMfaCode('');
+    setPasskeyFactorId('');
   }
 
   return (
@@ -357,6 +381,19 @@ export default function Login() {
           {/* Step 3: MFA Verify */}
           {step === 'mfa-verify' && (
             <form onSubmit={handleMfaVerify}>
+              {passkeyFactorId && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handlePasskeyVerify}
+                    disabled={loading}
+                    className="w-full rounded-xl bg-brand px-6 py-3 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    Sign in with passkey
+                  </button>
+                  <p className="my-4 text-center text-xs text-gray-400">or use your authenticator code</p>
+                </>
+              )}
               <p className="text-sm text-gray-600 mb-4">
                 Enter the 6-digit code from your authenticator app to continue.
               </p>

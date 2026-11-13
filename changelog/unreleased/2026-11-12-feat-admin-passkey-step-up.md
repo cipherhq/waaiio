@@ -1,0 +1,41 @@
+## 2026-11-12 — Admin passkey sign-in; step-up only when money moves out
+
+- **Why:** The Owner asked for passkey sign-in to the admin panel, with no extra code for financial tasks unless money is moving out. The Owner approved all six decisions on 2026-11-12:
+  - a passkey replaces the 6-digit code at sign-in, and the password stays;
+  - money-out actions and changes to where money goes always need confirmation;
+  - for passkey users, that confirmation is a fresh passkey tap;
+  - the skip lasts 12 hours after the latest passkey tap;
+  - adding or removing a passkey needs the code, and the authenticator app stays as the backup;
+  - password + code sign-in stays.
+- **What changed:**
+  - `supabase/migrations/538_admin_passkey_step_up.sql`:
+    - adds the `passkey_approve` and `passkey_remove` step-up actions;
+    - adds a unique index on `admin_step_up_authorizations.challenge_id`, so one tap confirms one action;
+    - adds the `admin_passkey_approvals` table: RLS deny-all, service role select/insert/delete only. `step_up_id` is an audit reference with no foreign key, so `cleanup_expired_step_ups()` keeps working (found by reviewer A);
+    - adds `admin_session_mfa_state(session_id)`: SECURITY DEFINER, `search_path ''`, EXECUTE for service role only. It returns the session's AAL, last-verified factor and start time from `auth.sessions`.
+  - `lib/admin-passkey.ts` (new): the passkey policy.
+    - Five actions can skip step-up: payout generation, payout rejection, and reseller payout approve, reject and generate.
+    - The 12-hour window, counted from sign-in (the session's start), not extended by later taps.
+    - The approved-passkeys check, which fails closed.
+    - The session check: Supabase Auth's session record must be aal2 with an approved passkey as its latest verified factor, tapped after that passkey's approval (reviewer A, P1).
+    - Freshness and one-tap binding for passkey step-up.
+  - `lib/admin-auth.ts`: `requirePlatformAdmin` also returns the verified `amr` claim and the user's MFA factors from `getUser`.
+  - `lib/admin-step-up.ts`:
+    - `prepareStepUp` returns `method` (`totp` or `passkey`), and `notRequired` for a skippable action in a passkey session;
+    - new `verifyPasskeyStepUp`;
+    - new `consumeStepUpOrPasskeyWaiver`, used only by the five no-money-out routes.
+  - The five no-money-out routes switch to `consumeStepUpOrPasskeyWaiver`: `payouts/generate`, `payouts/[id]/reject`, `reseller-payouts` (POST), and `reseller-payouts/[id]` (approve and reject only; mark_paid is never skipped). All money-out routes are untouched and still call `consumeStepUp`.
+  - `app/api/admin/step-up/verify`: `method: 'passkey'` branch. `step-up/prepare`: the two new actions.
+  - `app/api/admin/passkeys` (new): list, approve and remove your own passkeys, each with a code step-up.
+  - Admin app:
+    - Login offers "Sign in with passkey";
+    - `useStepUp` and `StepUpDialog` follow the server's method;
+    - new "My Passkeys" page and sidebar item;
+    - all 14 `StepUpDialog` uses pass `method`.
+  - `RELEASE_GATE_V2.md` §1.5: SEC-005 amended with the passkey rules.
+  - CI: registers the new pg test. `supabase/catalog-deltas/538_admin_passkey_step_up.json` is the PostgreSQL 17 catalog delta that CI's oracle generated for M538.
+- **Affects:** admin sign-in and every admin step-up dialog.
+- **Could break:**
+  - Passkeys need WebAuthn MFA turned on in Supabase Auth settings. That is a separate Owner-approved production change. Until then the passkey buttons fail, and code sign-in works as before.
+  - Passkeys are tied to the admin site's domain, so moving the admin panel to a new domain means re-adding passkeys.
+  - If an admin has an unapproved passkey, all passkey benefits are off until they approve or remove it.

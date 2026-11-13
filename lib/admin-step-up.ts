@@ -23,6 +23,9 @@ import { createHash } from 'crypto';
 import type { PlatformAdmin } from './admin-auth';
 import { logAdminAudit } from '@/lib/admin-audit';
 import { verifyTotpOnSingleConnection } from '@/lib/admin-mfa-transport';
+import {
+  isFreshPasskeyTap, PASSKEY_WAIVABLE_ACTIONS, passkeyChallengeId, passkeySessionStatus, TOTP_ONLY_ACTIONS,
+} from '@/lib/admin-passkey';
 
 export type StepUpAction =
   | 'payout_approve'
@@ -43,7 +46,9 @@ export type StepUpAction =
   | 'business_status'
   | 'payout_confirm_settlement'
   | 'payout_force_settle'
-  | 'channel_change_execute';
+  | 'channel_change_execute'
+  | 'passkey_approve'
+  | 'passkey_remove';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 
@@ -81,6 +86,10 @@ export interface StepUpPrepareResult {
   stepUpId: string;
   factorId: string;
   challengeId: string;
+  /** How the admin confirms: authenticator code, or a fresh passkey tap. */
+  method: 'totp' | 'passkey';
+  /** Trusted passkey session and a no-money-out action: nothing to confirm. */
+  notRequired?: true;
 }
 
 /**
@@ -101,6 +110,36 @@ export async function prepareStepUp(
   const sessionId = admin.sessionId;
   if (!sessionId) {
     throw new StepUpError('Cannot determine session identity');
+  }
+
+  const paramsHash = hashOperationParams(params);
+
+  // Passkey sessions (Owner decision 2026-11-12). The mutation routes enforce
+  // the same rule independently; this only tells the UI what to ask for.
+  if (!TOTP_ONLY_ACTIONS.has(actionType)) {
+    const passkey = await passkeySessionStatus(admin);
+    if (passkey.withinWindow && PASSKEY_WAIVABLE_ACTIONS.has(actionType)) {
+      return { stepUpId: '', factorId: '', challengeId: '', method: 'passkey', notRequired: true };
+    }
+    if (passkey.trusted) {
+      // factor_id NULL marks a passkey grant; the TOTP verify path rejects it.
+      const { data: grant, error: grantError } = await supabase
+        .from('admin_step_up_authorizations')
+        .insert({
+          admin_user_id: admin.userId,
+          session_id: sessionId,
+          action_type: actionType,
+          target_id: targetId,
+          params_hash: paramsHash,
+          challenge_id: null,
+          factor_id: null,
+          expires_at: new Date(Date.now() + STEP_UP_MAX_AGE_SECONDS * 1000).toISOString(),
+        })
+        .select('id')
+        .single();
+      if (grantError || !grant) throw new StepUpError('Failed to create step-up authorization');
+      return { stepUpId: grant.id, factorId: '', challengeId: '', method: 'passkey' };
+    }
   }
 
   // C0: Use official GET /auth/v1/user endpoint (SDK's mfa.listFactors() uses this).
@@ -126,8 +165,6 @@ export async function prepareStepUp(
     throw new StepUpError('No verified TOTP factor enrolled');
   }
 
-  const paramsHash = hashOperationParams(params);
-
   // Insert the pending step-up authorization
   const { data: stepUp, error: insertError } = await supabase
     .from('admin_step_up_authorizations')
@@ -152,7 +189,61 @@ export async function prepareStepUp(
     stepUpId: stepUp.id,
     factorId: totpFactor.id,
     challengeId: '',
+    method: 'totp',
   };
+}
+
+/**
+ * Verify a passkey step-up. The browser taps the passkey through Supabase
+ * Auth (which refreshes the session's mfa/webauthn amr timestamp) and then
+ * calls this with the refreshed access token. The tap must be later than the
+ * grant, and each tap verifies at most one grant (unique challenge_id, M538).
+ */
+export async function verifyPasskeyStepUp(admin: PlatformAdmin, stepUpId: string): Promise<void> {
+  const { createServiceClient } = await import('@/lib/supabase/service');
+  const supabase = createServiceClient();
+  const sessionId = admin.sessionId;
+  if (!sessionId) throw new StepUpError('Cannot determine session identity');
+
+  const { data: stepUp, error } = await supabase
+    .from('admin_step_up_authorizations')
+    .select('id, admin_user_id, session_id, action_type, challenge_id, factor_id, verified_at, consumed_at, expires_at, created_at')
+    .eq('id', stepUpId)
+    .single();
+
+  if (error || !stepUp) throw new StepUpError('Step-up authorization not found');
+  if (stepUp.admin_user_id !== admin.userId) throw new StepUpError('Step-up belongs to a different admin');
+  if (stepUp.session_id !== sessionId) throw new StepUpError('Step-up belongs to a different session');
+  if (stepUp.verified_at) throw new StepUpError('Step-up already verified');
+  if (stepUp.consumed_at) throw new StepUpError('Step-up already consumed');
+  if (new Date(stepUp.expires_at) < new Date()) throw new StepUpError('Step-up expired', true);
+  if (stepUp.factor_id || TOTP_ONLY_ACTIONS.has(stepUp.action_type as StepUpAction)) {
+    throw new StepUpError('This operation needs your authenticator code.', true);
+  }
+
+  const passkey = await passkeySessionStatus(admin);
+  if (!passkey.trusted || !isFreshPasskeyTap(passkey.verifiedAt, stepUp.created_at)) {
+    throw new StepUpError('Tap your passkey to confirm this operation.');
+  }
+
+  const { data: marked, error: updateError } = await supabase
+    .from('admin_step_up_authorizations')
+    .update({ challenge_id: passkeyChallengeId(sessionId, passkey.verifiedAt!), verified_at: new Date().toISOString() })
+    .eq('id', stepUpId)
+    .eq('admin_user_id', admin.userId)
+    .eq('session_id', sessionId)
+    .is('factor_id', null)
+    .is('challenge_id', null)
+    .is('verified_at', null)
+    .is('consumed_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .select('id')
+    .maybeSingle();
+
+  if (updateError?.code === '23505') {
+    throw new StepUpError('That passkey tap was already used. Tap your passkey again.');
+  }
+  if (updateError || !marked) throw new StepUpError('Step-up verification is no longer pending. Cancel and restart this operation.', true);
 }
 
 /**
@@ -318,6 +409,35 @@ export async function consumeStepUp(
   });
 
   return true;
+}
+
+/**
+ * Gate for financial actions that move no money out. A trusted passkey
+ * session within its 12-hour window skips step-up (audited); every other
+ * session must present a consumable step-up exactly as before.
+ * Money-out routes must call consumeStepUp directly, never this.
+ */
+export async function consumeStepUpOrPasskeyWaiver(
+  admin: PlatformAdmin,
+  stepUpId: string | null | undefined,
+  actionType: StepUpAction,
+  targetId: string | null,
+  params: Record<string, unknown>,
+): Promise<'consumed' | 'waived'> {
+  if (PASSKEY_WAIVABLE_ACTIONS.has(actionType) && (await passkeySessionStatus(admin)).withinWindow) {
+    logAdminAudit({
+      actorId: admin.userId,
+      action: 'step_up_waived_passkey',
+      entityType: actionType,
+      entityId: targetId ?? null,
+      details: { action_type: actionType, session_id: admin.sessionId ?? null },
+      ipAddress: 'server',
+    });
+    return 'waived';
+  }
+  if (!stepUpId) throw new StepUpError('Step-up authorization required');
+  await consumeStepUp(admin, stepUpId, actionType, targetId, params);
+  return 'consumed';
 }
 
 export class StepUpError extends Error {

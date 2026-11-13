@@ -100,12 +100,12 @@ function setupMocks(config: RejectTestConfig = {}) {
   if (stepUpFails) {
     const StepUpErrorClass = class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } };
     vi.doMock('@/lib/admin-step-up', () => ({
-      consumeStepUp: vi.fn().mockRejectedValue(new StepUpErrorClass('Step-up required')),
+      consumeStepUp: vi.fn().mockRejectedValue(new StepUpErrorClass('Step-up required')), consumeStepUpOrPasskeyWaiver: vi.fn().mockRejectedValue(new StepUpErrorClass('Step-up required')),
       StepUpError: StepUpErrorClass,
     }));
   } else {
     vi.doMock('@/lib/admin-step-up', () => ({
-      consumeStepUp: vi.fn().mockResolvedValue(true),
+      consumeStepUp: vi.fn().mockResolvedValue(true), consumeStepUpOrPasskeyWaiver: vi.fn().mockResolvedValue(true),
       StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
     }));
   }
