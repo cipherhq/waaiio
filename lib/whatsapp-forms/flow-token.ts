@@ -274,3 +274,57 @@ export function authenticateNativeFlowToken(token: unknown, senderPhone: string,
     return c;
   } catch { return null; }
 }
+
+/** #1005 PR 3b: party RSVP form tokens (v3). Valid for 24 hours; bound to one invitation and transport. */
+const PARTY_RSVP_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface PartyRsvpTokenClaims {
+  inviteId: string;
+  businessId: string;
+  publicationId: string;
+  channelId: string;
+  phoneNumberId: string;
+  assetId: string;
+  questionRevision: number;
+  phone: string;
+  nonce: string;
+  expiresAt: number;
+}
+
+function validPartyRsvpClaims(c: PartyRsvpTokenClaims): boolean {
+  return [c.inviteId, c.businessId, c.publicationId, c.channelId, c.nonce].every(v => typeof v === 'string' && UUID.test(v))
+    && typeof c.phone === 'string' && /^[1-9]\d{6,14}$/.test(c.phone)
+    && typeof c.phoneNumberId === 'string' && /^\d{1,64}$/.test(c.phoneNumberId)
+    && typeof c.assetId === 'string' && /^\d{1,64}$/.test(c.assetId)
+    && Number.isSafeInteger(c.questionRevision) && c.questionRevision >= 0
+    && Number.isSafeInteger(c.expiresAt);
+}
+
+export function generatePartyRsvpFlowToken(input: Omit<PartyRsvpTokenClaims, 'nonce' | 'expiresAt'>): FlowTokenResult {
+  const claims: PartyRsvpTokenClaims = {
+    ...input, phone: normalizePhone(input.phone), nonce: randomUUID(), expiresAt: Date.now() + PARTY_RSVP_TOKEN_TTL_MS,
+  };
+  if (!validPartyRsvpClaims(claims)) throw new FlowTokenError('Invalid party RSVP form binding.');
+  const payload = `v3|${JSON.stringify(claims)}`;
+  return { token: `${Buffer.from(payload).toString('base64url')}.${sign(payload, getSecret())}`, expiresAt: claims.expiresAt };
+}
+
+/** Authenticate before trusting any claim. Native form (v2) and legacy tokens fail closed. */
+export function authenticatePartyRsvpFlowToken(token: unknown, senderPhone: string, channelId: string, phoneNumberId: string): PartyRsvpTokenClaims | null {
+  if (typeof token !== 'string' || token.length > 2048) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2 || parts.some(p => !/^[A-Za-z0-9_-]+$/.test(p))) return null;
+  try {
+    const payload = Buffer.from(parts[0], 'base64url').toString('utf8');
+    if (!payload.startsWith('v3|')) return null;
+    const a = Buffer.from(parts[1], 'base64url');
+    const b = Buffer.from(sign(payload, getSecret()), 'base64url');
+    const { timingSafeEqual } = require('crypto');
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    const c: PartyRsvpTokenClaims = JSON.parse(payload.slice(3));
+    if (!c || typeof c !== 'object' || !validPartyRsvpClaims(c) || c.expiresAt <= Date.now()
+      || c.expiresAt > Date.now() + PARTY_RSVP_TOKEN_TTL_MS
+      || c.phone !== normalizePhone(senderPhone) || c.channelId !== channelId || c.phoneNumberId !== phoneNumberId) return null;
+    return c;
+  } catch { return null; }
+}
