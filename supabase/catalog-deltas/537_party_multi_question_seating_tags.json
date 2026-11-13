@@ -158,7 +158,7 @@
   }
  ],
  "migration": "537_party_multi_question_seating_tags.sql",
- "migration_sha256": "5bfa3bb892ac4624ff503887eef3c111ff4091ce41f46aa7370cc6fb74e7f845",
+ "migration_sha256": "c90e90c3e60160f081e7ed203f4ec8773ccdc514ff10d53173cc20887ecb0094",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
