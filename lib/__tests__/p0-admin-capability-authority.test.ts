@@ -3,7 +3,7 @@
  *
  * Drift prevention:
  * 1. Admin catalog exactly equals canonical CapabilityId set
- * 2. All 31 canonical capabilities are addressable
+ * 2. All 33 canonical capabilities are addressable
  * 3. Shared module is the single source of truth
  * 4. No duplicate IDs in canonical catalog
  *
@@ -27,9 +27,9 @@ import { NextRequest } from 'next/server';
 // ── Drift prevention tests (no mocks needed) ──
 
 describe('P0-CAP: Canonical capability catalog drift prevention', () => {
-  it('1. shared/capabilities.ts CAPABILITY_IDS has exactly 32 entries', async () => {
+  it('1. shared/capabilities.ts CAPABILITY_IDS has exactly 33 entries', async () => {
     const { CAPABILITY_IDS } = await import('@/shared/capabilities');
-    expect(CAPABILITY_IDS).toHaveLength(32);
+    expect(CAPABILITY_IDS).toHaveLength(33);
   });
 
   it('2. no duplicate IDs in canonical catalog', async () => {
@@ -67,7 +67,7 @@ describe('P0-CAP: Canonical capability catalog drift prevention', () => {
     expect(CAPABILITY_DEPENDENCIES.membership).toEqual(['loyalty']);
   });
 
-  it('7. all 31 canonical IDs are present', async () => {
+  it('7. all 33 canonical IDs are present', async () => {
     const { CAPABILITY_IDS } = await import('@/shared/capabilities');
     const expectedIds = [
       'scheduling', 'appointment', 'payment', 'ordering', 'ticketing',
@@ -76,7 +76,7 @@ describe('P0-CAP: Canonical capability catalog drift prevention', () => {
       'chat', 'waitlist', 'referral', 'staff', 'invoice', 'survey',
       'poll', 'giving', 'broadcast', 'recurring', 'auto_reply',
       'membership', 'estimates', 'packages', 'class_booking',
-      'multi_location', 'waiver',
+      'multi_location', 'waiver', 'promo_verification', 'custom_flow',
     ];
     for (const id of expectedIds) {
       expect(CAPABILITY_IDS, `Missing: ${id}`).toContain(id);

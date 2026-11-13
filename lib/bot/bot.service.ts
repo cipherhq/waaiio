@@ -1243,6 +1243,30 @@ export class BotService {
     }
     _bmark('session_revalidated');
 
+    // ── Custom Flow (Issue #1013, Phase 1) ──
+    // Data-driven flows run in their own engine with their own session
+    // table. This branch runs after STOP/restart/PIN interceptors and
+    // before the "my X" handlers, keyword matching, and the code-flow
+    // executor, so an active custom session owns the customer's input.
+    // It returns early only when the engine handled the message (active
+    // session, or the text matches a published flow's entry keyword for
+    // this business); everything else falls through untouched.
+    {
+      const customBusinessId = session?.business_id || preResolvedBusinessId || _cachedBusiness?.id || null;
+      if (customBusinessId) {
+        const { tryHandleCustomFlow } = await import('@/lib/bot/custom-flow/engine');
+        const customHandled = await tryHandleCustomFlow({
+          supabase: this.supabase,
+          sender: this.messageSender,
+          businessId: customBusinessId,
+          from,
+          text,
+          messageType,
+        });
+        if (customHandled) return;
+      }
+    }
+
     // ── Global "my X" query handlers (location, orders, bookings, receipts, etc.) ──
     const globalResult = await handleGlobalQuery({
       supabase: this.supabase,

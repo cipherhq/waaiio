@@ -17,7 +17,7 @@ export type CapabilityId =
   | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey'
   | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply'
   | 'membership' | 'estimates' | 'packages' | 'class_booking'
-  | 'multi_location' | 'waiver' | 'promo_verification';
+  | 'multi_location' | 'waiver' | 'promo_verification' | 'custom_flow';
 
 export type SubscriptionTier = 'free' | 'growth' | 'business';
 
@@ -72,6 +72,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'waitlist', label: 'Waitlist', description: 'When you\'re fully booked, customers join a waitlist. Auto-notified when a slot opens up.', icon: '📝' },
   { id: 'queue', label: 'Queue', description: 'Walk-in customers check in via WhatsApp, see their position, and get notified when it\'s their turn.', icon: '📋' },
   { id: 'crowdfunding', label: 'Campaigns', description: 'Run fundraising campaigns with goals and progress tracking. Track every donor and amount.', icon: '❤️' },
+  { id: 'custom_flow', label: 'Custom Flows', description: 'Build drag-and-drop WhatsApp flows with no code — menus, lookups, bookings, and payment links that read your own data tables.', icon: '🧩' },
 
   // ── NEW ──
   { id: 'estimates', label: 'Estimates & Quotes', description: 'Send price quotes to customers. They approve and it becomes a booking.', icon: '📋' },
@@ -116,6 +117,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   waitlist: 'business',
   queue: 'business',
   crowdfunding: 'business',
+  custom_flow: 'business',
 
   // NEW
   estimates: 'free',
