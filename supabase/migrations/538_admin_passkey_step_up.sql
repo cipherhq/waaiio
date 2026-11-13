@@ -8,9 +8,16 @@
 --     tap fail atomically, even under concurrent requests.
 -- §3. admin_passkey_approvals: passkeys an admin confirmed with an
 --     authenticator-app code. The server trusts a passkey session only when
---     every verified passkey on the account is listed here.
---
--- No SECURITY DEFINER functions. Service role only; RLS deny-all.
+--     every verified passkey on the account is listed here. step_up_id is an
+--     audit reference only (no foreign key), so cleanup_expired_step_ups()
+--     can still delete expired grants.
+-- §4. admin_session_mfa_state(session_id): the session's AAL, last-verified
+--     MFA factor and start time from auth.sessions. Supabase Auth sets
+--     factor_id on every MFA verification and downgrades sessions tied to a
+--     factor when it is removed. The server uses it to require that the
+--     session's latest verification came from an approved passkey.
+--     SECURITY DEFINER, search_path '', service role only (no anon or
+--     authenticated EXECUTE).
 BEGIN;
 
 -- §1
@@ -38,7 +45,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_admin_step_up_challenge_id
 CREATE TABLE IF NOT EXISTS public.admin_passkey_approvals (
   factor_id      uuid        PRIMARY KEY,
   admin_user_id  uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  step_up_id     uuid        NOT NULL REFERENCES public.admin_step_up_authorizations(id),
+  step_up_id     uuid        NOT NULL,
   approved_at    timestamptz NOT NULL DEFAULT now()
 );
 
@@ -56,5 +63,26 @@ CREATE POLICY "admin_passkey_approvals_deny_all"
 
 REVOKE ALL ON TABLE public.admin_passkey_approvals FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, DELETE ON TABLE public.admin_passkey_approvals TO service_role;
+
+-- §4
+CREATE OR REPLACE FUNCTION public.admin_session_mfa_state(p_session_id uuid)
+RETURNS TABLE (session_aal text, session_factor_id uuid, session_created_at timestamptz)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  RETURN QUERY
+    SELECT s.aal::text, s.factor_id, s.created_at
+    FROM auth.sessions s
+    WHERE s.id = p_session_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_session_mfa_state(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_session_mfa_state(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.admin_session_mfa_state(uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_session_mfa_state(uuid) TO service_role;
 
 COMMIT;

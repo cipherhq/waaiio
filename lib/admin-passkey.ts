@@ -7,12 +7,19 @@
  * - A passkey counts only after the admin approves it with an authenticator
  *   code (admin_passkey_approvals). If any verified passkey on the account is
  *   unapproved, passkey privileges are off and the code is required as before.
- * - For 12 hours after the latest passkey tap in this session, financial
- *   actions that move no money skip step-up (PASSKEY_WAIVABLE_ACTIONS).
+ * - A session is trusted only when Supabase Auth's own session record says its
+ *   latest MFA verification was an approved passkey (auth.sessions.factor_id,
+ *   read through admin_session_mfa_state, M538), the session is still aal2,
+ *   and that passkey tap happened after the passkey was approved. The amr
+ *   claim alone does not say which factor was used.
+ * - For 12 hours after sign-in (the session's start), financial actions that
+ *   move no money skip step-up (PASSKEY_WAIVABLE_ACTIONS). Later taps do not
+ *   extend the window.
  * - Every other step-up action needs a fresh passkey tap (or a code).
  *
- * All inputs come from the verified access token and the server-validated
- * user record (requirePlatformAdmin). Nothing here trusts client claims.
+ * All inputs come from the verified access token, the server-validated user
+ * record (requirePlatformAdmin) and Supabase Auth's session table. Nothing
+ * here trusts client claims. Every read error fails closed.
  */
 
 import { createHash } from 'crypto';
@@ -61,41 +68,74 @@ export function verifiedPasskeyFactorIds(admin: PlatformAdmin): string[] {
 }
 
 /**
- * True when the account has at least one verified passkey and every verified
- * passkey was approved with an authenticator code. Fails closed on read errors.
+ * Approval time (ms) of each verified passkey, or null when the account has no
+ * verified passkey, any verified passkey is unapproved, or the read fails.
  */
-export async function hasOnlyApprovedPasskeys(admin: PlatformAdmin): Promise<boolean> {
+async function approvedPasskeys(admin: PlatformAdmin): Promise<Map<string, number> | null> {
   const ids = verifiedPasskeyFactorIds(admin);
-  if (ids.length === 0) return false;
+  if (ids.length === 0) return null;
   const { createServiceClient } = await import('@/lib/supabase/service');
   const { data, error } = await createServiceClient()
     .from('admin_passkey_approvals')
-    .select('factor_id')
+    .select('factor_id, approved_at')
     .eq('admin_user_id', admin.userId)
     .in('factor_id', ids);
-  if (error || !Array.isArray(data)) return false;
-  const approved = new Set(data.map((r: { factor_id: string }) => r.factor_id));
-  return ids.every(id => approved.has(id));
+  if (error || !Array.isArray(data)) return null;
+  const approved = new Map<string, number>();
+  for (const r of data as Array<{ factor_id: string; approved_at: string }>) {
+    const at = Date.parse(r.approved_at);
+    if (Number.isFinite(at)) approved.set(r.factor_id, at);
+  }
+  return ids.every(id => approved.has(id)) ? approved : null;
+}
+
+interface SessionMfaState { aal: string | null; factorId: string | null; createdAtMs: number | null }
+
+/** Supabase Auth's record of this session (auth.sessions). Null on any error. */
+async function sessionMfaState(admin: PlatformAdmin): Promise<SessionMfaState | null> {
+  if (!admin.sessionId) return null;
+  const { createServiceClient } = await import('@/lib/supabase/service');
+  try {
+    const { data, error } = await createServiceClient()
+      .rpc('admin_session_mfa_state', { p_session_id: admin.sessionId })
+      .maybeSingle();
+    if (error || !data) return null;
+    const row = data as { session_aal: string | null; session_factor_id: string | null; session_created_at: string | null };
+    const created = row.session_created_at ? Date.parse(row.session_created_at) : NaN;
+    return { aal: row.session_aal, factorId: row.session_factor_id, createdAtMs: Number.isFinite(created) ? created : null };
+  } catch {
+    return null;
+  }
 }
 
 export interface PasskeySessionStatus {
-  /** The session verified a passkey and every passkey on the account is approved. */
+  /**
+   * The session's latest MFA verification was an approved passkey, tapped
+   * after its approval, and every passkey on the account is approved.
+   */
   trusted: boolean;
   /** Latest passkey verification in this session (Unix seconds). */
   verifiedAt: number | null;
-  /** trusted, and the latest passkey tap is within the 12-hour window. */
+  /** trusted, and the session started no more than 12 hours ago. */
   withinWindow: boolean;
 }
 
 export async function passkeySessionStatus(admin: PlatformAdmin, nowMs = Date.now()): Promise<PasskeySessionStatus> {
+  const untrusted = (verifiedAt: number | null): PasskeySessionStatus => ({ trusted: false, verifiedAt, withinWindow: false });
   const verifiedAt = latestPasskeyVerification(admin);
-  if (verifiedAt === null) return { trusted: false, verifiedAt: null, withinWindow: false };
-  const trusted = await hasOnlyApprovedPasskeys(admin);
   const now = Math.floor(nowMs / 1000);
-  const withinWindow = trusted
-    && verifiedAt <= now + CLOCK_SKEW_SECONDS
-    && verifiedAt >= now - PASSKEY_SESSION_WINDOW_SECONDS;
-  return { trusted, verifiedAt, withinWindow };
+  if (verifiedAt === null || verifiedAt > now + CLOCK_SKEW_SECONDS) return untrusted(verifiedAt);
+
+  const approvals = await approvedPasskeys(admin);
+  if (!approvals) return untrusted(verifiedAt);
+  const session = await sessionMfaState(admin);
+  if (!session || session.aal !== 'aal2' || !session.factorId) return untrusted(verifiedAt);
+  const approvedAt = approvals.get(session.factorId);
+  if (approvedAt === undefined || verifiedAt <= Math.floor(approvedAt / 1000)) return untrusted(verifiedAt);
+
+  const withinWindow = session.createdAtMs !== null
+    && nowMs - session.createdAtMs <= PASSKEY_SESSION_WINDOW_SECONDS * 1000;
+  return { trusted: true, verifiedAt, withinWindow };
 }
 
 /**

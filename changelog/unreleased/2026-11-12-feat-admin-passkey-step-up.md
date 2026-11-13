@@ -11,11 +11,13 @@
   - `supabase/migrations/538_admin_passkey_step_up.sql`:
     - adds the `passkey_approve` and `passkey_remove` step-up actions;
     - adds a unique index on `admin_step_up_authorizations.challenge_id`, so one tap confirms one action;
-    - adds the `admin_passkey_approvals` table: RLS deny-all, service role select/insert/delete only.
+    - adds the `admin_passkey_approvals` table: RLS deny-all, service role select/insert/delete only. `step_up_id` is an audit reference with no foreign key, so `cleanup_expired_step_ups()` keeps working (found by reviewer A);
+    - adds `admin_session_mfa_state(session_id)`: SECURITY DEFINER, `search_path ''`, EXECUTE for service role only. It returns the session's AAL, last-verified factor and start time from `auth.sessions`.
   - `lib/admin-passkey.ts` (new): the passkey policy.
     - Five actions can skip step-up: payout generation, payout rejection, and reseller payout approve, reject and generate.
-    - The 12-hour window.
+    - The 12-hour window, counted from sign-in (the session's start), not extended by later taps.
     - The approved-passkeys check, which fails closed.
+    - The session check: Supabase Auth's session record must be aal2 with an approved passkey as its latest verified factor, tapped after that passkey's approval (reviewer A, P1).
     - Freshness and one-tap binding for passkey step-up.
   - `lib/admin-auth.ts`: `requirePlatformAdmin` also returns the verified `amr` claim and the user's MFA factors from `getUser`.
   - `lib/admin-step-up.ts`:

@@ -26,6 +26,9 @@ const { state } = vi.hoisted(() => {
     stepUps: [] as Row[],
     approvals: [] as Row[],
     approvalsReadError: false,
+    /** auth.sessions row for the admin's session (admin_session_mfa_state). */
+    session: null as Record<string, unknown> | null,
+    sessionReadError: false,
     fixtures: {} as Record<string, { single?: unknown; list?: unknown[] }>,
     log: [] as Array<{ table: string; op: string }>,
     rpcCalls: [] as string[],
@@ -122,6 +125,12 @@ vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (t: string) => makeChain(t),
     rpc: (name: string) => {
+      if (name === 'admin_session_mfa_state') {
+        const res = Promise.resolve(state.sessionReadError
+          ? { data: null, error: { message: 'read failed' } }
+          : { data: state.session, error: null });
+        return Object.assign(res, { maybeSingle: () => res, single: () => res });
+      }
       state.rpcCalls.push(name);
       const res = Promise.resolve({ data: null, error: { message: 'rpc not stubbed' } });
       return Object.assign(res, { maybeSingle: () => res, single: () => res });
@@ -245,8 +254,11 @@ const MONEY_OUT_CALLS: Array<{ name: string; action: string; call: (stepUpId?: s
 beforeEach(() => {
   state.admin = passkeyAdmin();
   state.stepUps = [];
-  state.approvals = [{ factor_id: 'pk-1', admin_user_id: 'admin-1', step_up_id: 'su-0', approved_at: '2026-11-12T00:00:00Z' }];
+  state.approvals = [{ factor_id: 'pk-1', admin_user_id: 'admin-1', step_up_id: 'su-0', approved_at: new Date(Date.now() - 86_400_000).toISOString() }];
   state.approvalsReadError = false;
+  // Signed in two minutes ago; latest MFA verification was approved passkey pk-1.
+  state.session = { session_aal: 'aal2', session_factor_id: 'pk-1', session_created_at: new Date(Date.now() - 120_000).toISOString() };
+  state.sessionReadError = false;
   state.fixtures = { businesses: { single: { verification_level: 'verified', country_code: 'NG', name: 'Biz', owner_id: 'u1' } } };
   state.log = [];
   state.rpcCalls = [];
@@ -325,9 +337,16 @@ describe('financial actions that move no money skip step-up only for a trusted, 
       await expectStepUpDemanded(c.call);
     });
 
-    it(`${c.name}: passkey tap older than 12 hours → step-up required`, async () => {
+    it(`${c.name}: signed in more than 12 hours ago (even with a fresh tap) → step-up required`, async () => {
       c.fixtures?.();
-      state.admin = passkeyAdmin({ amr: [{ method: 'mfa/webauthn', timestamp: nowSec() - 12 * 3600 - 5 }] });
+      state.session = { ...state.session, session_created_at: new Date(Date.now() - (12 * 3600 + 5) * 1000).toISOString() };
+      state.admin = passkeyAdmin({ amr: [{ method: 'mfa/webauthn', timestamp: nowSec() - 1 }] });
+      await expectStepUpDemanded(c.call);
+    });
+
+    it(`${c.name}: session's latest verification was not an approved passkey → step-up required`, async () => {
+      c.fixtures?.();
+      state.session = { ...state.session, session_factor_id: 'pk-unapproved-removed' };
       await expectStepUpDemanded(c.call);
     });
 
@@ -340,6 +359,27 @@ describe('financial actions that move no money skip step-up only for a trusted, 
 
   it('fails closed when approvals cannot be read', async () => {
     state.approvalsReadError = true;
+    await expectStepUpDemanded(() => generateRoute.POST(req({})));
+  });
+
+  it('fails closed when the session record cannot be read', async () => {
+    state.sessionReadError = true;
+    await expectStepUpDemanded(() => generateRoute.POST(req({})));
+  });
+
+  it('a downgraded (aal1) session record earns nothing', async () => {
+    state.session = { ...state.session, session_aal: 'aal1' };
+    await expectStepUpDemanded(() => generateRoute.POST(req({})));
+  });
+
+  it('a session whose latest verification was the authenticator code earns nothing', async () => {
+    state.session = { ...state.session, session_factor_id: 'totp-1' };
+    await expectStepUpDemanded(() => generateRoute.POST(req({})));
+  });
+
+  it('a passkey tap from before the passkey was approved (registration) earns nothing', async () => {
+    state.approvals[0].approved_at = new Date().toISOString();
+    state.admin = passkeyAdmin({ amr: [{ method: 'mfa/webauthn', timestamp: nowSec() - 30 }] });
     await expectStepUpDemanded(() => generateRoute.POST(req({})));
   });
 
@@ -430,6 +470,29 @@ describe('passkey step-up verification', () => {
     state.approvals = [];
     tapNow();
     await expect(verifyPasskeyStepUp(state.admin as never, g.id)).rejects.toThrow(/Tap your passkey/);
+  });
+
+  it('a fresh tap by a since-removed, unapproved passkey cannot verify (session factor is not approved)', async () => {
+    const g = grant();
+    tapNow();
+    state.session = { ...state.session, session_factor_id: 'pk-attacker' };
+    await expect(verifyPasskeyStepUp(state.admin as never, g.id)).rejects.toThrow(/Tap your passkey/);
+    expect(g.verified_at).toBeNull();
+  });
+
+  it('a downgraded session cannot verify', async () => {
+    const g = grant();
+    tapNow();
+    state.session = { ...state.session, session_aal: 'aal1' };
+    await expect(verifyPasskeyStepUp(state.admin as never, g.id)).rejects.toThrow(/Tap your passkey/);
+  });
+
+  it('a session that signed in more than 12 hours ago can still confirm money-out with a fresh tap', async () => {
+    const g = grant();
+    tapNow();
+    state.session = { ...state.session, session_created_at: new Date(Date.now() - 20 * 3600 * 1000).toISOString() };
+    await verifyPasskeyStepUp(state.admin as never, g.id);
+    expect(g.verified_at).not.toBeNull();
   });
 
   it('another session cannot verify the grant', async () => {
