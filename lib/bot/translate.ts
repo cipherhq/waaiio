@@ -3,6 +3,7 @@ import { isFeatureEnabledServer, FLAGS } from '@/lib/posthog/flags';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import type { LanguageEntitlement } from './language-policy';
+import { isPhraseBookText } from './flows/flow-localization';
 import {
   getLanguageName as getCatalogLanguageName,
   isSupportedLanguage as isCatalogSupportedLanguage,
@@ -90,6 +91,9 @@ export async function translateBotResponse(
     return text;
   }
 
+  // Certified phrase-book copy is already in this language — send it as written.
+  if (isPhraseBookText(language, text)) return text;
+
   // Check feature flag (defaults to true if PostHog not configured)
   const enabled = await isFeatureEnabledServer(FLAGS.BOT_TRANSLATION_ENABLED, language).catch(err => { logger.warn('[TRANSLATE] Feature flag check failed (defaulting to enabled):', err); return true; });
   if (!enabled) return text;
@@ -118,6 +122,9 @@ export async function translateBotResponse(
     .replace(/\b\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s*,?\s*\d{0,4}\b/gi, (m) => { replacements.push(m); return `__V${replacements.length}__`; })
     .replace(/[₦$£€¢]\s?[\d,]+(\.\d{2})?/g, (m) => { replacements.push(m); return `__V${replacements.length}__`; })
     .replace(/\b[A-Z]{2,4}-\d{3,5}\b/g, (m) => { replacements.push(m); return `__V${replacements.length}__`; });
+
+  // Only protected values (names, amounts, references) and symbols left: nothing to translate.
+  if (!/\p{L}/u.test(templateText.replace(/__V\d+__/g, ''))) return text;
 
   const cacheKey = `${language}:${templateText}`;
   const cached = cache.get(cacheKey);

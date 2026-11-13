@@ -6616,6 +6616,45 @@ export function fillFlowCopy(
 }
 
 /**
+ * Paragraphs of the certified code-default copy for one language that are
+ * distinctly that language: exact texts only, never templates, and never a
+ * paragraph that is also English copy (an English or merchant sentence could
+ * equal it and must still be translated). Built once per language from FLOW_COPY
+ * only — never from filled-in values, so no customer data is kept.
+ */
+const phraseBookParagraphs = new Map<string, Set<string>>();
+
+function splitParagraphs(text: string): string[] {
+  return text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+}
+
+function getPhraseBookParagraphs(lang: string): Set<string> {
+  let exact = phraseBookParagraphs.get(lang);
+  if (exact) return exact;
+  const english = new Set(Object.values(FLOW_COPY.en).flatMap(splitParagraphs));
+  exact = new Set(
+    Object.values(FLOW_COPY[lang] ?? {})
+      .flatMap(splitParagraphs)
+      .filter(p => !/\{\w+\}/.test(p) && !english.has(p)),
+  );
+  phraseBookParagraphs.set(lang, exact);
+  return exact;
+}
+
+/**
+ * True when every paragraph of `text` is exactly certified, distinctly-`lang`
+ * code-default copy, so it needs no AI translation. English and uncertified
+ * languages (whose copy falls back to English) always return false.
+ */
+export function isPhraseBookText(lang: string | undefined, text: string): boolean {
+  if (!lang || lang === 'en' || !CERTIFIED_LANGUAGES.includes(lang)) return false;
+  const paragraphs = splitParagraphs(text);
+  if (paragraphs.length === 0) return false;
+  const exact = getPhraseBookParagraphs(lang);
+  return paragraphs.every(p => exact.has(p));
+}
+
+/**
  * Get the reroute prompt key for a broad intent.
  */
 export function getRerouteKey(intent: string | null): string {
