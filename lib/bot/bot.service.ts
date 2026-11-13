@@ -1245,16 +1245,35 @@ export class BotService {
 
     // ── Custom Flow (Issue #1013, Phase 1) ──
     // Data-driven flows run in their own engine with their own session
-    // table. This branch runs after STOP/restart/PIN interceptors and
-    // before the "my X" handlers, keyword matching, and the code-flow
-    // executor, so an active custom session owns the customer's input.
-    // It returns early only when the engine handled the message (active
-    // session, or the text matches a published flow's entry keyword for
-    // this business); everything else falls through untouched.
+    // table. This branch runs after STOP only, and before the "my X"
+    // handlers, keyword matching, and the code-flow executor. It yields to
+    // the platform's own routing: card-PIN steps never reach the engine
+    // (the input would be consumed and logged), and business codes win over
+    // a custom session or entry keyword. It returns early only when the
+    // engine handled the message (active session, or the text matches a
+    // published flow's entry keyword for this business); everything else
+    // falls through untouched.
     {
       const customBusinessId = session?.business_id || preResolvedBusinessId || _cachedBusiness?.id || null;
       if (customBusinessId) {
         const { tryHandleCustomFlow } = await import('@/lib/bot/custom-flow/engine');
+        // F4 PIN-step precedence: a customer typing a card PIN must never
+        // have the input consumed or logged by the custom engine.
+        const pinStep = session?.current_step;
+        const isPinStep = pinStep === 'save_card_pin' || pinStep === 'verify_card_pin' || pinStep === 'replace_card_pin';
+        // Exact business-code match (same query as the restart logic below):
+        // a code that is also an entry keyword belongs to the platform.
+        const isBusinessCode = async (candidate: string): Promise<boolean> => {
+          const trimmed = candidate.trim();
+          if (!/^[a-z0-9-]{2,30}$/i.test(trimmed)) return false;
+          const { data } = await this.supabase
+            .from('businesses')
+            .select('id')
+            .ilike('bot_code', trimmed.toLowerCase())
+            .eq('status', 'active')
+            .maybeSingle();
+          return !!data;
+        };
         const customHandled = await tryHandleCustomFlow({
           supabase: this.supabase,
           sender: this.messageSender,
@@ -1262,6 +1281,8 @@ export class BotService {
           from,
           text,
           messageType,
+          isPinStep,
+          isBusinessCode,
         });
         if (customHandled) return;
       }
