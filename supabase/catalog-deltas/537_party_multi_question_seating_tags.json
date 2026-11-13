@@ -65,7 +65,7 @@
      }
     ],
     "arguments": "defs jsonb, answers jsonb, tags text[], tracked jsonb, pinned boolean, OUT next_tags text[], OUT next_tracked jsonb, OUT next_answer_tag text",
-    "body_sha256": "b5b70f1cdd2252dbe941065d61ef8b4ce21d1eb17525680ec6ca22e72931a0db",
+    "body_sha256": "c260aaf109618a7e3a8a685c674d471957ed2effcf6309eba19fa3c4c6a21b7b",
     "config": [
      "search_path=pg_catalog"
     ],
@@ -79,7 +79,7 @@
     "strict": false,
     "volatility": "i"
    },
-   "after_sha256": "4772a22dbc3c1fc4d4756c7f8aac3a3039d1e838143b56ef9d6ee1b8b90aa01b",
+   "after_sha256": "652e9ba92025538f3f5e4e14d19d996d26d0cb13d56f799f2024aeb60fa74901",
    "identity": "function:private.party_answer_tags_537(defs jsonb, answers jsonb, tags text[], tracked jsonb, pinned boolean, OUT next_tags text[], OUT next_tracked jsonb, OUT next_answer_tag text)",
    "operation": "add"
   },
@@ -158,7 +158,7 @@
   }
  ],
  "migration": "537_party_multi_question_seating_tags.sql",
- "migration_sha256": "e08fff75c5df7b9cdbb8aec5344ba26216e1fcf66d8a52be1938fff775d48426",
+ "migration_sha256": "5bfa3bb892ac4624ff503887eef3c111ff4091ce41f46aa7370cc6fb74e7f845",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
