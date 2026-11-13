@@ -72,7 +72,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'waitlist', label: 'Waitlist', description: 'When you\'re fully booked, customers join a waitlist. Auto-notified when a slot opens up.', icon: '📝' },
   { id: 'queue', label: 'Queue', description: 'Walk-in customers check in via WhatsApp, see their position, and get notified when it\'s their turn.', icon: '📋' },
   { id: 'crowdfunding', label: 'Campaigns', description: 'Run fundraising campaigns with goals and progress tracking. Track every donor and amount.', icon: '❤️' },
-  { id: 'custom_flow', label: 'Custom Flows', description: 'Build drag-and-drop WhatsApp flows with no code — menus, lookups, bookings, and payment links that read your own data tables.', icon: '🧩' },
+  { id: 'custom_flow', label: 'Custom Flows', description: 'Custom WhatsApp menus and lookups that read your own data tables.', icon: '🧩' },
 
   // ── NEW ──
   { id: 'estimates', label: 'Estimates & Quotes', description: 'Send price quotes to customers. They approve and it becomes a booking.', icon: '📋' },

@@ -444,13 +444,13 @@ describe('custom flow engine', () => {
     expect(sender.buttons).toHaveLength(3); // back returns to the main menu
     await engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'start over' });
     expect(sender.buttons).toHaveLength(4); // start over returns to the start node
-    // "restart" belongs to the platform bot, not the engine.
-    const restart = await engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'restart' });
-    expect(restart.handled).toBe(false);
     await engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'cancel' });
     expect(sender.texts.at(-1)?.text).toContain('Thanks for chatting');
     const after = await engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text: 'hi' });
     expect(after.handled).toBe(false);
+    // "restart" belongs to the platform bot, not the engine — and it now
+    // closes the session (reviewer B P1). That passthrough, with the
+    // session-closed assertion, is pinned in the routing tests below.
   });
 
   it('answers a human request without ending the session', async () => {
@@ -770,6 +770,14 @@ describe('custom flow routing (tryHandleCustomFlow)', () => {
     expect(db.custom_flow_sessions).toHaveLength(0);
   });
 
+  it('does not start a flow when the entry keyword has trailing words', async () => {
+    const handled = await tryHandleCustomFlow({
+      supabase, sender, businessId: BUSINESS_A, from: PHONE, text: 'AFROFEST 2026',
+    });
+    expect(handled).toBe(false);
+    expect(db.custom_flow_sessions).toHaveLength(0);
+  });
+
   it('passes through a business code sent inside an active session', async () => {
     await startSession();
     const handled = await tryHandleCustomFlow({
@@ -777,6 +785,14 @@ describe('custom flow routing (tryHandleCustomFlow)', () => {
       isBusinessCode: async (text) => text === 'OTHERBIZ',
     });
     expect(handled).toBe(false);
+    // Reviewer B P1: the session must be closed, or the customer's next
+    // typed replies are swallowed by the engine.
+    expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
+    const next = await tryHandleCustomFlow({
+      supabase, sender, businessId: BUSINESS_A, from: PHONE, text: '1',
+    });
+    expect(next).toBe(false);
+    expect(sender.texts.some((t) => t.text.includes("Sorry, I didn't catch that"))).toBe(false);
   });
 
   it('passes through a restart word with an active session', async () => {
@@ -785,6 +801,14 @@ describe('custom flow routing (tryHandleCustomFlow)', () => {
       supabase, sender, businessId: BUSINESS_A, from: PHONE, text: 'restart',
     });
     expect(handled).toBe(false);
+    // Reviewer B P1: the session must be closed, or the customer's next
+    // typed replies are swallowed by the engine.
+    expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
+    const next = await tryHandleCustomFlow({
+      supabase, sender, businessId: BUSINESS_A, from: PHONE, text: '1',
+    });
+    expect(next).toBe(false);
+    expect(sender.texts.some((t) => t.text.includes("Sorry, I didn't catch that"))).toBe(false);
   });
 });
 

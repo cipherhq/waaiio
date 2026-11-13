@@ -15,6 +15,10 @@
  *     switches to biz-B: new session + sender bound to biz-B);
  *  3. a foreign button postback ("I've Paid" / i_paid) reaches its existing
  *     handler (it sends the stale-payment "No recent payment found" reply).
+ *  4. a "restart" closes the custom session and the next typed answer ("1")
+ *     reaches the normal flow's handler (the scheduling date step runs) —
+ *     reviewer B P1: without the close, the engine swallows the "1" and
+ *     answers its own fallback instead.
  *
  * Follows the real-BotService harness of s1-botservice-real-handleMessage.test.ts:
  * real BotService + real custom-flow engine, mocked external boundaries, an
@@ -60,7 +64,10 @@ vi.mock('@/lib/capabilities/service', () => ({
 }));
 vi.mock('@/lib/bot/smart-intent', () => ({
   parseSmartIntent: vi.fn().mockResolvedValue(null),
-  parseSmartIntentHybrid: vi.fn().mockResolvedValue(null),
+  // Test 4 ("restart" then "1") reaches the capability-selection pre-fill,
+  // which reads parsed.understood — production never returns null here, so
+  // the mock returns the minimal "not understood" object instead.
+  parseSmartIntentHybrid: vi.fn().mockResolvedValue({ understood: false, broadIntent: null, serviceKeywords: [], date: null, specificTime: null, timePreference: null, quantity: null, amount: null, variantKeywords: [] }),
   matchServiceFromKeywords: vi.fn().mockResolvedValue(null),
   matchProductsFromKeywords: vi.fn().mockResolvedValue([]),
   buildAcknowledgment: vi.fn().mockReturnValue(null),
@@ -187,7 +194,9 @@ class RoutingQuery {
   returns(): this { return this; }
   head(): this { return this; }
   range(): this { return this; }
-  order(col: string, opts: { ascending: boolean }): this { this.orderBy = { col, asc: opts.ascending }; return this; }
+  // Real supabase-js defaults ascending to true when opts is omitted
+  // (scheduling.flow.ts calls .order(col) with one argument).
+  order(col: string, opts?: { ascending: boolean }): this { this.orderBy = { col, asc: opts?.ascending ?? true }; return this; }
   limit(n: number): this { this.limitN = n; return this; }
 
   single(): Promise<{ data: Row | null; error: null }> { this.mode = 'single'; return Promise.resolve(this.execute() as { data: Row | null; error: null }); }
@@ -333,6 +342,12 @@ function createRoutingSupabase(currentStep: string) {
       if (fn === 'update_session_cas') {
         return { data: { success: true, version: 1 }, error: null };
       }
+      // Test 4 ("restart") reaches the shared-conversation selection after
+      // the restart creates a fresh session; a truthy selection lets the
+      // restart path continue to the capability menu.
+      if (fn === 'select_shared_conversation') {
+        return { data: { ok: true }, error: null };
+      }
       return { data: null, error: null };
     }),
   };
@@ -397,5 +412,33 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
     // The custom engine never answered: no flow menu went out.
     const bodies = [...cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.body ?? ''))];
     expect(bodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
+  });
+
+  it('4. restart: the custom session closes and the next typed answer reaches the normal flow handler', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const { supabase, db } = createRoutingSupabase('select_capability');
+    const bot = new BotService(supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    // The customer types "restart" inside the active custom session.
+    await bot.handleMessage(PHONE, 'restart', 'text', 'pnid-1');
+
+    // Reviewer B P1: the restart must close the custom session…
+    expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
+    // …and the restart handler itself ran: a fresh session started and the
+    // normal bot asked for a language (no custom menu went out).
+    const listBodies = cloud.sendList.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(listBodies.some((b) => b.includes('Please choose your preferred language'))).toBe(true);
+    expect(listBodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
+
+    // …then the next typed answer reaches the normal flow's handler: "1"
+    // selects the scheduling capability and its date step runs.
+    await bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    const buttonBodies = cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(buttonBodies.some((b) => b.includes('When would you like to book?'))).toBe(true);
+    // The custom engine never answered the typed reply: no fallback text
+    // and no custom menu went out.
+    expect(sentTexts(cloud).some((t) => t.includes("Sorry, I didn't catch that"))).toBe(false);
+    expect(buttonBodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
   });
 });

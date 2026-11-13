@@ -113,13 +113,24 @@ export class CustomFlowEngine {
         return this.handleWithSession(session, text);
       }
       // Restart words and business codes belong to the existing bot.
-      if (RESTART_WORDS.test(text)) return { handled: false };
-      if (args.isBusinessCode && (await args.isBusinessCode(text))) return { handled: false };
+      // Close the session first: otherwise the customer is left in a
+      // custom session whose menu they can no longer see, and their next
+      // typed replies are swallowed by the engine (#1016 reviewer B P1).
+      if (RESTART_WORDS.test(text)) {
+        await closeSession(supabase, session.id, session.business_id);
+        return { handled: false };
+      }
+      if (args.isBusinessCode && (await args.isBusinessCode(text))) {
+        await closeSession(supabase, session.id, session.business_id);
+        return { handled: false };
+      }
       return this.handleWithSession(session, text);
     }
 
-    // No active session: only an entry keyword can start a flow.
-    const keyword = text.split(/\s+/)[0]?.toUpperCase() ?? '';
+    // No active session: only an entry keyword can start a flow. The
+    // whole message must be the keyword (reviewer B, non-blocking):
+    // first-word matching let "AFROFEST hello" start a flow by accident.
+    const keyword = text.toUpperCase();
     if (!keyword) return { handled: false };
     const flow = await this.loadPublishedFlowByKeyword(businessId, keyword);
     if (!flow) return { handled: false };
@@ -172,7 +183,7 @@ export class CustomFlowEngine {
     if (!flow) {
       // Flow unpublished or deleted mid-conversation: close and fall back
       // to normal routing instead of stranding the customer.
-      await closeSession(supabase, session.id);
+      await closeSession(supabase, session.id, session.business_id);
       return { handled: false };
     }
 
@@ -212,7 +223,7 @@ export class CustomFlowEngine {
   /** The flow changed under the customer: say so, close, start fresh. */
   private async restartWithNotice(session: CustomFlowSessionRow, flow: LoadedFlow): Promise<CustomFlowHandleResult> {
     await this.sendText(session, FLOW_UPDATED_TEXT);
-    await closeSession(this.deps.supabase, session.id);
+    await closeSession(this.deps.supabase, session.id, session.business_id);
     await this.startFlow(flow, session.business_id, session.whatsapp_number);
     return { handled: true };
   }
@@ -224,7 +235,7 @@ export class CustomFlowEngine {
     const { supabase } = this.deps;
     const flow = await this.loadPublishedFlowById(session.business_id, session.flow_id);
     if (!flow) {
-      await closeSession(supabase, session.id);
+      await closeSession(supabase, session.id, session.business_id);
       return { handled: false };
     }
 
@@ -276,7 +287,7 @@ export class CustomFlowEngine {
     }
 
     if (isRestart) {
-      await closeSession(supabase, session.id);
+      await closeSession(supabase, session.id, session.business_id);
       await this.startFlow(flow, session.business_id, session.whatsapp_number);
       return { handled: true };
     }
@@ -284,7 +295,7 @@ export class CustomFlowEngine {
     // Anything else — including cancel — is not an answer to the resume
     // prompt. The prompt was offered once: close the session and pass this
     // same message to the normal bot, so the customer can never get stuck.
-    await closeSession(supabase, session.id);
+    await closeSession(supabase, session.id, session.business_id);
     return { handled: false };
   }
 
@@ -306,7 +317,7 @@ export class CustomFlowEngine {
 
     const startNode = flow.definition.nodes.find((n) => n.id === startNodeId);
     if (!startNode) {
-      await closeSession(supabase, session.id);
+      await closeSession(supabase, session.id, session.business_id);
       return false;
     }
 
@@ -344,7 +355,7 @@ export class CustomFlowEngine {
     }
     if (GLOBAL_EXIT_WORDS.has(normalized)) {
       await this.sendText(session, DEFAULT_CLOSE_TEXT);
-      await closeSession(this.deps.supabase, session.id);
+      await closeSession(this.deps.supabase, session.id, session.business_id);
       return { handled: true };
     }
     if (GLOBAL_HUMAN_WORDS.has(normalized)) {
@@ -530,7 +541,7 @@ export class CustomFlowEngine {
         if (node.next) {
           await this.goToNode(session, flow, node.next, depth + 1);
         } else {
-          await closeSession(this.deps.supabase, session.id);
+          await closeSession(this.deps.supabase, session.id, session.business_id);
         }
         return;
       }
@@ -592,7 +603,7 @@ export class CustomFlowEngine {
   ): Promise<void> {
     if (depth >= MAX_MESSAGE_HOPS) {
       logger.warn(`[CUSTOM-FLOW] Message chain exceeded ${MAX_MESSAGE_HOPS} hops; closing session ${session.id}.`);
-      await closeSession(this.deps.supabase, session.id);
+      await closeSession(this.deps.supabase, session.id, session.business_id);
       return;
     }
     const node = flow.definition.nodes.find((n) => n.id === nodeId);
@@ -600,7 +611,7 @@ export class CustomFlowEngine {
       // Broken link in the definition: fall back to the start node.
       const startId = flow.definition.start_node ?? flow.definition.nodes[0]?.id;
       if (!startId || startId === nodeId) {
-        await closeSession(this.deps.supabase, session.id);
+        await closeSession(this.deps.supabase, session.id, session.business_id);
         return;
       }
       await this.goToNode(session, flow, startId, depth);
