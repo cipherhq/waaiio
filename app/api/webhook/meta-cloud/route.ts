@@ -1,6 +1,7 @@
 import { isNativeFormMessage, handleNativeFormWebhook } from '@/lib/whatsapp-forms/webhook';
 import { handleMerchantAlertOptIn, sendMerchantAlertControlReply } from '@/lib/bot/merchant-alert-optin';
 import { handleOptInConfirmation, isOptInPayload, sendOptInControlReply } from '@/lib/consent/optin-confirmation';
+import { isRsvpButtonPayload } from '@/lib/parties/cold-invite';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -665,9 +666,9 @@ export async function POST(request: NextRequest) {
                   text = msg.interactive.list_reply?.id || msg.interactive.list_reply?.title || '';
                   msgType = 'list';
                 }
-              } else if (msg.type === 'button' && isOptInPayload(msg.button?.payload)) {
-                // Template quick-reply tap (#591). Only opt-in confirmation payloads are
-                // read; every other template button keeps being dropped below.
+              } else if (msg.type === 'button' && (isOptInPayload(msg.button?.payload) || isRsvpButtonPayload(msg.button?.payload))) {
+                // Template quick-reply tap. Only opt-in confirmation (#591) and party invite RSVP
+                // (#1005) payloads are read; every other template button keeps being dropped below.
                 text = msg.button!.payload!;
                 msgType = 'button';
               }

@@ -73,6 +73,17 @@ export const WAAIIO_TEMPLATES: TemplateDefinition[] = [
     ],
   },
   {
+    // Cold party invites (#1005): the quick-reply payloads are set per send (rsvp_<choice>_<inviteId>).
+    name: 'waaiio_party_invite_v1',
+    category: 'MARKETING',
+    language: 'en_US',
+    components: [
+      { type: 'BODY', text: "You're invited to {{1}}.\n\nWill you be there? Tap a button below to reply.", example: { body_text: [["Ada's birthday party on Saturday 5 December at 6:00 PM at The Citadel Lagos"]] } },
+      { type: 'FOOTER', text: 'Powered by Waaiio' },
+      { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: "Yes, I'll be there" }, { type: 'QUICK_REPLY', text: 'Maybe' }, { type: 'QUICK_REPLY', text: "Can't make it" }] },
+    ],
+  },
+  {
     name: 'feedback_request',
     category: 'MARKETING',
     language: 'en_US',

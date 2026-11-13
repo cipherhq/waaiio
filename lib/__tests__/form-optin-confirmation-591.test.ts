@@ -784,6 +784,20 @@ describe('Meta webhook: template quick replies and interactive buttons', () => {
     expect(m.rpc).toHaveBeenCalledWith('complete_webhook_event', expect.anything());
   });
 
+  it('#1005: a party invite template button reaches the bot as its rsvp_ payload', async () => {
+    const payload = 'rsvp_maybe_0b0e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
+    const res = await inbound({ type: 'button', button: { payload, text: 'Maybe' } });
+    expect(res.status).toBe(200);
+    expect(m.bot).toHaveBeenCalledTimes(1);
+    expect(m.bot.mock.calls[0][1]).toBe(payload);
+    expect(consents()).toEqual([]);
+  });
+
+  it('#1005: a malformed rsvp_ template payload is still dropped', async () => {
+    await inbound({ type: 'button', button: { payload: 'rsvp_yes_not-an-invite', text: "Yes, I'll be there" } });
+    expect(m.bot).not.toHaveBeenCalled();
+  });
+
   it('an interactive button_reply with an optin_ id also reaches the handler', async () => {
     const nonce = newOptInNonce();
     seedRequest(A, nonce);
