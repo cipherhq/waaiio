@@ -5,8 +5,10 @@ export type PartyQuestion = {
   type: 'short_text' | 'single_choice' | 'yes_no';
   required: boolean;
   options?: { id: string; label: string }[];
-  /** M514: the chosen option's label becomes a guest tag. Single choice only, one per party. */
+  /** M514/M537: the guest's answer becomes a guest tag. Single choice and yes/no; any number per party. */
   tag_answers?: boolean;
+  /** M537: the tag a tagging yes/no question gives guests who answer Yes (1–100 characters, trimmed). */
+  yes_tag?: string;
 };
 export type PartyAnswers = Record<string, string | boolean>;
 export const QUESTION_BODY_LIMIT = 16 * 1024;
@@ -17,18 +19,19 @@ const label = (v: unknown, max: number): v is string => typeof v === 'string' &&
 export function parseQuestions(value: unknown): PartyQuestion[] {
   if (!Array.isArray(value) || value.length > 10) throw new Error('Use at most 10 questions.');
   const ids = new Set<string>();
-  let tagging = 0;
   for (const q of value) {
-    if (!object(q) || Object.keys(q).some(k => !['id', 'label', 'type', 'required', 'options', 'tag_answers'].includes(k)) ||
+    if (!object(q) || Object.keys(q).some(k => !['id', 'label', 'type', 'required', 'options', 'tag_answers', 'yes_tag'].includes(k)) ||
       typeof q.id !== 'string' || !identifier.test(q.id) || ids.has(q.id) || !label(q.label, 120) ||
       !['short_text', 'single_choice', 'yes_no'].includes(String(q.type)) || typeof q.required !== 'boolean')
       throw new Error('Invalid question. Check its label, type and unique ID.');
     ids.add(q.id);
-    if (q.tag_answers !== undefined) {
-      if (typeof q.tag_answers !== 'boolean' || q.type !== 'single_choice')
-        throw new Error('Only choice questions can tag guests with their answer.');
-      if (q.tag_answers) tagging++;
-    }
+    if (q.tag_answers !== undefined && (typeof q.tag_answers !== 'boolean' || !['single_choice', 'yes_no'].includes(String(q.type))))
+      throw new Error('Only choice and yes/no questions can tag guests with their answer.');
+    if (q.yes_tag !== undefined && (q.type !== 'yes_no' || typeof q.yes_tag !== 'string' || q.yes_tag !== q.yes_tag.trim() ||
+      q.yes_tag.length < 1 || q.yes_tag.length > 100))
+      throw new Error('Use 1–100 characters, without spaces at the ends, for the tag for Yes.');
+    if (q.type === 'yes_no' && q.tag_answers === true && q.yes_tag === undefined)
+      throw new Error(`Add a tag for Yes: ${String(q.label)}`);
     if (q.type === 'single_choice') {
       if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 10)
         throw new Error('Choice questions need 2–10 options.');
@@ -41,7 +44,6 @@ export function parseQuestions(value: unknown): PartyQuestion[] {
       }
     } else if (q.options !== undefined) throw new Error('Only choice questions have options.');
   }
-  if (tagging > 1) throw new Error('Only one question can tag guests with their answer.');
   return value as PartyQuestion[];
 }
 

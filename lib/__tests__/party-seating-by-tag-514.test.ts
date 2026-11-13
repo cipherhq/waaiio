@@ -187,10 +187,19 @@ describe('T3 question contract', () => {
     expect(parseQuestions([side({ tag_answers: false })])).toHaveLength(1);
     expect(parseQuestions([side({})])).toHaveLength(1);
   });
-  it('rejects it on other types, as a non-boolean, or on two questions', () => {
-    expect(() => parseQuestions([{ id: 'm', label: 'Meal', type: 'short_text', required: false, tag_answers: true }])).toThrow(/Only choice questions/);
-    expect(() => parseQuestions([{ ...side(), tag_answers: 'yes' }])).toThrow(/Only choice questions/);
-    expect(() => parseQuestions([side(), { ...side(), id: 'side2' }])).toThrow(/Only one question/);
+  it('rejects it on text questions or as a non-boolean (M537 allows several questions, and yes/no)', () => {
+    expect(() => parseQuestions([{ id: 'm', label: 'Meal', type: 'short_text', required: false, tag_answers: true }])).toThrow(/Only choice and yes\/no/);
+    expect(() => parseQuestions([{ ...side(), tag_answers: 'yes' }])).toThrow(/Only choice and yes\/no/);
+    expect(parseQuestions([side(), { ...side(), id: 'side2' }])).toHaveLength(2);
+  });
+  it('M537: a tagging yes/no question needs a trimmed tag for Yes of 1–100 characters', () => {
+    const veg = (extra: Partial<PartyQuestion>): PartyQuestion => ({ id: 'veg', label: 'Vegetarian?', type: 'yes_no', required: false, ...extra });
+    expect(parseQuestions([veg({ tag_answers: true, yes_tag: 'Vegetarian' }), side()])).toHaveLength(2);
+    expect(parseQuestions([veg({ yes_tag: 'Vegetarian' })])).toHaveLength(1);
+    expect(() => parseQuestions([veg({ tag_answers: true })])).toThrow(/Add a tag for Yes/);
+    for (const yes_tag of [' Vegetarian', '', 'x'.repeat(101)])
+      expect(() => parseQuestions([veg({ tag_answers: true, yes_tag })])).toThrow(/tag for Yes/);
+    expect(() => parseQuestions([side({ tag_answers: true, yes_tag: 'Groom' })])).toThrow(/tag for Yes/);
   });
 });
 
