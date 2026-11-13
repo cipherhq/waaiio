@@ -4,7 +4,7 @@
  * Handles the shared-number directory experience:
  *   1. Greeting (first contact / home / returning customer)
  *   2. Natural language search → WhatsApp List results
- *   3. "Did you mean?" fuzzy name suggestions
+ *   3. Close name matches ("No exact match for 'X'. These names are close:")
  *   4. Category/location correction ("Showing results for…")
  *   5. Result selection → enters business bot
  *   6. "connect <name>" command
@@ -108,8 +108,40 @@ export async function sendReturningGreeting(
   }
   buttons.push({ id: 'dir_find', title: truncTitle(getFlowCopy(lang, 'directory.find_button')) });
 
-  const body = `${greeting}\n\n${getFlowCopy(lang, 'directory.returning_search_hint')}`;
+  const body = `${greeting} ${getFlowCopy(lang, 'directory.past_businesses')}\n\n${getFlowCopy(lang, 'directory.returning_search_hint')}`;
   await send.sendPlatformButtons(from, body, buttons);
+}
+
+/**
+ * Customer's search text as shown back to them in quotes: one line, at most 40 chars.
+ */
+export function searchLabel(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 40 ? `${oneLine.slice(0, 39)}…` : oneLine;
+}
+
+/** Header for close name matches ("No exact match for 'X'. These names are close:"). */
+export function closeMatchesHeader(query: string, count: number, lang?: string): string {
+  return fillFlowCopy(lang, count === 1 ? 'directory.close_match_one' : 'directory.close_matches', {
+    query: searchLabel(query),
+  });
+}
+
+/**
+ * Send businesses the customer used before, labelled as past (sent after any search
+ * results, never mixed into them). Buttons are biz_{startIndex + i} so they index into
+ * the session's stored `suggestions` list. At most 3 (WhatsApp button limit).
+ */
+export async function sendPastBusinesses(
+  send: PlatformSend,
+  from: string,
+  past: Array<{ id: string; name: string; bot_code: string }>,
+  startIndex: number,
+  lang?: string,
+): Promise<void> {
+  if (past.length === 0) return;
+  await send.sendPlatformButtons(from, getFlowCopy(lang, 'directory.past_businesses'),
+    past.slice(0, 3).map((b, i) => ({ id: `biz_${startIndex + i}`, title: truncTitle(b.name) })));
 }
 
 // ── Search ────────────────────────────────────────────────
@@ -133,8 +165,9 @@ function freeTextQuery(parsed: ReturnType<typeof parseDirectoryQuery>, text: str
  * Handles:
  * - Category/location search ("salon in Lagos")
  * - Typo correction ("resturant in Lagos" → "Showing results for restaurant in Lagos")
- * - Name search → fuzzy suggestions ("Glow Studio" → did-you-mean list)
- * - No results → suggestion text
+ * - Name search → close name matches ("Glo Studio" → "These names are close:")
+ * - No results → "No businesses found for 'X'"
+
  */
 export async function handleDirectorySearch(
   supabase: SupabaseClient,
@@ -163,7 +196,7 @@ export async function handleDirectorySearch(
 
   // If it's a name query (no category or location matched), do fuzzy name search
   if (parsed.nameQuery && parsed.categories.length === 0 && !parsed.locationText) {
-    return handleNameSearch(supabase, send, from, parsed.nameQuery, sharedCountry, hiddenIds, lang);
+    return handleNameSearch(supabase, send, from, parsed.nameQuery, text, sharedCountry, hiddenIds, lang);
   }
 
   // Build search criteria from parsed query
@@ -196,22 +229,14 @@ export async function handleDirectorySearch(
       ? searchResult.results.length + '+' // indicate more exist
       : String(searchResult.results.length);
 
-    const description = buildSearchDescription(parsed.categories[0], parsed.locationText, lang);
-
     let bodyText = correctionPrefix
       ? `${correctionPrefix}\n\n`
       : '';
 
     if (searchResult.hasMore) {
-      bodyText += fillFlowCopy(lang, 'directory.results_hint_more', {
-        count: total,
-        description,
-      });
+      bodyText += fillFlowCopy(lang, 'directory.search_results_more', { query: searchLabel(text), count: total });
     } else {
-      bodyText += fillFlowCopy(lang, 'directory.results_found', {
-        count: String(searchResult.results.length),
-        description,
-      });
+      bodyText += searchResultsText(text, searchResult.results.length, lang);
     }
 
     await sendResultsList(send, from, searchResult.results, bodyText, lang);
@@ -232,9 +257,8 @@ export async function handleDirectorySearch(
   }
 
   // No results at all
-  const noResultsMsg = correctionPrefix
-    ? `${correctionPrefix}\n\n${getFlowCopy(lang, 'directory.no_results')}`
-    : getFlowCopy(lang, 'directory.no_results');
+  const noResults = fillFlowCopy(lang, 'directory.no_results_for', { query: searchLabel(text) });
+  const noResultsMsg = correctionPrefix ? `${correctionPrefix}\n\n${noResults}` : noResults;
   await send.sendPlatformText(from, noResultsMsg);
 
   return {
@@ -255,6 +279,7 @@ async function handleNameSearch(
   send: PlatformSend,
   from: string,
   nameQuery: string,
+  customerText: string,
   country: string | null,
   hiddenIds: string[],
   lang?: string,
@@ -262,7 +287,7 @@ async function handleNameSearch(
   const suggestions = await searchFuzzy(supabase, nameQuery, country, hiddenIds);
 
   if (suggestions.length > 0) {
-    return sendFuzzySuggestions(send, from, suggestions, nameQuery, '', lang);
+    return sendFuzzySuggestions(send, from, suggestions, nameQuery, '', lang, customerText);
   }
 
   // No fuzzy matches either — fall back to full-text search
@@ -274,10 +299,7 @@ async function handleNameSearch(
   });
 
   if (searchResult.ok && searchResult.results.length > 0) {
-    const bodyText = fillFlowCopy(lang, 'directory.results_found', {
-      count: String(searchResult.results.length),
-      description: `"${nameQuery}"`,
-    });
+    const bodyText = searchResultsText(customerText, searchResult.results.length, lang);
 
     await sendResultsList(send, from, searchResult.results, bodyText, lang);
 
@@ -292,7 +314,7 @@ async function handleNameSearch(
   }
 
   // Nothing found
-  await send.sendPlatformText(from, getFlowCopy(lang, 'directory.no_results'));
+  await send.sendPlatformText(from, fillFlowCopy(lang, 'directory.no_results_for', { query: searchLabel(customerText) }));
   return {
     _directory_mode: true,
     _directory_results: [],
@@ -304,7 +326,8 @@ async function handleNameSearch(
 }
 
 /**
- * Send fuzzy suggestions as a "Did you mean?" list.
+ * Send fuzzy suggestions as a "No exact match… these names are close" list.
+ * `shownQuery` is the customer's own text when it differs from the searched name.
  */
 async function sendFuzzySuggestions(
   send: PlatformSend,
@@ -313,12 +336,12 @@ async function sendFuzzySuggestions(
   originalQuery: string,
   prefix: string,
   lang?: string,
+  shownQuery: string = originalQuery,
 ): Promise<DirectorySessionData> {
   const items = suggestions.slice(0, WHATSAPP_LIST_MAX);
 
-  const headerText = prefix
-    ? `${prefix}\n\n${getFlowCopy(lang, 'directory.did_you_mean')}`
-    : getFlowCopy(lang, 'directory.did_you_mean');
+  const closeHeader = closeMatchesHeader(shownQuery, items.length, lang);
+  const headerText = prefix ? `${prefix}\n\n${closeHeader}` : closeHeader;
 
   if (items.length <= 3) {
     // Use buttons for small suggestion sets
@@ -330,7 +353,7 @@ async function sendFuzzySuggestions(
   } else {
     // Use list for larger sets
     await send.sendPlatformList(from, {
-      title: getFlowCopy(lang, 'directory.did_you_mean_title'),
+      title: getFlowCopy(lang, 'directory.close_matches_title'),
       body: headerText,
       buttonLabel: truncTitle(getFlowCopy(lang, 'directory.view_suggestions'), LIST_TITLE_MAX),
       items: items.map((s, i) => ({
@@ -535,11 +558,11 @@ function buildSuggestionDescription(s: FuzzySuggestion): string {
 }
 
 /**
- * Build a human-readable search description from category + location.
+ * Body for a results list: "Search results for 'X': I found N businesses. Tap below to choose one."
  */
-function buildSearchDescription(category?: string, location?: string | null, lang?: string): string {
-  if (category && location) return fillFlowCopy(lang, 'directory.desc_category_in_location', { category, location });
-  if (category) return category;
-  if (location) return fillFlowCopy(lang, 'directory.desc_businesses_in', { location });
-  return getFlowCopy(lang, 'directory.desc_your_search');
+function searchResultsText(query: string, count: number, lang?: string): string {
+  return fillFlowCopy(lang, count === 1 ? 'directory.search_results_one' : 'directory.search_results', {
+    query: searchLabel(query),
+    count,
+  });
 }

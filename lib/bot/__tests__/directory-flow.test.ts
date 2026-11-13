@@ -347,7 +347,7 @@ describe('WhatsApp Directory Flow', () => {
     expect(correctionMsg).toBeDefined();
   });
 
-  it('name search shows "Did you mean" suggestions (not no-results)', async () => {
+  it('name search shows close matches labelled as such (not no-results)', async () => {
     // Use a name that doesn't contain category keywords (e.g., "FacesByKoph")
     // "Glw Studio" would be parsed as photographer category due to "studio" keyword.
     const db = buildMock({
@@ -363,10 +363,11 @@ describe('WhatsApp Directory Flow', () => {
     await bot.handleMessage(PHONE, 'FacezByKof', 'text', SHARED_PNID);
 
     const m = msgs(sender);
-    const didYouMean = m.find(x => textOf(x).includes('Did you mean'));
-    const noResults = m.find(x => textOf(x).includes("couldn't find"));
+    const closeMatches = m.find(x => textOf(x).includes("No exact match for 'FacezByKof'. These names are close:"));
+    const noResults = m.find(x => textOf(x).includes('No businesses found'));
     // Must show suggestions, NOT no-results
-    expect(didYouMean).toBeDefined();
+    expect(closeMatches).toBeDefined();
+    expect(m.some(x => textOf(x).includes('Did you mean'))).toBe(false);
     expect(noResults).toBeUndefined();
   });
 
@@ -567,7 +568,7 @@ describe('WhatsApp Directory Flow', () => {
     // minimum the search ran (a reply was sent) — createDirectorySession may
     // use the UPDATE path (mock returns null but no error, so step (a) succeeds).
     const searchReply = msgs(sender).find(m =>
-      textOf(m).includes("couldn't find") || textOf(m).includes('found'),
+      textOf(m).includes('No businesses found') || textOf(m).includes('found'),
     );
     expect(dirInserted || dirUpdated || searchReply).toBeTruthy();
   });

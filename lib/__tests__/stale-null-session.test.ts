@@ -265,7 +265,7 @@ describe('Stale null-business session fix', () => {
 
     // Normal flow continues — user receives a directory reply ('sometext' → search → no results)
     const dirCalls = cloud.sendText.mock.calls.filter(
-      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes("couldn't find")
+      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('No businesses found for')
     );
     expect(dirCalls.length).toBeGreaterThan(0);
   });
@@ -389,7 +389,7 @@ describe('Stale null-business session fix', () => {
     expect(fallbackCalls.length).toBe(0);
   });
 
-  it('4. returning customer with past businesses, "Hi": platform-scoped picker, no crash', async () => {
+  it('4. returning customer with past businesses, "Hi": greeting labels them as past, no crash', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     mockDetectionResult = { businessId: null, suggestions: [] };
@@ -434,11 +434,12 @@ describe('Stale null-business session fix', () => {
     // Should NOT throw — previously returning customer paths could crash with no business bound
     await expect(bot.handleMessage('+234800', 'Hi', 'text', 'pnid-1')).resolves.toBeUndefined();
 
-    // Platform-scoped picker buttons were sent (returning businesses as suggestions)
+    // Platform-scoped greeting buttons: past businesses labelled as past, not "Did you mean"
     const buttonCalls = cloud.sendButtons.mock.calls;
     expect(buttonCalls.length).toBeGreaterThan(0);
     const buttonBody = buttonCalls[0]?.[0]?.bodyText || '';
-    expect(buttonBody).toContain('Did you mean');
+    expect(buttonBody).toContain("Welcome back! 👋 You've used these businesses before. Would you like to continue with one of them?");
+    expect(buttonBody).not.toContain('Did you mean');
 
     // No "Something went wrong" fallback
     const fallbackCalls = cloud.sendText.mock.calls.filter(
@@ -774,7 +775,7 @@ describe('Stale null-business session fix', () => {
     };
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
     await bot.handleMessage('+234800', 'Concurrent Biz', 'text');
-    const dym = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('Did you mean'));
+    const dym = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('No exact match'));
     expect(dym.length).toBe(0);
     expect(spyPT).toHaveBeenCalled();
     const fb = spyPT.mock.calls.find((c: any[]) => (c[0] as { text?: string })?.text?.includes('Something went wrong'));
@@ -818,7 +819,7 @@ describe('Stale null-business session fix', () => {
     // Only 1 insert attempted (helper), no generic session insert
     expect(insertCount).toBe(1);
     // No DYM buttons
-    const dym = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('Did you mean'));
+    const dym = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('No exact match'));
     expect(dym.length).toBe(0);
     // Exactly one platform error
     const errors = spyPT.mock.calls.filter((c: any[]) => (c[0] as { text?: string })?.text?.includes('Something went wrong'));
@@ -827,7 +828,7 @@ describe('Stale null-business session fix', () => {
 
   // ── Fix 6: Real two-message regression — returning customer with expired stale session ──
 
-  it('13. two-message: msg1 "Hi" → picker stored; msg2 "biz_0" resumes suggestion session, binds business via recursive call', async () => {
+  it('13. two-message: msg1 "Hi" → returning greeting stored; msg2 "biz_0" on a stored picker binds business via recursive call', async () => {
     // MSG 1: verify picker is sent and session is stored
     const cloud1 = createMockCloud();
     const sender1 = new MetaCloudSender(cloud1 as any, createTestSupabase());
@@ -1917,7 +1918,7 @@ describe('Stale null-business session fix', () => {
     // Only 1 INSERT (the initial 23505) — no retry because session was non-expired
     expect(insertCount27).toBe(1);
     // One search reply (no results) — no error reply
-    const searchReply = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes("couldn't find"));
+    const searchReply = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('No businesses found for'));
     expect(searchReply.length).toBeGreaterThan(0);
     expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
   });

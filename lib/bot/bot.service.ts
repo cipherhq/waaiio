@@ -67,10 +67,13 @@ import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
+import { parseDirectoryQuery } from '@/lib/marketplace/query-parser';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
 import {
   sendDirectoryGreeting,
   sendReturningGreeting,
+  sendPastBusinesses,
+  closeMatchesHeader,
   handleDirectorySearch,
   handleDirectorySelection,
   handleConnectCommand,
@@ -1825,28 +1828,24 @@ export class BotService {
         logger.debug('[BOT] detectBotCode("' + text + '") → authority:', detection.authority, 'biz:', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
       }
 
-      // #266 R1: Returning customer history is suggestion/ranking evidence, NOT tenant authority.
-      // Show ALL past businesses as picker candidates; never auto-bind from history alone.
-      if (!businessId) {
-        const returningBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
-        if (returningBusinesses.length > 0) {
-          // Merge returning-customer businesses into suggestions for the picker
-          // Preserve any bot-code-detected suggestions at the front
-          const existing = new Set((pendingSuggestions || []).map(s => s.id));
-          const merged = [...(pendingSuggestions || [])];
-          for (const rb of returningBusinesses) {
-            if (!existing.has(rb.id)) merged.push(rb);
-          }
-          pendingSuggestions = merged;
-          logger.debug('[BOT] returning customer businesses added to suggestions:', returningBusinesses.length);
-        }
+      // A category or area search ("salon in Lekki") is answered by the directory search
+      // below as labelled results, not by the close-name picker (Owner decision 2026-11-13).
+      if (!businessId && pendingSuggestions && pendingSuggestions.length > 0
+        && (isCategoryMatch || parseDirectoryQuery(text, sharedNumberCountry).locationText)) {
+        pendingSuggestions = undefined;
       }
 
-      // "Did you mean?" — fuzzy suggestions / category matches / auto-correct confirmation
+      // Close name matches — search results come first; businesses the
+      // customer used before follow in a separate message labelled as past (Owner
+      // decision 2026-11-13). #266 R1: history is a labelled pick list, never tenant authority.
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0) {
+        const matchIds = new Set(pendingSuggestions.map(s => s.id));
+        const pastBusinesses = (await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry))
+          .filter(b => !matchIds.has(b.id)).slice(0, 3);
         const sugSession = await this.createNullBizSuggestionSession(
           from, profile?.id || null,
-          { suggestions: pendingSuggestions, isCategory: isCategoryMatch,
+          { suggestions: [...pendingSuggestions, ...pastBusinesses], isCategory: isCategoryMatch,
+            _search_match_count: pendingSuggestions.length, _search_query: text,
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(sharedConversation ? { _conversation_version: sharedConversation.version } : {}),
           },
@@ -1864,28 +1863,26 @@ export class BotService {
             await this.sendPlatformText(from, 'Something went wrong on our end. Send *Hi* to start over.');
             return;
           }
-          // Choose wording based on persisted match type
+          // Stored list = search matches first, then past businesses. A session without the
+          // count (recovered from before this change) is all matches.
+          const storedCount = sugSession.session_data?._search_match_count;
+          const matchCount = typeof storedCount === 'number' && storedCount > 0 && storedCount <= persisted.length
+            ? storedCount : persisted.length;
+          const matches = persisted.slice(0, matchCount);
           const headerText = persistedIsCategory
             ? `Here are some businesses that might help:`
-            : persisted.length === 1
-              ? `Did you mean *${persisted[0].name}*?`
-              : `Did you mean one of these businesses?`;
+            : closeMatchesHeader(String(sugSession.session_data?._search_query ?? text), matches.length);
 
-          if (persisted.length === 1 && !persistedIsCategory) {
-            // Single fuzzy match — confirmation buttons (platform-scoped: pre-business discovery)
-            await this.sendPlatformButtons(from, headerText, [
-              { id: 'biz_0', title: 'Yes' },
-              { id: 'biz_no', title: 'No' },
-            ]);
-          } else if (persisted.length <= 3) {
+          if (matches.length <= 3) {
             // Use buttons (platform-scoped: pre-business discovery)
             await this.sendPlatformButtons(from, headerText,
-              persisted.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
+              matches.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
           } else {
             // Fallback to numbered list as text (platform-scoped: pre-business discovery)
-            const list = persisted.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            const list = matches.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
             await this.sendPlatformText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
           }
+          await sendPastBusinesses(this.buildDirectorySend(), from, persisted.slice(matchCount), matchCount);
           return;
         } else {
           // Helper failed — send platform error and stop; never fall through to generic session creation
@@ -3088,8 +3085,11 @@ export class BotService {
         return;
       }
 
-      // ── Returning user with past businesses — directory greeting + quick-pick ──
-      if (recentBusinesses.length >= 1) {
+      const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
+
+      // ── Returning user says hi — greeting with past businesses labelled as past ──
+      // Any other text is a search: results first, past businesses after (below).
+      if (recentBusinesses.length >= 1 && isGreeting) {
         const { data: returningProfile } = profile ? await this.supabase
           .from('profiles').select('first_name').eq('id', profile.id).single()
           : { data: null };
@@ -3098,24 +3098,20 @@ export class BotService {
 
         await sendReturningGreeting(dirSend, from, recentBusinesses, name || null);
 
-        // Clean up old sessions
-        await this.supabase.from('bot_sessions').delete()
-          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
-
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from,
-          user_id: profile?.id || null,
-          business_id: null,
-          current_step: 'directory_search',
-          session_data: { _directory_mode: true, suggestions: recentBusinesses.slice(0, 2), _directory_country: sharedNumberCountry },
-          is_active: true,
-          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
+        // CAS-safe session persist with channel provenance, same as the first-time greeting.
+        const returningSess = await this.createDirectorySession(
+          from, profile?.id || null, 'directory_search',
+          await this.navigationChannelData(from, destinationPhone, {
+            _directory_mode: true, suggestions: recentBusinesses.slice(0, 2), _directory_country: sharedNumberCountry,
+          }),
+        );
+        if (!returningSess) {
+          logger.warn('[BOT] createDirectorySession(returning greeting) failed — session not persisted after greeting');
+        }
         return;
       }
 
       // ── First-time user — directory greeting ──
-      const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
         await sendDirectoryGreeting(dirSend, from);
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
@@ -3135,10 +3131,21 @@ export class BotService {
         const searchData = await handleDirectorySearch(
           this.supabase, dirSend, from, text, sharedNumberCountry,
         );
+        // Returning customer: past businesses after the results, labelled as past (biz_N).
+        // Not when the search was refused (rate limit / unavailable): one reply per message.
+        const shownIds = new Set([
+          ...(searchData?._directory_results || []).map(r => r.businessId),
+          ...(searchData?._directory_suggestions || []).map(s => s.id),
+        ]);
+        const pastBusinesses = searchData ? recentBusinesses.filter(b => !shownIds.has(b.id)).slice(0, 3) : [];
+        await sendPastBusinesses(dirSend, from, pastBusinesses, 0);
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         const dirSearchSess = await this.createDirectorySession(
           from, profile?.id || null, 'directory_results',
-          await this.navigationChannelData(from, destinationPhone, { _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}) }),
+          await this.navigationChannelData(from, destinationPhone, {
+            _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}),
+            ...(pastBusinesses.length > 0 ? { suggestions: pastBusinesses } : {}),
+          }),
         );
         if (!dirSearchSess) {
           logger.warn('[BOT] createDirectorySession(directory_results) failed — session not persisted after search');
