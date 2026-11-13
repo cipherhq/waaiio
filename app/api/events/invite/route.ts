@@ -9,7 +9,7 @@ import { checkOptInBatch } from '@/lib/security/check-optin';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
-import { sendColdPartyInvite, whatsappOptedOut } from '@/lib/parties/cold-invite';
+import { sendColdPartyInvite, coldInviteBlocked } from '@/lib/parties/cold-invite';
 import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
@@ -302,11 +302,12 @@ export async function POST(request: NextRequest) {
           results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
         }
       } else if (!isOptedIn && partyId && guestsConsented && resolved
-        && !await whatsappOptedOut(service, businessId, phone)
-        && await sendColdPartyInvite(resolved.sender, { to: phone, details: `${inviteTarget.name} on ${dateTimeLabel}${venueLabel}`, inviteId: invite.id })) {
+        && !await coldInviteBlocked(service, businessId, phone)
+        && await sendColdPartyInvite(resolved.sender, { to: phone, details: `${inviteTarget.name}${hostName ? ` hosted by ${hostName}` : ''} on ${dateTimeLabel}${venueLabel}`, inviteId: invite.id })) {
         // Owner decision (#1005): the host confirmed consent, so a guest who never messaged the business
-        // gets the Yes/Maybe/No invite template (charged as marketing). An opt-out always wins; if the
-        // template cannot be sent the email/SMS/link fallbacks below still apply.
+        // gets the Yes/Maybe/No invite template (charged as marketing). An opt-out or a "No thanks" to
+        // this business's WhatsApp updates always wins; if the template cannot be sent the
+        // email/SMS/link fallbacks below still apply.
         results.push({ phone, status: isResend ? 'resent' : 'sent', note: 'WhatsApp invite with Yes / Maybe / No buttons' });
       } else if (!isOptedIn) {
         // Not opted in — try email fallback, otherwise return share link

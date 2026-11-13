@@ -18,16 +18,28 @@ export function isRsvpButtonPayload(value: unknown): value is string {
   return typeof value === 'string' && RSVP_BUTTON_RE.test(value);
 }
 
-/** True unless the guest is known not to have opted out of WhatsApp from this business. Fails closed. */
-export async function whatsappOptedOut(db: SupabaseClient, businessId: string, phone: string): Promise<boolean> {
+/**
+ * True when the guest must not get a cold invite from this business: they opted out of its
+ * WhatsApp messages (STOP), or their latest answer to its WhatsApp marketing request is a
+ * revocation ("No thanks"), as every other marketing send honours. Fails closed.
+ */
+export async function coldInviteBlocked(db: SupabaseClient, businessId: string, phone: string): Promise<boolean> {
   const digits = phone.replace(/\D/g, '');
+  const variants = [digits, `+${digits}`];
   try {
     const { count, error } = await db.from('messaging_opt_outs')
-      .select('id', { count: 'exact', head: true }).in('phone', [digits, `+${digits}`])
+      .select('id', { count: 'exact', head: true }).in('phone', variants)
       .or(`business_id.eq.${sanitizeFilterValue(businessId)},business_id.is.null`)
       .eq('channel', 'whatsapp').is('resubscribed_at', null);
-    if (error || count === null || count === undefined) return true;
-    return count > 0;
+    if (error || count === null || count === undefined || count > 0) return true;
+    // Latest answer across both phone formats wins; an unanswered (pending) request is not an answer.
+    const { data, error: consentError } = await db.from('customer_consents')
+      .select('status').eq('business_id', businessId).in('phone', variants)
+      .eq('channel', 'whatsapp').eq('purpose', 'marketing').neq('status', 'pending')
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(1).maybeSingle();
+    if (consentError) return true;
+    return data?.status === 'revoked';
   } catch {
     return true;
   }

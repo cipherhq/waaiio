@@ -1,11 +1,11 @@
 ## 2026-11-13 — Party invites with Yes / Maybe / No buttons for guests who never messaged the business (#1005)
 
-- **Owner decision (2026-11-12, issue #1005):** when the host ticks "These guests agreed to receive WhatsApp messages from me", a party guest who has never messaged the business gets a WhatsApp invite template with Yes / Maybe / No buttons. It is charged as a marketing message from the host's messaging balance. An opt-out always wins.
+- **Owner decision (2026-11-12, issue #1005):** when the host ticks "These guests agreed to receive WhatsApp messages from me", a party guest who has never messaged the business gets a WhatsApp invite template with Yes / Maybe / No buttons. It is charged as a marketing message from the host's messaging balance. An opt-out (STOP) or a "No thanks" to the business's WhatsApp updates always wins, as for every other marketing send.
 - **What changed:**
   - `lib/parties/cold-invite.ts` (new):
     - the template name;
     - an RSVP payload check;
-    - a fail-closed WhatsApp opt-out lookup;
+    - a fail-closed check that blocks STOP opt-outs and revoked WhatsApp marketing consent;
     - `sendColdPartyInvite`, which sends with quick-reply payloads `rsvp_<choice>_<inviteId>`, marketing category, and a single attempt.
   - `lib/channels/provision-templates.ts`: new template `waaiio_party_invite_v1` (MARKETING, three QUICK_REPLY buttons).
   - `app/api/events/invite/route.ts`:

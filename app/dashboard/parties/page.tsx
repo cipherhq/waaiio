@@ -935,7 +935,7 @@ export default function PartiesPage() {
             </div>
             <label className="mt-3 flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
               <input type="checkbox" checked={guestsConsented} onChange={e => setGuestsConsented(e.target.checked)} className="mt-0.5" />
-              <span>These guests agreed to receive WhatsApp messages from me. Guests who have never messaged you then get a WhatsApp invite with Yes / Maybe / No buttons, charged as a marketing message from your messaging balance. Guests who opted out of your WhatsApp messages never get this invite.</span>
+              <span>These guests agreed to receive WhatsApp messages from me. Guests who have never messaged you then get a WhatsApp invite with Yes / Maybe / No buttons, charged as a marketing message from your messaging balance. Guests who opted out of your WhatsApp messages, or said no to your WhatsApp updates, never get this invite.</span>
             </label>
             <div className="mt-3 flex gap-2">
               <button onClick={handleSendInvite} disabled={sending || !invitePhone.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">{sending ? 'Sending...' : 'Send'}</button>
@@ -952,7 +952,7 @@ export default function PartiesPage() {
             <textarea value={bulkPhones} onChange={e => setBulkPhones(e.target.value)} rows={5} placeholder={"2348012345678\n2349087654321"} className="mt-3 w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand font-mono" />
             <label className="mt-3 flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
               <input type="checkbox" checked={guestsConsented} onChange={e => setGuestsConsented(e.target.checked)} className="mt-0.5" />
-              <span>These guests agreed to receive WhatsApp messages from me. Guests who have never messaged you then get a WhatsApp invite with Yes / Maybe / No buttons, charged as a marketing message from your messaging balance. Guests who opted out of your WhatsApp messages never get this invite.</span>
+              <span>These guests agreed to receive WhatsApp messages from me. Guests who have never messaged you then get a WhatsApp invite with Yes / Maybe / No buttons, charged as a marketing message from your messaging balance. Guests who opted out of your WhatsApp messages, or said no to your WhatsApp updates, never get this invite.</span>
             </label>
             <div className="mt-3 flex gap-2">
               <button onClick={handleBulkInvite} disabled={sending || !bulkPhones.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
