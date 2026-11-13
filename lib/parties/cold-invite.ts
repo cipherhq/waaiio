@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export const PARTY_INVITE_TEMPLATE = 'waaiio_party_invite_v1';
 
@@ -23,7 +24,7 @@ export async function whatsappOptedOut(db: SupabaseClient, businessId: string, p
   try {
     const { count, error } = await db.from('messaging_opt_outs')
       .select('id', { count: 'exact', head: true }).in('phone', [digits, `+${digits}`])
-      .or(`business_id.eq.${businessId},business_id.is.null`)
+      .or(`business_id.eq.${sanitizeFilterValue(businessId)},business_id.is.null`)
       .eq('channel', 'whatsapp').is('resubscribed_at', null);
     if (error || count === null || count === undefined) return true;
     return count > 0;
