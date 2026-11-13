@@ -79,23 +79,47 @@
    "after": {
     "deferrable": false,
     "deferred": false,
-    "definition": "FOREIGN KEY (step_up_id) REFERENCES admin_step_up_authorizations(id)",
-    "validated": true
-   },
-   "after_sha256": "8037f30687e5f856dcc80601b1fde4286b19d14a18d6d49a65132faad00d58f2",
-   "identity": "constraint:public.admin_passkey_approvals.admin_passkey_approvals_step_up_id_fkey",
-   "operation": "add"
-  },
-  {
-   "after": {
-    "deferrable": false,
-    "deferred": false,
     "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text, 'channel_change_execute'::text, 'passkey_approve'::text, 'passkey_remove'::text]))",
     "validated": true
    },
    "after_sha256": "1a878c15a9957b9860a7002dafb7905d5fb0497e30a46e2b3e991cb9480c7740",
    "identity": "constraint:public.admin_step_up_authorizations.admin_step_up_authorizations_action_type_check",
    "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_session_id uuid",
+    "body_sha256": "6a554dcad94f0dced5fbc6c936c06d7f2fc9e6b713ac8d17a41cbb8458ff08ee",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(session_aal text, session_factor_id uuid, session_created_at timestamp with time zone)",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "99af2bf25b51063d97850f660802686f6868ec96e55ac25ec64bc674e18a8960",
+   "identity": "function:public.admin_session_mfa_state(p_session_id uuid)",
+   "operation": "add"
   },
   {
    "after": {
@@ -262,7 +286,7 @@
   }
  ],
  "migration": "538_admin_passkey_step_up.sql",
- "migration_sha256": "990eeaa6dae64cf38267332ba91d53acd872cc2cd9b3b3b3621e32d196ad4f40",
+ "migration_sha256": "a62f0294852c66ea6089c114956f872f27d1e7e7f469e52f319c701464f1fe3a",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
