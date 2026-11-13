@@ -1,4 +1,4 @@
-# Issue #736 — Full 32-Capability WhatsApp E2E Certification Contract
+# Issue #736 — Full 33-Capability WhatsApp E2E Certification Contract
 
 > **Phase A: Contract, Dependency Audit, Traceability Matrix, and Certification Plan**
 >
@@ -12,7 +12,7 @@
 
 ---
 
-## 1. Canonical 32-Capability Lifecycle Matrix
+## 1. Canonical 33-Capability Lifecycle Matrix
 
 Source: `shared/capabilities.ts` + `docs/contracts/capability-index.json` at HEAD `1c6ed975`.
 
@@ -28,9 +28,9 @@ Each capability has **five independent dimensions**:
 | **Certification Level** | `code-tested`, `staging-e2e-verified`, `unverified` | Highest verification tier achieved (no staging E2E in Phase A) |
 | **Dependency Status** | `ready`, `blocked-pr-NNN`, `owner-decision-needed` | Whether external dependencies prevent certification |
 
-### 1.2 Full 32-Capability Matrix
+### 1.2 Full 33-Capability Matrix
 
-**Invariant: exactly 32 rows, matching `shared/capabilities.ts` CapabilityId union and `capability-index.json` array length.**
+**Invariant: exactly 33 rows, matching `shared/capabilities.ts` CapabilityId union and `capability-index.json` array length.**
 
 | # | ID | Tier | Entry Type | Bot Implementation | First Step | Payment | Backing Data Predicate | Test Coverage | Certification | Dependency |
 |---|-----|------|------------|-------------------|------------|---------|----------------------|---------------|---------------|------------|
@@ -66,20 +66,21 @@ Each capability has **five independent dimensions**:
 | 30 | `multi_location` | growth | dashboard-only | no-bot-flow | N/A | No | Multiple locations | untested | unverified | owner-decision-needed |
 | 31 | `waiver` | growth | top-level-menu | no-bot-flow (regex match in `capability-selection.flow.ts`) | Waiver template selection | No | `waiver_templates` active | partial | unverified | ready |
 | 32 | `promo_verification` | growth | contextual | no-bot-flow (dedicated entry step `promo_entry`) | `promo_entry` | No | Active promo campaigns | tested | code-tested | ready |
+| 33 | `custom_flow` | business | contextual | data-driven engine (`lib/bot/custom-flow/engine.ts`) | entry keyword | No (Phase 1; Payment Link in Phase 4) | `custom_flows` status=published, entry_keyword set | tested | code-tested | ready |
 
 ### 1.3 Count Validation
 
 | Dimension | Value | Count | IDs |
 |-----------|-------|-------|-----|
 | **Entry: top-level-menu** | Shown in WhatsApp capability list | 15 | scheduling, appointment, payment, ordering, ticketing, giving, chat, reservation, table_reservation, invoice, queue, crowdfunding, class_booking, waiver, loyalty (via My Account) |
-| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action | 9 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification |
+| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action, or a flow entry keyword | 10 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification, custom_flow |
 | **Entry: dashboard-only** | No customer-facing WhatsApp interaction | 8 | broadcast, membership, staff, whatsapp_sign, reports, estimates, packages, multi_location |
-| **Total** | | **32** | *Validated: 15 + 9 contextual + 8 dashboard = 32 (table_reservation counted once as top-level-menu)* |
+| **Total** | | **33** | *Validated: 15 + 10 contextual + 8 dashboard = 33 (table_reservation counted once as top-level-menu)* |
 
 **`getUserFacingCapabilities()` logic** (source: `lib/bot/handlers/flow-routing.ts:36-42`):
-- **Always excluded from menu** (17 IDs in `nonUserFacing` set): reminders, feedback, loyalty, referral, reports, staff, whatsapp_sign, survey, poll, broadcast, recurring, auto_reply, membership, estimates, packages, multi_location, promo_verification
+- **Always excluded from menu** (18 IDs in `nonUserFacing` set): reminders, feedback, loyalty, referral, reports, staff, whatsapp_sign, survey, poll, broadcast, recurring, auto_reply, membership, estimates, packages, multi_location, promo_verification, custom_flow
 - **Conditionally excluded** (+2 when `scheduling` or `table_reservation` present): payment, invoice
-- **Maximum user-facing menu items**: 15 (all 32 minus 17 always-excluded)
+- **Maximum user-facing menu items**: 15 (all 33 minus 18 always-excluded)
 - **Minimum user-facing menu items**: 13 (when scheduling/table_reservation adds payment+invoice to exclusion)
 - Note: `waitlist` passes the filter but `prepareCapabilityMenu()` returns false for its backing check — it never appears in the menu, only triggered contextually when no slots available
 
@@ -458,7 +459,7 @@ Gaps that depend on Owner product decisions, not confirmed defects. Included her
 
 | Test Category | Capabilities | Type | Status |
 |--------------|-------------|------|--------|
-| Capability menu routing (all 32) | All | Unit (Vitest) | Partial — `cas-004-*.test.ts` covers subset |
+| Capability menu routing (all 33) | All | Unit (Vitest) | Partial — `cas-004-*.test.ts` covers subset |
 | Payment lifecycle per provider | scheduling, ordering, ticketing, giving, reservation, crowdfunding, invoice | Integration | Partial — `process-success*.test.ts` covers |
 | Saved card save/skip/PIN | Paystack, Stripe | Unit + Integration | Tested — dedicated test files exist |
 | Offline bank transfer lifecycle | ordering, scheduling, reservation | Disposable PG | Partial — `bank-transfer.test.ts` (11 tests) |
@@ -499,7 +500,7 @@ Reuses #728/#729 `synthetic-e2e/` infrastructure.
 
 | Area | Method | Evidence |
 |------|--------|---------|
-| All 32 capability IDs match `shared/capabilities.ts` | Direct file read | SHA `1c6ed975` |
+| All 33 capability IDs match `shared/capabilities.ts` | Direct file read | SHA `1c6ed975` |
 | `getUserFacingCapabilities()` logic and counts | Direct file read of `flow-routing.ts:36-42` | SHA `1c6ed975` |
 | `prepareCapabilityMenu()` backing data checks | Direct file read of `capability-selection.flow.ts:29-118` | SHA `1c6ed975` |
 | `getFirstStepForCapability()` routing | Direct file read of `capability-selection.flow.ts:121-140` | SHA `1c6ed975` |
