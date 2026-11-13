@@ -9,9 +9,9 @@ const url = process.env.TEST_DATABASE_URL;
 if (process.env.REQUIRE_PG_TESTS === 'true' && !url) throw new Error('Disposable PostgreSQL is required');
 const suite = url ? describe : describe.skip;
 const id = (n: number) => '00000000-0000-4000-a537-' + n.toString(16).padStart(12, '0');
-const owner = id(1), business = id(3), party = id(5);
+const owner = id(1), business = id(3), party = id(5), party2 = id(6);
 const tA = id(10);
-const g1 = id(20), g2 = id(21), g3 = id(22);
+const g1 = id(20), g2 = id(21), g3 = id(22), g4 = id(23);
 const GROOM = "Groom's family", BRIDE = "Bride's family", VEG = 'Vegetarian', CAR = 'Parking';
 const side = (extra: Record<string, unknown> = { tag_answers: true }) => ({
   id: 'side', label: 'Which side are you from?', type: 'single_choice', required: true,
@@ -23,6 +23,10 @@ const veg = (extra: Record<string, unknown> = { tag_answers: true, yes_tag: VEG 
 const car = (extra: Record<string, unknown> = { tag_answers: true, yes_tag: CAR }) => ({
   id: 'car', label: 'Coming by car?', type: 'yes_no', required: false, ...extra,
 });
+const mealChoice = (extra: Record<string, unknown> = {}) => ({
+  id: 'meal', label: 'Meal?', type: 'single_choice', required: false,
+  options: [{ id: 'meat', label: 'Meat' }, { id: 'fish', label: 'Fish' }], ...extra,
+});
 const migration = (file: string) => readFileSync(join(process.cwd(), 'supabase/migrations', file), 'utf8');
 
 type Row = Record<string, any>;
@@ -31,6 +35,8 @@ suite('M537 several questions tag guests (real PostgreSQL)', () => {
   let pool: pg.Pool;
   let revision = 0;
   let backfilled: Row;
+  const before: Record<string, Row> = {};
+  const after: Record<string, Row> = {};
   const saveQuestions = async (questions: unknown[]) => {
     const r = await pool.query('SELECT public.party_questions_489($1,$2,$3) value', [party, owner, { revision, questions }]);
     revision = r.rows[0].value.revision;
@@ -103,12 +109,34 @@ suite('M537 several questions tag guests (real PostgreSQL)', () => {
     `);
     for (const file of ['457_party_tables_seats.sql', '486_party_seating_groups_pins_atomic_plans.sql',
       '489_party_rsvp_questions.sql', '514_party_seating_by_tag.sql']) await pool.query(migration(file));
-    // A guest tagged under M514 (one tagging question) before M537 arrives.
+    // Guests tagged under M514 before M537 arrives, in the three ways M514 tags.
     await reset();
+    // B: the guest answers first, then the host ticks tagging (D3 re-tags from the party's questions).
+    await saveQuestions([side({})]);
+    await accept('tok-537-2', { side: 'groom' });
     await saveQuestions([side()]);
+    // A: the guest answers while tagging is on.
     await accept('tok-537-1', { side: 'groom' });
+    // C: on a second party, the host moves tagging to another question after the guest answered.
+    const q2 = async (questions: unknown[], rev: number) =>
+      (await pool.query('SELECT public.party_questions_489($1,$2,$3) value', [party2, owner, { revision: rev, questions }])).rows[0].value.revision;
+    await pool.query("INSERT INTO parties(id,business_id,name,date,max_guests) VALUES($1,$2,'Dinner','2027-01-02',50)", [party2, business]);
+    await pool.query("INSERT INTO event_invites(id,business_id,party_id,guest_phone,guest_name,invite_token) VALUES($1,$2,$3,'+15550000004','Di','tok-537-4')", [g4, business, party2]);
+    let rev2 = await q2([side(), mealChoice()], 0);
+    await pool.query('SELECT public.complete_party_rsvp_489($1,$2,null,null)', ['tok-537-4', { revision: rev2, status: 'accepted', plus_ones: 0, answers: { side: 'groom', meal: 'meat' } }]);
+    rev2 = await q2([side({}), mealChoice({ tag_answers: true })], rev2);
+    for (const [k, g] of [['A', g1], ['B', g2], ['C', g4]] as const)
+      before[k] = (await pool.query('SELECT tags, answer_tag FROM public.event_invites WHERE id=$1', [g])).rows[0];
     await pool.query(migration('537_party_multi_question_seating_tags.sql'));
     backfilled = await invite(g1);
+    for (const [k, g] of [['A', g1], ['B', g2], ['C', g4]] as const) after[k] = await invite(g);
+    // After M537 a changed answer must still swap the tag, as under M514.
+    await accept('tok-537-2', { side: 'bride' });
+    after.Bswap = await invite(g2);
+    await pool.query('SELECT public.complete_party_rsvp_489($1,$2,null,null)', ['tok-537-4', { revision: rev2, status: 'accepted', plus_ones: 0, answers: { side: 'groom', meal: 'fish' } }]);
+    after.Cswap = await invite(g4);
+    await pool.query('DELETE FROM public.event_invites WHERE party_id=$1', [party2]);
+    await pool.query('DELETE FROM public.parties WHERE id=$1', [party2]);
   }, 60000);
 
   beforeEach(reset);
@@ -116,6 +144,15 @@ suite('M537 several questions tag guests (real PostgreSQL)', () => {
 
   it('backfills an M514 auto-tag to its question and keeps answer_tag', () => {
     expect(backfilled).toMatchObject({ tags: [GROOM], answer_tag: GROOM, answer_tags: { side: GROOM } });
+  });
+
+  it('backfills from the party\'s questions: tagging ticked after the RSVP, and tagging moved to another question', () => {
+    expect(before.B).toMatchObject({ tags: [GROOM], answer_tag: GROOM });
+    expect(after.B).toMatchObject({ tags: [GROOM], answer_tag: GROOM, answer_tags: { side: GROOM } });
+    expect(after.Bswap).toMatchObject({ tags: [BRIDE], answer_tags: { side: BRIDE } });
+    expect(before.C).toMatchObject({ tags: ['Meat'], answer_tag: 'Meat' });
+    expect(after.C).toMatchObject({ tags: ['Meat'], answer_tags: { meal: 'Meat' } });
+    expect(after.Cswap).toMatchObject({ tags: ['Fish'], answer_tags: { meal: 'Fish' } });
   });
 
   it('validates tagging: several questions, yes/no needs a trimmed Tag for Yes, yes_tag only on yes/no', async () => {

@@ -20,13 +20,15 @@ BEGIN;
 ALTER TABLE public.event_invites ADD COLUMN answer_tags jsonb NOT NULL DEFAULT '{}'::jsonb
   CONSTRAINT event_invites_answer_tags_537 CHECK (jsonb_typeof(answer_tags) = 'object');
 
--- Backfill: an existing auto-tag came from the one tagging question of the snapshot it was saved with.
+-- Backfill: an existing auto-tag belongs to the party's current tagging question. M514 last computed
+-- answer_tag against the party's question_definitions: a question save re-tags every guest from them
+-- (D3) without rewriting snapshots, and an RSVP's snapshot equals them at the time it is saved.
 -- Owner context; the M514 trigger does not watch answer_tags, so this write changes nothing else.
 UPDATE public.event_invites i SET answer_tags = jsonb_build_object(q.qid, i.answer_tag)
-  FROM (SELECT x.id, (SELECT d.value->>'id' FROM jsonb_array_elements(x.saved_question_snapshot) d
+  FROM (SELECT x.id, (SELECT d.value->>'id' FROM jsonb_array_elements(p.question_definitions) d
       WHERE d.value->>'type' = 'single_choice' AND d.value->'tag_answers' = 'true'::jsonb LIMIT 1) AS qid
-    FROM public.event_invites x
-    WHERE x.answer_tag IS NOT NULL AND jsonb_typeof(x.saved_question_snapshot) = 'array') q
+    FROM public.event_invites x JOIN public.parties p ON p.id = x.party_id AND p.business_id = x.business_id
+    WHERE x.answer_tag IS NOT NULL AND jsonb_typeof(p.question_definitions) = 'array') q
   WHERE i.id = q.id AND q.qid IS NOT NULL;
 
 -- Same rules as M514, except: tag_answers on single-choice and yes/no questions, any number
