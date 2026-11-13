@@ -391,7 +391,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     expect(spyPlatformText).toHaveBeenCalled();
     // Directory reply text confirms the send was a deliberate directory no-results message
     const sentTexts = spyPlatformText.mock.calls.map((c: any[]) => (c[0] as { text?: string }).text ?? '');
-    expect(sentTexts.some(t => t.includes("couldn't find"))).toBe(true);
+    expect(sentTexts.some(t => t.includes("No businesses found for 'random text'"))).toBe(true);
     // S-1 property: zero BUSINESS-scoped cloud calls (platform-scoped are legitimate)
     expect(totalBusinessScopedCalls(cloud, sender)).toBe(0);
     // Guard: no generic fallback — the sends are deliberate platform-scoped directory messages
