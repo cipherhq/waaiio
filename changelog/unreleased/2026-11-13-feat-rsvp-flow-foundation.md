@@ -9,12 +9,13 @@
     - `party_rsvp_flow_publications`: one Meta Flow per WhatsApp Business Account and Flow revision.
     - `party_rsvp_flow_receipts`: one row per accepted submission, keyed by the hashed token nonce.
     - `save_party_rsvp_flow_response_540`. It re-checks the publication, channel, guest phone, business, question revision and the inbound WhatsApp message. It saves only through `complete_party_rsvp_489`, then records the receipt.
+    - Only guest-facing outcomes are mapped to error codes (`questions_changed`, `capacity`, `invalid_answers`). Any other database error propagates.
     - Every ACL is explicit, service_role included, so production and staging end up identical. Guests and hosts cannot read either table.
   - `lib/parties/rsvp-flow.ts`:
     - the static Flow JSON (10 question slots);
     - its revision;
     - the send-time data builder, which returns null, meaning "use the web link", when a choice label is over 30 characters;
-    - the response reader.
+    - the response reader. When the party asks for dietary needs, a blank box clears an earlier note, as the RSVP page and bot do.
   - `lib/parties/guest-capacity.ts`: how many companions to offer, by the M489 and M457 rules.
   - `lib/whatsapp-forms/flow-token.ts`: v3 party RSVP tokens.
     - Each token is bound to one invitation, publication, channel, number, Meta asset and question revision, and is valid for 24 hours.
