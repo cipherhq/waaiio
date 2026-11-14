@@ -108,13 +108,15 @@ export async function initializePayment(
     const donorPhone = opts.campaignAttemptKey ? canonicalSavedCardPhone(opts.phone) : null;
     if (opts.campaignAttemptKey && (!opts.campaignId || !opts.businessId || !donorPhone || !opts.referenceCode)) return null;
     const campaignAttemptId = opts.campaignAttemptKey
-      ? createHash('sha256').update(JSON.stringify([opts.businessId, opts.campaignId, donorPhone, opts.campaignAttemptKey]))
+      ? createHash('sha256').update(JSON.stringify([opts.businessId, opts.campaignId, opts.campaignAttemptKey]))
         .digest('hex').slice(0, 32).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5')
       : null;
+    // Provider and local identity use the same immutable attempt. Donor fields are verified separately.
+    const referenceCode = campaignAttemptId ? `DON-${campaignAttemptId}` : opts.referenceCode;
     async function ensureDonationIntent(paymentId: string): Promise<boolean> {
       const { data, error } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
         p_payment_id: paymentId, p_donor_phone: donorPhone,
-        p_donor_name: opts.donorName || null, p_reference_code: opts.referenceCode,
+        p_donor_name: opts.donorName || null, p_reference_code: referenceCode,
       });
       return !error && Boolean(data?.donation_id) && (data.created === true || data.already_existed === true);
     }
@@ -413,7 +415,7 @@ export async function initializePayment(
             amount: opts.amount,
             currency: currencyCode,
             gateway: gateway.name,
-            gateway_reference: opts.referenceCode,
+            gateway_reference: referenceCode,
             status: 'pending',
             payment_authority_version: 1,
             fee_policy_version: 1,
@@ -422,7 +424,7 @@ export async function initializePayment(
             fee_basis: feeBasis,
             provider_init_state: 'pre_dispatch',
             metadata: {
-              reference_code: opts.referenceCode,
+              reference_code: referenceCode,
               ...(campaignAttemptId && { campaign_web_attempt: true }),
               channel: opts.confirmationOrigin || 'whatsapp',
               ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
@@ -477,10 +479,10 @@ export async function initializePayment(
         business_id: opts.businessId, user_id: opts.userId, order_id: opts.orderId ?? null,
         booking_id: opts.bookingId ?? null, invoice_id: opts.invoiceId ?? null,
         amount: opts.amount, currency: currencyCode, gateway: gateway.name,
-        gateway_reference: opts.referenceCode, fee_policy_version: 0,
+        gateway_reference: referenceCode, fee_policy_version: 0,
         transaction_category: opts.transactionCategory ?? null,
         metadata: {
-          reference_code: opts.referenceCode, channel: 'whatsapp',
+          reference_code: referenceCode, channel: 'whatsapp',
           payment_origin: isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform'),
           ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
           ...(payoutAccountId && !providerConnectionId && { provider_connection_id: payoutAccountId }),
@@ -507,9 +509,9 @@ export async function initializePayment(
       const { data: attempt, error } = await supabase.from('payments').insert({
         id: campaignAttemptId, business_id: opts.businessId, campaign_id: opts.campaignId,
         user_id: opts.userId, amount: opts.amount, currency: currencyCode, gateway: gateway.name,
-        gateway_reference: opts.referenceCode, status: 'pending', payment_authority_version: 1,
+        gateway_reference: referenceCode, status: 'pending', payment_authority_version: 1,
         fee_policy_version: 0, transaction_category: 'giving', provider_init_state: 'pre_dispatch',
-        metadata: { reference_code: opts.referenceCode, campaign_web_attempt: true, channel: opts.confirmationOrigin || 'whatsapp',
+        metadata: { reference_code: referenceCode, campaign_web_attempt: true, channel: opts.confirmationOrigin || 'whatsapp',
           _confirmation_origin: opts.confirmationOrigin,
           ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
           payment_origin: isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform'),
@@ -544,7 +546,7 @@ export async function initializePayment(
       userId: opts.userId,
       amount: opts.amount,
       currency: currencyCode,
-      referenceCode: opts.referenceCode,
+      referenceCode: referenceCode,
       businessName: opts.businessName,
       phone: opts.phone,
       userEmail: opts.userEmail,
@@ -578,7 +580,7 @@ export async function initializePayment(
           gateway_reference: providerRef,
           provider_init_state: 'provider_confirmed',
           metadata: {
-            reference_code: opts.referenceCode,
+            reference_code: referenceCode,
             ...(campaignAttemptId && { campaign_web_attempt: true }),
             channel: opts.confirmationOrigin || 'whatsapp',
             checkout_url: result.url,
@@ -638,7 +640,7 @@ export async function initializePayment(
         donor_name: opts.donorName || null,
         amount: opts.amount,
         currency: currencyCode,
-        reference_code: opts.referenceCode,
+        reference_code: referenceCode,
         status: 'pending',
       });
     }

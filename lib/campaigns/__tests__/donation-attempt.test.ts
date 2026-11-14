@@ -111,6 +111,30 @@ describe.each([false, true])('campaign attempt, fee policy %s', v1 => {
     expect(mock.dispatch).toHaveBeenCalledTimes(3);
     expect(new Set(state.payments.map(row => row.id)).size).toBe(3);
   });
+  it('rejects a changed phone on the same attempt after the provider rewrites its reference', async () => {
+    const state = database(v1);
+    const first = await initializePayment(state.db, options);
+    expect(first).not.toBeNull();
+    expect(state.payments[0].gateway_reference).toMatch(/^provider-/);
+    expect(await initializePayment(state.db, { ...options, phone: '+12025550124' })).toBeNull();
+    expect(state.payments).toHaveLength(1);
+    expect(state.donations).toHaveLength(1);
+    expect(state.donations[0].phone).toBe(options.phone);
+    expect(mock.dispatch).toHaveBeenCalledTimes(1);
+    expect(mock.dispatch.mock.calls[0][0].referenceCode).toBe(`DON-${state.payments[0].id}`);
+  });
+
+  it('scopes a reused client token to distinct merchant and campaign provider references', async () => {
+    const state = database(v1);
+    await initializePayment(state.db, options);
+    await initializePayment(state.db, { ...options, businessId: 'other-business' });
+    await initializePayment(state.db, { ...options, campaignId: 'other-campaign' });
+    expect(state.payments).toHaveLength(3);
+    expect(state.donations).toHaveLength(3);
+    expect(new Set(mock.dispatch.mock.calls.map(call => call[0].referenceCode)).size).toBe(3);
+    for (const call of mock.dispatch.mock.calls) expect(call[0].referenceCode).toBe(`DON-${call[0].existingPaymentId}`);
+  });
+
   it('allows only one concurrent dispatch for an attempt', async () => {
     const state = database(v1);
     await Promise.all([initializePayment(state.db, options), initializePayment(state.db, options)]);
@@ -138,10 +162,10 @@ describe.each([false, true])('campaign attempt, fee policy %s', v1 => {
   });
   it('keeps terminal callback state when it arrives before initialization returns', async () => {
     const state = database(v1);
-    mock.dispatch.mockImplementation(async () => {
+    mock.dispatch.mockImplementation(async (input: Row) => {
       expect(state.donations).toHaveLength(1);
       // Existing Stripe webhook resolves the pre-provider reference and repairs it before finalizing.
-      const row = state.payments.find(row => row.gateway_reference === options.referenceCode)!;
+      const row = state.payments.find(row => row.gateway_reference === input.referenceCode)!;
       Object.assign(row, { gateway_reference: 'provider-fast', provider_init_state: 'provider_confirmed', status: 'success' });
       return { url: 'https://checkout.test/paid', reference: 'provider-fast' };
     });
