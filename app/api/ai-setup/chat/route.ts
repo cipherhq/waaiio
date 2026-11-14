@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import Anthropic from '@anthropic-ai/sdk';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -259,8 +260,9 @@ ${categoryGuide}
       );
     }
 
-    // Track usage
-    await incrementAIUsage(supabase, business_id, 'ace_setup');
+    // Ownership was verified above; usage writes require service authority.
+    const counted = await incrementAIUsage(createServiceClient(), business_id, 'ace_setup');
+    if (!counted) throw new Error('AI usage could not be recorded');
 
     return NextResponse.json({
       reply: text,
