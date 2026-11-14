@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { canonicalPublicOrigin } from '@/lib/url';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 
@@ -47,6 +48,7 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [shareStatus, setShareStatus] = useState('');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('list');
   const [donations, setDonations] = useState<Donation[]>([]);
@@ -88,6 +90,13 @@ export default function CampaignsPage() {
       setError(true);
     }
     setLoading(false);
+  }
+
+  async function copyDonationLink(campaignId: string) {
+    try {
+      await navigator.clipboard.writeText(`${canonicalPublicOrigin()}/donate/${campaignId}`);
+      setShareStatus('Link copied.');
+    } catch { setShareStatus('Unable to copy link.'); }
   }
 
   function openAdd() {
@@ -540,6 +549,7 @@ export default function CampaignsPage() {
         </div>
       ) : (
         <div className="mt-6 space-y-3">
+          <p role="status" className="text-sm text-gray-600">{shareStatus}</p>
           {campaigns.map((campaign) => {
             const progress = campaign.goal_amount > 0
               ? Math.min(100, Math.round((campaign.raised_amount / campaign.goal_amount) * 100))
@@ -585,6 +595,12 @@ export default function CampaignsPage() {
                     </div>
                   </div>
                 )}
+
+                <div className="mt-4 flex flex-wrap gap-3" onClick={event => event.stopPropagation()}>
+                  <button type="button" className="min-h-11 rounded-lg border px-3 text-sm" onClick={() => copyDonationLink(campaign.id)}>Copy donation link</button>
+                  <a className="inline-flex min-h-11 items-center rounded-lg border px-3 text-sm" target="_blank" rel="noopener noreferrer"
+                    href={`https://wa.me/?text=${encodeURIComponent(`${canonicalPublicOrigin()}/donate/${campaign.id}`)}`}>Share on WhatsApp</a>
+                </div>
 
                 <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
                   <span>{campaign.donor_count} donors</span>

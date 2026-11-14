@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+import { canonicalSavedCardPhone } from '@/lib/payments/saved-card-compat';
 import { reserveTaxPayment, openTaxCheckout } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
@@ -41,6 +43,8 @@ export async function initializePayment(
     campaignId?: string;
     /** Donor name for campaign donations */
     donorName?: string;
+    /** Stable public checkout attempt token; opt-in keeps legacy campaign callers compatible. */
+    campaignAttemptKey?: string;
     /** #219: Exact inbound WhatsApp channel ID for post-payment confirmation routing */
     inboundChannelId?: string;
     /** #219: Interaction origin — determines confirmation delivery behavior */
@@ -100,23 +104,57 @@ export async function initializePayment(
       return null;
     }
 
+    // A campaign contains many donations. Bind reuse to one donor attempt, never the campaign.
+    const donorPhone = opts.campaignAttemptKey ? canonicalSavedCardPhone(opts.phone) : null;
+    if (opts.campaignAttemptKey && (!opts.campaignId || !opts.businessId || !donorPhone || !opts.referenceCode)) return null;
+    const campaignAttemptId = opts.campaignAttemptKey
+      ? createHash('sha256').update(JSON.stringify([opts.businessId, opts.campaignId, donorPhone, opts.campaignAttemptKey]))
+        .digest('hex').slice(0, 32).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5')
+      : null;
+    async function ensureDonationIntent(paymentId: string): Promise<boolean> {
+      const { data, error } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+        p_payment_id: paymentId, p_donor_phone: donorPhone,
+        p_donor_name: opts.donorName || null, p_reference_code: opts.referenceCode,
+      });
+      return !error && Boolean(data?.donation_id) && (data.created === true || data.already_existed === true);
+    }
+    if (campaignAttemptId) {
+      const { data: attempt, error } = await supabase.from('payments')
+        .select('id, business_id, campaign_id, amount, currency, gateway, status, gateway_status, gateway_reference, provider_init_state, metadata')
+        .eq('id', campaignAttemptId).maybeSingle();
+      if (error) return null;
+      if (attempt) {
+        if (attempt.business_id !== opts.businessId || attempt.campaign_id !== opts.campaignId
+          || Number(attempt.amount) !== opts.amount || attempt.currency !== currencyCode
+          || attempt.gateway !== gateway.name || attempt.status !== 'pending'
+          || attempt.gateway_status?.startsWith('review_required:')
+          || attempt.provider_init_state !== 'provider_confirmed'
+          || attempt.metadata?._confirmation_origin !== opts.confirmationOrigin
+          || attempt.metadata?._inbound_channel_id !== opts.inboundChannelId
+          || !(await ensureDonationIntent(attempt.id))) return null;
+        const checkoutUrl = attempt.metadata?.checkout_url;
+        if (typeof checkoutUrl !== 'string' || !checkoutUrl.startsWith('https://')) return null;
+        return { url: checkoutUrl, reference: attempt.gateway_reference };
+      }
+    }
+
     // ── Idempotent reuse: check for an existing pending payment for this entity.
     // Fail closed: if the lookup itself fails, do NOT proceed to the provider —
     // creating a duplicate provider transaction is worse than a transient failure. ──
     const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId || opts.campaignId;
-    if (entityId) {
+    if (entityId && !campaignAttemptId) {
       const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
       try {
         // ── Step 1: Quarantine guard (FIRST — wins over pending reuse) ──
         // If provider already collected money and the payment is under review,
         // block new charges regardless of ordinary payment status.
-        const { data: quarantined, error: quarantineError } = await supabase
+        let quarantineQuery = supabase
           .from('payments')
           .select('id, gateway_status')
           .eq(entityCol, entityId)
-          .like('gateway_status', 'review_required:%')
-          .limit(1)
-          .maybeSingle();
+          .like('gateway_status', 'review_required:%');
+        if (opts.campaignId) quarantineQuery = quarantineQuery.is('metadata->>campaign_web_attempt', null);
+        const { data: quarantined, error: quarantineError } = await quarantineQuery.limit(1).maybeSingle();
 
         if (quarantineError) {
           logger.withContext({ op: 'payment.quarantine-lookup', ...safeLogErrorContext(quarantineError) })
@@ -129,14 +167,14 @@ export async function initializePayment(
         }
 
         // ── Step 2: Pending payment reuse ──
-        const { data: existingPayment, error: lookupError } = await supabase
+        let pendingQuery = supabase
           .from('payments')
           .select('id, gateway_reference, amount, currency, gateway, metadata')
           .eq(entityCol, entityId)
-          .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .eq('status', 'pending');
+        if (opts.campaignId) pendingQuery = pendingQuery.is('metadata->>campaign_web_attempt', null);
+        const { data: existingPayment, error: lookupError } = await pendingQuery
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
 
         if (lookupError) {
           logger.withContext({ op: 'payment.reuse-lookup', ...safeLogErrorContext(lookupError) })
@@ -189,17 +227,18 @@ export async function initializePayment(
     // do NOT create a new row or blindly re-dispatch. The provider may have
     // accepted the charge. Return null to prevent double-charge.
     // The reconciliation cron handles verify-first recovery for dispatched rows.
-    if (entityId && opts.transactionCategory) {
+    if (entityId && opts.transactionCategory && !campaignAttemptId) {
       try {
         const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
-        const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
+        let dispatchedQuery = supabase
           .from('payments')
           .select('id, provider_init_state, gateway_reference')
           .eq(entityCol, entityId)
           .eq('fee_policy_version', 1)
           .eq('provider_init_state', 'dispatched')
-          .eq('status', 'pending')
-          .maybeSingle();
+          .eq('status', 'pending');
+        if (opts.campaignId) dispatchedQuery = dispatchedQuery.is('metadata->>campaign_web_attempt', null);
+        const { data: dispatchedRow, error: dispatchLookupErr } = await dispatchedQuery.maybeSingle();
         if (dispatchLookupErr) {
           logger.withContext({ op: 'payment.v1-dispatched-recovery', ...safeLogErrorContext(dispatchLookupErr) })
             .error('[PAYMENT] V1 dispatched-row recovery lookup failed — fail closed to prevent duplicate dispatch');
@@ -363,6 +402,7 @@ export async function initializePayment(
 
           // Create pre-provider payment row with full v1 binding
           const taxPayload = {
+            ...(campaignAttemptId && { id: campaignAttemptId }),
             booking_id: opts.bookingId || null,
             invoice_id: opts.invoiceId || null,
             campaign_id: opts.campaignId || null,
@@ -383,7 +423,10 @@ export async function initializePayment(
             provider_init_state: 'pre_dispatch',
             metadata: {
               reference_code: opts.referenceCode,
-              channel: 'whatsapp',
+              ...(campaignAttemptId && { campaign_web_attempt: true }),
+              channel: opts.confirmationOrigin || 'whatsapp',
+              ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
+              ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
               payment_origin: paymentRouting,
               ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
               ...(payoutAccountId && !providerConnectionId && { provider_connection_id: payoutAccountId }),
@@ -405,6 +448,7 @@ export async function initializePayment(
             return null;
           }
           v1PaymentId = preRow.id;
+          if (campaignAttemptId && !(await ensureDonationIntent(preRow.id))) return null;
 
           // CAS: pre_dispatch → dispatched (before provider call)
           const { data: casRows, error: casErr } = await supabase.from('payments')
@@ -458,6 +502,32 @@ export async function initializePayment(
       }
     }
 
+    // Fee-policy-off campaigns use the same durable attempt claim as v1.
+    if (campaignAttemptId && !v1PaymentId) {
+      const { data: attempt, error } = await supabase.from('payments').insert({
+        id: campaignAttemptId, business_id: opts.businessId, campaign_id: opts.campaignId,
+        user_id: opts.userId, amount: opts.amount, currency: currencyCode, gateway: gateway.name,
+        gateway_reference: opts.referenceCode, status: 'pending', payment_authority_version: 1,
+        fee_policy_version: 0, transaction_category: 'giving', provider_init_state: 'pre_dispatch',
+        metadata: { reference_code: opts.referenceCode, campaign_web_attempt: true, channel: opts.confirmationOrigin || 'whatsapp',
+          _confirmation_origin: opts.confirmationOrigin,
+          ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
+          payment_origin: isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform'),
+          ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
+          ...(payoutAccountId && !providerConnectionId && { provider_connection_id: payoutAccountId }),
+          ...(isByo && { byo: true, byo_business_id: byoBusinessId }),
+          ...(connectAccountId && { connect: true, connect_account_id: connectAccountId }),
+        },
+      }).select('id').single();
+      // A concurrent insert owns the attempt. It alone may dispatch to the provider.
+      if (error || !attempt || !(await ensureDonationIntent(attempt.id))) return null;
+      const { data: claimed, error: claimError } = await supabase.from('payments')
+        .update({ provider_init_state: 'dispatched' }).eq('id', attempt.id)
+        .eq('provider_init_state', 'pre_dispatch').select('id');
+      if (claimError || claimed?.length !== 1) return null;
+      v1PaymentId = attempt.id;
+    }
+
     const result = await observe('payment.init', {
       gateway: gateway.name,
       businessId: opts.businessId,
@@ -509,7 +579,8 @@ export async function initializePayment(
           provider_init_state: 'provider_confirmed',
           metadata: {
             reference_code: opts.referenceCode,
-            channel: 'whatsapp',
+            ...(campaignAttemptId && { campaign_web_attempt: true }),
+            channel: opts.confirmationOrigin || 'whatsapp',
             checkout_url: result.url,
             payment_origin: isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform'),
             ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
