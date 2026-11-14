@@ -75,6 +75,16 @@ describe('live references and actual-engine isolated preview',()=>{
     expect(await resolveRowSource(db,a,data,'USD')).toMatchObject({type:'Test ticket',price:'$20'});
     rows.events[0].status='draft';expect(await resolveRowSource(db,a,data,'USD')).toBeNull();
   });
+  it('uses configured open hours and never presents closed days as open in the actual engine',async()=>{
+    rows.businesses[0].operating_hours={monday:{open:'09:00',close:'17:00'},sunday:{open:'09:00',close:'17:00',closed:true},saturday:{open:'10:00',close:'14:00',is_open:false}};
+    const def={...definition(),business_bindings:['operating_hours'] as const,greeting:'{{business.operating_hours}}'};
+    const messages=await previewDraft(db,a,{...def,business_bindings:['operating_hours']},[]);
+    expect(messages.some(m=>m.text==='monday: 09:00–17:00')).toBe(true);
+    expect(JSON.stringify(messages)).not.toMatch(/sunday|saturday/);
+    rows.businesses[0].operating_hours.monday.closed=true;
+    expect((await businessData(db,a,['operating_hours'])).vars['business.operating_hours']).toBe('');
+    expect((await previewDraft(db,a,{...def,business_bindings:['operating_hours']},[])).some(m=>m.text===NO_MATCH)).toBe(true);
+  });
   it('missing business fields remain missing and cannot be supplied from row text',async()=>{
     rows.businesses[0].name=null;
     rows.custom_flow_table_rows[0].data['business.name']='Fake';

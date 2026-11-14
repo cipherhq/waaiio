@@ -59,7 +59,7 @@ export function TableEditor({businessId,flowId,onDirty,onSaved}:{businessId:stri
     </div>
     {notice&&<p role="status">{notice}</p>}
     {schema&&<fieldset disabled={busy} className="space-y-3">
-      <label>Table name<input className={input} value={schema.name} maxLength={80} onChange={e=>{setSchema({...schema,name:e.target.value});mark(true);}}/></label>
+      <label>Table name<input className={input} disabled={!!schema.updated_at} value={schema.name} maxLength={80} onChange={e=>{setSchema({...schema,name:e.target.value});mark(true);}}/></label>
       {schema.columns.map((column,index)=><div key={index} className="flex flex-wrap items-center gap-3">
         <label>Column name<input className={input} value={column.name} maxLength={40} onChange={e=>{setSchema({...schema,columns:schema.columns.map((c,i)=>i===index?{...c,name:e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,'_'),label:e.target.value}:c)});mark(true);}}/></label>
         <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={!!column.required} onChange={e=>{setSchema({...schema,columns:schema.columns.map((c,i)=>i===index?{...c,required:e.target.checked}:c)});mark(true);}}/>Required</label>

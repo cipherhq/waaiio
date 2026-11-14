@@ -55,7 +55,8 @@ export async function POST(request: NextRequest) {
         result = await auth.db.from('custom_flow_tables').insert({id:tableId,business_id:auth.businessId,flow_id:body.flowId,name:body.name.trim(),columns,editor_schema_version:1}).select(tableColumns).single();
       } else {
         if (typeof body.updatedAt !== 'string') return fail('invalid_version',400);
-        result = await auth.db.from('custom_flow_tables').update({name:body.name.trim(),columns}).eq('business_id',auth.businessId).eq('flow_id',body.flowId).eq('id',tableId).eq('updated_at',body.updatedAt).select(tableColumns).maybeSingle();
+        if (body.name.trim() !== table!.name) return fail('invalid_table',400);
+        result = await auth.db.from('custom_flow_tables').update({columns}).eq('business_id',auth.businessId).eq('flow_id',body.flowId).eq('id',tableId).eq('updated_at',body.updatedAt).select(tableColumns).maybeSingle();
       }
     } else {
       if (!isUuid(body.id)) return fail('invalid_row',400);

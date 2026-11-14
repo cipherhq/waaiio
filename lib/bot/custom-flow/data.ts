@@ -16,7 +16,7 @@ export const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typ
 export const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 export function businessValue(field: BusinessField,value: unknown): string {
   if(field==='operating_hours'&&isRecord(value))return Object.entries(value)
-    .filter(([,hours])=>isRecord(hours)&&typeof hours.open==='string'&&typeof hours.close==='string')
+    .filter(([,hours])=>isRecord(hours)&&hours.closed!==true&&hours.is_open!==false&&typeof hours.open==='string'&&typeof hours.close==='string')
     .map(([day,hours])=>`${day}: ${(hours as Record<string,unknown>).open}–${(hours as Record<string,unknown>).close}`).join('\n');
   return typeof value==='string'?value:'';
 }

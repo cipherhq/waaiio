@@ -112,6 +112,16 @@ describe('M543 guided setup and direct-writer concurrency (real PostgreSQL)',()=
     await c.query('COMMIT');
     expect((await db.query('SELECT data FROM custom_flow_table_rows WHERE id=$1',[rowId])).rows[0].data).toEqual({name:5});
   });
+  it('keeps published table references stable across owner and service schema edits',async()=>{
+    await seed();const c=await client();
+    for(const role of ['authenticated','service_role']){
+      await c.query('RESET ROLE');await c.query(`SET ROLE ${role}`);
+      await expect(c.query("UPDATE custom_flow_tables SET name='renamed' WHERE id=$1",[tableId])).rejects.toMatchObject({code:'23514'});
+    }
+    await c.query('UPDATE custom_flow_tables SET columns=$2 WHERE id=$1',[tableId,JSON.stringify([...columns,{name:'details',type:'text'}])]);
+    const answer=await c.query("SELECT r.data FROM custom_flow_tables t JOIN custom_flow_table_rows r ON r.table_id=t.id AND r.business_id=t.business_id WHERE t.business_id=$1 AND t.flow_id=$2 AND t.name='people'",[biz,flowId]);
+    expect(answer.rows).toEqual([{data:{name:'Person'}}]);
+  });
   it('direct row writer fails immediately on table lock contention and can explicitly retry',async()=>{
     await seed(); const a=await client(),b=await client();
     await a.query('BEGIN'); await a.query('SELECT pg_advisory_xact_lock(hashtextextended($1,543))',[tableId]);

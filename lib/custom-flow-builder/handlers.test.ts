@@ -86,6 +86,16 @@ describe('guided HTTP handlers: real shared ownership/capability policy, mocked 
     expect((await saveData(post('/data',{...input,data:{name:'Stale'}}))).status).toBe(409);
     expect(state.rows.custom_flow_table_rows[0].data.name).toBe('After');expect(state.writes).toHaveLength(1);
   });
+  it('keeps existing table names fixed while allowing new names and compatible columns',async()=>{
+    seedFlow();const columns=[{name:'name',type:'text'},{name:'details',type:'text'}];
+    expect((await saveData(post('/data',{action:'save_table',tableId,name:'renamed',columns,updatedAt:'old'}))).status).toBe(400);
+    expect(state.writes).toEqual([]);
+    expect((await saveData(post('/data',{action:'save_table',tableId,name:'people',columns,updatedAt:'old'}))).status).toBe(200);
+    expect(state.rows.custom_flow_tables[0]).toMatchObject({name:'people',columns});
+    expect(state.rows.custom_flow_table_rows[0].data).toEqual({name:'Before'});
+    expect((await saveData(post('/data',{action:'create_table',id:sourceId,name:'new_table',columns}))).status).toBe(200);
+    expect(state.rows.custom_flow_tables.some(t=>t.name==='new_table')).toBe(true);
+  });
   it('does not attach a foreign or variable source to an editable row',async()=>{
     seedFlow();state.rows.products=[{id:sourceId,business_id:otherId,is_active:true,deleted_at:null,price:10,name:'Other'}];
     const response=await saveData(post('/data',{action:'save_row',id:rowId,tableId,rowCode:'A',data:{_source:{version:1,kind:'product',id:sourceId}},position:0,hidden:false,updatedAt:'old'}));

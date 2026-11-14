@@ -57,6 +57,18 @@ describe('guided merchant interactions',()=>{
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Keep this');
     expect((screen.getByLabelText('Table name') as HTMLSelectElement).disabled).toBe(true);
   });
+  it('allows names on creation but keeps existing names fixed when adding columns',async()=>{
+    await openRow();
+    fireEvent.click(screen.getByRole('button',{name:'Add column'}));
+    const name=screen.getAllByLabelText('Table name').find(el=>el.tagName==='INPUT') as HTMLInputElement;
+    expect(name.disabled).toBe(true);expect(name.value).toBe('items');
+    fireEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    await waitFor(()=>expect((screen.getByRole('button',{name:'Add table'}) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button',{name:'Add table'}));
+    const newName=screen.getAllByLabelText('Table name').find(el=>el.tagName==='INPUT') as HTMLInputElement;
+    expect(newName.disabled).toBe(false);
+    fireEvent.change(newName,{target:{value:'new_information'}});expect(newName.value).toBe('new_information');
+  });
   it('requires explicit confirmation before deleting a live row',async()=>{
     await openRow();vi.mocked(window.confirm).mockReturnValue(false);
     fireEvent.click(screen.getByRole('button',{name:'Delete row'}));expect(posts).toEqual([]);

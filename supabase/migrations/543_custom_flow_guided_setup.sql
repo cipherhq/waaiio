@@ -80,7 +80,7 @@ BEGIN
     RAISE EXCEPTION 'custom_flow_schema_version_immutable' USING ERRCODE = '23514';
   END IF;
   IF TG_OP = 'UPDATE' AND OLD.editor_schema_version = 1 AND
-    (NEW.editor_schema_version <> 1 OR NEW.id <> OLD.id OR NEW.business_id <> OLD.business_id OR NEW.flow_id <> OLD.flow_id) THEN
+    (NEW.editor_schema_version <> 1 OR NEW.id <> OLD.id OR NEW.business_id <> OLD.business_id OR NEW.flow_id <> OLD.flow_id OR NEW.name IS DISTINCT FROM OLD.name) THEN
     RAISE EXCEPTION 'custom_flow_table_identity_immutable' USING ERRCODE = '23514';
   END IF;
   IF NEW.editor_schema_version <> 1 THEN RETURN NEW; END IF;

@@ -24,6 +24,10 @@ branches in the engine. Five empty tables cover artists, vendors, ticket types,
 news and FAQs. No customer facts, prices, venue details or sample claims are
 invented. A community-centre information desk proves reuse with different data.
 
+Owner decision: table names are set on creation and remain fixed afterward,
+including direct writers for guided tables. Adding columns preserves names and
+published lookup references. Coordinated renaming is outside this milestone.
+
 Table Saves update live answers immediately. Publish and Reset affect flow
 structure only. Reset replaces the draft with the currently published definition;
 it does not restore historical releases or revert saved table contents.
@@ -145,3 +149,9 @@ requires a timed nontechnical-user trial and is not established by code tests.
   Final-head CI, canonical catalog delta, two final reviews and real guided
   browser acceptance remain outstanding. No hosted deployment/application or
   timed usability claim follows from these checks.
+
+Review correction evidence: fixed guided table names are enforced in UI, API and
+the existing version-1 database identity guard. Updated handler/UI suites passed
+19 tests and real PostgreSQL passed 15 tests, all zero skips; the new disposable
+cluster was stopped and removed. Live operating-hours bindings honor both
+existing closed-day flags, preserving Settings authority without new wording.

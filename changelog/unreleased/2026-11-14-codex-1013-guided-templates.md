@@ -22,3 +22,7 @@ release; conflicting schema/data edits return retryable errors rather than
 overwriting changes. This branch depends on unmerged Phase 2 PR #1024. Migration
 application, merge and deployment require separate Owner authorization. Hosted
 runtime acceptance and timed nontechnical setup acceptance remain unclaimed.
+
+- Existing guided table names remain fixed after creation, including direct
+  writers, so adding columns preserves published lookup references. Live hours
+  exclude days marked closed in Settings.
