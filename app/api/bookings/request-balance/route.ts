@@ -131,6 +131,7 @@ export async function POST(request: NextRequest) {
       const l10n = await resolveProactiveLocalization(serviceClient, phone, businessId);
       await resolved.sender.sendText({
         to: toPhone,
+        messageCategory: 'service',
         text: fillFlowCopy(l10n.language, 'notification.balance_due', { businessName: biz.name, referenceCode: booking.reference_code, balance: formatCurrency(balance, cc), paymentUrl }),
       });
     }
