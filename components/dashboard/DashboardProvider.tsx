@@ -4,6 +4,7 @@ import { createContext, useContext, useCallback, useEffect, useState, type React
 import { useRouter } from 'next/navigation';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { loadCountries } from '@/lib/countries';
+import { allowDashboardNavigation } from './dirty-navigation';
 
 export interface Business {
   id: string;
@@ -100,6 +101,7 @@ export function DashboardProvider({
 
   const switchBusiness = useCallback(async (businessId: string) => {
     if (businessId === business.id) return;
+    if (!allowDashboardNavigation()) return;
     setSwitchingBusiness(true);
     try {
       const res = await fetch('/api/dashboard/switch-business', {
