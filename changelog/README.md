@@ -38,7 +38,7 @@ Do not edit `CHANGELOG.md` directly in a feature PR.
 After the last PR for a release has merged, and immediately before prepare, the orchestrating session opens a small collect PR (release step 0).
 It merges before prepare, because nothing may merge between prepare and deploy.
 It is skipped when `changelog/unreleased/` has no fragments. The collect PR is
-docs-only, so it needs one review.
+docs-only and requires both assigned Codex reviews under the Operating Order.
 
 ```bash
 node scripts/changelog/collect.mjs collect --dry-run   # preview
@@ -59,8 +59,8 @@ as docs:
 - this README;
 - `CHANGELOG.md`.
 
-A docs-only PR plus its fragment therefore stays in the standard lane with one
-review. `collect.mjs` reads these files, but it only checks their format and
+A docs-only PR plus its fragment therefore stays in the standard lane. Both assigned Codex reviews are required under the
+Operating Order, including for docs-only work. `collect.mjs` reads these files, but it only checks their format and
 fails closed, and nothing it produces is deployed. That makes it a narrow,
 tested exception to the rule that docs read by tooling count as code. Any other
 file under `changelog/` is full lane.

@@ -255,7 +255,7 @@ A release SHA is **certified** only when ALL of the following are recorded on Gi
 
 1. **Exact SHA** — the full 40-character commit hash on protected `main`
 2. **CI evidence** — all required jobs green on that exact SHA (not a prior commit)
-3. **CTO review** — the reviewer of record (an independent Claude reviewer; Operating Order "Roles") posted `READY FOR MERGE` or equivalent on the exact SHA
+3. **CTO review** — both assigned independent Codex reviewers (Operating Order "Roles") posted `READY FOR MERGE` or equivalent on the exact SHA
 4. **Owner authorization** — explicit merge authorization recorded
 5. **Migration reconciliation** — all migrations in the SHA are applied to production and verified
 6. **Deployment verification** — Vercel deployment is `READY`, aliases are correct, HTTP smoke check passes
@@ -599,7 +599,7 @@ The classifier checks both path and content. A reviewer may raise a PR to full, 
 - the two-reviewer gate;
 - Owner staging acceptance where the Owner's own credentials are required.
 
-**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs (files under `docs/**` and `*.md`) are classified separately from the lanes: they need one review. A file is docs-only only if it matches no full-lane path and no CI, release or gate tooling reads it. One narrow exception (Owner decision 2026-11-04): `CHANGELOG.md`, correctly named changelog fragments (`changelog/unreleased/YYYY-MM-DD-<slug>.md`) and `changelog/README.md` stay docs-only even though `scripts/changelog/collect.mjs` reads them. That script only checks their format, fails closed, and produces nothing that is deployed (see `docs/RELEASE_V3_GATE.md` and `changelog/README.md`). When classes overlap, the stricter class wins. Governance and agent-instruction files need CTO review: `CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, this document, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`, `docs/contracts/**`, `.agents/**` and `.claude/**`.
+**Classification before merge.** The same classifier runs on each PR before merge to set its review requirement. The release gate checks that every included PR has that review recorded. Docs-only PRs (files under `docs/**` and `*.md`) are classified separately from the lanes: they require both assigned Codex reviews under the Operating Order. The existing classifier and automated record-count minimum do not waive that policy. A file is docs-only only if it matches no full-lane path and no CI, release or gate tooling reads it. One narrow exception (Owner decision 2026-11-04): `CHANGELOG.md`, correctly named changelog fragments (`changelog/unreleased/YYYY-MM-DD-<slug>.md`) and `changelog/README.md` stay docs-only even though `scripts/changelog/collect.mjs` reads them. That script only checks their format, fails closed, and produces nothing that is deployed (see `docs/RELEASE_V3_GATE.md` and `changelog/README.md`). When classes overlap, the stricter class wins. Governance and agent-instruction files need CTO review: `CLAUDE.md`, `WAAIIO_ENGINEERING_OPERATING_ORDER.md`, this document, `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md`, `docs/contracts/**`, `.agents/**` and `.claude/**`.
 
 ### 9.4 One release approval
 
