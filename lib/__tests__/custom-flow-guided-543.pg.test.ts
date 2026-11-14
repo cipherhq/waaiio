@@ -3,6 +3,7 @@ import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { assertGuidedLocalPg } from './helpers/guided-local-pg';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw Error('Disposable PostgreSQL required (TEST_DATABASE_URL)');
@@ -14,6 +15,7 @@ const owner = randomUUID(), otherOwner = randomUUID(), biz = randomUUID(), other
 const flowId = randomUUID(), tableId = randomUUID(), rowId = randomUUID();
 const columns = [{name:'name',type:'text',required:true}];
 let admin: pg.Client, db: pg.Client, target: string;
+let databaseCreated = false;
 const migration = (name: string) => readFileSync(join(process.cwd(),'supabase/migrations',name),'utf8');
 const clients: pg.Client[] = [];
 async function client(asOwner = owner) {
@@ -30,8 +32,10 @@ describe('M543 guided setup and direct-writer concurrency (real PostgreSQL)',()=
   beforeAll(async()=>{
     admin = new pg.Client({connectionString:url}); await admin.connect();
     const identity = (await admin.query("SELECT inet_server_addr()::text AS address, current_database() AS database")).rows[0];
-    expect([null,'127.0.0.1','::1']).toContain(identity.address);
-    await admin.query(`CREATE DATABASE ${database}`);
+    assertGuidedLocalPg({socketDirectory:address.searchParams.get('host'),
+      peerAddress:(admin.connection.stream as {remoteAddress?:string}).remoteAddress,
+      serverAddress:identity.address,initialDatabase:identity.database,expectedDatabase:decodeURIComponent(address.pathname.slice(1))||'postgres'});
+    await admin.query(`CREATE DATABASE ${database}`); databaseCreated = true;
     const destination = new URL(url); destination.pathname = `/${database}`; target = destination.toString();
     db = new pg.Client({connectionString:target}); await db.connect();
     expect((await db.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
@@ -56,7 +60,7 @@ describe('M543 guided setup and direct-writer concurrency (real PostgreSQL)',()=
   afterAll(async()=>{
     for(const c of clients) await c.end();
     await db?.end();
-    if(admin){await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);await admin.end();}
+    if(admin){if(databaseCreated)await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);await admin.end();}
   });
   beforeEach(async()=>{
     await db.query('TRUNCATE custom_flows,businesses CASCADE');
