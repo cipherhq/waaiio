@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
   const { data: dispatchedPayments, error: dispatchQueryErr } = await supabase
     .from('payments')
     .select('id, gateway, gateway_reference, metadata, provider_init_state, fee_policy_version, created_at, amount, currency, tax_allocation')
-    .or('fee_policy_version.eq.1,tax_allocation.not.is.null')
+    .or('fee_policy_version.eq.1,tax_allocation.not.is.null,campaign_id.not.is.null')
     .eq('provider_init_state', 'dispatched')
     .eq('status', 'pending')
     .neq('gateway_status', 'dispatched_quarantine')
@@ -289,7 +289,7 @@ export async function GET(request: NextRequest) {
     // #264: Skip v1 dispatched rows — the dedicated dispatched-recovery block owns them.
     // They must not enter ordinary reconciliation until the exact checked transition succeeds.
     const sp = payment as Record<string, unknown>;
-    if ((sp.fee_policy_version === 1 || sp.tax_allocation) && sp.provider_init_state === 'dispatched') {
+    if ((sp.fee_policy_version === 1 || sp.tax_allocation || sp.campaign_id) && sp.provider_init_state === 'dispatched') {
       continue;
     }
 
