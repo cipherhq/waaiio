@@ -1,3 +1,270 @@
+## 2026-11-13 — Pidgin replies: send certified phrase-book text without AI translation
+
+- **Why:**
+  - On staging, a Pidgin customer's capability menu took about 3.9 s: about 15 AI translation calls before the menu was sent.
+  - The flow engine sends every outbound message through `translateBotResponse` whenever the session language is not English. That included text it had just taken from the certified Pidgin phrase book, so the AI was asked to "translate" Pidgin into Pidgin. This was slow, and it could reword the reviewed copy.
+  - It also called the AI for text where only a protected value was left, such as the business name in the menu title.
+  - The Owner approved "Fix A" on 2026-11-13.
+- **What changed:**
+  - `lib/bot/flows/flow-localization.ts`: new `isPhraseBookText(lang, text)`.
+    - It is true only when every paragraph of the text exactly equals a certified code-default `FLOW_COPY[lang]` paragraph that is distinctly that language.
+    - Templates with `{placeholders}` are never matched.
+    - A paragraph that is also English copy is never matched.
+    - The set is built only from `FLOW_COPY`, never from filled-in values, so no customer data is kept.
+    - English and uncertified languages always return false. Today only `pcm` is certified.
+    - The first head matched templates as patterns. Both reviewers found that this let English and merchant text through (for example "Welcome to Mama Put! …"), so it was replaced.
+  - `lib/bot/translate.ts`: `translateBotResponse` returns the text unchanged, with no PostHog flag check and no AI call, in two cases:
+    - (a) `isPhraseBookText` is true;
+    - (b) after the protected values (names, amounts, references, dates) are taken out, no letters are left.
+- **Affects:** outbound bot messages for Pidgin sessions.
+  - The capability menu goes from 8 AI calls to 1 in the local harness. The one left is a label whose Pidgin copy equals English.
+  - Distinctly-Pidgin phrase-book paragraphs in other messages are also no longer AI-translated.
+- **Unchanged:**
+  - English sessions.
+  - Uncertified languages (yo, ig, ha, tw, fr, es), whose copy falls back to English and is still AI-translated.
+  - Merchant text, `ctx.t('English…')` strings, filled-in templates, English-identical copy, and any message containing a paragraph that is not distinctly-Pidgin phrase-book copy.
+  - Business and platform translation overrides, which are not recognised and are still AI-translated as before.
+- **Could break:** Pidgin customers now see the exact certified phrase-book wording for distinctly-Pidgin paragraphs, instead of the AI's rewording of them.
+- **Tests:** `lib/bot/__tests__/phrase-book-skip-ai.test.ts`
+
+## 2026-11-13 — Bot: customers always pick the service, even when there is only one
+
+- **Why:**
+  - On the production business Healing Labs, the bot never showed the services list. With only one active service, it picked that service and went straight to "pick a date".
+  - The date step does not name the service, so the customer first saw what they were booking on the final confirmation.
+  - The Owner decided that a customer must always select the service themselves, and chose Option A (always show the list) on 2026-11-13.
+- **What changed:**
+  - `lib/bot/flows/scheduling.flow.ts`, step `select_service`:
+    - `skipIf` no longer fills the service and skips the step when there is exactly one service.
+    - `prompt` no longer returns nothing for one service, so the normal list is shown with that one row (name, price, length).
+  - `lib/bot/flows/appointment.flow.ts`, step `select_appointment`: `skipIf` no longer auto-selects the only appointment type, so the existing list is shown.
+  - In both flows, tapping the row runs the existing `validate()`, which fills the same session fields as before, and then continues to `select_date` (or `select_class_session` for classes).
+- **Affects:** every business with exactly one active bookable service or appointment type, including classes.
+- **Unchanged:**
+  - With no services: the "General" fallback / "no appointments" buttons.
+  - With two or more services: the same list as before.
+  - An earlier explicit choice still skips the list (`skip_service`). This covers a customer typing the service name (smart intent, in the first message or at the menu) and rescheduling an existing booking from My Bookings.
+  - The main capability menu is still skipped when a business offers only one kind of thing.
+  - Single table, property, ticket type, location and staff are still picked automatically.
+  - Payment, confirmation and the next-steps menu after a booking.
+- **Could break:** customers of single-service businesses now see one extra tap (the one-row list) before the date step.
+- **Tests:**
+  - `lib/bot/flows/__tests__/appointment-singleton-reproduction.test.ts`: the singleton expectations now expect the one-row list, and new tests tap it through to `select_date`.
+  - `lib/__tests__/p1-appointment-closure.test.ts`: test 3 now asserts that the auto-select block is gone. The buffer still reaches the session through `validate()` (test 4).
+
+## 2026-11-13 — M539: explicit service-role permissions on the admin passkey approvals table
+
+- **Why:** M538 created `public.admin_passkey_approvals` and granted the service role SELECT, INSERT and DELETE. It did not first revoke the service role's default rights.
+  - Production's defaults give the service role every table right; staging's give fewer.
+  - So the final permissions would differ by environment, and Release V3 prepare would stop on the catalog mismatch, as it did for five M526/M535 tables in the last release.
+  - The Owner chose to fix this on 2026-11-13. M538 is already on main and CI forbids editing a merged migration, so the fix is a separate migration (Owner: "Yes, use M539").
+- **What changed:**
+  - `supabase/migrations/539_admin_passkey_approvals_explicit_acl.sql`: revokes all rights on the table from the service role, then grants SELECT, INSERT and DELETE.
+  - `lib/__tests__/admin-passkey-acl-539.pg.test.ts` (new): starts from production-like default privileges, applies M538 and then M539 twice, and proves the final rights are exactly SELECT, INSERT, DELETE.
+  - CI registers the new pg test.
+  - Catalog delta for M539.
+- **Affects:** database permissions on one table, used only by the server.
+- **Could break:** nothing in the app. The server uses only SELECT, INSERT and DELETE on this table. Apply M539 right after M538 (M537, M538, M539 in order, with the usual pause between them).
+
+## 2026-11-13 — Party RSVP: after Yes, send one link to the RSVP page instead of chat questions (#1005 PR 3a)
+
+- **Why:**
+  - Owner decision on #1005 (2026-11-13): "Link first, then form".
+  - When a guest tapped Yes on a party that has questions, the bot asked guest count, dietary needs and every question one message at a time. Each message is billed and slow for the guest.
+- **What changed:**
+  - `lib/bot/bot.service.ts`: on a Yes tap for a party with questions, the new `sendPartyRsvpLink` sends one message with `/rsvp/<token>?rsvp=yes`. That page already asks everything at once and saves through the same API.
+  - If that message cannot be sent, the bot falls back to today's one-by-one questions.
+  - `app/rsvp/[token]/page.tsx`: `?rsvp=yes` pre-selects Yes, only for a guest who has not answered yet.
+- **Affects:** Yes taps on party invites that have RSVP questions (template buttons and in-chat buttons).
+- **Unchanged:**
+  - Maybe and No.
+  - Yes on parties without questions.
+  - Events.
+  - The sender phone check.
+  - The RSVP page's save path and its capacity and required-answer checks.
+- **Could break:**
+  - The guest's RSVP is not saved until they submit the page. A guest who taps Yes and never opens the link stays "pending" (before, they stayed pending until the chat questions finished).
+  - The link message is in English.
+- **Tests:** `lib/__tests__/party-questions-botservice-489.test.ts`, `lib/__tests__/party-questions-ui-489.test.tsx`
+
+## 2026-11-13 — Several RSVP questions can tag guests for seating (#1005)
+
+- **Owner decisions (2026-11-12, issue #1005):**
+  - Any single-choice or yes/no question can be marked "Tag guests with their answer". The limit of one per party is gone.
+  - A tagging yes/no question has a host-typed "Tag for Yes". Guests who answer Yes get that tag; No gives no tag.
+- **Migration M537** (`supabase/migrations/537_party_multi_question_seating_tags.sql`):
+  - Adds `event_invites.answer_tags` (jsonb, question id → auto-tag). Existing M514 auto-tags are backfilled to their question.
+  - Replaces `private.validate_party_questions_489` (adds `yes_tag`, allows several tagging questions), the trigger function `private.party_answer_tag_514`, and `private.party_questions_489`.
+  - Adds `private.party_answer_tags_537`.
+  - No new SECURITY DEFINER function; grants are restated and self-checked.
+  - M514's rules still hold per question: a changed answer swaps only that question's tag; the organiser's own tags are never adopted or removed; a pinned guest keeps auto-tags (D2); unticking a question or deleting an option keeps the tag as an ordinary tag (D7).
+  - `answer_tag` is still maintained (first auto-tag in question order), so existing readers keep working.
+- **App:**
+  - `lib/parties/rsvp-questions.ts` mirrors the new rules.
+  - The questions editor offers tagging on choice and yes/no questions, with a "Tag for Yes" box.
+  - The guest list marks every auto-tag "(from RSVP)", and tables can be reserved for any tagging question's tags.
+- **Tests:**
+  - New real-PostgreSQL test `lib/__tests__/party-multi-question-tags-537.pg.test.ts`, run in CI's disposable-PG job.
+  - `lib/__tests__/party-seating-by-tag-514.test.ts` and `party-seating-by-tag-ui-514.test.tsx` were updated for the new rule.
+- **Could break:**
+  - Deploying before M537 is applied: the guest-list query asks for `answer_tags`. M537 must be applied before the app deploy.
+  - Hosts with many tagging questions get more tags per guest.
+
+## 2026-11-13 — Party RSVP WhatsApp form: publisher behind its own switch (#1005 PR 3c)
+
+- **Why:**
+  - The reusable RSVP form (M540, PR 3b) has to be published to Meta once per WhatsApp account before guests can be sent it.
+  - The Owner decided it has its own switch, separate from merchant native forms.
+- **What changed:**
+  - `lib/whatsapp-forms/meta-flow-asset.ts`: the create, upload, publish and status calls take an optional switch.
+    - The default is still `nativeFormsEnabled`, so merchant native forms are unchanged.
+    - Deprecate is always native.
+  - `lib/channels/meta-cloud.ts`: new `partyRsvpFlowAssets(wabaId)`.
+    - It is bound to the service's own account and uses the RSVP switch.
+    - Its Meta category is OTHER.
+  - `lib/parties/rsvp-flow-publisher.ts`: creates, uploads, publishes and verifies the static RSVP Flow on one account.
+    - A unique `(waba_id, revision)` row claims each attempt.
+    - Provider calls are never retried automatically.
+    - Any unclear outcome is left as `needs_review`, together with Meta's validation messages when the layout is rejected.
+    - An admin can resume only an attempt whose Meta asset is known, so a second asset is never created.
+    - An attempt left in `creating` or `draft` (in progress, or interrupted) is never resumed. Recovering it is manual: check Meta for `Waaiio party RSVP <revision>`, then set the row to `needs_review` by hand.
+    - If Meta created an asset but its ID could not be saved, the ID is logged.
+  - `app/api/admin/party-rsvp-flow/route.ts`:
+    - GET returns read-only status. POST publishes, and accepts `{"resume": true}`.
+    - Access is limited to platform admins or the cron secret. Unlike `verifyCronAuth`, there is no local bypass.
+    - It always uses the platform account from server env, and is rate limited to 3 per minute.
+    - Every attempt that reaches the publisher is written to `admin_audit_logs`, with the admin's ID or "cron secret" and the outcome.
+    - `maxDuration` is 60 seconds.
+- **Affects:** nothing until `WHATSAPP_PARTY_RSVP_FORMS_ENABLED=true` is set on a deployment and someone calls the route. Publishing on staging and on production each needs the Owner's approval.
+- **Unchanged:**
+  - merchant native forms (their routes, their switch, and their default gate);
+  - the bot and the RSVP page;
+  - all migrations.
+- **Could break:** nothing at runtime while the switch is off. Dedicated WhatsApp numbers on their own Meta account are not covered yet; PR 3d falls back to the web link for them.
+- **Tests:** `lib/__tests__/party-rsvp-flow-publisher-1005.test.ts`, `lib/__tests__/party-rsvp-flow-route-1005.test.ts`
+
+## 2026-11-13 — Party RSVP WhatsApp form: database, token and form layout (M540, #1005 PR 3b)
+
+- **Why:**
+  - Owner decisions on #1005 (2026-11-13): after Yes, a guest answers every party question in one reusable WhatsApp form.
+  - The form is filled in at send time, with the web RSVP link as the fallback and a separate on/off switch.
+  - This PR is the groundwork only. Nothing sends, publishes or receives a form yet (PRs 3c and 3d).
+- **What changed:**
+  - `supabase/migrations/540_party_rsvp_flow.sql`, which adds:
+    - `party_rsvp_flow_publications`: one Meta Flow per WhatsApp Business Account and Flow revision.
+    - `party_rsvp_flow_receipts`: one row per accepted submission, keyed by the hashed token nonce.
+    - `save_party_rsvp_flow_response_540`. It re-checks the publication, channel, guest phone, business, question revision and the inbound WhatsApp message. It saves only through `complete_party_rsvp_489`, then records the receipt.
+    - Only guest-facing outcomes are mapped to error codes (`questions_changed`, `capacity`, `invalid_answers`). Any other database error propagates.
+    - Every ACL is explicit, service_role included, so production and staging end up identical. Guests and hosts cannot read either table.
+  - `lib/parties/rsvp-flow.ts`:
+    - the static Flow JSON (10 question slots);
+    - its revision;
+    - the send-time data builder, which returns null, meaning "use the web link", when a choice label is over 30 characters;
+    - the response reader. When the party asks for dietary needs, a blank box clears an earlier note, as the RSVP page and bot do.
+  - `lib/parties/guest-capacity.ts`: how many companions to offer, by the M489 and M457 rules.
+  - `lib/whatsapp-forms/flow-token.ts`: v3 party RSVP tokens.
+    - Each token is bound to one invitation, publication, channel, number, Meta asset and question revision, and is valid for 24 hours.
+    - v2 and v3 tokens never authenticate as each other.
+  - `lib/whatsapp-forms/release-gate.ts`: `partyRsvpFormsEnabled()` (`WHATSAPP_PARTY_RSVP_FORMS_ENABLED`, off by default).
+  - `.github/workflows/ci.yml`: runs the new PG test in the disposable-PG job, where it is required, and excludes it from Main App.
+- **Affects:** nothing at runtime yet. The new code is not called, and the switch is off.
+- **Unchanged:** the bot, the RSVP page, merchant native forms (v2 tokens and their switch), and M489.
+- **Could break:** applying M540 needs `event_invites`, `whatsapp_channels`, `whatsapp_inbound_receipts` and M489 to be present (all are on staging and production).
+- **Tests:** `lib/__tests__/party-rsvp-flow-1005.test.ts`, `lib/__tests__/party-rsvp-flow-540.pg.test.ts`
+
+## 2026-11-13 — Party invites with Yes / Maybe / No buttons for guests who never messaged the business (#1005)
+
+- **Owner decision (2026-11-12, issue #1005):** when the host ticks "These guests agreed to receive WhatsApp messages from me", a party guest who has never messaged the business gets a WhatsApp invite template with Yes / Maybe / No buttons. It is charged as a marketing message from the host's messaging balance. An opt-out (STOP) or a "No thanks" to the business's WhatsApp updates always wins, as for every other marketing send.
+- **What changed:**
+  - `lib/parties/cold-invite.ts` (new):
+    - the template name;
+    - an RSVP payload check;
+    - a fail-closed check that blocks STOP opt-outs and revoked WhatsApp marketing consent;
+    - `sendColdPartyInvite`, which sends with quick-reply payloads `rsvp_<choice>_<inviteId>`, marketing category, and a single attempt.
+  - `lib/channels/provision-templates.ts`: new template `waaiio_party_invite_v1` (MARKETING, three QUICK_REPLY buttons).
+  - `app/api/events/invite/route.ts`:
+    - new `guests_consented` flag;
+    - for party invites, a non-opted-in guest who has not opted out gets the template;
+    - if it cannot be sent (for example while Meta has not approved it yet), the existing email, SMS or share-link fallbacks apply unchanged.
+  - `app/api/webhook/meta-cloud/route.ts`: template quick-reply taps with an RSVP payload now reach the bot's existing `rsvp_*` handler.
+  - `app/dashboard/parties/page.tsx`: consent checkbox on the single and bulk invite forms.
+- **Unchanged:**
+  - guests who already messaged the business (interactive buttons, as before);
+  - event invites;
+  - the self-opt-in page;
+  - inbound RSVP handling;
+  - the opt-in confirmation template.
+- **Tests:**
+  - `lib/__tests__/party-cold-invite-1005.test.ts`;
+  - two webhook cases in `lib/__tests__/form-optin-confirmation-591.test.ts`.
+- **Needs an Owner-approved provider action:** the template must be created on the WhatsApp Business Account(s) and approved by Meta. Until then the old fallbacks are used.
+- **Could break:** a host who ticks consent for guests who did not agree risks WhatsApp quality or spam reports on the number.
+
+## 2026-11-13 — Custom Flow Phase 1: data-driven Message / Menu / Lookup engine (Issue #1013)
+
+- **Why:**
+  - Businesses need WhatsApp flows without hand-written code: a menu, a live data lookup, and a message, driven by a definition and data tables the merchant edits.
+  - Phase 1 is the foundation only: schema, tenant scoping, session handling, and an engine that runs Message, Menu, and Lookup from a published definition. No builder, no payments, no templates yet.
+- **What changed:**
+  - `supabase/migrations/541_custom_flow_base.sql`: new tables `custom_flows`, `custom_flow_tables`, `custom_flow_table_rows`, `custom_flow_sessions`, `custom_flow_logs`. RLS default-deny on all five; owner-scoped policies via `businesses.owner_id = auth.uid()`; service_role for server writes. No SECURITY DEFINER functions.
+  - `lib/bot/custom-flow/engine.ts`: `CustomFlowEngine` + `tryHandleCustomFlow()`. Loads the published definition only, renders nodes through the existing `MessageSender` (tenant-bound first, S-1), reads table rows live, and never invents an answer (no-match and fallback messages instead). Sessions live in `custom_flow_sessions` (own table, version-guarded CAS) keyed by raw phone + business_id (DB-005). Expired sessions offer "Continue / Start again". Every turn is logged to `custom_flow_logs`.
+  - `lib/bot/custom-flow/definition.ts`: `validateDefinition()` — plain-English errors for broken node links, duplicate ids, missing text, and lowercase entry keywords. The engine fails closed on an invalid published definition.
+  - `lib/bot/custom-flow/session.ts`: load / create / version-guarded update / close for custom sessions.
+  - `lib/bot/bot.service.ts`: one delegation branch in `handleMessage` (after STOP only — it yields to restart words, card-PIN steps and business codes via explicit checks inside the branch; before "my X" handlers and keyword matching). Returns early only when the engine handled the message; all other traffic falls through untouched.
+  - `shared/capabilities.ts` + `docs/contracts/capability-index.json`: new capability `custom_flow`, Premium tier (`business`), 32 → 33 capabilities. `custom_flow` is excluded from the WhatsApp capability menu (`nonUserFacing` in `lib/bot/handlers/flow-routing.ts`) — Phase 1 entry is by keyword only. Merchant description: "Custom WhatsApp menus and lookups that read your own data tables." (no builder, bookings, or payment links in Phase 1).
+  - Reviewer B round (same PR): restart words and business codes inside an active session now close the custom session before yielding to the normal bot, so the customer's next typed replies reach the normal flow instead of being swallowed by the engine. Entry keywords match the whole message, not just the first word. The reserved-keyword list grew with the bot's own words (ORDER, BUY, TICKET, TABLE, DONATE, GIVE, RESERVE, MY, SWITCH, CONNECT, SAVE, REMOVE, UPDATES, DIRECTORY) in both the validator and the migration 541 CHECK. `closeSession` is scoped by `business_id`.
+  - `scripts/full-release-targets.json`: refreshed the `capability-index.json` sha256 (both kinds).
+- **Affects:** only messages that match a published custom flow's entry keyword or an active custom session. No published custom flows exist yet, so no customer traffic changes.
+- **Unchanged:**
+  - `executor.ts`, `registry.ts`, and all 17 code flows.
+  - Capability menu contents and ordering for existing capabilities.
+  - Channel resolution, payment code, and the Stage 1–3 payment lifecycle.
+  - `bot_sessions` — custom sessions do not touch it.
+- **Could break:** a business that enables `custom_flow` and publishes a flow with an entry keyword that collides with a code-flow keyword would capture those messages first (the branch runs before keyword matching). Publish-time keyword validation lands with the builder (Phase 2).
+- **Tests:** `lib/bot/custom-flow/__tests__/engine.test.ts` (in-memory fake Supabase, recording sender; zero targeted skips). Covers: keyword start, menu buttons vs list, postback/number/label input, gibberish fallback, lookup match / row-code / no-match, hidden-row and cross-tenant exclusion, menu/cancel/human words, expired-session resume, and step logging.
+
+## 2026-11-12 — Admin passkey sign-in; step-up only when money moves out
+
+- **Why:** The Owner asked for passkey sign-in to the admin panel, with no extra code for financial tasks unless money is moving out. The Owner approved all six decisions on 2026-11-12:
+  - a passkey replaces the 6-digit code at sign-in, and the password stays;
+  - money-out actions and changes to where money goes always need confirmation;
+  - for passkey users, that confirmation is a fresh passkey tap;
+  - the skip lasts 12 hours after the latest passkey tap;
+  - adding or removing a passkey needs the code, and the authenticator app stays as the backup;
+  - password + code sign-in stays.
+- **What changed:**
+  - `supabase/migrations/538_admin_passkey_step_up.sql`:
+    - adds the `passkey_approve` and `passkey_remove` step-up actions;
+    - adds a unique index on `admin_step_up_authorizations.challenge_id`, so one tap confirms one action;
+    - adds the `admin_passkey_approvals` table: RLS deny-all, service role select/insert/delete only. `step_up_id` is an audit reference with no foreign key, so `cleanup_expired_step_ups()` keeps working (found by reviewer A);
+    - adds `admin_session_mfa_state(session_id)`: SECURITY DEFINER, `search_path ''`, EXECUTE for service role only. It returns the session's AAL, last-verified factor and start time from `auth.sessions`.
+  - `lib/admin-passkey.ts` (new): the passkey policy.
+    - Five actions can skip step-up: payout generation, payout rejection, and reseller payout approve, reject and generate.
+    - The 12-hour window, counted from sign-in (the session's start), not extended by later taps.
+    - The approved-passkeys check, which fails closed.
+    - The session check: Supabase Auth's session record must be aal2 with an approved passkey as its latest verified factor, tapped after that passkey's approval (reviewer A, P1).
+    - Freshness and one-tap binding for passkey step-up.
+  - `lib/admin-auth.ts`: `requirePlatformAdmin` also returns the verified `amr` claim and the user's MFA factors from `getUser`.
+  - `lib/admin-step-up.ts`:
+    - `prepareStepUp` returns `method` (`totp` or `passkey`), and `notRequired` for a skippable action in a passkey session;
+    - new `verifyPasskeyStepUp`;
+    - new `consumeStepUpOrPasskeyWaiver`, used only by the five no-money-out routes.
+  - The five no-money-out routes switch to `consumeStepUpOrPasskeyWaiver`: `payouts/generate`, `payouts/[id]/reject`, `reseller-payouts` (POST), and `reseller-payouts/[id]` (approve and reject only; mark_paid is never skipped). All money-out routes are untouched and still call `consumeStepUp`.
+  - `app/api/admin/step-up/verify`: `method: 'passkey'` branch. `step-up/prepare`: the two new actions.
+  - `app/api/admin/passkeys` (new): list, approve and remove your own passkeys, each with a code step-up.
+  - Admin app:
+    - Login offers "Sign in with passkey";
+    - `useStepUp` and `StepUpDialog` follow the server's method;
+    - new "My Passkeys" page and sidebar item;
+    - all 14 `StepUpDialog` uses pass `method`.
+  - `RELEASE_GATE_V2.md` §1.5: SEC-005 amended with the passkey rules.
+  - CI: registers the new pg test. `supabase/catalog-deltas/538_admin_passkey_step_up.json` is the PostgreSQL 17 catalog delta that CI's oracle generated for M538.
+- **Affects:** admin sign-in and every admin step-up dialog.
+- **Could break:**
+  - Passkeys need WebAuthn MFA turned on in Supabase Auth settings. That is a separate Owner-approved production change. Until then the passkey buttons fail, and code sign-in works as before.
+  - Passkeys are tied to the admin site's domain, so moving the admin panel to a new domain means re-adding passkeys.
+  - If an admin has an unapproved passkey, all passkey benefits are off until they approve or remove it.
+
 ## 2026-11-13 — Business search on WhatsApp: results first, past businesses labelled as past
 
 - **What changed:** On the shared WhatsApp number, every business a returning customer had chatted with before was merged into the same "Did you mean one of these businesses?" list as the search matches. So whatever a returning customer typed, even "Hi", they got that list and never saw real search results (`bot.service.ts`, no-session path). Owner decision (Option A, 2026-11-13): search results come first and are labelled as results, no results is said plainly, and past businesses follow in a separate message: "You've used these businesses before. Would you like to continue with one of them?" (up to 3 buttons, businesses already in the results left out). A returning customer who says "Hi" gets "Welcome back! 👋 You've used these businesses before. Would you like to continue with one of them?" plus up to 2 past businesses and "Find a business"; any other text is searched. New wording: "Search results for 'X': I found N businesses. Tap below to choose one.", "No exact match for 'X'. These names are close:" (one name: "This name is close:", a name button instead of the old Yes/No), "No businesses found for 'X'. Try a different name, area or category, or browse waaiio.com/directory." A category or area search ("salon in Lekki") that the quick name check also matched now goes to the directory search, so it gets the labelled results list instead of the close-name picker ("Here are some businesses that might help:" is no longer reached from this path).
