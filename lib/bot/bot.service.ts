@@ -111,6 +111,15 @@ export class BotService {
      *  Only the webhook entry (no _internalProvenance) should assign 'pre_resolved'. */
     _internalProvenance?: string,
     _pickerSelection?: { id?: string; version?: number; conversationVersion: number; businessId: string },
+    /** Issue #1013 'Hi' fix rework: separate restart signal for the
+     *  custom-flow guard — deliberately NOT provenance. Only the platform's
+     *  own restart re-entries pass this (waitlist acceptance, returning
+     *  customer, go-back-to-business, cancel/menu restarts, bot-code
+     *  redirects that fall back to 'Hi'). Redispatches of the customer's
+     *  own text (language picker, chat handoff) never pass it. Nothing
+     *  except the custom-flow guard reads it, so it changes no metering,
+     *  trust, or picker behaviour. */
+    _internalRestart?: boolean,
   ): Promise<void> {
     try {
     let text = messageText.trim();
@@ -284,7 +293,7 @@ export class BotService {
       if (lastSession?.business_id) {
         // ACC-204 R4: Carry forward the original provenance from the deactivated session
         const lastProvenance = deriveReentryProvenance((lastSession.session_data as Record<string, unknown>)?.biz_resolution as string | undefined);
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, lastSession.business_id, undefined, undefined, lastProvenance);
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, lastSession.business_id, undefined, undefined, lastProvenance, undefined, true);
       }
       // Fallback — no previous business found
       return this.handleMessage(from, 'Hi', messageType, destinationPhone);
@@ -654,7 +663,10 @@ export class BotService {
 
           // Deactivate any existing session and start a new booking flow
           if (existingSession) await this.deactivateSession(existingSession.id);
-          return this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id, undefined, undefined, 'waitlist_acceptance');
+          // 'Hi' fix rework: the re-entry carries the separate restart
+          // flag, NOT provenance — exactly as on main otherwise, so usage
+          // counting, promo trust and the language picker are unchanged.
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id, undefined, undefined, undefined, undefined, true);
         } else {
           // Declined — mark as expired so next person can be notified
           await this.supabase
@@ -1253,26 +1265,29 @@ export class BotService {
     // the platform's own routing: card-PIN steps never reach the engine
     // (the input would be consumed and logged), and business codes win over
     // a custom session or entry keyword. Internal restart re-entries
-    // ('Hi'/'start'/'restart' with provenance) close the custom session
-    // and fall through to the normal bot. It returns early only when the
-    // engine handled the message (active session, or the text matches a
-    // published flow's entry keyword for this business); everything else
-    // falls through untouched.
+    // ('Hi'/'start'/'restart' with the separate _internalRestart signal)
+    // close the custom session and fall through to the normal bot. It
+    // returns early only when the engine handled the message (active
+    // session, or the text matches a published flow's entry keyword for
+    // this business); everything else falls through untouched.
     {
       const customBusinessId = session?.business_id || preResolvedBusinessId || _cachedBusiness?.id || null;
       // Internal restart re-entries (Issue #1013, 'Hi' fix): when the
-      // platform deliberately restarts the customer — waitlist acceptance
-      // ('waitlist_acceptance'), a returning customer
-      // ('returning_customer'), cancel/menu restarts — the re-entered
+      // platform deliberately restarts the customer — waitlist acceptance,
+      // a returning customer, go-back-to-business, cancel/menu restarts,
+      // bot-code redirects that fall back to 'Hi' — the re-entered
       // restart signal ('Hi'/'start'/'restart') must reach the normal bot,
       // not the custom engine. Close any active custom session first: a
       // deliberate restart ends it, the same as a typed restart word.
-      // The guard is deliberately narrow — internal re-entries that
-      // redispatch the customer's own text (language-picker
-      // 'lang_pick_redispatch', chat handoff/start) must still reach the
-      // engine, so only restart signals are intercepted here.
+      // The signal is _internalRestart, separate from _internalProvenance:
+      // provenance carries trust (metering, promo, language picker), so
+      // reusing it as the restart signal changed waitlist behaviour for
+      // every acceptance. The flag is read only by this guard. The guard
+      // is deliberately narrow — internal re-entries that redispatch the
+      // customer's own text (language-picker 'lang_pick_redispatch', chat
+      // handoff/start) never pass the flag, so they still reach the engine.
       const isInternalRestart =
-        !!_internalProvenance && /^(hi|start|restart)$/i.test(text);
+        !!_internalRestart && /^(hi|start|restart)$/i.test(text);
       if (isInternalRestart && customBusinessId) {
         const { loadActiveSession, closeSession } = await import('@/lib/bot/custom-flow/session');
         const activeCustom = await loadActiveSession(this.supabase, customBusinessId, from);
@@ -1373,7 +1388,7 @@ export class BotService {
           .eq('id', detection.businessId)
           .single();
         if (biz) {
-          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'fuzzy');
+          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id, undefined, undefined, 'fuzzy', undefined, true);
           return;
         }
       }
@@ -1535,7 +1550,7 @@ export class BotService {
             .eq('id', restartBizId)
             .single();
           // ACC-204 R4: Carry forward original provenance — prevents fuzzy->restart trust laundering
-          await this.handleMessage(from, restartBiz?.bot_code || 'Hi', messageType, destinationPhone, restartBizId, undefined, undefined, restartProvenance);
+          await this.handleMessage(from, restartBiz?.bot_code || 'Hi', messageType, destinationPhone, restartBizId, undefined, undefined, restartProvenance, undefined, true);
         } else {
           await this.handleMessage(from, 'Hi', messageType, destinationPhone);
         }
@@ -1648,7 +1663,7 @@ export class BotService {
           // Pass 'returning_customer' provenance: the customer verified payment ownership for
           // this business but has no active session. 'returning_customer' is NOT in
           // TRUSTED_PROVENANCES so promo-only branches are correctly denied.
-          return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, 'returning_customer');
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, 'returning_customer', undefined, true);
         }
         const newData = { ...session.session_data, active_capability: undefined };
         const casParams: Record<string, unknown> = {
@@ -4333,7 +4348,7 @@ export class BotService {
           const { data: biz } = await this.supabase
             .from('businesses').select('bot_code').eq('id', session.business_id).single();
           // ACC-204 R4: Carry forward original provenance
-          await this.handleMessage(from, biz?.bot_code || 'Hi', messageType, destinationPhone, session.business_id, undefined, undefined, pcProvenance);
+          await this.handleMessage(from, biz?.bot_code || 'Hi', messageType, destinationPhone, session.business_id, undefined, undefined, pcProvenance, undefined, true);
         }
         return;
       }

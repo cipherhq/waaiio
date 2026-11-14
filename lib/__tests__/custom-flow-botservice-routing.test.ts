@@ -24,6 +24,10 @@
  *     re-entry closes the custom session instead of being swallowed by
  *     the engine ('Hi' fix: without the guard, the engine shows its own
  *     menu and the booking flow never starts).
+ *  6. waitlist acceptance leaves usage counting unchanged — the customer's
+ *     "yes" is still counted as an inbound message / new conversation
+ *     ('Hi' fix rework: the re-entry carries a separate restart flag, not
+ *     provenance, so the no-provenance usage path runs exactly as on main).
  *
  * Follows the real-BotService harness of s1-botservice-real-handleMessage.test.ts:
  * real BotService + real custom-flow engine, mocked external boundaries, an
@@ -466,11 +470,12 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
     expect(db.waitlist_entries[0]?.status).toBe('confirmed');
     // …and the 'Hi' re-entry closed the custom session…
     expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
-    // …and reached the normal bot: the capability menu went out (no
-    // custom menu), so the customer can pick scheduling and book.
-    const buttonBodies = cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
-    expect(buttonBodies.some((b) => b.includes('What would you like to do?'))).toBe(true);
-    expect(buttonBodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
+    // …and reached the normal bot: as on main (no provenance), a
+    // first-time customer at a multi-language business gets the language
+    // picker first — not the capability menu, and no custom menu.
+    const listBodies = cloud.sendList.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(listBodies.some((b) => b.includes('Please choose your preferred language'))).toBe(true);
+    expect(listBodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
     // The custom engine never answered: no fallback text went out.
     expect(sentTexts(cloud).some((t) => t.includes("Sorry, I didn't catch that"))).toBe(false);
 
@@ -480,5 +485,30 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
     const buttonBodies2 = cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
     expect(buttonBodies2.some((b) => b.includes('When would you like to book?'))).toBe(true);
     expect(buttonBodies2.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
+  });
+
+  it('6. waitlist acceptance: usage counting is unchanged (the "yes" is still counted as an inbound message / new conversation)', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const { supabase } = createRoutingSupabase('select_capability');
+    const bot = new BotService(supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    // The customer accepts a waitlist spot ("yes") while a custom session
+    // is active. The 'Hi' re-entry carries a separate restart flag, not
+    // provenance — so the no-provenance usage path must run exactly as on
+    // main: the "yes" counts as one inbound message / new conversation.
+    await bot.handleMessage(PHONE, 'yes', 'text', 'pnid-1');
+    // trackInboundMessage is fire-and-forget: let its rpc resolve.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const usageCalls = (supabase.rpc.mock.calls as any[]).filter(
+      (c) => c[0] === 'increment_message_usage' && c[1]?.p_direction === 'inbound',
+    );
+    expect(usageCalls).toHaveLength(1);
+    expect(usageCalls[0][1]).toEqual({
+      p_business_id: 'biz-A',
+      p_direction: 'inbound',
+      p_is_new_conversation: true,
+    });
   });
 });
