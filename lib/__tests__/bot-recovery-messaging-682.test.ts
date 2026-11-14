@@ -298,9 +298,14 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
 
     const callPattern = /this\.handleMessage\(from,\s*[^)]+\)/g;
     const calls = [...source.matchAll(callPattern)];
-    const approvedWaitlistCall = "this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id)";
-    expect(source.split(approvedWaitlistCall).length - 1).toBe(1);
-    const waitlistPrefix = source.slice(source.indexOf('if (notifiedEntry)'), source.indexOf(approvedWaitlistCall));
+    // The waitlist acceptance handoff is the one known exception to this
+    // rule (no provenance). Issue #1013 'Hi' fix rework: it carries the
+    // separate restart flag instead, so the waitlist step keeps its main
+    // behaviour — usage counting, promo trust and the language picker are
+    // unchanged. The flag is the 10th arg; provenance (8th) stays empty.
+    const waitlistCall = "this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id, undefined, undefined, undefined, undefined, true)";
+    expect(source.split(waitlistCall).length - 1).toBe(1);
+    const waitlistPrefix = source.slice(source.indexOf('if (notifiedEntry)'), source.indexOf(waitlistCall));
     expect(waitlistPrefix).toContain('if (existingSession) await this.deactivateSession(existingSession.id)');
     expect(calls.length).toBeGreaterThan(10);
 
@@ -314,19 +319,17 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
     });
 
     for (const call of bizIdCalls) {
+      // Known exception: the waitlist call (see above) — no provenance by
+      // design; the restart flag carries the restart signal instead.
+      if (call[0].startsWith(waitlistCall)) continue;
       const parts = call[0].split(',');
       if (parts.length < 8) {
         const idx = source.indexOf(call[0]);
         const lineNum = source.substring(0, idx).split('\n').length;
-        // This existing waitlist handoff deactivates the old session first.
-        // Match its identity, not a source line that unrelated edits can move.
-        const isKnownException = call[0] === approvedWaitlistCall;
-        if (!isKnownException) {
-          throw new Error(
-            `Business-scoped handleMessage redispatch at line ~${lineNum} missing _internalProvenance. ` +
-            `Call: ${call[0].substring(0, 100)}...`
-          );
-        }
+        throw new Error(
+          `Business-scoped handleMessage redispatch at line ~${lineNum} missing _internalProvenance. ` +
+          `Call: ${call[0].substring(0, 100)}...`
+        );
       }
     }
   });

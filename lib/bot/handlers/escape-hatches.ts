@@ -160,7 +160,7 @@ export async function handleEscapeHatch(
   step: string,
   sendText: (to: string, text: string) => Promise<void>,
   deactivateSession: (sessionId: string) => Promise<void>,
-  handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string, mediaUrl?: string, messageId?: string, provenance?: string) => Promise<void>,
+  handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string, mediaUrl?: string, messageId?: string, provenance?: string, pickerSelection?: { id?: string; version?: number; conversationVersion: number; businessId: string }, internalRestart?: boolean) => Promise<void>,
   /** Copy language, or a resolver for it. A resolver runs only when an exit reply needs the language. */
   lang?: string | (() => Promise<string>),
 ): Promise<{ handled: boolean }> {
@@ -258,7 +258,7 @@ export async function handleEscapeHatch(
       }
 
       await deactivateSession(session.id);
-      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, cancelProvenance);
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, cancelProvenance, undefined, true);
       return { handled: true };
     }
 
@@ -276,7 +276,7 @@ export async function handleEscapeHatch(
         return { handled: true };
       }
       await deactivateSession(session.id);
-      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, menuProvenance);
+      await handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, menuProvenance, undefined, true);
       return { handled: true };
     }
 

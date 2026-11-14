@@ -1181,8 +1181,10 @@ describe('supplemental: source structure verification — provenance laundering'
     // go_back_biz now selects session_data and passes lastProvenance
     expect(src).toContain("select('business_id, session_data')");
     expect(src).toContain('lastProvenance');
-    // The recursive call includes the provenance as 8th arg (after undefined, undefined)
-    expect(src).toMatch(/handleMessage\(from.*lastSession\.business_id.*lastProvenance\)/);
+    // The recursive call includes the provenance as 8th arg (after undefined, undefined).
+    // Issue #1013 'Hi' fix rework: the separate restart flag may follow
+    // it as 9th/10th args (undefined, true) — the provenance is still 8th.
+    expect(src).toMatch(/handleMessage\(from.*lastSession\.business_id.*lastProvenance(, undefined, true)?\)/);
   });
 
   it('keyword/switch action passes fuzzy provenance (structure proof)', () => {
@@ -1193,8 +1195,10 @@ describe('supplemental: source structure verification — provenance laundering'
     );
     // switch/connect match is user-initiated fuzzy lookup — NOT authoritative
     expect(src).toContain("'fuzzy'");
-    // The handleMessage call for switch/connect detection includes fuzzy provenance
-    expect(src).toMatch(/handleMessage\(from.*biz\.bot_code.*biz\.id.*'fuzzy'\)/);
+    // The handleMessage call for switch/connect detection includes fuzzy provenance.
+    // Issue #1013 'Hi' fix rework: the separate restart flag may follow
+    // it as 9th/10th args (undefined, true).
+    expect(src).toMatch(/handleMessage\(from.*biz\.bot_code.*biz\.id.*'fuzzy'(, undefined, true)?\)/);
   });
 
   it('restart_yes carries forward session biz_resolution (structure proof)', () => {
