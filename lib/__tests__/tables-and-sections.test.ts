@@ -24,7 +24,7 @@ function mockDb(opts: DbOpts) {
     const ops: Array<[string, ...unknown[]]> = [];
     calls.push({ table, ops });
     const chain: Record<string, unknown> = {};
-    for (const m of ['select', 'eq', 'neq', 'in', 'is', 'gte', 'lte', 'limit', 'order', 'update']) {
+    for (const m of ['select', 'eq', 'neq', 'in', 'is', 'gte', 'lte', 'limit', 'order', 'update', 'range', 'lt', 'gt']) {
       chain[m] = vi.fn((...args: unknown[]) => { ops.push([m, ...args]); return chain; });
     }
     chain.maybeSingle = vi.fn(async () => {

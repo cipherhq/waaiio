@@ -1,0 +1,707 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.seating_holds.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.seating_holds.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.seating_holds.created_by",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp without time zone"
+   },
+   "after_sha256": "22337041d4fba75624aeaf068a6f96f3f9655c6ed890481bd3375a2ae1220881",
+   "identity": "column:public.seating_holds.ends_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.seating_holds.group_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.seating_holds.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.seating_holds.label",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.seating_holds.released_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.seating_holds.released_by",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.seating_holds.seating_resource_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "integer"
+   },
+   "after_sha256": "a09b5329cddcbfcdc9114baaafe3af969fe9dd2a5c6c95037a26837a0d29795a",
+   "identity": "column:public.seating_holds.seats",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp without time zone"
+   },
+   "after_sha256": "22337041d4fba75624aeaf068a6f96f3f9655c6ed890481bd3375a2ae1220881",
+   "identity": "column:public.seating_holds.starts_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "false",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "boolean"
+   },
+   "after_sha256": "8297533d5dfe9297714c79d7fce4b1991c9dba7a34f9ee58a3f8eada63fad6ea",
+   "identity": "column:public.seating_holds.whole_resource",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id)",
+    "validated": true
+   },
+   "after_sha256": "1c39889ada11b69df67a135fbcbabd7cc89c6bc3684707fc6c3a519657577eaf",
+   "identity": "constraint:public.seating_holds.seating_holds_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (business_id, group_id, seating_resource_id)",
+    "validated": true
+   },
+   "after_sha256": "1c91a833c8c33ae5f8096279e7cac591ed57f317355f782350fced6f2708b6dd",
+   "identity": "constraint:public.seating_holds.seating_holds_business_id_group_id_seating_resource_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (ends_at > starts_at)",
+    "validated": true
+   },
+   "after_sha256": "1b707fca8184e9e59e466a5c5e2a587514ba0988c4035b7e7b18558ba348fd2d",
+   "identity": "constraint:public.seating_holds.seating_holds_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (whole_resource AND seats IS NULL OR NOT whole_resource AND seats IS NOT NULL AND seats >= 1 AND seats <= 500)",
+    "validated": true
+   },
+   "after_sha256": "b8b12405b3de0673adefdc8882a3767bf794b84e170d92e03f7f2c13a28c4b73",
+   "identity": "constraint:public.seating_holds.seating_holds_check1",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK ((released_at IS NULL) = (released_by IS NULL))",
+    "validated": true
+   },
+   "after_sha256": "f1bc69e34ddaa75362d0c46155c7d3f9d58fabd12ca6e934a26d457d6a14e246",
+   "identity": "constraint:public.seating_holds.seating_holds_check2",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (created_by) REFERENCES auth.users(id)",
+    "validated": true
+   },
+   "after_sha256": "29c8fbd30525433ce5fcc978af335c89b0438c8c0acf4b0b318943b07fada2f1",
+   "identity": "constraint:public.seating_holds.seating_holds_created_by_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(label)) >= 1 AND length(btrim(label)) <= 100)",
+    "validated": true
+   },
+   "after_sha256": "553dddb95b349eb02547c2c36836de311913406a800037d78c52ce117a05e123",
+   "identity": "constraint:public.seating_holds.seating_holds_label_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.seating_holds.seating_holds_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (released_by) REFERENCES auth.users(id)",
+    "validated": true
+   },
+   "after_sha256": "7e970fc01b84db116e87efb8e6a5e64f9948008cba413d2c28bb5c7d0c3463eb",
+   "identity": "constraint:public.seating_holds.seating_holds_released_by_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (seating_resource_id, business_id) REFERENCES seating_resources(id, business_id)",
+    "validated": true
+   },
+   "after_sha256": "2267879c494196c127d755239d238ea498be53c38cfb97fa125e63293066cbfe",
+   "identity": "constraint:public.seating_holds.seating_holds_seating_resource_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "c912360ae23076c55f6ce0d456039b3d1c6d44c35ebbdcead45bf914b3f0c26a",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "99c6e0c9adef7a1f93ba87d5ba3fcad74384f585fe33513827094f5f54d26982",
+   "identity": "function:private.guard_seating_booking_occupancy()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "0b279e4beb57d9c22cf7691b2187d075940db62bdea034e46746e01e6f0b3cb0",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5e8121b3dcadd8ea7549543397614f256190624eb1f0105965d7506ea5890ed1",
+   "identity": "function:private.guard_seating_capacity()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "1cea0f4e231f2a9e82ce80aa14556c3dbb5136827848b58f0c6dcbbfa4183095",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5804340c9cd968d146e5434f55dcff29959ed901385c85b945ea8efc777b72a6",
+   "identity": "function:private.seating_hold_immutable()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer DEFAULT 90, p_guest_name text DEFAULT NULL::text, p_guest_phone text DEFAULT NULL::text, p_guest_email text DEFAULT NULL::text, p_special_requests text DEFAULT NULL::text, p_deposit_amount integer DEFAULT 0, p_deposit_status text DEFAULT 'none'::text, p_status text DEFAULT 'confirmed'::text, p_total_amount integer DEFAULT 0, p_expected_deposit integer DEFAULT NULL::integer, p_expected_duration integer DEFAULT NULL::integer",
+    "body_sha256": "10cbb4e868e8b74fbb9480a2cedd48c4e4bb0e0f734ad1459b8a19e9195ce44e",
+    "config": null,
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "736ec474ca146dc7b0c68cb07c495e0632042e699cdc0b2c6863d963e42a1b5e",
+   "identity": "function:public.book_table_atomic(p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_deposit_amount integer, p_deposit_status text, p_status text, p_total_amount integer, p_expected_deposit integer, p_expected_duration integer)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_actor_id uuid, p_group_id uuid, p_resource_ids uuid[], p_start timestamp without time zone, p_end timestamp without time zone, p_seats integer, p_whole_resource boolean, p_label text",
+    "body_sha256": "c779237c0dbf035cbcfdf30b8b99d3a23fc82ec5cc27434a371569ec9b99e93c",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "SETOF seating_holds",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "4d1c6a82f6acb589791e78d83eb2d902509b77e9d1deb767b4d244a93d1f821d",
+   "identity": "function:public.create_seating_hold(p_business_id uuid, p_actor_id uuid, p_group_id uuid, p_resource_ids uuid[], p_start timestamp without time zone, p_end timestamp without time zone, p_seats integer, p_whole_resource boolean, p_label text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_actor_id uuid, p_group_id uuid",
+    "body_sha256": "283bcb02b9d08237086b5eb66fdec0d97a0bc1abc843cc8ff9fad150c4951783",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "integer",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "1510be9f54ed8872ae33845c25dfafd386039a83c378aaf2ee50b4d1a77b119c",
+   "identity": "function:public.release_seating_hold(p_business_id uuid, p_actor_id uuid, p_group_id uuid)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_resource_id uuid, p_start timestamp without time zone, p_end timestamp without time zone, p_capacity integer, p_include_bookings boolean DEFAULT true",
+    "body_sha256": "a183fa597daa0e4282731ff4e57588c5592de21c6369a0ce44f5fa8bcb5d8f0c",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "integer",
+    "strict": false,
+    "volatility": "s"
+   },
+   "after_sha256": "febd9edfcf2a56e672340630d5fba9ebcfcaa999c91948851e6d593fd30dc3bc",
+   "identity": "function:public.seating_occupied_peak(p_business_id uuid, p_resource_id uuid, p_start timestamp without time zone, p_end timestamp without time zone, p_capacity integer, p_include_bookings boolean)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX seating_holds_active_resource ON public.seating_holds USING btree (business_id, seating_resource_id, starts_at, ends_at) WHERE (released_at IS NULL)",
+    "predicate": "(released_at IS NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "325cc00bf5f1657e8472365fb8d30f34e606dc26fc170ce3c79639e762a2c223",
+   "identity": "index:public.seating_holds.seating_holds_active_resource",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX seating_holds_business_id_group_id_seating_resource_id_key ON public.seating_holds USING btree (business_id, group_id, seating_resource_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "e0473802ffcdce1e2451b2e49f4a99b4ebd79f848a42f60347419fc198f05b3c",
+   "identity": "index:public.seating_holds.seating_holds_business_id_group_id_seating_resource_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX seating_holds_pkey ON public.seating_holds USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "739008e396e874b6adb3bacf6e4565b77c5f5cdba2ecc94c9eef031037c89f0f",
+   "identity": "index:public.seating_holds.seating_holds_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX seating_resources_id_business_key ON public.seating_resources USING btree (id, business_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "a551371a2af6de6316952a16407a6be96fc19f3d6bb57c7ccd9a7243f1626a98",
+   "identity": "index:public.seating_resources.seating_resources_id_business_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(EXISTS ( SELECT 1\n   FROM businesses b\n  WHERE ((b.id = seating_holds.business_id) AND (b.owner_id = auth.uid()))))",
+    "with_check": null
+   },
+   "after_sha256": "094868790e655443b2ad8a9b683b393c8cb672aff6de171d06075d18998dfa5f",
+   "identity": "policy:public.seating_holds.seating_holds_owner_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.seating_holds.seating_holds_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "9336a00bf165a649fce5f8f405e38dbd2e4fa55e18aec2fdd376337d4d37b413",
+   "identity": "table:public.seating_holds",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_seating_booking_occupancy BEFORE INSERT OR UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION private.guard_seating_booking_occupancy()",
+    "enabled": "O"
+   },
+   "after_sha256": "5c2897626d69b6b100286f4bb7055f83cc6001433bce6e4730343cebfdb15604",
+   "identity": "trigger:public.bookings.guard_seating_booking_occupancy",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER seating_hold_immutable BEFORE UPDATE ON seating_holds FOR EACH ROW EXECUTE FUNCTION private.seating_hold_immutable()",
+    "enabled": "O"
+   },
+   "after_sha256": "55e059d87a4c2f95d13079a0b66bf5b8a1304baddd8ca3f2fdfd42777ab84a8b",
+   "identity": "trigger:public.seating_holds.seating_hold_immutable",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_seating_capacity BEFORE UPDATE OF capacity, business_id ON seating_resources FOR EACH ROW EXECUTE FUNCTION private.guard_seating_capacity()",
+    "enabled": "O"
+   },
+   "after_sha256": "ec652308b3410fb7a015d78f368803dc1f1af9a654da1afc9249d3fc3ee674e5",
+   "identity": "trigger:public.seating_resources.guard_seating_capacity",
+   "operation": "add"
+  }
+ ],
+ "migration": "542_seating_holds.sql",
+ "migration_sha256": "fd0d72db85252402ed5f01997ff9055767295453b33174a04c63b455034e79d7",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
