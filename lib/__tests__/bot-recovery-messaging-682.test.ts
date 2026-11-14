@@ -298,9 +298,12 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
 
     const callPattern = /this\.handleMessage\(from,\s*[^)]+\)/g;
     const calls = [...source.matchAll(callPattern)];
-    const approvedWaitlistCall = "this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id)";
-    expect(source.split(approvedWaitlistCall).length - 1).toBe(1);
-    const waitlistPrefix = source.slice(source.indexOf('if (notifiedEntry)'), source.indexOf(approvedWaitlistCall));
+    // The waitlist acceptance handoff used to be the one known exception
+    // to this rule (no provenance). Issue #1013 'Hi' fix: it now passes
+    // 'waitlist_acceptance', so there are no exceptions left.
+    const waitlistCall = "this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id, undefined, undefined, 'waitlist_acceptance')";
+    expect(source.split(waitlistCall).length - 1).toBe(1);
+    const waitlistPrefix = source.slice(source.indexOf('if (notifiedEntry)'), source.indexOf(waitlistCall));
     expect(waitlistPrefix).toContain('if (existingSession) await this.deactivateSession(existingSession.id)');
     expect(calls.length).toBeGreaterThan(10);
 
@@ -318,15 +321,10 @@ describe('structural: all business-scoped recursive handleMessage calls pass _in
       if (parts.length < 8) {
         const idx = source.indexOf(call[0]);
         const lineNum = source.substring(0, idx).split('\n').length;
-        // This existing waitlist handoff deactivates the old session first.
-        // Match its identity, not a source line that unrelated edits can move.
-        const isKnownException = call[0] === approvedWaitlistCall;
-        if (!isKnownException) {
-          throw new Error(
-            `Business-scoped handleMessage redispatch at line ~${lineNum} missing _internalProvenance. ` +
-            `Call: ${call[0].substring(0, 100)}...`
-          );
-        }
+        throw new Error(
+          `Business-scoped handleMessage redispatch at line ~${lineNum} missing _internalProvenance. ` +
+          `Call: ${call[0].substring(0, 100)}...`
+        );
       }
     }
   });

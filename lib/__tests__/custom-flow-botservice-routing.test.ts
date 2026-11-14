@@ -4,10 +4,10 @@
  * The routing tests in lib/bot/custom-flow/__tests__/engine.test.ts prove
  * tryHandleCustomFlow itself yields on PIN steps, business codes and foreign
  * postbacks. This file proves the WIRING in BotService.handleMessage
- * (lib/bot/bot.service.ts, custom-flow branch ~1255-1288): with an ACTIVE
- * custom session, each of the three inputs still reaches its EXISTING
- * handler — and the test asserts the handler actually ran, not merely that
- * the engine returned "not handled":
+ * (lib/bot/bot.service.ts, custom-flow branch ~1249): with an ACTIVE
+ * custom session, each input still reaches its EXISTING handler — and the
+ * test asserts the handler actually ran, not merely that the engine
+ * returned "not handled":
  *
  *  1. a save_card_pin step reaches the card-PIN handler (it sends the
  *     "enter exactly 4 digits" prompt);
@@ -19,6 +19,11 @@
  *     reaches the normal flow's handler (the scheduling date step runs) —
  *     reviewer B P1: without the close, the engine swallows the "1" and
  *     answers its own fallback instead.
+ *  5. waitlist acceptance ("yes" to a spot opening up) reaches the booking
+ *     flow while a custom session is active — the platform's internal 'Hi'
+ *     re-entry closes the custom session instead of being swallowed by
+ *     the engine ('Hi' fix: without the guard, the engine shows its own
+ *     menu and the booking flow never starts).
  *
  * Follows the real-BotService harness of s1-botservice-real-handleMessage.test.ts:
  * real BotService + real custom-flow engine, mocked external boundaries, an
@@ -318,6 +323,9 @@ function seedDb(currentStep: string): { db: Record<string, Row[]>; botSession: R
       { business_id: 'biz-A', capability: 'custom_flow', is_enabled: true, sort_order: 0 },
       { business_id: 'biz-A', capability: 'scheduling', is_enabled: true, sort_order: 1 },
     ],
+    waitlist_entries: [
+      { id: 'wl-1', business_id: 'biz-A', customer_name: 'Test Customer', customer_phone: PHONE, service_id: 'svc-1', status: 'notified', notified_at: new Date(Date.now() - 60000).toISOString() },
+    ],
     },
     botSession,
   };
@@ -440,5 +448,37 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
     // and no custom menu went out.
     expect(sentTexts(cloud).some((t) => t.includes("Sorry, I didn't catch that"))).toBe(false);
     expect(buttonBodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
+  });
+
+  it('5. waitlist acceptance: "yes" reaches the booking flow while a custom session is active', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const { supabase, db } = createRoutingSupabase('select_capability');
+    const bot = new BotService(supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    // The customer accepts a waitlist spot ("yes") while a custom session
+    // is active. The platform re-enters handleMessage with 'Hi' to start
+    // the booking flow — that 'Hi' must reach the normal bot, not the
+    // custom engine.
+    await bot.handleMessage(PHONE, 'yes', 'text', 'pnid-1');
+
+    // The waitlist handler itself ran: the entry was confirmed…
+    expect(db.waitlist_entries[0]?.status).toBe('confirmed');
+    // …and the 'Hi' re-entry closed the custom session…
+    expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
+    // …and reached the normal bot: the capability menu went out (no
+    // custom menu), so the customer can pick scheduling and book.
+    const buttonBodies = cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(buttonBodies.some((b) => b.includes('What would you like to do?'))).toBe(true);
+    expect(buttonBodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
+    // The custom engine never answered: no fallback text went out.
+    expect(sentTexts(cloud).some((t) => t.includes("Sorry, I didn't catch that"))).toBe(false);
+
+    // …then the next typed answer reaches the normal flow's handler: "1"
+    // selects the scheduling capability and its date step runs.
+    await bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    const buttonBodies2 = cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(buttonBodies2.some((b) => b.includes('When would you like to book?'))).toBe(true);
+    expect(buttonBodies2.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
   });
 });

@@ -654,7 +654,7 @@ export class BotService {
 
           // Deactivate any existing session and start a new booking flow
           if (existingSession) await this.deactivateSession(existingSession.id);
-          return this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id);
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id, undefined, undefined, 'waitlist_acceptance');
         } else {
           // Declined — mark as expired so next person can be notified
           await this.supabase
@@ -1252,13 +1252,33 @@ export class BotService {
     // handlers, keyword matching, and the code-flow executor. It yields to
     // the platform's own routing: card-PIN steps never reach the engine
     // (the input would be consumed and logged), and business codes win over
-    // a custom session or entry keyword. It returns early only when the
+    // a custom session or entry keyword. Internal restart re-entries
+    // ('Hi'/'start'/'restart' with provenance) close the custom session
+    // and fall through to the normal bot. It returns early only when the
     // engine handled the message (active session, or the text matches a
     // published flow's entry keyword for this business); everything else
     // falls through untouched.
     {
       const customBusinessId = session?.business_id || preResolvedBusinessId || _cachedBusiness?.id || null;
-      if (customBusinessId) {
+      // Internal restart re-entries (Issue #1013, 'Hi' fix): when the
+      // platform deliberately restarts the customer — waitlist acceptance
+      // ('waitlist_acceptance'), a returning customer
+      // ('returning_customer'), cancel/menu restarts — the re-entered
+      // restart signal ('Hi'/'start'/'restart') must reach the normal bot,
+      // not the custom engine. Close any active custom session first: a
+      // deliberate restart ends it, the same as a typed restart word.
+      // The guard is deliberately narrow — internal re-entries that
+      // redispatch the customer's own text (language-picker
+      // 'lang_pick_redispatch', chat handoff/start) must still reach the
+      // engine, so only restart signals are intercepted here.
+      const isInternalRestart =
+        !!_internalProvenance && /^(hi|start|restart)$/i.test(text);
+      if (isInternalRestart && customBusinessId) {
+        const { loadActiveSession, closeSession } = await import('@/lib/bot/custom-flow/session');
+        const activeCustom = await loadActiveSession(this.supabase, customBusinessId, from);
+        if (activeCustom) await closeSession(this.supabase, activeCustom.id, activeCustom.business_id);
+      }
+      if (customBusinessId && !isInternalRestart) {
         const { tryHandleCustomFlow } = await import('@/lib/bot/custom-flow/engine');
         // F4 PIN-step precedence: a customer typing a card PIN must never
         // have the input consumed or logged by the custom engine.
