@@ -76,6 +76,13 @@ const navItems: NavItem[] = [
 
   // ── MANAGE: Set up what you sell ──
   {
+    href: '/dashboard/custom-flows',
+    label: 'Custom flows',
+    icon: 'M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12',
+    capabilities: ['custom_flow'],
+    section: 'manage',
+  },
+  {
     href: '/dashboard/appointments-management',
     label: 'Appointments',
     icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
