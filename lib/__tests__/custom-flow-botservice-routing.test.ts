@@ -39,11 +39,10 @@ import type { CustomFlowDefinition } from '@/lib/bot/custom-flow/types';
 
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }) }));
-vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30, abuse_cooldown_soft_minutes: 5, abuse_cooldown_hard_minutes: 30, conversation_limits: { free: 200, growth: 1000, business: 5000 } }) }));
+vi.mock('@/lib/platformSettings', () => ({ getPlatformSettingsSync: vi.fn(() => ({})), loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30, abuse_cooldown_soft_minutes: 5, abuse_cooldown_hard_minutes: 30, conversation_limits: { free: 200, growth: 1000, business: 5000 } }) }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 vi.mock('@/lib/bot/translate', () => ({ translateBotResponse: vi.fn(async (t: string) => t), detectLanguage: vi.fn(async () => 'en'), getLanguageName: vi.fn(() => 'English') }));
 vi.mock('@/lib/bot/handlers/global-queries', () => ({ handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })), isOrdersQuery: vi.fn(() => false) }));
-vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^home$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
 vi.mock('@/lib/bot/keyword-service', () => ({ loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }), matchQuickReply: vi.fn(() => null), loadUnifiedKeywords: vi.fn().mockResolvedValue([]), matchUnifiedKeyword: vi.fn(() => null) }));
 vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 vi.mock('@/lib/bot/customer-intelligence', () => ({
@@ -510,5 +509,37 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
       p_direction: 'inbound',
       p_is_new_conversation: true,
     });
+  });
+
+  it('7. button back with no history closes custom flow before the next typed booking reply', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const { supabase, db } = createRoutingSupabase('collect_name');
+    const existingRpc = supabase.rpc.getMockImplementation();
+    supabase.rpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
+      if (fn === 'deactivate_session_atomic') {
+        const row = db.bot_sessions.find((s) => s.id === args.p_session_id);
+        if (row) row.is_active = false;
+        return { data: true, error: null };
+      }
+      if (fn === 'get_shared_conversation') {
+        const active = db.bot_sessions.find((s) => s.is_active);
+        return { data: { version: 0, business_id: 'biz-A', session: active ? { ...active } : null }, error: null };
+      }
+      return existingRpc(fn, args);
+    });
+    const bot = new BotService(supabase, sender, createStandaloneService(), { ...createMockIntelligence(), resetAbuse: vi.fn() } as any);
+    // A stale platform Back button belongs to the code flow, even while
+    // a custom session is active. The original button and generated Hi
+    // both yield at the engine's non-text gate; the next typed reply must
+    // also remain in the booking flow.
+    await bot.handleMessage(PHONE, 'back', 'button', 'pnid-1');
+    expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
+    const listBodies = cloud.sendList.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(listBodies.some((b) => b.includes('Please choose your preferred language'))).toBe(true);
+    await bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    const buttonBodies = cloud.sendButtons.mock.calls.map((c: any[]) => String(c[0]?.bodyText ?? ''));
+    expect(buttonBodies.some((b) => b.includes('When would you like to book?'))).toBe(true);
+    expect(sentTexts(cloud).some((t) => t.includes('Day 1: Tems'))).toBe(false);
   });
 });
