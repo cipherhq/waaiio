@@ -23,6 +23,9 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
 import { requireCurrentCapability } from '@/lib/bot/flows/shared/capability-guard';
 import { parseDefinition, validateDefinition } from './definition';
+import { businessData } from './sources';
+import { loadAnswerRows } from './table-data';
+import { hasValue, variablesIn } from './data';
 import {
   loadActiveSession,
   createSession,
@@ -79,6 +82,7 @@ interface LoadedFlow {
   entryKeyword: string | null;
   publishedVersion: number;
   definition: CustomFlowDefinition;
+  businessVars?: Record<string, unknown>;
 }
 
 export class CustomFlowEngine {
@@ -325,9 +329,9 @@ export class CustomFlowEngine {
     // whose text IS the greeting, send it once as the menu (buttons
     // included) instead of twice as plain text + menu.
     const startIsMenuWithGreetingText =
-      startNode.type === 'menu' && substitute(startNode.text, {}) === flow.greeting;
+      startNode.type === 'menu' && this.renderText(startNode.text, flow) === this.renderText(flow.greeting, flow);
     if (!startIsMenuWithGreetingText) {
-      await this.sendText(session, flow.greeting);
+      await this.sendText(session, this.renderText(flow.greeting, flow));
     }
     await this.renderNode(session, flow, startNode);
     return true;
@@ -349,7 +353,7 @@ export class CustomFlowEngine {
       return { handled: true };
     }
     if (GLOBAL_HELP_WORDS.has(normalized)) {
-      await this.sendText(session, flow.fallbackMessage);
+      await this.sendText(session, this.renderText(flow.fallbackMessage, flow));
       await this.goToNode(session, flow, flow.definition.start_node ?? flow.definition.nodes[0].id);
       return { handled: true };
     }
@@ -380,7 +384,7 @@ export class CustomFlowEngine {
         await this.renderNode(session, flow, node);
         return { handled: true };
       default:
-        await this.sendText(session, flow.fallbackMessage);
+        await this.sendText(session, this.renderText(flow.fallbackMessage, flow));
         return { handled: true };
     }
   }
@@ -416,7 +420,7 @@ export class CustomFlowEngine {
     }
 
     // No match: say so and re-show the menu. Never guess the choice.
-    await this.sendText(session, flow.fallbackMessage);
+    await this.sendText(session, this.renderText(flow.fallbackMessage, flow));
     await this.renderNode(session, flow, node);
     return { handled: true };
   }
@@ -428,7 +432,9 @@ export class CustomFlowEngine {
     text: string,
   ): Promise<CustomFlowHandleResult> {
     const query = text.trim();
-    const rows = await this.loadTableRows(session.business_id, flow.id, node.table);
+    let rows: CustomFlowTableRow[];
+    try { rows = await loadAnswerRows(this.deps.supabase, session.business_id, flow.id, node.table, node.reply, flow.businessVars); }
+    catch { await this.sendText(session, this.renderText(node.no_match, flow, { query })); return { handled: true }; }
 
     // A disambiguation is pending for this node: the reply picks a candidate.
     const pending = this.pendingLookupCandidates(session, node.id);
@@ -438,7 +444,7 @@ export class CustomFlowEngine {
         const row = rows.find((r) => r.row_code.toLowerCase() === picked.row_code.toLowerCase());
         if (row) {
           await this.clearLookupCandidates(session);
-          const reply = substitute(node.reply, rowVars(row.data));
+          const reply = this.renderText(node.reply, flow, rowVars(row.data));
           await this.sendText(session, reply);
           const nextId = node.next ?? flow.definition.start_node ?? flow.definition.nodes[0].id;
           await this.goToNode(session, flow, nextId);
@@ -452,13 +458,13 @@ export class CustomFlowEngine {
     const matches = this.findRows(rows, node.search_fields, query);
 
     if (matches.length === 0) {
-      await this.sendText(session, substitute(node.no_match, { query }));
+      await this.sendText(session, this.renderText(node.no_match, flow, { query }));
       // Stay on the lookup node so the customer can try another search.
       return { handled: true };
     }
 
     if (matches.length === 1) {
-      const reply = substitute(node.reply, rowVars(matches[0].data));
+      const reply = this.renderText(node.reply, flow, rowVars(matches[0].data));
       await this.sendText(session, reply);
       const nextId = node.next ?? flow.definition.start_node ?? flow.definition.nodes[0].id;
       await this.goToNode(session, flow, nextId);
@@ -532,7 +538,7 @@ export class CustomFlowEngine {
   ): Promise<void> {
     switch (node.type) {
       case 'message': {
-        const text = substitute(node.text, session.fields);
+        const text = this.renderText(node.text, flow, session.fields);
         if (node.image) {
           await this.sendImage(session, node.image, text);
         } else {
@@ -554,7 +560,7 @@ export class CustomFlowEngine {
         // prompt when the definition has one; otherwise stay silent — the
         // menu option that led here already said what to do.
         if (node.prompt) {
-          await this.sendText(session, substitute(node.prompt, session.fields));
+          await this.sendText(session, this.renderText(node.prompt, flow, session.fields));
         }
         return;
       }
@@ -568,7 +574,7 @@ export class CustomFlowEngine {
     flow: LoadedFlow,
     node: Extract<CustomFlowNode, { type: 'menu' }>,
   ): Promise<void> {
-    const body = substitute(node.text, session.fields);
+    const body = this.renderText(node.text, flow, session.fields);
     if (node.options.length <= 3) {
       await this.deps.sender.sendButtons({
         to: session.whatsapp_number,
@@ -630,31 +636,6 @@ export class CustomFlowEngine {
 
   // ── Lookup ────────────────────────────────────────────────────────
 
-  private async loadTableRows(
-    businessId: string,
-    flowId: string,
-    tableName: string,
-  ): Promise<CustomFlowTableRow[]> {
-    const { supabase } = this.deps;
-    const { data: table, error: tableError } = await supabase
-      .from('custom_flow_tables')
-      .select('id')
-      .eq('business_id', businessId)
-      .eq('flow_id', flowId)
-      .eq('name', tableName)
-      .maybeSingle();
-    if (tableError || !table) return [];
-    const { data: rows, error } = await supabase
-      .from('custom_flow_table_rows')
-      .select('id, row_code, data, position, hidden')
-      .eq('business_id', businessId)
-      .eq('table_id', (table as { id: string }).id)
-      .eq('hidden', false)
-      .order('position', { ascending: true });
-    if (error || !rows) return [];
-    return rows as unknown as CustomFlowTableRow[];
-  }
-
   /**
    * All matching rows: exact row_code first, then whole-word matches across
    * search fields, then substring matches. A one-letter query matches
@@ -699,7 +680,7 @@ export class CustomFlowEngine {
       .eq('status', 'published')
       .maybeSingle();
     if (error || !data) return null;
-    return this.toLoadedFlow(data);
+    return this.toLoadedFlow(data, businessId);
   }
 
   private async loadPublishedFlowByKeyword(businessId: string, keyword: string): Promise<LoadedFlow | null> {
@@ -711,15 +692,20 @@ export class CustomFlowEngine {
       .eq('entry_keyword', keyword)
       .maybeSingle();
     if (error || !data) return null;
-    return this.toLoadedFlow(data);
+    return this.toLoadedFlow(data, businessId);
   }
 
-  private toLoadedFlow(row: Record<string, unknown>): LoadedFlow | null {
+  private async toLoadedFlow(row: Record<string, unknown>, businessId: string): Promise<LoadedFlow | null> {
     const definition = parseDefinition(row.published_definition);
     if (!definition) return null;
     // Fail closed: a published definition that no longer validates is
     // treated as unavailable (logged by the caller path), never guessed at.
     if (validateDefinition(definition).length > 0) return null;
+    let businessVars: Record<string, unknown> | undefined;
+    if (definition.business_bindings?.length) {
+      try { businessVars = (await businessData(this.deps.supabase, businessId, definition.business_bindings)).vars; }
+      catch { businessVars = {}; }
+    }
     return {
       id: String(row.id),
       name: String(row.name ?? ''),
@@ -728,7 +714,19 @@ export class CustomFlowEngine {
       entryKeyword: (row.entry_keyword as string | null) ?? null,
       publishedVersion: Number(row.published_version ?? 1),
       definition,
+      businessVars,
     };
+  }
+
+  private renderText(text: string, flow: LoadedFlow, values: Record<string, unknown> = {}): string {
+    if (!flow.definition.business_bindings) return substitute(text, values);
+    const safe = Object.fromEntries(Object.entries(values).filter(([key]) => !key.startsWith('business.') && !key.startsWith('_')));
+    const vars = { ...safe, ...flow.businessVars };
+    if (variablesIn(text).some(key => key.startsWith('business.') && !hasValue(vars[key]))) {
+      // The configured fallback cannot recurse or expose unresolved bindings.
+      return substitute(flow.fallbackMessage, vars);
+    }
+    return substitute(text, vars);
   }
 
   // ── Sending + logging ─────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { withOrderMetadata, type EditableFlow, type FlowOrderMetadata } from './order';
+import { readBusinessBindings, readGuided } from '@/lib/bot/custom-flow/data';
 
 export function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -47,6 +48,8 @@ export function readDraft(value: unknown, id: string, businessId: string): Edita
     ...(value.start_node === undefined ? {} : { start_node: text(value.start_node, 80) }), nodes,
     tables: [...new Set(nodes.flatMap(node => node.type === 'lookup' ? [node.table] : []))],
   };
+  if (value.business_bindings !== undefined) definition.business_bindings = readBusinessBindings(value.business_bindings);
+  if (value.guided !== undefined) definition.guided = readGuided(value.guided);
   if (!definition.name.trim() || definition.currency!.length !== 3) throw new Error('invalid_definition');
   if (value.editor_order !== undefined) {
     const metadata = value.editor_order;

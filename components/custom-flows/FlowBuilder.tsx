@@ -6,19 +6,26 @@ import { appendBlock, removeBlock, reorderFlow, selectStart, setMessageDestinati
 import type { PreviewMessage } from '@/lib/custom-flow-builder/preview';
 import { BlockOrder } from './BlockOrder';
 import { useDirtyNavigation } from '@/components/dashboard/dirty-navigation';
+import { FlowSetup } from './FlowSetup';
+import { TableEditor } from './TableEditor';
+import { BUSINESS_FIELDS,businessValue,type BusinessField } from '@/lib/bot/custom-flow/data';
+import { toggleSection } from '@/lib/custom-flow-builder/templates';
 
 interface FlowRow { id: string; definition: EditableFlow; version: number; published_definition: EditableFlow | null; published_version: number | null }
-interface Props { businessId: string; language?: string; timezone?: string; currency?: string }
+interface Props { businessId: string; language?: string; timezone?: string; currency?: string; businessDetails?:Partial<Record<BusinessField,unknown>> }
 const inputClass = 'mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-purple-600 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white';
 const buttonClass = 'min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-40 dark:border-gray-700';
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm font-medium">{label}{children}</label>; }
 
-export function FlowBuilder({ businessId, language = 'en', timezone = 'Africa/Lagos', currency = 'NGN' }: Props) {
+export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const [rows, setRows] = useState<FlowRow[]>([]);
   const [row, setRow] = useState<FlowRow | null>(null);
   const [draft, setDraft] = useState<EditableFlow | null>(null);
   const [dirty, setDirty] = useState(false);
-  useDirtyNavigation(dirty);
+  const [tableDirty,setTableDirty] = useState(false);
+  const [setup,setSetup] = useState<'festival_info'|'blank'|null>(null);
+  const [advanced,setAdvanced] = useState(false);
+  useDirtyNavigation(dirty || tableDirty || setup !== null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
@@ -38,18 +45,14 @@ export function FlowBuilder({ businessId, language = 'en', timezone = 'Africa/La
     return () => controller.abort();
   }, [businessId]);
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
+    const warn = (event: BeforeUnloadEvent) => { if (dirty || tableDirty || setup) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [dirty,tableDirty,setup]);
 
   function edit(next: EditableFlow) { setDraft(next); setDirty(true); setMessages([]); setInputs([]); setErrors([]); setNotice(''); }
   function choose(selected: FlowRow) {
-    setRow(selected); setDraft(withOrderMetadata(selected.definition)); setDirty(false); setMessages([]); setInputs([]); setErrors([]); setNotice('');
-  }
-  function create() {
-    setRow(null);
-    edit(withOrderMetadata({ id: crypto.randomUUID(), name: '', status: 'draft', greeting: '', fallback_message: '', language, timezone, currency, nodes: [] }));
+    setRow(selected); setDraft(withOrderMetadata(selected.definition)); setDirty(false); setTableDirty(false); setAdvanced(false); setMessages([]); setInputs([]); setErrors([]); setNotice('');
   }
   function updateNode(next: CustomFlowNode) { if (draft) edit({ ...draft, nodes: draft.nodes.map(node => node.id === next.id ? next : node) }); }
   function add(type: CustomFlowNode['type']) {
@@ -77,6 +80,8 @@ export function FlowBuilder({ businessId, language = 'en', timezone = 'Africa/La
           missing_lookup_table: 'A lookup table is missing from this flow. Check the table name before publishing.',
           keyword_conflict: 'Another flow already uses this entry keyword. Choose a different keyword.',
           preview_unavailable: 'Unable to preview this draft. Check the flow and try again.',
+          missing_business_settings: 'Missing business information. Update Settings before publishing.',
+          incomplete_sections: 'Add complete visible information to each selected section, or turn that section off.',
         };
         setNotice(notices[body.error] ?? 'Unable to save changes. Try again.');
         return;
@@ -102,21 +107,31 @@ export function FlowBuilder({ businessId, language = 'en', timezone = 'Africa/La
   return <div className="space-y-6" aria-busy={busy || loading}>
     <header><h1 className="text-2xl font-semibold">Custom flows</h1><p className="mt-2 max-w-2xl text-gray-600 dark:text-gray-400">Edit a draft, preview it, then publish when you’re ready. Customers keep using the published flow until you publish.</p></header>
     <div className="flex flex-wrap items-center gap-3">
-      <select aria-label="Custom flows" className={`${inputClass} max-w-sm`} disabled={dirty || busy || loading} value={row?.id ?? ''} onChange={event => { const selected = rows.find(item => item.id === event.target.value); if (selected) choose(selected); }}>
+      <select aria-label="Custom flows" className={`${inputClass} max-w-sm`} disabled={dirty || tableDirty || !!setup || busy || loading} value={row?.id ?? ''} onChange={event => { const selected = rows.find(item => item.id === event.target.value); if (selected) choose(selected); }}>
         <option value="">Choose a flow to edit.</option>{rows.map(item => <option key={item.id} value={item.id}>{item.definition.name}</option>)}
       </select>
-      <button className={buttonClass} disabled={dirty || busy} onClick={create}>New flow</button>
+      <button className={buttonClass} disabled={dirty || tableDirty || busy || !!setup} onClick={()=>setSetup('festival_info')}>Start with a template</button>
+      <button className={buttonClass} disabled={dirty || tableDirty || busy || !!setup} onClick={()=>setSetup('blank')}>Start blank</button>
     </div>
+    {setup&&<FlowSetup businessId={businessId} template={setup} onCancel={()=>setSetup(null)} onCreated={flow=>{setRows(current=>[flow,...current.filter(item=>item.id!==flow.id)]);choose(flow);setSetup(null);}}/>}
     {notice && <p role="status">{notice}</p>}
     {errors.length > 0 && <ul role="alert" className="list-inside list-disc text-red-700">{errors.map((error, index) => <li key={index}>{error}</li>)}</ul>}
-    {draft && <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+    {draft && !setup && <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
       <fieldset disabled={busy} className="min-w-0 space-y-5">
         <div className="grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
           {(['name', 'greeting', 'fallback_message', 'entry_keyword', 'language', 'timezone', 'currency'] as const).map(key => <Field key={key} label={{ name: 'Flow name', greeting: 'Greeting', fallback_message: 'Fallback message', entry_keyword: 'Entry keyword', language: 'Language', timezone: 'Time zone', currency: 'Currency' }[key]}>
-            <input className={inputClass} value={draft[key] ?? ''} onChange={event => edit({ ...draft, [key]: event.target.value })} />
+            <input className={inputClass} readOnly={!!draft.guided&&(key==='timezone'||key==='currency')} value={draft[key] ?? ''} onChange={event => edit({ ...draft, [key]: event.target.value })} />
           </Field>)}
           <Field label="Start block">{destination(draft.start_node ?? draft.nodes[0]?.id, value => { if (value) edit(selectStart(draft, value)); }, false)}</Field>
         </div>
+        {draft.guided&&<section className="space-y-3 rounded-xl border p-5">
+          <h2 className="font-semibold">Business details</h2><p>Choose the business details to use in this flow.</p>
+          <div className="grid gap-3 sm:grid-cols-2">{BUSINESS_FIELDS.map(field=><div key={field}><label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={draft.business_bindings?.includes(field)??false} onChange={e=>edit({...draft,business_bindings:e.target.checked?[...(draft.business_bindings??[]),field]:(draft.business_bindings??[]).filter(f=>f!==field)})}/>{field.replaceAll('_',' ')} — Linked to Settings</label><p className="whitespace-pre-wrap break-words text-sm">{businessValue(field,businessDetails[field])}</p></div>)}</div>
+          {draft.guided.sections.map(section=><label key={section.id} className="flex min-h-11 items-center justify-between gap-3">{section.label}<button className={buttonClass} onClick={()=>{try{edit(toggleSection(draft,section.id));}catch{setNotice('This section has custom connections. Update them in the advanced editor before turning it off.');}}}>{section.enabled?'Turn section off':section.label}</button></label>)}
+          <button className={buttonClass} onClick={()=>setAdvanced(v=>!v)} aria-expanded={advanced}>Advanced editor</button><p className="text-sm">Changes here update the same flow.</p>
+        </section>}
+        {row&&<TableEditor key={row.id} businessId={businessId} flowId={row.id} onDirty={setTableDirty} onSaved={()=>{setMessages([]);setInputs([]);}}/>}
+        {(!draft.guided||advanced)&&<>
         <div className="flex flex-wrap gap-2">{(['message', 'menu', 'lookup'] as const).map(type => <button key={type} className={buttonClass} onClick={() => add(type)}>Add {type}</button>)}</div>
         <p id="flow-reorder-help" className="text-sm text-gray-600 dark:text-gray-400">Drag a block, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>
         <BlockOrder value={draft.nodes.map(node => node.id)} onValueChange={order => edit(reorderFlow(draft, order))} labels={Object.fromEntries(draft.nodes.map((node, index) => [node.id, `${index + 1}. ${node.type === 'message' ? 'Message' : node.type === 'menu' ? 'Menu prompt' : 'Lookup prompt'}`]))} instructionsId="flow-reorder-help" upLabel="Move up" downLabel="Move down" />
@@ -142,11 +157,13 @@ export function FlowBuilder({ businessId, language = 'en', timezone = 'Africa/La
             <Field label="Next step">{destination(node.next, value => updateNode({ ...node, next: value }), false)}</Field>
           </>}
         </section>)}
-        <div className="flex flex-wrap gap-2"><button className={`${buttonClass} bg-purple-700 text-white`} disabled={!draft.name.trim()} onClick={() => action('save')}>Save draft</button><button className={buttonClass} disabled={!row} onClick={() => action('validate')}>Validate</button><button className={buttonClass} disabled={!row || dirty} onClick={() => action('publish')}>Publish</button><button className={buttonClass} disabled={!row?.published_definition} onClick={() => action('restore')}>Reset draft to published</button></div>
+        </>}
+        <div className="flex flex-wrap gap-2"><button className={`${buttonClass} bg-purple-700 text-white`} disabled={!draft.name.trim()||tableDirty} onClick={() => action('save')}>Save draft</button><button className={buttonClass} disabled={!row||tableDirty} onClick={() => action('validate')}>Validate</button><button className={buttonClass} disabled={!row || dirty||tableDirty} onClick={() => action('publish')}>Publish flow</button><button className={buttonClass} disabled={!row?.published_definition||tableDirty} onClick={() => action('restore')}>Reset draft to published</button></div>
+        <p className="text-sm">Publishing updates the menu and flow structure.</p><p className="text-sm">This resets the flow structure. Saved table information stays unchanged.</p>
       </fieldset>
       <aside className="h-fit space-y-4 rounded-3xl border-4 border-gray-800 bg-gray-50 p-4 dark:bg-gray-950 xl:sticky xl:top-6">
         <h2 className="font-semibold">Preview draft</h2><p className="text-sm text-gray-500">Preview only. No messages are sent.</p>
-        <button className={buttonClass} disabled={!row || busy} onClick={() => action('preview', [])}>Restart preview</button>
+        <button className={buttonClass} disabled={!row || busy||tableDirty} onClick={() => action('preview', [])}>Restart preview</button>
         <div className="max-h-[28rem] space-y-3 overflow-y-auto" aria-live="polite">{messages.map((message, index) => <div key={index} className={`rounded-xl p-3 ${message.input ? 'ml-6 bg-purple-100 text-gray-900' : 'mr-4 border bg-white text-gray-900'}`}>
           <p className="whitespace-pre-wrap break-words">{message.text}</p>
           {/* Merchant-provided preview image; avoid a server-side image fetch. */}

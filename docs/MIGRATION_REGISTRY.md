@@ -396,3 +396,16 @@ These numbers were held for the tax drafts before 534 was reserved (see the 534 
 Reserved 2026-11-11 after checking main through M534 and open issue reservations.
 Core architecture agreement: issue #591 comment-6807100601. Server-only immutable
 publication bindings and atomic native response persistence, registration association and exact-address email consent. Extension architecture agreed in independent Claude session (correction review); no hosted application authorized.
+
+### Reservation — guided Custom Flow templates (#1013)
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 543 | custom_flow_guided_setup | codex/1013-guided-templates | Reserved; design checkpoint pending; not applied |
+
+Coordinator reserved 543 on 2026-11-14 for atomic template initialization and
+table-edit concurrency. Remote main `6fb9d5c73ebc309286f1293fb3045a46f6a8cd90`
+contains migrations through 541; open PR #1027 owns 542. Open PRs #1021–#1024
+and #1026 add no migration. This lane builds on unmerged Phase 2 PR #1024
+at `de871238ba7b46e09881be82a130bcffa943ce6c`. Reservation grants no hosted
+schema application or deployment authority. Recheck collisions before SQL creation.

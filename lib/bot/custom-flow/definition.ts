@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import type { CustomFlowDefinition, CustomFlowNode } from './types';
+import { readBusinessBindings, readGuided } from './data';
 
 /**
  * Words a flow may not claim as its entry keyword. They already mean
@@ -41,6 +42,10 @@ export function validateDefinition(definition: unknown): string[] {
   }
 
   const def = definition as unknown as Partial<CustomFlowDefinition>;
+  try {
+    if (def.business_bindings !== undefined) readBusinessBindings(def.business_bindings);
+    if (def.guided !== undefined) readGuided(def.guided);
+  } catch { errors.push('Unable to save changes. Try again.'); }
 
   if (typeof def.name !== 'string' || def.name.trim().length === 0) {
     errors.push('The flow needs a name.');

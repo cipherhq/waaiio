@@ -6,6 +6,8 @@
 // a customer need is first tested against combinations of these nodes.
 // ─────────────────────────────────────────────────────────────────────
 
+import type { BusinessField, GuidedMetadata } from './data';
+
 export type CustomFlowNodeType = 'message' | 'menu' | 'lookup';
 
 export interface CustomFlowMessageNode {
@@ -74,6 +76,8 @@ export interface CustomFlowDefinition {
   nodes: CustomFlowNode[];
   /** Table names this flow may read. */
   tables?: string[];
+  business_bindings?: BusinessField[];
+  guided?: GuidedMetadata;
 }
 
 export interface CustomFlowTableColumn {
