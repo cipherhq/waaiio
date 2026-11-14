@@ -1,3 +1,5 @@
+import { seatsAvailableDuring, type SeatingHold } from '@/lib/seating/holds';
+
 /**
  * Which start times on one date can still be booked (#919).
  *
@@ -37,6 +39,9 @@ export interface OpenTimesOptions {
   candidateDuration: number;
   /** Buffer sent to `book_slot_atomic` (`p_buffer_minutes`). Ignored for tables. */
   bufferMinutes: number;
+  seatingHolds?: SeatingHold[];
+  seatingCapacity?: number;
+  seatsRequired?: number;
 }
 
 export interface OpenTime {
@@ -95,6 +100,8 @@ export function openTimesOnDate(slots: string[], rows: SlotBookingRow[], o: Open
         return s < b.start + length && s + o.candidateDuration > b.start;
       });
       if (overlaps) continue;
+      if (seatsAvailableDuring(o.seatingHolds || [], o.seatingCapacity ?? 1,
+        `${o.date}T${slot}:00`, o.candidateDuration) < (o.seatsRequired ?? 1)) continue;
     } else if (o.bufferMinutes > 0) {
       const buf = o.bufferMinutes;
       const dur = o.candidateDuration;

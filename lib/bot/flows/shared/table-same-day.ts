@@ -1,3 +1,4 @@
+import { loadSeatingHolds, seatsAvailableDuring } from '@/lib/seating/holds';
 /**
  * Same-day table reservations (Owner decision 2026-11-04).
  *
@@ -151,8 +152,12 @@ export async function hasTableSlotLeftToday(ctx: FlowContext, local: BusinessLoc
   // Cannot confirm availability — do not offer today.
   if (error) return false;
 
+  const holds = await loadSeatingHolds(ctx.supabase, ctx.business.id, resourceId,
+    `${local.date}T00:00:00`, `${addDaysToDateStr(local.date, 2)}T00:00:00`);
   const fallbackDuration = duration || 30;
   return slots.some(slot => {
+    if (seatsAvailableDuring(holds, (sd._seating_capacity as number) || 1,
+      `${local.date}T${slot}:00`, tableDuration) < ((sd.party_size as number) || (sd._seating_min_party as number) || 1)) return false;
     const slotStart = toMinutes(slot);
     return !(bookings || []).some(b => {
       if (!b.time) return false;
