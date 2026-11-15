@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { FlowBuilder } from './FlowBuilder';
 import { createTemplate } from '@/lib/custom-flow-builder/templates';
 
@@ -151,6 +151,61 @@ describe('FlowBuilder user journeys', () => {
     expect(screen.getByRole('button', { name: '3. Community Events — Lookup' })).toBeTruthy();
     expect(start.options[start.options.length - 1].value).toBe(lookupId);
     expect(start.options[start.options.length - 1].textContent).toBe('3. Community Events — Lookup');
+  });
+
+  it('shows validation rejection and success beside the bottom actions without changing the flow', async () => {
+    await open();
+    const before = structuredClone(row);
+    const validate = screen.getByRole('button', { name: 'Validate' });
+    const actions = validate.parentElement!.parentElement!;
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'incomplete_sections', errors: ['A selected section needs information.'] }) } as Response);
+    fireEvent.click(validate);
+    await within(actions).findByRole('status');
+    expect(within(actions).getByRole('status').textContent).toBe('Add complete visible information to each selected section, or turn that section off.');
+    expect(within(actions).getByRole('alert').textContent).toBe('A selected section needs information.');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    fireEvent.click(validate);
+    await within(actions).findByText('No validation errors.');
+    expect(within(actions).queryByRole('alert')).toBeNull();
+    expect(row).toEqual(before);
+    expect(calls.map(call => call.action)).toEqual(['validate']);
+  });
+
+  it('keeps publish confirmation and displays a confirmed rejection beside Publish', async () => {
+    await open();
+    const before = structuredClone(row);
+    const publish = screen.getByRole('button', { name: 'Publish flow' });
+    const actions = publish.parentElement!.parentElement!;
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    const requestsBefore = vi.mocked(fetch).mock.calls.length;
+    fireEvent.click(publish);
+    expect(window.confirm).toHaveBeenCalledWith('Publish this draft? Customers will use these changes.');
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requestsBefore);
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'incomplete_sections' }) } as Response);
+    fireEvent.click(publish);
+    await within(actions).findByText('Add complete visible information to each selected section, or turn that section off.');
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]!.body)).action).toBe('publish');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(row).toEqual(before);
+  });
+
+  it('shows preview failure beside preview and clears earlier action feedback', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Validate' }));
+    await screen.findByText('No validation errors.');
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'preview_unavailable' }) } as Response);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart preview' }));
+    await within(screen.getByRole('complementary')).findByText('Unable to preview this draft. Check the flow and try again.');
+    expect(screen.queryByText('No validation errors.')).toBeNull();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('keeps initial load failure visible without an open editor', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, json: async () => ({}) } as Response);
+    render(<FlowBuilder businessId="business" />);
+    await screen.findByText('Unable to load flows. Try again.');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Validate' })).toBeNull();
   });
 
   it('retains edits on a stale-save response', async () => {
