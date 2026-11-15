@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { normalizeImportPhone } from '@/lib/customers/import-phone';
 
 // ═══════════════════════════════════════════════════════════════════════
 // Source verification — Growth import page calls canonical endpoint
@@ -91,8 +92,10 @@ describe('API /api/customers/import contract', () => {
     expect(apiSource).toContain("'Maximum 500 contacts per import'");
   });
 
-  it('uses phone normalization with ensurePlus', () => {
-    expect(apiSource).toContain('ensurePlus');
+  it('normalizes international contact identities and rejects invalid phone input', () => {
+    expect(normalizeImportPhone('234 803 123 4567')).toBe('+2348031234567');
+    expect(normalizeImportPhone('+234801234567890123')).toBeNull();
+    expect(normalizeImportPhone('08012345678')).toBeNull();
   });
 
   it('upserts on business_id + phone natural key', () => {
