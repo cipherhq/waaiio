@@ -33,7 +33,7 @@
  * real BotService + real custom-flow engine, mocked external boundaries, an
  * in-memory filter-aware Supabase mock seeded with an active custom session.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTestSupabase } from './helpers/mock-supabase';
 import type { CustomFlowDefinition } from '@/lib/bot/custom-flow/types';
 
@@ -90,7 +90,7 @@ vi.mock('@/lib/channels/send-guard', () => ({
   }),
 }));
 
-let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }>; authority?: 'exact' | 'suggestion' } = { businessId: null, suggestions: [] };
+let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }>; authority?: 'exact' | 'suggestion'; deepLinkCapability?: string } = { businessId: null, suggestions: [] };
 vi.mock('@/lib/bot/handlers/bot-code-detection', () => ({
   detectBotCode: vi.fn().mockResolvedValue(null),
   detectBotCodeWithSuggestions: vi.fn().mockImplementation(async () => mockDetectionResult),
@@ -216,7 +216,7 @@ class RoutingQuery {
   }
   catch(reject: (e: unknown) => void): void { try { this.execute(); } catch (e) { reject(e); } }
 
-  private execute(): { data: Row | Row[] | null; error: null } {
+  private execute(): { data: Row | Row[] | null; error: null; count?: number } {
     const table = this.db[this.table] ?? [];
     if (this.op === 'insert') {
       const inserted = this.insertRows.map((row, i) => ({
@@ -252,7 +252,7 @@ class RoutingQuery {
     if (this.mode === 'single' || this.mode === 'maybeSingle') {
       return { data: rows[0] ? { ...rows[0] } : null, error: null };
     }
-    return { data: rows.map((r) => ({ ...r })), error: null };
+    return { data: rows.map((r) => ({ ...r })), error: null, count: rows.length };
   }
 }
 
@@ -633,4 +633,115 @@ describe('custom-flow business menu: actual BotService and executor', () => {
     expect(direct.db.custom_flow_sessions).toHaveLength(1);
   });
 
+});
+
+
+describe('first contact: published custom-flow menu entry', () => {
+  const flowId = '11111111-1111-4111-8111-111111111111';
+  let restoreCapabilities: (() => void) | undefined;
+  let restoreCanonical: (() => void) | undefined;
+  beforeEach(() => { suspendedBizIds = new Set(); mockDetectionResult = { businessId: null, suggestions: [] }; vi.clearAllMocks(); });
+  afterEach(() => { restoreCapabilities?.(); restoreCanonical?.(); });
+
+  async function firstContact(capabilities = ['custom_flow', 'scheduling']) {
+    const f = createRoutingSupabase('select_capability');
+    f.db.bot_sessions = [];
+    f.db.profiles = [];
+    f.db.customer_profiles = [];
+    f.db.custom_flow_sessions = [];
+    f.db.custom_flow_logs = [];
+    f.db.whatsapp_channels[0] = { ...f.db.whatsapp_channels[0], channel_type: 'dedicated', business_id: 'biz-A' };
+    f.db.ai_conversation_config = [{ business_id: 'biz-A', enabled_languages: ['en'] }];
+    f.db.business_capabilities = capabilities.map((capability, sort_order) => ({ business_id: 'biz-A', capability, is_enabled: true, sort_order }));
+    f.db.services = ['A', 'B'].map(id => ({ id: `service-${id}`, business_id: 'biz-A', name: `Service ${id}`, is_active: true, service_type: 'booking', deleted_at: null, price: 1000, duration_minutes: 60 }));
+    f.db.custom_flows[0] = { ...f.db.custom_flows[0], id: flowId, entry_keyword: null, published_definition: { ...FESTIVAL_DEF, id: flowId, entry_keyword: null } };
+    const { getConfiguredCapabilities } = await import('@/lib/capabilities/service');
+    const original = vi.mocked(getConfiguredCapabilities).getMockImplementation()!;
+    vi.mocked(getConfiguredCapabilities).mockImplementation(async (_db, businessId) => ({ ok: true, rows: f.db.business_capabilities.filter(row => row.business_id === businessId).map(({ capability, is_enabled, sort_order }) => ({ capability, is_enabled, sort_order })) }));
+    restoreCapabilities = () => vi.mocked(getConfiguredCapabilities).mockImplementation(original);
+    f.supabase.rpc.mockImplementation(async (name: string, args: any) => {
+      if (name === 'get_bot_context') {
+        const session = f.db.bot_sessions.find(row => row.is_active && row.business_id === args.p_business_id);
+        return { data: { has_session: !!session, session: session ? structuredClone(session) : null }, error: null };
+      }
+      if (name === 'deactivate_session_atomic') {
+        const session = f.db.bot_sessions.find(row => row.id === args.p_session_id);
+        if (session) session.is_active = false;
+      }
+      if (name === 'update_session_cas') {
+        const session = f.db.bot_sessions.find(row => row.id === args.p_session_id);
+        if (!session || (session.version ?? 0) !== (args.p_expected_version ?? 0)) return { data: { success: false, reason: 'version_conflict' }, error: null };
+        Object.assign(session, { version: (session.version ?? 0) + 1, current_step: args.p_current_step, session_data: structuredClone(args.p_session_data) });
+        return { data: { success: true, version: session.version }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const bot = new BotService(f.supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+    return { ...f, cloud, bot };
+  }
+  function postbacks(cloud: ReturnType<typeof createMockCloud>): string[] {
+    return [
+      ...cloud.sendButtons.mock.calls.flatMap((call: any) => call[0].buttons.map((button: any) => button.id)),
+      ...cloud.sendList.mock.calls.flatMap((call: any) => call[0].sections.flatMap((section: any) => section.rows.map((row: any) => row.id))),
+    ];
+  }
+
+  it.each([['custom only', ['custom_flow']], ['ordinary plus custom', ['scheduling', 'custom_flow']]])('Hi on a dedicated number exposes %s before any session/profile exists', async (_label, capabilities) => {
+    const f = await firstContact(capabilities as string[]);
+    expect(f.db.bot_sessions).toHaveLength(0);
+    expect(f.db.profiles).toHaveLength(0);
+    expect(f.db.customer_profiles).toHaveLength(0);
+    await f.bot.handleMessage(PHONE, 'Hi', 'text', 'pnid-1', 'biz-A');
+    const created = f.recorder.inserts.find(item => item.table === 'bot_sessions')!.row;
+    expect(created.current_step).toBe('select_capability');
+    // Premium businesses keep the first-contact language choice before the menu.
+    expect(postbacks(f.cloud)).toContain('lang_pick_en');
+    await f.bot.handleMessage(PHONE, 'lang_pick_en', 'button', 'pnid-1', 'biz-A');
+    const session = f.db.bot_sessions.find(row => row.is_active)!;
+    expect(session.current_step).toBe('select_capability');
+    expect(session.session_data._custom_flow_menu).toMatchObject({ sessionId: session.id, businessId: 'biz-A' });
+    expect(session.session_data._custom_flow_menu.postbacks).toContain(`cf-start:${flowId}`);
+    expect(postbacks(f.cloud)).toContain(`cf-start:${flowId}`);
+    if (capabilities.includes('scheduling')) expect(postbacks(f.cloud)).toContain('cap_scheduling');
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+  });
+
+  it.each(['missing', 'draft', 'disabled', 'denied', 'invalid'])('keeps the ordinary initial route when custom flow is %s', async state => {
+    const f = await firstContact();
+    if (state === 'missing') f.db.custom_flows = [];
+    if (state === 'draft') f.db.custom_flows[0].status = 'draft';
+    if (state === 'disabled') f.db.business_capabilities[0].is_enabled = false;
+    if (state === 'denied') f.db.businesses[0].subscription_tier = 'free';
+    if (state === 'invalid') f.db.custom_flows[0].published_definition = {};
+    await f.bot.handleMessage(PHONE, 'Hi', 'text', 'pnid-1', 'biz-A');
+    expect(f.recorder.inserts.find(item => item.table === 'bot_sessions')!.row.current_step).toBe('select_service');
+    expect(f.db.bot_sessions[0].session_data._custom_flow_menu).toBeUndefined();
+    expect(postbacks(f.cloud)).not.toContain(`cf-start:${flowId}`);
+  });
+
+  it('preserves explicit canonical scheduling on a dedicated number with published custom choices', async () => {
+    const f = await firstContact();
+    const canonical = await import('@/lib/bot/canonical-understanding');
+    const spy = vi.spyOn(canonical, 'understandCanonicalMessage').mockResolvedValue({ broadIntent: 'booking', semanticFamily: 'service_time_booking', requestedAction: 'create_new', confidence: 1, language: 'en', entities: { serviceKeywords: [], date: null, specificTime: null, timePreference: null, quantity: null, amount: null, variantKeywords: [] }, source: 'regex', languageEntitlement: { allowedLanguages: ['en'], llmAllowed: false, translationAllowed: false }, languageBlocked: false });
+    restoreCanonical = () => spy.mockRestore();
+    await f.bot.handleMessage(PHONE, 'book', 'text', 'pnid-1', 'biz-A');
+    expect(spy).toHaveBeenCalledOnce();
+    expect(f.recorder.inserts.find(item => item.table === 'bot_sessions')!.row.current_step).toBe('select_service');
+    expect(f.db.bot_sessions[0].session_data.active_capability).toBe('scheduling');
+    expect(postbacks(f.cloud)).not.toContain(`cf-start:${flowId}`);
+  });
+
+  it('preserves an explicit scheduling deep link with published custom choices', async () => {
+    const f = await firstContact();
+    const canonical = await import('@/lib/bot/canonical-understanding');
+    const spy = vi.spyOn(canonical, 'understandCanonicalMessage').mockResolvedValue({ broadIntent: null, semanticFamily: null, requestedAction: null, confidence: 0, language: 'en', entities: { serviceKeywords: [], date: null, specificTime: null, timePreference: null, quantity: null, amount: null, variantKeywords: [] }, source: 'regex', languageEntitlement: { allowedLanguages: ['en'], llmAllowed: false, translationAllowed: false }, languageBlocked: false });
+    restoreCanonical = () => spy.mockRestore();
+    mockDetectionResult = { businessId: 'biz-A', suggestions: [], authority: 'exact', deepLinkCapability: 'scheduling' };
+    await f.bot.handleMessage(PHONE, 'AFRO-scheduling', 'text');
+    expect(f.recorder.inserts.find(item => item.table === 'bot_sessions')!.row.current_step).toBe('select_service');
+    expect(f.db.bot_sessions[0].session_data._deep_link_capability).toBe('scheduling');
+    expect(postbacks(f.cloud)).not.toContain(`cf-start:${flowId}`);
+  });
 });

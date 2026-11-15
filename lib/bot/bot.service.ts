@@ -2228,6 +2228,13 @@ export class BotService {
           ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
           : 'greeting';
 
+        // First contact has no existing menu/session to expose published flows.
+        // Keep explicit deep-link and canonical routes in their branches above.
+        if (business && firstStep !== 'select_capability' && capabilities.includes('custom_flow')) {
+          const { publishedFlowChoices } = await import('./custom-flow/menu');
+          if ((await publishedFlowChoices(this.supabase, business.id)).length > 0) firstStep = 'select_capability';
+        }
+
         // CAS-004: Semantic mismatch for auto-skip (when not directly routed)
         if (business && firstStep !== 'select_capability' && firstStep !== 'greeting' && canonicalResult) {
           const { getUserFacingCapabilities } = await import('./handlers/flow-routing');
