@@ -257,7 +257,7 @@ describe('my-bookings: rebook-after-cancel CAS with p_business_id', () => {
             eq: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 single: vi.fn().mockResolvedValue({
-                  data: { id: 'b1', business_id: 'biz-rebook', service_id: 'svc-1', party_size: 2, services: { id: 'svc-1', name: 'Haircut', price: 5000, deposit_amount: 0 } },
+                  data: { id: 'b1', status: 'confirmed', business_id: 'biz-rebook', service_id: 'svc-1', party_size: 2, services: { id: 'svc-1', name: 'Haircut', price: 5000, deposit_amount: 0 } },
                 }),
               }),
             }),
@@ -307,7 +307,7 @@ describe('my-bookings: rebook-after-cancel CAS with p_business_id', () => {
             eq: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 single: vi.fn().mockResolvedValue({
-                  data: { id: 'b1', business_id: 'biz-rebook', service_id: 'svc-1', party_size: 2, services: { id: 'svc-1', name: 'Haircut', price: 5000, deposit_amount: 0 } },
+                  data: { id: 'b1', status: 'confirmed', business_id: 'biz-rebook', service_id: 'svc-1', party_size: 2, services: { id: 'svc-1', name: 'Haircut', price: 5000, deposit_amount: 0 } },
                 }),
               }),
             }),
@@ -337,8 +337,12 @@ describe('my-bookings: rebook-after-cancel CAS with p_business_id', () => {
 
     await handleModifyBooking(supabase, messageSender, sendText, executor, session as any, '+2341234567890', 'reschedule_booking');
 
+    // Prove the conflict path was reached rather than rejected by status validation.
+    expect(supabase.rpc).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_session_id: 'sess-001', p_expected_version: 5, p_current_step: 'select_date', p_business_id: 'biz-rebook',
+    }));
     // Silent exit — no sendText, no flow executor
-    expect(sendText).not.toHaveBeenCalledWith('+2341234567890', expect.stringContaining('new date'));
+    expect(sendText).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
   });
 });
