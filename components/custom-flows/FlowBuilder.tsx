@@ -5,6 +5,7 @@ import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { appendBlock, removeBlock, reorderFlow, selectStart, setMessageDestination, withOrderMetadata, type EditableFlow } from '@/lib/custom-flow-builder/order';
 import type { PreviewMessage } from '@/lib/custom-flow-builder/preview';
 import { BlockOrder } from './BlockOrder';
+import { blockLabel } from '@/lib/custom-flow-builder/block-label';
 import { useDirtyNavigation } from '@/components/dashboard/dirty-navigation';
 import { FlowSetup } from './FlowSetup';
 import { TableEditor } from './TableEditor';
@@ -101,7 +102,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     return <select className={inputClass} value={selected} onChange={event => change(event.target.value || null)}>
       {allowEnd ? <option value="">End</option> : <option value="" disabled>Choose a destination</option>}
       {missing && <option value={selected} disabled>Choose a destination</option>}
-      {draft?.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {node.type === 'message' ? 'Message' : node.type === 'menu' ? 'Menu prompt' : 'Lookup prompt'}</option>)}
+      {draft?.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {blockLabel(node, draft?.guided)}</option>)}
     </select>;
   }
   return <div className="space-y-6" aria-busy={busy || loading}>
@@ -134,9 +135,9 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
         {(!draft.guided||advanced)&&<>
         <div className="flex flex-wrap gap-2">{(['message', 'menu', 'lookup'] as const).map(type => <button key={type} className={buttonClass} onClick={() => add(type)}>Add {type}</button>)}</div>
         <p id="flow-reorder-help" className="text-sm text-gray-600 dark:text-gray-400">Drag a block, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>
-        <BlockOrder value={draft.nodes.map(node => node.id)} onValueChange={order => edit(reorderFlow(draft, order))} labels={Object.fromEntries(draft.nodes.map((node, index) => [node.id, `${index + 1}. ${node.type === 'message' ? 'Message' : node.type === 'menu' ? 'Menu prompt' : 'Lookup prompt'}`]))} instructionsId="flow-reorder-help" upLabel="Move up" downLabel="Move down" />
+        <BlockOrder value={draft.nodes.map(node => node.id)} onValueChange={order => edit(reorderFlow(draft, order))} labels={Object.fromEntries(draft.nodes.map((node, index) => [node.id, `${index + 1}. ${blockLabel(node, draft?.guided)}`]))} instructionsId="flow-reorder-help" upLabel="Move up" downLabel="Move down" />
         {draft.nodes.map((node, index) => <section key={node.id} className="space-y-4 rounded-xl border p-5">
-          <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">{index + 1}. {node.type === 'message' ? 'Message' : node.type === 'menu' ? 'Menu prompt' : 'Lookup prompt'}</h2><button className={buttonClass} onClick={() => edit(removeBlock(draft, node.id))}>Remove block</button></div>
+          <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">{index + 1}. {blockLabel(node, draft?.guided)}</h2><button className={buttonClass} onClick={() => edit(removeBlock(draft, node.id))}>Remove block</button></div>
           {node.type === 'message' && <>
             <Field label="Message"><textarea className={inputClass} value={node.text} onChange={event => updateNode({ ...node, text: event.target.value })} /></Field>
             <Field label="Image URL"><input className={inputClass} value={node.image ?? ''} onChange={event => updateNode({ ...node, image: event.target.value })} /></Field>
