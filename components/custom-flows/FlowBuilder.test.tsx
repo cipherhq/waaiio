@@ -117,6 +117,42 @@ describe('FlowBuilder user journeys', () => {
     expect(calls[0].definition.nodes.at(-1).options[0].next).toBe('a');
   });
 
+  it('labels template destinations and headings without changing option values or saved connections', async () => {
+    const template = createTemplate({ id: 'flow', businessId: 'business', template: 'festival_info', name: 'Saved flow', keyword: '', language: 'en', timezone: 'UTC', currency: 'USD', bindings: [] }).definition;
+    row.definition = template as typeof definition;
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced editor' }));
+    const labels = ['1. Menu prompt', '2. Artists — Lookup', '3. Vendors — Lookup', '4. Ticket Types — Lookup', '5. News — Lookup', '6. FAQs — Lookup'];
+    for (const label of labels) {
+      expect(screen.getByRole('heading', { name: label })).toBeTruthy();
+      expect(screen.getByRole('button', { name: label })).toBeTruthy();
+    }
+    const destinations = screen.getAllByLabelText('Destination') as HTMLSelectElement[];
+    expect(destinations.map(select => select.value)).toEqual(template.nodes[0].type === 'menu' ? template.nodes[0].options.map(option => option.next) : []);
+    for (const select of [...destinations, screen.getByLabelText('Start block'), ...screen.getAllByLabelText('Next step')] as HTMLSelectElement[]) {
+      expect(Array.from(select.options).filter(option => option.value).map(option => [option.value, option.textContent])).toEqual(template.nodes.map((node, index) => [node.id, labels[index]]));
+    }
+    expect(calls).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await screen.findByText('Draft saved.');
+    expect(calls[0].definition.nodes).toEqual(template.nodes);
+    expect(calls[0].definition.start_node).toBe(template.start_node);
+    expect(calls[0].definition.guided).toEqual(template.guided);
+  });
+
+  it('labels custom tables and keeps an unconfigured lookup generic', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Add lookup' }));
+    expect(screen.getByRole('heading', { name: '3. Lookup prompt' })).toBeTruthy();
+    const start = screen.getByLabelText('Start block') as HTMLSelectElement;
+    const lookupId = start.options[start.options.length - 1].value;
+    fireEvent.change(screen.getByLabelText('Table name', { selector: 'textarea' }), { target: { value: 'community_events' } });
+    expect(screen.getByRole('heading', { name: '3. Community Events — Lookup' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '3. Community Events — Lookup' })).toBeTruthy();
+    expect(start.options[start.options.length - 1].value).toBe(lookupId);
+    expect(start.options[start.options.length - 1].textContent).toBe('3. Community Events — Lookup');
+  });
+
   it('retains edits on a stale-save response', async () => {
     await open();
     fireEvent.change(screen.getByLabelText('Greeting'), { target: { value: 'Keep this edit' } });
