@@ -7,6 +7,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { BookingCancelConfirmation, type CancellationBooking } from '@/components/dashboard/BookingCancelConfirmation';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
@@ -135,6 +136,7 @@ export default function BookingsPage() {
   const toggleSelect = (id: string) => setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const toggleAll = () => setSelectedIds(prev => prev.size === pageItems.length ? new Set() : new Set(pageItems.map(b => b.id)));
   const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [cancellation, setCancellation] = useState<Array<CancellationBooking & { booking: Booking; businessId: string }> | null>(null);
 
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
@@ -531,7 +533,19 @@ export default function BookingsPage() {
     return () => { supabase.removeChannel(channel); };
   }, [fetchBookings, business.id]);
 
-  async function updateStatus(id: string, newStatus: string) {
+  function requestCancellation(items: Booking[]) {
+    if (cancellation) return;
+    setCancellation(items.map(booking => ({ id: booking.id, booking: { ...booking }, businessId: business.id,
+      label: `${booking.reference_code} — ${booking.guest_name} — ${booking.date}${booking.time ? ` ${booking.time}` : ''}` })));
+  }
+
+  async function updateStatus(id: string, newStatus: string, cancellationConfirmed = false, target?: { booking: Booking; businessId: string }): Promise<boolean> {
+    if (newStatus === 'cancelled' && !cancellationConfirmed) {
+      const booking = bookings.find(item => item.id === id);
+      if (booking) requestCancellation([booking]);
+      return false;
+    }
+    if (newStatus === 'cancelled' && (!target || target.booking.id !== id || target.businessId !== business.id)) return false;
     const supabase = createClient();
     const extra: Record<string, unknown> = {};
     const now = new Date().toISOString();
@@ -542,7 +556,7 @@ export default function BookingsPage() {
     }
 
     // Determine which table this record belongs to
-    const booking = bookings.find(b => b.id === id);
+    const booking = target?.booking ?? bookings.find(b => b.id === id);
     const isThisReservation = !!(booking as any)?._isReservation;
 
     if (isThisReservation) {
@@ -551,7 +565,7 @@ export default function BookingsPage() {
         const today = new Date().toISOString().split('T')[0];
         if (booking && booking.date > today) {
           alert(`Check-in is not available until ${new Date(booking.date + 'T00:00').toLocaleDateString()}`);
-          return;
+          return false;
         }
         extra.checked_in_at = now;
         extra.checked_in_by = 'business';
@@ -576,11 +590,11 @@ export default function BookingsPage() {
           const err = await res.json().catch(() => ({}));
           console.error(`[DASHBOARD] ${action} API error:`, err);
           fetchBookings();
-          return;
+          return false;
         }
       } catch {
         fetchBookings();
-        return;
+        return false;
       }
 
       // Only notify staff AFTER confirmed cancellation success
@@ -596,15 +610,20 @@ export default function BookingsPage() {
       }
 
       fetchBookings();
-      return;
+      return true;
     }
 
     const table = isThisReservation ? 'reservations' : 'bookings';
-    const { error: statusError } = await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
+    const statusQuery = supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
+    const result = newStatus === 'cancelled'
+      ? await statusQuery.eq('business_id', target!.businessId).select('id').maybeSingle()
+      : await statusQuery;
+    const statusError = result.error;
+    if (newStatus === 'cancelled' && (!result.data || statusError)) return false;
 
     if (statusError) {
       alert(statusError.code === '40001' ? 'This resource changed. Try again.' : 'Failed to update');
-      return;
+      return false;
     }
 
     // #963: an approved booking sends its after-booking intake form (if any).
@@ -643,12 +662,23 @@ export default function BookingsPage() {
     }
 
     fetchBookings();
+    return true;
   }
 
   const title = labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1);
 
   return (
     <div>
+      {cancellation && <BookingCancelConfirmation bookings={cancellation}
+        onCancel={async id => {
+          const target = cancellation.find(item => item.id === id);
+          const success = await updateStatus(id, 'cancelled', true, target);
+          if (success) {
+            setSelectedIds(previous => { const next = new Set(previous); next.delete(id); return next; });
+            setSelectedId(previous => previous === id ? null : previous);
+          }
+          return success;
+        }} onClose={() => setCancellation(null)} />}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
         {!isReservationType && (
@@ -964,11 +994,7 @@ export default function BookingsPage() {
             onClick={async () => {
               const cancellable = bookings.filter(b => selectedIds.has(b.id) && ['pending', 'confirmed'].includes(b.status));
               if (cancellable.length === 0) { alert('No cancellable bookings selected'); return; }
-              if (!confirm(`Cancel ${cancellable.length} booking${cancellable.length > 1 ? 's' : ''}? Customers will be notified.`)) return;
-              setBulkUpdating(true);
-              for (const b of cancellable) await updateStatus(b.id, 'cancelled');
-              setBulkUpdating(false);
-              setSelectedIds(new Set());
+              requestCancellation(cancellable);
             }}
             className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
@@ -1697,7 +1723,7 @@ export default function BookingsPage() {
                   <div className="flex flex-wrap gap-2">
                     {getActionsForBooking(selected)[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
                       <button key={action.next}
-                        onClick={() => { updateStatus(selected.id, action.next); setSelectedId(null); }}
+                        onClick={() => { updateStatus(selected.id, action.next); if (action.next !== 'cancelled') setSelectedId(null); }}
                         className={`rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium ${action.color}`}>
                         {action.label}
                       </button>
