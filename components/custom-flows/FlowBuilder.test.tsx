@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { FlowBuilder } from './FlowBuilder';
 import { createTemplate } from '@/lib/custom-flow-builder/templates';
 
@@ -198,6 +198,91 @@ describe('FlowBuilder user journeys', () => {
     await within(screen.getByRole('complementary')).findByText('Unable to preview this draft. Check the flow and try again.');
     expect(screen.queryByText('No validation errors.')).toBeNull();
     expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('disables historical preview choices while keeping the current return menu and restart usable', async () => {
+    await open();
+    const before = structuredClone(row);
+    const preview = screen.getByRole('complementary');
+    const menu = { text: 'Choose a section', options: [{ label: 'Artists', value: 'cf:main:0' }, { label: 'Vendors', value: 'cf:main:1' }] };
+    const info = { text: 'Information after the menu.' };
+    const respond = (messages: unknown[]) => vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ messages }) } as Response);
+    const requests = () => vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === 'POST').map(call => JSON.parse(String(call[1]!.body)));
+    respond([menu, info]);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Restart preview' }));
+    const artists = await within(preview).findByRole('button', { name: 'Artists' });
+    expect((artists as HTMLButtonElement).disabled).toBe(false);
+    const lookup = [menu, info, { text: 'Artists', input: true }, { text: 'Type an artist name.' }];
+    respond(lookup);
+    fireEvent.click(artists);
+    await within(preview).findByText('Type an artist name.');
+    for (const label of ['Artists', 'Vendors']) {
+      const oldOption = within(preview).getByRole('button', { name: label }) as HTMLButtonElement;
+      expect(oldOption.disabled).toBe(true);
+      const beforeClick = requests().length;
+      fireEvent.click(oldOption);
+      expect(requests()).toHaveLength(beforeClick);
+    }
+    const reply = within(preview).getByRole('textbox', { name: 'Message' });
+    fireEvent.change(reply, { target: { value: 'Tems' } });
+    const result = [...lookup, { text: 'Tems', input: true }, { text: 'Tems performs on Friday.' }, { text: 'Continue', options: [{ label: 'Return to menu', value: 'cf:return:0' }] }, info];
+    respond(result);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Preview draft' }));
+    const back = await within(preview).findByRole('button', { name: 'Return to menu' });
+    expect((back as HTMLButtonElement).disabled).toBe(false);
+    respond([...result, { text: 'Return to menu', input: true }, menu, info]);
+    fireEvent.click(back);
+    await waitFor(() => expect(within(preview).getAllByRole('button', { name: 'Artists' })).toHaveLength(2));
+    expect((within(preview).getAllByRole('button', { name: 'Artists' })[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((within(preview).getAllByRole('button', { name: 'Artists' })[1] as HTMLButtonElement).disabled).toBe(false);
+    respond([menu, info]);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Restart preview' }));
+    await waitFor(() => expect(within(preview).getAllByRole('button', { name: 'Artists' })).toHaveLength(1));
+    expect((within(preview).getByRole('button', { name: 'Artists' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(requests().map(request => request.inputs)).toEqual([[], ['cf:main:0'], ['cf:main:0', 'Tems'], ['cf:main:0', 'Tems', 'cf:return:0'], []]);
+    expect(requests().every(request => request.action === 'preview')).toBe(true);
+    expect(row).toEqual(before);
+  });
+
+  it('scrolls only the transcript to each latest preview response without moving focus', async () => {
+    await open();
+    render(<button>Outside preview</button>);
+    const outside = screen.getByRole('button', { name: 'Outside preview' });
+    outside.focus();
+    const preview = screen.getByRole('complementary');
+    const transcript = preview.querySelector('[aria-live="polite"]') as HTMLDivElement;
+    let contentHeight = 1000;
+    Object.defineProperty(transcript, 'scrollHeight', { configurable: true, get: () => contentHeight });
+    const windowScroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [{ text: 'First preview response.' }] }) } as Response);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Restart preview' }));
+    await within(preview).findByText('First preview response.');
+    expect(transcript.scrollTop).toBe(1000);
+    transcript.scrollTop = 100;
+    contentHeight = 2000;
+    fireEvent.change(within(preview).getByRole('textbox', { name: 'Message' }), { target: { value: 'Next' } });
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [{ text: 'First preview response.' }, { text: 'Next', input: true }, { text: 'Latest preview response.' }] }) } as Response);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Preview draft' }));
+    await within(preview).findByText('Latest preview response.');
+    expect(transcript.scrollTop).toBe(2000);
+    expect(windowScroll).not.toHaveBeenCalled();
+    expect(document.documentElement.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it('shows preview loading locally and retains retry controls with the existing error', async () => {
+    await open();
+    const preview = screen.getByRole('complementary');
+    const restart = within(preview).getByRole('button', { name: 'Restart preview' }) as HTMLButtonElement;
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    fireEvent.click(restart);
+    expect(preview.getAttribute('aria-busy')).toBe('true');
+    expect(restart.disabled).toBe(true);
+    await act(async () => finish({ ok: false, json: async () => ({ error: 'preview_unavailable' }) } as Response));
+    expect(within(preview).getByRole('status').textContent).toBe('Unable to preview this draft. Check the flow and try again.');
+    expect(preview.getAttribute('aria-busy')).toBe('false');
+    expect(restart.disabled).toBe(false);
   });
 
   it('keeps initial load failure visible without an open editor', async () => {
