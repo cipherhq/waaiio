@@ -9,6 +9,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import { cleanupPasskeyDatabase, PASSKEY_PG_CLEANUP_TIMEOUT } from './helpers/passkey-pg-cleanup';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -68,10 +69,8 @@ suite('M538 admin passkey step-up (real PostgreSQL)', () => {
   }, 20000);
 
   afterAll(async () => {
-    await client?.end();
-    await control?.query(`DROP DATABASE IF EXISTS ${database}`);
-    await control?.end();
-  });
+    await cleanupPasskeyDatabase(database, client, control);
+  }, PASSKEY_PG_CLEANUP_TIMEOUT);
 
   it('keeps every earlier action, accepts the new passkey actions and still rejects unknown ones', async () => {
     for (const a of ['payout_approve', 'payout_reject', 'payout_generate', 'payout_confirm_settlement', 'payout_force_settle',
