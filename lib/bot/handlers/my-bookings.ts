@@ -8,6 +8,7 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { handleTransactionDocument } from './transaction-docs';
 import { routeToMyAccountMenu } from './my-account-menu';
 import { formatDisplayDate } from '@/lib/bot/format-date';
+import { bookingHistoryStatus, bookingHistoryPages, mergeBookingHistory } from '../booking-history-status';
 
 /**
  * Show and navigate the user's bookings, tickets, and reservations.
@@ -23,14 +24,25 @@ export async function handleMyBookings(
 ): Promise<void> {
   if (!input) {
     // Fetch upcoming bookings
-    const { data: upcoming } = await supabase
+    const { data: activeBookings } = await supabase
       .from('bookings')
-      .select('id, date, time, party_size, reference_code, flow_type, businesses (name, country_code)')
+      .select('id, date, time, party_size, reference_code, status, flow_type, businesses (name, country_code)')
       .eq('user_id', session.user_id!)
       .in('status', ['confirmed', 'pending'])
       .gte('date', new Date().toISOString().split('T')[0])
       .order('date', { ascending: true })
       .limit(5);
+
+    const { data: cancelledBookings } = await supabase
+      .from('bookings')
+      .select('id, date, time, party_size, reference_code, status, flow_type, businesses (name, country_code)')
+      .eq('user_id', session.user_id!)
+      .eq('status', 'cancelled')
+      .gte('date', new Date().toISOString().split('T')[0])
+      .order('date', { ascending: true })
+      .limit(5);
+
+    const upcoming = mergeBookingHistory(activeBookings || [], cancelledBookings || []).sort((a, b) => a.date.localeCompare(b.date));
 
     // Fetch event tickets (match both +234... and 234... phone formats)
     const phoneWithPlus = from.startsWith('+') ? from : `+${from}`;
@@ -46,7 +58,7 @@ export async function handleMyBookings(
     // Fetch upcoming reservations (stays)
     const phoneP = from.startsWith('+') ? from : `+${from}`;
     const phoneN = from.startsWith('+') ? from.slice(1) : from;
-    const { data: reservations } = await supabase
+    const { data: activeReservations } = await supabase
       .from('reservations')
       .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name, country_code)')
       .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
@@ -54,6 +66,17 @@ export async function handleMyBookings(
       .gte('check_out', new Date().toISOString().split('T')[0])
       .order('check_in', { ascending: true })
       .limit(5);
+
+    const { data: cancelledReservations } = await supabase
+      .from('reservations')
+      .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name, country_code)')
+      .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .eq('status', 'cancelled')
+      .gte('check_out', new Date().toISOString().split('T')[0])
+      .order('check_in', { ascending: true })
+      .limit(5);
+
+    const reservations = mergeBookingHistory(activeReservations || [], cancelledReservations || []).sort((a, b) => a.check_in.localeCompare(b.check_in));
 
     const items: { title: string; description: string; postbackText: string }[] = [];
 
@@ -63,7 +86,7 @@ export async function handleMyBookings(
         const dateLabel = formatDisplayDate(r.date, 'short', 'en', biz?.country_code || 'NG');
         items.push({
           title: biz?.name || 'Business',
-          description: `${dateLabel} at ${r.time} • ${r.party_size} guests`,
+          description: `${bookingHistoryStatus(r.status)} • ${dateLabel} at ${r.time} • ${r.party_size} guests`,
           postbackText: `booking_${r.id}`,
         });
       }
@@ -92,7 +115,7 @@ export async function handleMyBookings(
         const checkOut = formatDisplayDate(r.check_out, 'brief', 'en', cc);
         items.push({
           title: biz?.name || 'Stay',
-          description: `${checkIn} → ${checkOut} • Ref: ${r.reference_code}`,
+          description: `${bookingHistoryStatus(r.status)} • ${checkIn} → ${checkOut} • Ref: ${r.reference_code}`,
           postbackText: `reservation_${r.id}`,
         });
       }
@@ -109,13 +132,15 @@ export async function handleMyBookings(
 
     items.push({ title: '← Back to Menu', description: 'Return to main menu', postbackText: 'back_to_account' });
 
-    await messageSender.sendList({
-      to: from,
-      title: 'Bookings, Tickets & Stays',
-      body: 'Select a booking, ticket, or stay to view:\n\nType *menu* to go back.',
-      buttonLabel: 'View All',
-      items,
-    });
+    for (const page of bookingHistoryPages(items)) {
+      await messageSender.sendList({
+        to: from,
+        title: 'Bookings, Tickets & Stays',
+        body: 'Select a booking, ticket, or stay to view:\n\nType *menu* to go back.',
+        buttonLabel: 'View All',
+        items: page,
+      });
+    }
     return;
   }
 
@@ -430,7 +455,7 @@ export async function handleModifyBooking(
   if (!input) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, date, time, party_size, reference_code, business_id, flow_type, businesses (name, country_code)')
+      .select('id, date, time, party_size, reference_code, status, business_id, flow_type, businesses (name, country_code)')
       .eq('id', bookingId)
       .eq('user_id', session.user_id!)
       .single();
@@ -449,13 +474,15 @@ export async function handleModifyBooking(
       `📅 ${dateLabel} at ${booking.time}`,
       `👥 ${booking.party_size} guests`,
       `🔑 Ref: *${booking.reference_code}*`,
+      `Status: ${bookingHistoryStatus(booking.status)}`,
     ].join('\n'));
 
     const isTableReservation = booking.flow_type === 'table_reservation';
+    const canModify = ['pending', 'confirmed'].includes(booking.status);
     const actionButtons = [
       // Hide reschedule for table reservations — pending Owner decision on safe atomic reschedule
-      ...(!isTableReservation ? [{ id: 'reschedule_booking', title: 'Reschedule' }] : []),
-      { id: 'cancel_booking', title: 'Cancel Booking' },
+      ...(canModify && !isTableReservation ? [{ id: 'reschedule_booking', title: 'Reschedule' }] : []),
+      ...(canModify ? [{ id: 'cancel_booking', title: 'Cancel Booking' }] : []),
       { id: 'back_bookings', title: 'Back' },
     ];
     await messageSender.sendButtons({
@@ -544,7 +571,7 @@ export async function handleModifyBooking(
     // Fetch booking details to populate session for rescheduling
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, business_id, service_id, party_size, flow_type, services (id, name, price, deposit_amount)')
+      .select('id, business_id, service_id, party_size, status, flow_type, services (id, name, price, deposit_amount)')
       .eq('id', bookingId)
       .eq('user_id', session.user_id!)
       .single();
@@ -552,6 +579,11 @@ export async function handleModifyBooking(
     if (!booking || !booking.business_id) {
       await sendText(from, 'Could not load booking details. Send *my bookings* to try again.');
       await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+      return;
+    }
+
+    if (!['pending', 'confirmed'].includes(booking.status)) {
+      await sendText(from, 'This booking can no longer be rescheduled.');
       return;
     }
 
