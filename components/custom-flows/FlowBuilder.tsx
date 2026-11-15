@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { appendBlock, removeBlock, reorderFlow, selectStart, setMessageDestination, withOrderMetadata, type EditableFlow } from '@/lib/custom-flow-builder/order';
 import type { PreviewMessage } from '@/lib/custom-flow-builder/preview';
@@ -35,6 +35,15 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
   const [inputs, setInputs] = useState<string[]>([]);
   const [reply, setReply] = useState('');
+  const previewTranscript = useRef<HTMLDivElement>(null);
+  const lastPreviewInput = messages.reduce((last, message, index) => message.input ? index : last, -1);
+  const previewBusy = busy && feedbackLocation === 'preview';
+
+  useEffect(() => {
+    // Scroll the bounded transcript, never the merchant's editor or focus.
+    const transcript = previewTranscript.current;
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  }, [messages]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,6 +106,11 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       else setNotice('No validation errors.');
     } catch { setNotice('Unable to save changes. Try again.'); }
     finally { setBusy(false); }
+  }
+  function choosePreviewOption(messageIndex: number, value: string) {
+    // Earlier buttons remain readable history, not inputs for the current node.
+    if (busy || messageIndex <= lastPreviewInput) return;
+    void action('preview', [...inputs, value]);
   }
   function destination(value: string | null | undefined, change: (value: string | null) => void, allowEnd = true) {
     const selected = value ?? (allowEnd ? '' : draft?.start_node ?? draft?.nodes[0]?.id ?? '');
@@ -170,16 +184,16 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
         </div>
         <p className="text-sm">Publishing updates the menu and flow structure.</p><p className="text-sm">This resets the flow structure. Saved table information stays unchanged.</p>
       </fieldset>
-      <aside className="h-fit space-y-4 rounded-3xl border-4 border-gray-800 bg-gray-50 p-4 dark:bg-gray-950 xl:sticky xl:top-6">
-        <h2 className="font-semibold">Preview draft</h2><p className="text-sm text-gray-500">Preview only. No messages are sent.</p>
+      <aside aria-busy={previewBusy} className="h-fit space-y-4 rounded-3xl border-4 border-gray-800 bg-gray-50 p-4 dark:bg-gray-950 xl:sticky xl:top-6">
+        <h2 className="flex items-center gap-2 font-semibold">Preview draft{previewBusy && <span aria-hidden="true" className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />}</h2><p className="text-sm text-gray-500">Preview only. No messages are sent.</p>
         {feedbackLocation === 'preview' && feedback}
         <button className={buttonClass} disabled={!row || busy||tableDirty} onClick={() => action('preview', [])}>Restart preview</button>
-        <div className="max-h-[28rem] space-y-3 overflow-y-auto" aria-live="polite">{messages.map((message, index) => <div key={index} className={`rounded-xl p-3 ${message.input ? 'ml-6 bg-purple-100 text-gray-900' : 'mr-4 border bg-white text-gray-900'}`}>
+        <div ref={previewTranscript} className="max-h-[28rem] space-y-3 overflow-y-auto" aria-live="polite">{messages.map((message, index) => <div key={index} className={`rounded-xl p-3 ${message.input ? 'ml-6 bg-purple-100 text-gray-900' : 'mr-4 border bg-white text-gray-900'}`}>
           <p className="whitespace-pre-wrap break-words">{message.text}</p>
           {/* Merchant-provided preview image; avoid a server-side image fetch. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {message.image && <img src={message.image} alt="" className="mt-2 max-h-64 w-full rounded-lg object-contain" />}
-          {message.options?.map(option => <button key={option.value} disabled={busy} className={`${buttonClass} mt-2 block w-full`} onClick={() => action('preview', [...inputs, option.value])}>{option.label}</button>)}
+          {message.options?.map(option => <button key={option.value} disabled={busy || index <= lastPreviewInput} className={`${buttonClass} mt-2 block w-full`} onClick={() => choosePreviewOption(index, option.value)}>{option.label}</button>)}
         </div>)}</div>
         <form onSubmit={event => { event.preventDefault(); if (reply.trim()) action('preview', [...inputs, reply]); }}>
           <Field label="Message"><input className={inputClass} value={reply} onChange={event => setReply(event.target.value)} disabled={busy || !messages.length} /></Field>
