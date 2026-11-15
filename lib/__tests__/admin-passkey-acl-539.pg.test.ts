@@ -9,6 +9,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import { cleanupPasskeyDatabase, PASSKEY_PG_CLEANUP_TIMEOUT } from './helpers/passkey-pg-cleanup';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -57,10 +58,8 @@ suite('M539 explicit admin_passkey_approvals ACL (real PostgreSQL)', () => {
   }, 20000);
 
   afterAll(async () => {
-    await client?.end();
-    await control?.query(`DROP DATABASE IF EXISTS ${database}`);
-    await control?.end();
-  });
+    await cleanupPasskeyDatabase(database, client, control);
+  }, PASSKEY_PG_CLEANUP_TIMEOUT);
 
   it('M538 alone leaves service_role with the environment default rights (the drift M539 fixes)', async () => {
     expect(await rights('service_role')).toEqual(TABLE_RIGHTS);
