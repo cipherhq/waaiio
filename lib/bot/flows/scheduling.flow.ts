@@ -1,3 +1,4 @@
+import { loadSeatingHolds, seatsAvailableDuring } from '@/lib/seating/holds';
 import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
 import { quoteBookingTax, isTaxTermsChanged, isSafePurchaseAmount } from '@/lib/tax/server-quote';
 import { prepareFreeCompletion } from './shared/free-completion';
@@ -89,6 +90,17 @@ function getDatePrompt(category: string, lang?: string): string {
     default:
       return getFlowCopy(lang, 'booking.date_default');
   }
+}
+
+async function availableTablePartySize(ctx: FlowContext): Promise<number> {
+  const d = ctx.session.session_data;
+  const capacity = (d._seating_capacity as number) || 10;
+  if (!d.date || !d.time || !d.seating_resource_id) return capacity;
+  const date = d.date as string;
+  const holds = await loadSeatingHolds(ctx.supabase, ctx.business!.id, d.seating_resource_id as string,
+    `${date}T00:00:00`, `${addDaysToDateStr(date, 2)}T00:00:00`);
+  return seatsAvailableDuring(holds, capacity, `${date}T${String(d.time).slice(0, 5)}:00`,
+    (d._seating_duration as number) || 90);
 }
 
 type StaffSchedule = Record<string, { start?: string; end?: string }>;
@@ -261,9 +273,16 @@ async function openTimesForDate(ctx: FlowContext, dateStr: string, inputs: OpenT
   const localNow = inputs.localNow !== undefined ? inputs.localNow : (isTableRes ? await resolveBusinessLocalNow(ctx) : null);
   const rows = inputs.rows ?? await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
   const slots = candidateTimes(ctx, dateStr, staffSchedule, localNow, inputs.pref, inputs.extraTime);
+  const seatingHolds = isTableRes && d.seating_resource_id
+    ? await loadSeatingHolds(ctx.supabase, ctx.business!.id, d.seating_resource_id as string,
+      `${dateStr}T00:00:00`, `${addDaysToDateStr(dateStr, 2)}T00:00:00`)
+    : [];
   return openTimesOnDate(slots, rows, {
     date: dateStr,
     isTable: isTableRes,
+    seatingHolds,
+    seatingCapacity: (d._seating_capacity as number) || 10,
+    seatsRequired: (d.party_size as number) || (d._seating_min_party as number) || 1,
     maxCapacity: (d._service_max_capacity as number) || 1,
     fallbackDuration: (d.service_duration as number) || 30,
     // The lengths and buffer create_booking sends to book_table_atomic / book_slot_atomic
@@ -2166,12 +2185,17 @@ export const schedulingFlow: FlowDefinition = {
     // ── Select Quantity ──
     {
       id: 'select_quantity',
+      nextAfterPrompt(ctx: FlowContext) {
+        if (!ctx.session.session_data._seating_reselect_time) return undefined;
+        delete ctx.session.session_data._seating_reselect_time;
+        return 'select_time';
+      },
       async skipIf(ctx: FlowContext) {
         // ── Table reservations: enforce resource min/max BEFORE generic skips ──
         // Service/business skip_quantity and class state must not bypass table party-size selection.
         if (ctx.session.session_data._is_table_reservation) {
           const tableMin = (ctx.session.session_data._seating_min_party as number) || 1;
-          const tableMax = (ctx.session.session_data._seating_capacity as number) || 10;
+          const tableMax = await availableTablePartySize(ctx);
           const existingSize = ctx.session.session_data.party_size as number | undefined;
           // Only skip if valid party_size already set AND within table bounds
           if (existingSize && existingSize >= tableMin && existingSize <= tableMax) return true;
@@ -2248,8 +2272,13 @@ export const schedulingFlow: FlowDefinition = {
         // Table reservation FIRST — takes priority over stale class state
         const isTableReservation = ctx.session.session_data._is_table_reservation === true;
         if (isTableReservation) {
-          const maxCap = (ctx.session.session_data._seating_capacity as number) || 10;
+          const maxCap = await availableTablePartySize(ctx);
           const minCap = (ctx.session.session_data._seating_min_party as number) || 1;
+          if (maxCap < minCap) {
+            ctx.session.session_data._seating_reselect_time = true;
+            const picker = schedulingFlow.steps.find(step => step.id === 'select_time')!;
+            return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.time_taken') }, ...await picker.prompt(ctx)];
+          }
           const candidates = new Set<number>();
           candidates.add(minCap);
           if (maxCap !== minCap) candidates.add(maxCap);
@@ -2325,8 +2354,9 @@ export const schedulingFlow: FlowDefinition = {
         let maxQty: number;
         let minQty = 1;
         if (isTableReservation) {
-          maxQty = (ctx.session.session_data._seating_capacity as number) || 10;
+          maxQty = await availableTablePartySize(ctx);
           minQty = (ctx.session.session_data._seating_min_party as number) || 1;
+          if (maxQty < minQty) return { valid: true, data: { _seating_reselect_time: true } };
         } else if (isClass) {
           maxQty = Math.min(remaining || 10, 10);
         } else {
@@ -2347,7 +2377,13 @@ export const schedulingFlow: FlowDefinition = {
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { party_size: size } };
       },
-      async next() { return 'collect_guest_names'; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._seating_reselect_time) {
+          delete ctx.session.session_data._seating_reselect_time;
+          return 'select_time';
+        }
+        return 'collect_guest_names';
+      },
     },
 
     // ── Collect Guest Names (group bookings) ──

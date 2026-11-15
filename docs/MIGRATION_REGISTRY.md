@@ -396,3 +396,11 @@ These numbers were held for the tax drafts before 534 was reserved (see the 534 
 Reserved 2026-11-11 after checking main through M534 and open issue reservations.
 Core architecture agreement: issue #591 comment-6807100601. Server-only immutable
 publication bindings and atomic native response persistence, registration association and exact-address email consent. Extension architecture agreed in independent Claude session (correction review); no hosted application authorized.
+
+### Reservation — merchant internal seating holds
+
+| Version | Description | Branch | Status |
+|---------|-------------|--------|--------|
+| 542 | seating_holds | codex/vip-seating-holds | Reserved; not applied |
+
+Coordinator reserved 542 on 2026-11-14 after checking main through 541, open PRs 1021–1024 and local worktree migration filenames. Internal tenant-scoped VIP holds, resource-lock capacity checks and auditable release.

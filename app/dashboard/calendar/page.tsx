@@ -532,6 +532,11 @@ export default function CalendarPage() {
 
     const { error: statusError } = await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
 
+    if (statusError) {
+      alert(statusError.code === '40001' ? 'This resource changed. Try again.' : 'Failed to update');
+      return;
+    }
+
     // #963: an approved booking sends its after-booking intake form (if any).
     if (!statusError && newStatus === 'confirmed') {
       fetch('/api/intake/after-confirm', {
