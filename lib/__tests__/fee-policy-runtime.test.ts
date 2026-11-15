@@ -140,6 +140,26 @@ describe('Cron dispatched recovery — real GET handler', () => {
     expect(reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id).length).toBe(0);
   });
 
+  it('v0 campaign ambiguous dispatch is verified without reinitialization or ordinary reconciliation', async () => {
+    const campaign = { ...DISPATCHED_PAYSTACK, fee_policy_version: 0, campaign_id: 'campaign-web', metadata: { reference_code: 'DON-web', _confirmation_origin: 'web' } };
+    const sb = buildCronSb({ dispatched: [campaign] });
+    const result = await callCron(sb, [{ ok: false, body: { message: 'unavailable' } }]);
+    expect(result.fetchCalls).toHaveLength(1);
+    expect(result.fetchCalls[0]).toEqual({ url: 'https://api.paystack.co/transaction/verify/DON-web', method: 'GET' });
+    expect(result.reconcileCallCount).toBe(0);
+    expect(sb.casWrites).toHaveLength(0);
+    expect(sb.terminalWrites).toHaveLength(0);
+  });
+
+  it('v0 campaign found paid is repaired and reconciled on the same payment', async () => {
+    const campaign = { ...DISPATCHED_PAYSTACK, fee_policy_version: 0, campaign_id: 'campaign-web', metadata: { reference_code: 'DON-web', _confirmation_origin: 'web' } };
+    const sb = buildCronSb({ dispatched: [campaign] });
+    const result = await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
+    expect(result.fetchCalls.every(call => call.method === 'GET')).toBe(true);
+    expect(sb.casWrites.some(row => row.provider_init_state === 'provider_confirmed')).toBe(true);
+    expect(result.reconciledIds).toContain(campaign.id);
+  });
+
   // ── Paystack ──
 
   it('Paystack found paid → checked CAS + reconcile', async () => {
@@ -615,6 +635,42 @@ describe('Stripe webhook v1 crash repair — real POST handler', () => {
     const res = await POST(req);
     return { status: res.status, json: await res.json() };
   }
+
+  it.each([0, 1])('campaign fee policy %s callback correlates a pre-dispatch reference before init returns', async feePolicy => {
+    const payment: Record<string, unknown> = {
+      id: 'campaign-attempt', campaign_id: 'campaign', booking_id: null, invoice_id: null,
+      reservation_id: null, order_id: null, amount: 25, status: 'pending', gateway: 'stripe',
+      gateway_reference: 'DON-web', provider_init_state: 'dispatched', fee_policy_version: feePolicy,
+      payment_authority_version: 1, finalization_completed_at: null,
+    };
+    const reconcile = vi.fn().mockResolvedValue({ acknowledgeSuccess: true });
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcile }));
+    const client = { from(table: string) {
+      const filters: Array<[string, unknown]> = [];
+      let update: Record<string, unknown> | null = null;
+      const result = () => {
+        if (table !== 'payments') return { data: null, error: null };
+        if (!filters.every(([key, value]) => payment[key] === value)) return { data: null, error: null };
+        if (update) Object.assign(payment, update);
+        return { data: { ...payment }, error: null };
+      };
+      const chain: any = {
+        select: () => chain, eq: (key: string, value: unknown) => { filters.push([key, value]); return chain; },
+        update: (row: Record<string, unknown>) => { update = row; return chain; },
+        insert: () => chain, upsert: () => chain, single: async () => result(), maybeSingle: async () => result(),
+        then: (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve),
+      };
+      return chain;
+    }, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) };
+    const result = await callStripeWebhook({ id: 'evt_campaign_web', type: 'checkout.session.completed', data: { object: {
+      id: 'cs_campaign', payment_status: 'paid', amount_total: 2500, currency: 'usd',
+      metadata: { reference_code: 'DON-web', channel: 'web' },
+    } } }, client);
+    expect(result.status).toBe(200);
+    expect(payment.gateway_reference).toBe('cs_campaign');
+    expect(payment.provider_init_state).toBe('provider_confirmed');
+    expect(reconcile).toHaveBeenCalledWith(expect.anything(), 'campaign-attempt', 'webhook', expect.anything());
+  });
 
   it('v1-identifiable paid event with no canonical row → retryable 500', async () => {
     const event = { id: 'evt_1', type: 'checkout.session.completed', data: { object: {
