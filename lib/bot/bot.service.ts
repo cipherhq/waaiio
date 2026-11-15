@@ -120,6 +120,8 @@ export class BotService {
      *  except the custom-flow guard reads it, so it changes no metering,
      *  trust, or picker behaviour. */
     _internalRestart?: boolean,
+    /** Accounting only: a displayed menu number redispatched as its existing postback. */
+    _menuPostbackRedispatch?: boolean,
   ): Promise<void> {
     try {
     let text = messageText.trim();
@@ -1096,7 +1098,7 @@ export class BotService {
       // #682: Track inbound message with new-conversation detection (non-blocking).
       // session.updated_at reflects the last interaction — if >24h ago, it's a new conversation.
       // Skip for internal redispatches (pc_options, pc_again, etc.) to avoid double-counting.
-      if (!_internalProvenance) {
+      if (!_internalProvenance && !_menuPostbackRedispatch) {
         trackInboundMessage(this.supabase, session.business_id, (session as any).updated_at ?? null)
           .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
       }
@@ -1312,7 +1314,24 @@ export class BotService {
             .maybeSingle();
           return !!data;
         };
-        const customHandled = await tryHandleCustomFlow({
+        const { handleCustomFlowMenu } = await import('@/lib/bot/custom-flow/menu-entry');
+        const menuEntry = await handleCustomFlowMenu({
+          supabase: this.supabase, sender: this.messageSender, businessId: customBusinessId,
+          from, text, session, isPinStep, isBusinessCode,
+        });
+        if (menuEntry.kind === 'started') return;
+        if (menuEntry.kind === 'unavailable') {
+          await this.sendSessionLocalizedText(from, getFlowCopy('en', 'error.capability_unavailable'), session ?? { business_id: customBusinessId, session_data: {} });
+          return;
+        }
+        if (menuEntry.kind === 'mapped' && menuEntry.text === 'nav_directory') {
+          const provenance = _internalProvenance ?? deriveReentryProvenance(session?.session_data.biz_resolution as string | undefined);
+          return this.handleMessage(from, menuEntry.text, messageType, destinationPhone, preResolvedBusinessId,
+            mediaUrl, messageId, provenance, undefined, undefined, true);
+        }
+        // A resolved ordinary choice is not a custom entry keyword.
+        if (menuEntry.kind === 'mapped') text = menuEntry.text;
+        const customHandled = menuEntry.kind !== 'mapped' && await tryHandleCustomFlow({
           supabase: this.supabase,
           sender: this.messageSender,
           businessId: customBusinessId,
@@ -2640,7 +2659,7 @@ export class BotService {
 
       // #682: Track inbound for new sessions (session just created → null updated_at → new conversation).
       // Skip for internal redispatches (pc_options, pc_again, etc.) to avoid double-counting.
-      if (businessId && !_internalProvenance) {
+      if (businessId && !_internalProvenance && !_menuPostbackRedispatch) {
         trackInboundMessage(this.supabase, businessId, null)
           .catch(err => logger.warn('[BOT] Inbound tracking failed (non-critical):', err));
       }

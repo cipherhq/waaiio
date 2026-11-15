@@ -146,6 +146,18 @@ export class CustomFlowEngine {
     return { handled: started };
   }
 
+  /** A displayed business-menu choice can start a flow without an entry keyword. */
+  async startById(businessId: string, from: string, flowId: string): Promise<boolean> {
+    this.deps.sender.bindBusiness?.(businessId);
+    // A stale menu button must never replace or become input to an active flow.
+    if (await loadActiveSession(this.deps.supabase, businessId, from)) return false;
+    if (!(await this.isEntitled(businessId))) return false;
+    const flow = await this.loadPublishedFlowById(businessId, flowId);
+    if (!flow) return false;
+    // createSession's active-session unique index is the final concurrent-start gate.
+    return this.startFlow(flow, businessId, from);
+  }
+
   /**
    * Entitlement gate (P1 fix, PR #1016 review). Reuses the bot's canonical
    * capability guard — the same helper the code flows use — so tier,

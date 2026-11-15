@@ -1,3 +1,4 @@
+import { FLOW_START_PREFIX, publishedFlowChoices, rememberFlowMenu, resolveFlowMenuSelection, type PublishedFlowChoice } from '../custom-flow/menu';
 import { isSharedConversation, DIRECTORY_ACTION } from './shared/navigation';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -34,6 +35,7 @@ export { getCapabilityLabel };
 async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
   userFacing: CapabilityId[];
   customLabels: Record<string, string>;
+  customFlows: PublishedFlowChoice[];
 }> {
   const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
   const businessId = ctx.business?.id;
@@ -43,7 +45,7 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
   // new ctx, so nothing carries over between messages.
   const cacheKey = `${businessId ?? ''}|${capabilities.join(',')}`;
   const cached = menuDataByContext.get(ctx);
-  let menuData: Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string> }>;
+  let menuData: Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string>; customFlows: PublishedFlowChoice[] }>;
   if (cached && cached.key === cacheKey) {
     menuData = cached.data;
   } else {
@@ -51,25 +53,25 @@ async function prepareCapabilityMenu(ctx: FlowContext): Promise<{
     menuDataByContext.set(ctx, { key: cacheKey, data: menuData });
     menuData.catch(() => menuDataByContext.delete(ctx));
   }
-  const { userFacing, customLabels } = await menuData;
+  const { userFacing, customLabels, customFlows } = await menuData;
 
   // Write to session_data for downstream validation/diagnostics (not treated as authoritative cache)
   ctx.session.session_data._filtered_capabilities = userFacing;
   ctx.session.session_data._capability_custom_labels = customLabels;
 
-  return { userFacing, customLabels };
+  return { userFacing, customLabels, customFlows };
 }
 
 const menuDataByContext = new WeakMap<FlowContext, {
   key: string;
-  data: Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string> }>;
+  data: Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string>; customFlows: PublishedFlowChoice[] }>;
 }>();
 
 async function loadCapabilityMenuData(
   ctx: FlowContext,
   capabilities: CapabilityId[],
   businessId: string | undefined,
-): Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string> }> {
+): Promise<{ userFacing: CapabilityId[]; customLabels: Record<string, string>; customFlows: PublishedFlowChoice[] }> {
   // Canonical user-facing filter — single source of truth
   let userFacing = getUserFacingCapabilities(capabilities);
 
@@ -147,7 +149,9 @@ async function loadCapabilityMenuData(
     ? await getCapabilityCustomLabels(ctx.supabase, businessId)
     : {};
 
-  return { userFacing, customLabels };
+  const customFlows = businessId && capabilities.includes('custom_flow')
+    ? await publishedFlowChoices(ctx.supabase, businessId) : [];
+  return { userFacing, customLabels, customFlows };
 }
 
 /** A capability postback id or a bare menu number — a selection, not a request with details. */
@@ -192,11 +196,11 @@ const selectCapabilityStep: FlowStepConfig = {
       return false;
     }
 
-    const { userFacing } = await prepareCapabilityMenu(ctx);
+    const { userFacing, customFlows } = await prepareCapabilityMenu(ctx);
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
 
     // Exactly one renderable capability → auto-select and skip the menu
-    if (userFacing.length === 1 && !await isSharedConversation(ctx.supabase, ctx.session.session_data) && !ctx.session.session_data._customer_history) {
+    if (customFlows.length === 0 && userFacing.length === 1 && !await isSharedConversation(ctx.supabase, ctx.session.session_data) && !ctx.session.session_data._customer_history) {
       ctx.session.session_data.active_capability = userFacing[0];
       // Send greeting as standalone text since capability menu is skipped
       const greeting = ctx.session.session_data._greeting as string | undefined;
@@ -211,7 +215,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // Auto-select the sole contextual capability so the flow reaches its entry step.
     // CAS-004 safety: only auto-select when ALL capabilities are contextual and
     // have a known safe entry point (promo_verification → promo_entry).
-    if (userFacing.length === 0 && capabilities.length > 0 &&
+    if (customFlows.length === 0 && userFacing.length === 0 && capabilities.length > 0 &&
         capabilities.every(c => c === 'promo_verification')) {
       ctx.session.session_data.active_capability = capabilities[0];
       const greeting = ctx.session.session_data._greeting as string | undefined;
@@ -230,7 +234,7 @@ const selectCapabilityStep: FlowStepConfig = {
 
   async prompt(ctx: FlowContext) {
     // Always prepare capabilities authoritatively — never depend on skipIf() cache
-    const { userFacing, customLabels } = await prepareCapabilityMenu(ctx);
+    const { userFacing, customLabels, customFlows } = await prepareCapabilityMenu(ctx);
     const category = ctx.business?.category || 'other';
 
     // Check if returning customer has past bookings/orders — show "My Account" option
@@ -314,6 +318,12 @@ const selectCapabilityStep: FlowStepConfig = {
         optInOffered = true;
       }
     }
+    // Append after every existing option, including the unchanged opt-in offer.
+    for (const flow of customFlows) capItems.push({ id: `${FLOW_START_PREFIX}${flow.id}`, title: flow.name, postbackText: `${FLOW_START_PREFIX}${flow.id}` });
+    delete ctx.session.session_data._custom_flow_menu;
+    const rememberPage = (ids: string[]) => {
+      if (customFlows.length && ctx.business) rememberFlowMenu(ctx.session, ctx.business.id, ids);
+    };
     const bodyText = greeting
       ? `${greeting}\n\n${getFlowCopy(ctx.copyLang, 'menu.what_to_do')}`
       : getFlowCopy(ctx.copyLang, 'menu.what_to_do');
@@ -322,7 +332,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // Localization metadata for the outbound translation boundary:
     // - waaiioOwnedItemTitles: true — Waaiio UI labels (My Account, default cap labels) translate
     // - protectedValues: merchant custom labels + business name survive byte-for-byte
-    const merchantProtected: string[] = [];
+    const merchantProtected: string[] = customFlows.flatMap(flow => [flow.name, truncTitle(flow.name), truncTitle(flow.name, 24)]);
     for (const cap of userFacing) {
       if (customLabels[cap]) merchantProtected.push(customLabels[cap]);
     }
@@ -355,10 +365,11 @@ const selectCapabilityStep: FlowStepConfig = {
     // WhatsApp buttons max 3 — use a list for more options.
     // The opt-in row needs its description, which buttons cannot show.
     if (capItems.length <= 3 && !optInOffered) {
+      rememberPage(capItems.map(item => item.id));
       return [{
         type: 'buttons' as const,
         body: bodyText,
-        buttons: capItems.map(i => ({ id: i.id, title: i.title })),
+        buttons: capItems.map(i => ({ id: i.id, title: i.id.startsWith(FLOW_START_PREFIX) ? truncTitle(i.title) : i.title })),
         _localization: locMeta,
       }];
     }
@@ -367,10 +378,11 @@ const selectCapabilityStep: FlowStepConfig = {
     // WhatsApp list body max is 1024 chars — trim greeting if needed
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
 
-    const allListItems = capItems.map(i => ({ title: i.title, postbackText: i.postbackText, ...(i.description ? { description: i.description } : {}) }));
+    const allListItems = capItems.map(i => ({ title: i.id.startsWith(FLOW_START_PREFIX) ? truncTitle(i.title, 24) : i.title, postbackText: i.postbackText, ...(i.description ? { description: i.description } : {}) }));
 
     // If everything fits in one page, no pagination needed
     if (allListItems.length <= META_MAX_ROWS) {
+      rememberPage(allListItems.map(item => item.postbackText));
       return [{
         type: 'list' as const,
         title: bizName || getFlowCopy(ctx.copyLang, 'menu.title'),
@@ -443,6 +455,8 @@ const selectCapabilityStep: FlowStepConfig = {
       });
     }
 
+    rememberPage(pageItems.map(item => item.postbackText));
+
     // Store page state for validate() to use
     ctx.session.session_data._cap_menu_page = safePage;
     ctx.session.session_data._cap_menu_total_pages = pages.length;
@@ -458,6 +472,12 @@ const selectCapabilityStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext) {
+    const selection = resolveFlowMenuSelection(ctx.session, ctx.business?.id ?? '', input);
+    if (selection.kind === 'unavailable' || (selection.kind === 'selection' && selection.flowId)) {
+      // Custom starts belong to the BotService adapter, never executor completion.
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.capability_unavailable'), persistSessionDataOnFailure: true };
+    }
+    if (selection.kind === 'selection') input = selection.postback;
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const category = ctx.business?.category || 'other';
     // CAS-004: Use shared user-facing capability filter — single source of truth
@@ -495,6 +515,7 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // Handle "My Account" selection
     if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
+      delete ctx.session.session_data._custom_flow_menu;
       ctx.session.session_data.active_capability = 'my_account';
       delete ctx.session.session_data._transaction_followup_key;
       // Clean up pagination state — My Account exits the paginated menu
@@ -601,6 +622,8 @@ const selectCapabilityStep: FlowStepConfig = {
     // suppress this interaction's terminal navigation. Pagination/rejections
     // return above and keep their existing ownership.
     delete ctx.session.session_data._transaction_followup_key;
+
+    delete ctx.session.session_data._custom_flow_menu;
 
     // Clear stale transactional state BEFORE entity extraction (P2-3).
     // Must run first so cleanup removes the PREVIOUS capability's data,

@@ -43,7 +43,7 @@ vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: vi.fn().mockRes
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 vi.mock('@/lib/bot/translate', () => ({ translateBotResponse: vi.fn(async (t: string) => t), detectLanguage: vi.fn(async () => 'en'), getLanguageName: vi.fn(() => 'English') }));
 vi.mock('@/lib/bot/handlers/global-queries', () => ({ handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })), isOrdersQuery: vi.fn(() => false) }));
-vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^home$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
+vi.mock('@/lib/bot/handlers/escape-hatches', () => ({ HOME_PATTERN: /^(home|directory|search)$/i, handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }) }));
 vi.mock('@/lib/bot/keyword-service', () => ({ loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }), matchQuickReply: vi.fn(() => null), loadUnifiedKeywords: vi.fn().mockResolvedValue([]), matchUnifiedKeyword: vi.fn(() => null) }));
 vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 vi.mock('@/lib/bot/customer-intelligence', () => ({
@@ -511,4 +511,126 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
       p_is_new_conversation: true,
     });
   });
+});
+
+describe('custom-flow business menu: actual BotService and executor', () => {
+  const flowId = '11111111-1111-4111-8111-111111111111';
+  async function menuFixture(provenance?: string) {
+    const f = createRoutingSupabase('select_capability');
+    f.db.custom_flow_sessions = [];
+    f.db.custom_flow_logs = [];
+    f.db.custom_flows[0].id = flowId;
+    f.db.custom_flows[0].entry_keyword = null;
+    f.db.custom_flows[0].published_definition = { ...FESTIVAL_DEF, id: flowId, entry_keyword: null };
+    if (provenance) f.botSession.session_data.biz_resolution = provenance;
+    const { rememberFlowMenu } = await import('@/lib/bot/custom-flow/menu');
+    rememberFlowMenu(f.botSession as any, 'biz-A', ['cap_scheduling', `cf-start:${flowId}`]);
+    f.supabase.rpc.mockImplementation(async (name: string, args: any) => {
+      if (name === 'get_shared_conversation') return { data: { version: 0, business_id: 'biz-A', session: structuredClone(f.botSession) }, error: null };
+      if (name === 'update_session_cas') {
+        if (args.p_expected_version !== f.botSession.version) return { data: { success: false, reason: 'version_conflict' }, error: null };
+        Object.assign(f.botSession, { version: f.botSession.version + 1, current_step: args.p_current_step, session_data: structuredClone(args.p_session_data) });
+        return { data: { success: true, version: f.botSession.version }, error: null };
+      }
+      if (name === 'deactivate_session_atomic') f.botSession.is_active = false;
+      return { data: null, error: null };
+    });
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const bot = new BotService(f.supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+    return { ...f, cloud, sender, bot };
+  }
+  beforeEach(() => { suspendedBizIds = new Set(); mockDetectionResult = { businessId: null, suggestions: [] }; vi.clearAllMocks(); });
+  it.each(['button', 'text'])('starts a displayed blank-keyword flow by %s without completing the normal executor', async type => {
+    const f = await menuFixture();
+    await f.bot.handleMessage(PHONE, type === 'button' ? `cf-start:${flowId}` : '2', type, 'pnid-1');
+    expect(f.db.custom_flow_sessions).toHaveLength(1);
+    expect(f.db.custom_flow_sessions[0].flow_id).toBe(flowId);
+    expect(f.botSession.current_step).toBe('select_capability');
+    expect(f.botSession.session_data._custom_flow_menu).toBeUndefined();
+    expect(f.cloud.sendButtons.mock.calls.some((c: any) => c[0].bodyText.includes('AfroPlus Fest'))).toBe(true);
+    expect(f.supabase.rpc.mock.calls.filter((c: any) => c[0] === 'increment_message_usage' && c[1]?.p_direction === 'inbound')).toHaveLength(1);
+  });
+  it.each([undefined, 'shared_session'])( 'ordinary numeric selection with provenance %s is counted once without inventing provenance', async provenance => {
+    const f = await menuFixture(provenance);
+    const spy = vi.spyOn(f.bot, 'handleMessage');
+    await f.bot.handleMessage(PHONE, '1', 'text', 'pnid-1', undefined, undefined, 'inbound-1');
+    expect(spy.mock.calls).toHaveLength(1);
+    expect(f.botSession.session_data.biz_resolution).toBe(provenance);
+    expect(f.supabase.rpc.mock.calls.filter((c: any) => c[0] === 'increment_message_usage' && c[1]?.p_direction === 'inbound')).toHaveLength(1);
+    expect(f.cloud.sendButtons.mock.calls.some((c: any) => c[0].bodyText.includes('When would you like to book?'))).toBe(true);
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+  });
+  it.each([undefined, 'shared_session'])('numeric directory entry with provenance %s reaches existing directory handler', async provenance => {
+    const f = await menuFixture(provenance);
+    (f.botSession.session_data._custom_flow_menu as any).postbacks[0] = 'nav_directory';
+    const spy = vi.spyOn(f.bot, 'handleMessage');
+    await f.bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    expect(spy.mock.calls).toHaveLength(2);
+    expect(spy.mock.calls[1][2]).toBe('text');
+    expect(spy.mock.calls[1][7]).toBe(provenance);
+    expect(spy.mock.calls[1][9]).toBeUndefined();
+    expect(f.recorder.inserts.some(i => i.table === 'bot_sessions' && i.row.current_step === 'directory_search' && i.row.business_id === null)).toBe(true);
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+    expect(f.supabase.rpc.mock.calls.filter((c: any) => c[0] === 'increment_message_usage' && c[1]?.p_direction === 'inbound')).toHaveLength(1);
+  });
+  it.each([undefined, 'shared_session'])('numeric opt-in with provenance %s cannot become consent', async provenance => {
+    const f = await menuFixture(provenance);
+    (f.botSession.session_data._custom_flow_menu as any).postbacks[0] = 'updates_yes:welcome:11111111-1111-4111-8111-111111111111';
+    await f.bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    expect(f.recorder.inserts.some(i => i.table === 'customer_consents' || i.table === 'launch_subscribers')).toBe(false);
+    expect(sentTexts(f.cloud).some(t => t.includes('That option is not available right now.'))).toBe(true);
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+    expect(f.supabase.rpc.mock.calls.filter((c: any) => c[0] === 'increment_message_usage' && c[1]?.p_direction === 'inbound')).toHaveLength(1);
+  });
+  it('persists the displayed snapshot through the real executor before sending', async () => {
+    const f = await menuFixture();
+    delete f.botSession.session_data._custom_flow_menu;
+    f.sender.bindBusiness('biz-A');
+    await (f.bot as any).flowExecutor.execute(PHONE, '', f.botSession, f.db.businesses[0]);
+    const snapshot = f.botSession.session_data._custom_flow_menu;
+    expect(snapshot).toMatchObject({ sessionId: f.botSession.id, businessId: 'biz-A' });
+    expect(snapshot.postbacks).toContain(`cf-start:${flowId}`);
+    const saved = f.supabase.rpc.mock.calls.findIndex((c: any) => c[0] === 'update_session_cas' && c[1].p_session_data._custom_flow_menu);
+    expect(saved).toBeGreaterThanOrEqual(0);
+    const sends = [...f.cloud.sendButtons.mock.invocationCallOrder, ...f.cloud.sendList.mock.invocationCallOrder, ...f.cloud.sendText.mock.invocationCallOrder];
+    expect(sends.length).toBeGreaterThan(0);
+    expect(f.supabase.rpc.mock.invocationCallOrder[saved]).toBeLessThan(Math.min(...sends));
+  });
+  it('does not send the prompt if executor snapshot persistence loses CAS', async () => {
+    const f = await menuFixture();
+    f.supabase.rpc.mockResolvedValue({ data: { success: false, reason: 'version_conflict' }, error: null });
+    await (f.bot as any).flowExecutor.execute(PHONE, '', f.botSession, f.db.businesses[0]);
+    expect(f.cloud.sendButtons).not.toHaveBeenCalled();
+    expect(f.cloud.sendList).not.toHaveBeenCalled();
+  });
+  it('keeps the next numeric reply in the active custom engine, not the normal menu', async () => {
+    const f = await menuFixture();
+    await f.bot.handleMessage(PHONE, `cf-start:${flowId}`, 'button', 'pnid-1');
+    await f.bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    expect(sentTexts(f.cloud)).toContain('Day 1: Tems at 8pm on the Main Stage.');
+    expect(f.cloud.sendButtons.mock.calls.some((c: any) => c[0].bodyText.includes('When would you like to book?'))).toBe(false);
+  });
+  it('a failed prompt send does not start a custom flow or bypass snapshot persistence', async () => {
+    const f = await menuFixture();
+    f.sender.bindBusiness('biz-A');
+    f.cloud.sendButtons.mockRejectedValueOnce(new Error('Cloud API error: 400 (simulated rejection)'));
+    await (f.bot as any).flowExecutor.execute(PHONE, '', f.botSession, f.db.businesses[0]);
+    expect(f.botSession.session_data._custom_flow_menu).toBeDefined();
+    expect(f.cloud.sendButtons).toHaveBeenCalledOnce();
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+  });
+
+  it('an ordinary numeric choice cannot become a custom keyword, while direct keyword entry still works', async () => {
+    const f = await menuFixture();
+    f.db.custom_flows[0].entry_keyword = 'CAP_SCHEDULING';
+    await f.bot.handleMessage(PHONE, '1', 'text', 'pnid-1');
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+    expect(f.cloud.sendButtons.mock.calls.some((c: any) => c[0].bodyText.includes('When would you like to book?'))).toBe(true);
+    const direct = await menuFixture();
+    direct.db.custom_flows[0].entry_keyword = 'CAP_SCHEDULING';
+    await direct.bot.handleMessage(PHONE, 'CAP_SCHEDULING', 'text', 'pnid-1');
+    expect(direct.db.custom_flow_sessions).toHaveLength(1);
+  });
+
 });

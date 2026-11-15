@@ -66,23 +66,25 @@ Each capability has **five independent dimensions**:
 | 30 | `multi_location` | growth | dashboard-only | no-bot-flow | N/A | No | Multiple locations | untested | unverified | owner-decision-needed |
 | 31 | `waiver` | growth | top-level-menu | no-bot-flow (regex match in `capability-selection.flow.ts`) | Waiver template selection | No | `waiver_templates` active | partial | unverified | ready |
 | 32 | `promo_verification` | growth | contextual | no-bot-flow (dedicated entry step `promo_entry`) | `promo_entry` | No | Active promo campaigns | tested | code-tested | ready |
-| 33 | `custom_flow` | business | contextual | data-driven engine (`lib/bot/custom-flow/engine.ts`) | entry keyword | No (Phase 1; Payment Link in Phase 4) | `custom_flows` status=published, entry_keyword set | tested | code-tested | ready |
+| 33 | `custom_flow` | business | top-level-menu (also keyword) | data-driven engine (`lib/bot/custom-flow/engine.ts`) | Published flow choice or entry keyword | No (Phase 1; Payment Link in Phase 4) | `custom_flows` status=published, valid published snapshot; keyword optional for menu entry | tested | code-tested | ready |
 
 ### 1.3 Count Validation
 
 | Dimension | Value | Count | IDs |
 |-----------|-------|-------|-----|
-| **Entry: top-level-menu** | Shown in WhatsApp capability list | 15 | scheduling, appointment, payment, ordering, ticketing, giving, chat, reservation, table_reservation, invoice, queue, crowdfunding, class_booking, waiver, loyalty (via My Account) |
-| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action, or a flow entry keyword | 10 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification, custom_flow |
+| **Entry: top-level-menu** | Shown in WhatsApp capability list | 16 | scheduling, appointment, payment, ordering, ticketing, giving, chat, reservation, table_reservation, invoice, queue, crowdfunding, class_booking, waiver, loyalty (via My Account), custom_flow (individual published flows) |
+| **Entry: contextual** | Triggered by events, post-completion, automation, merchant action, or a flow entry keyword | 9 | feedback, poll, recurring, survey, auto_reply, referral, reminders, waitlist, promo_verification |
 | **Entry: dashboard-only** | No customer-facing WhatsApp interaction | 8 | broadcast, membership, staff, whatsapp_sign, reports, estimates, packages, multi_location |
-| **Total** | | **33** | *Validated: 15 + 10 contextual + 8 dashboard = 33 (table_reservation counted once as top-level-menu)* |
+| **Total** | | **33** | *Validated: 16 + 9 contextual + 8 dashboard = 33 (table_reservation counted once as top-level-menu)* |
 
 **`getUserFacingCapabilities()` logic** (source: `lib/bot/handlers/flow-routing.ts:36-42`):
-- **Always excluded from menu** (18 IDs in `nonUserFacing` set): reminders, feedback, loyalty, referral, reports, staff, whatsapp_sign, survey, poll, broadcast, recurring, auto_reply, membership, estimates, packages, multi_location, promo_verification, custom_flow
+- **Excluded from the generic capability-ID menu filter** (18 IDs in `nonUserFacing` set): reminders, feedback, loyalty, referral, reports, staff, whatsapp_sign, survey, poll, broadcast, recurring, auto_reply, membership, estimates, packages, multi_location, promo_verification, custom_flow
 - **Conditionally excluded** (+2 when `scheduling` or `table_reservation` present): payment, invoice
-- **Maximum user-facing menu items**: 15 (all 33 minus 18 always-excluded)
-- **Minimum user-facing menu items**: 13 (when scheduling/table_reservation adds payment+invoice to exclusion)
+- **Maximum generic user-facing capability items**: 15 (all 33 minus 18 always-excluded)
+- **Minimum generic user-facing capability items**: 13 (when scheduling/table_reservation adds payment+invoice to exclusion)
 - Note: `waitlist` passes the filter but `prepareCapabilityMenu()` returns false for its backing check — it never appears in the menu, only triggered contextually when no slots available
+
+Custom-flow discovery appends individual tenant-scoped, entitled, published flow choices after the existing capability/account/directory/opt-in rows. Their labels come from validated published snapshots, not draft names. They share existing button/list pagination; a saved current-page snapshot resolves numbered replies. Selection rechecks current entitlement and publication, then starts the existing engine by flow ID, including flows without an entry keyword. Typed numbers never become marketing consent; the existing opt-in row still requires a real tap. This source-level integration does not certify hosted WhatsApp acceptance.
 
 ### 1.4 Certification Summary
 
