@@ -17,6 +17,7 @@
  */
 
 import { createHash } from 'crypto';
+import { hasCheckoutReply } from './checkout-reply-progress';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getPlatformSettingsSync, loadPlatformSettings, type PlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
@@ -99,18 +100,18 @@ export function resolveCustomerDailyReplyLimit(
 }
 
 /** True when the customer's active session with this business is paying. */
-async function isAtPaymentStep(db: SupabaseClient, phone: string, businessId: string): Promise<boolean> {
+async function readGuardSession(db: SupabaseClient, phone: string, businessId: string) {
   const { data, error } = await db
     .from('bot_sessions')
-    .select('current_step, session_data')
+    .select('id, current_step, session_data')
     .eq('whatsapp_number', phone)
     .eq('business_id', businessId)
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  const row = data as { current_step?: string; session_data?: Record<string, unknown> } | null;
-  return isPayingSession(row?.current_step, row?.session_data);
+  const row = data as { id?: string; current_step?: string; session_data?: Record<string, unknown> } | null;
+  return row;
 }
 
 export type CustomerReplyGuard = (businessId: string, recipientPhone: string) => Promise<void>;
@@ -133,10 +134,10 @@ function digits(phone: string): string {
  * CustomerDailyLimitError while the customer is over the limit.
  */
 export function createCustomerReplyGuard(db: SupabaseClient, phone: string): CustomerReplyGuardHandle {
-  const decisions = new Map<string, Promise<void>>();
+  const counts = new Map<string, Promise<{ overLimit: boolean; limit: number; sessionId?: string }>>();
   let noticePending = false;
 
-  async function decide(businessId: string): Promise<void> {
+  async function count(businessId: string): Promise<{ overLimit: boolean; limit: number; sessionId?: string }> {
     let limit: number;
     try {
       const { data: biz, error } = await db
@@ -153,7 +154,7 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
       );
     } catch (err) {
       logger.warn('[MESSAGE-GUARD] daily limit lookup failed; allowing reply:', (err as Error).message);
-      return;
+      return { overLimit: false, limit: 0 };
     }
 
     let usage: { over_limit?: boolean } | null;
@@ -165,17 +166,27 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
       usage = data as typeof usage;
     } catch (err) {
       logger.warn('[MESSAGE-GUARD] daily reply count failed; allowing reply:', (err as Error).message);
-      return;
+      return { overLimit: false, limit };
     }
-    if (!usage?.over_limit) return;
-
+    if (!usage?.over_limit) return { overLimit: false, limit };
     try {
-      if (await isAtPaymentStep(db, phone, businessId)) return;
+      const row = await readGuardSession(db, phone, businessId);
+      // Preserve the legacy per-inbound payment/fail-open decision. The new
+      // temporary checkout proof is deliberately NOT part of this cached value.
+      return { overLimit: !isPayingSession(row?.current_step, row?.session_data), limit, sessionId: row?.id };
     } catch (err) {
-      // Unknown whether the customer is paying: never cut off a possible checkout.
       logger.warn('[MESSAGE-GUARD] payment-step check failed; allowing reply:', (err as Error).message);
-      return;
+      return { overLimit: false, limit };
     }
+  }
+
+  async function decide(businessId: string): Promise<void> {
+    let counted = counts.get(businessId);
+    if (!counted) { counted = count(businessId); counts.set(businessId, counted); }
+    const { overLimit, limit, sessionId } = await counted;
+    if (!overLimit) return;
+    // Reevaluate only the ephemeral allowance on EVERY send, never cache it.
+    if (hasCheckoutReply(db, businessId, phone, sessionId)) return;
 
     logger.warn(`[MESSAGE-GUARD] customer ...${phone.slice(-4)} over daily limit ${limit} for business ${businessId}`);
     // Claim today's notice only now that a reply is really refused.
@@ -193,12 +204,7 @@ export function createCustomerReplyGuard(db: SupabaseClient, phone: string): Cus
   return {
     guard: (businessId: string, recipientPhone: string) => {
       if (!customerDigits || digits(recipientPhone) !== customerDigits) return Promise.resolve();
-      let decision = decisions.get(businessId);
-      if (!decision) {
-        decision = decide(businessId);
-        decisions.set(businessId, decision);
-      }
-      return decision;
+      return decide(businessId);
     },
     takeLimitNotice: () => {
       const due = noticePending;

@@ -1706,7 +1706,9 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.session.session_data._promo_action === 'applied' && ctx.session.session_data.promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data.discount_amount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
+          const text = await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`);
+          if (ctx.deferredTransitionMessages) ctx.deferredTransitionMessages.push({ type: 'text', text });
+          else await ctx.sender.sendText({ to: ctx.from, text });
         }
         // Logistics mode: skip delivery zones, collect pickup+dropoff addresses
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -1771,7 +1773,9 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.session.session_data.promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data.discount_amount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
+          const text = await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`);
+          if (ctx.deferredTransitionMessages) ctx.deferredTransitionMessages.push({ type: 'text', text });
+          else await ctx.sender.sendText({ to: ctx.from, text });
         }
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         if (meta.logistics_mode) return 'collect_pickup_address';
@@ -1828,6 +1832,8 @@ export const orderingFlow: FlowDefinition = {
           .from('delivery_zones')
           .select('id, name, price, is_pickup, is_negotiable')
           .eq('id', input)
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .single();
 
         if (!zone) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.valid_zone_hint') };

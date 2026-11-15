@@ -1,3 +1,4 @@
+import { checkoutProgress, forwardCheckoutProgress, withCheckoutReply, type CheckoutProgress } from '@/lib/messaging/checkout-reply-progress';
 import { isSharedConversation, DIRECTORY_ACTION, transactionNextSteps } from './shared/navigation';
 import { redactPrivateLinkPath } from '@/lib/sentry-redact';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -269,6 +270,7 @@ export class FlowExecutor {
     const ctx: FlowContext = {
       supabase: this.supabase,
       sender: scopedSender,
+      deferredTransitionMessages: [],
       standalone: this.standalone,
       intelligence: this.intelligence,
       from,
@@ -897,7 +899,8 @@ export class FlowExecutor {
     _fmark('step_next');
 
     if (nextStepId) {
-      await this.advanceToStep(session, nextStepId, from, ctx, translationCtx, scopedSender);
+      const progress = checkoutProgress(ctx, stepId, nextStepId, result.data);
+      await this.advanceToStep(session, nextStepId, from, ctx, translationCtx, scopedSender, progress);
       _fmark('advance_done');
       executionReachedTerminal = true; // #267: advanced to next step
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
@@ -974,6 +977,7 @@ export class FlowExecutor {
     ctx: FlowContext,
     tCtx: TranslationContext,
     sender?: MessageSender,
+    progress?: CheckoutProgress,
   ): Promise<void> {
     session.current_step = nextStepId;
     const advanceSaved = await this.casUpdateSession(session, {
@@ -1020,37 +1024,43 @@ export class FlowExecutor {
     if (shouldSkipNext) {
       const afterNext = await nextStep.next(ctx);
       if (afterNext) {
-        await this.advanceToStep(session, afterNext, from, ctx, tCtx, sender);
+        await this.advanceToStep(session, afterNext, from, ctx, tCtx, sender, forwardCheckoutProgress(progress, nextStepId, afterNext));
       } else {
         await this.deactivateSession(session.id);
       }
       return;
     }
 
-    // Show next step's prompt (possibly customized)
-    if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
-      if (!session.conversation_log) session.conversation_log = [];
-      this.trackStepHistory(session, nextStepId);
-      const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session, tCtx);
-      session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
-      if (!await this.persistConversationLog(session, session.conversation_log)) return;
-      await this.sendText(from, translatedCustom, sender);
-    } else {
-      const messages = await nextStep.prompt(ctx);
-      if (messages.length > 0) {
+    // Destination CAS succeeded; scope closes even on refusal or a thrown prompt.
+    await withCheckoutReply(progress, async () => {
+      const deferred = ctx.deferredTransitionMessages?.splice(0) || [];
+      // Show next step's prompt (possibly customized)
+      if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
+        if (!session.conversation_log) session.conversation_log = [];
         this.trackStepHistory(session, nextStepId);
+        const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session, tCtx);
+        this.logPromptMessages(session, deferred);
+        session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
+        if (!await this.persistConversationLog(session, session.conversation_log)) return;
+        if (deferred.length) await this.sendMessages(from, deferred, undefined, tCtx, sender);
+        await this.sendText(from, translatedCustom, sender);
+      } else {
+        const messages = [...deferred, ...await nextStep.prompt(ctx)];
+        if (messages.length > 0) {
+          this.trackStepHistory(session, nextStepId);
+        }
+        this.logPromptMessages(session, messages);
+        // ACC-008: Honor nextAfterPrompt in advanceToStep as well.
+        const advNap = typeof nextStep.nextAfterPrompt === 'function'
+          ? nextStep.nextAfterPrompt(ctx)
+          : nextStep.nextAfterPrompt;
+        if (advNap) {
+          session.current_step = advNap;
+        }
+        if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
+        await this.sendMessages(from, messages, undefined, tCtx, sender);
       }
-      this.logPromptMessages(session, messages);
-      // ACC-008: Honor nextAfterPrompt in advanceToStep as well.
-      const advNap = typeof nextStep.nextAfterPrompt === 'function'
-        ? nextStep.nextAfterPrompt(ctx)
-        : nextStep.nextAfterPrompt;
-      if (advNap) {
-        session.current_step = advNap;
-      }
-      if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
-      await this.sendMessages(from, messages, undefined, tCtx, sender);
-    }
+    });
   }
 
   /** Track which steps the user has actually seen (not auto-skipped) for "back" navigation */
