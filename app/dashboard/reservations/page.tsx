@@ -602,6 +602,11 @@ export default function BookingsPage() {
     const table = isThisReservation ? 'reservations' : 'bookings';
     const { error: statusError } = await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
 
+    if (statusError) {
+      alert(statusError.code === '40001' ? 'This resource changed. Try again.' : 'Failed to update');
+      return;
+    }
+
     // #963: an approved booking sends its after-booking intake form (if any).
     if (!statusError && !isThisReservation && newStatus === 'confirmed') {
       fetch('/api/intake/after-confirm', {

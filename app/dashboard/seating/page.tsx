@@ -6,6 +6,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
+import InternalHolds from '@/components/dashboard/seating/InternalHolds';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface SeatingResource {
@@ -182,7 +183,9 @@ export default function SeatingPage() {
       : await supabase.from('seating_resources').insert(payload);
     if (err) {
       // The database check still guards a bypassed client check; show the same guidance, not the raw error.
-      setError(err.message?.includes('seating_no_overnight') ? OVERNIGHT_MESSAGE : err.message);
+      setError(err.code === '40001' ? 'This resource changed. Try again.'
+        : err.message?.includes('seating_capacity_conflict') ? 'Capacity cannot be reduced below existing bookings and holds.'
+        : err.message?.includes('seating_no_overnight') ? OVERNIGHT_MESSAGE : err.message);
       setSaving(false);
       return;
     }
@@ -466,6 +469,7 @@ export default function SeatingPage() {
           ))}
         </div>
       )}
+      <InternalHolds businessId={business.id} timezone={business.timezone || 'UTC'} resources={resources} />
     </div>
   );
 }

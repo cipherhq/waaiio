@@ -1,6 +1,6 @@
 # Waaiio Engineering Standing Operating Order
 
-> Canonical governance document for Waaiio engineering, security, release, production E2E certification, and Claude/CTO-reviewer/Owner collaboration.
+> Canonical governance document for Waaiio engineering, security, release, production E2E certification, and implementation/reviewer/Owner collaboration.
 > Source: GitHub issue #220 and its governance addenda. This file is the authoritative version once merged to protected main.
 
 ---
@@ -8,15 +8,24 @@
 ## Roles
 
 - **Owner** = final business/product authority and separate merge/deploy/production-mutation authority.
-- **Claude** = primary repository auditor/reviewer/implementer.
-- **CTO / reviewer of record** = an independent Claude reviewer (see below). This role is the architecture/security/release gate, not merely a second reviewer.
+- **Implementation agent** = the assigned implementation chat or agent, including Claude or Codex.
+- **Reviewer A (Codex)** = functional correctness, requirements, customer journeys, regressions, test coverage and accessibility.
+- **Reviewer B (Codex)** = security, authorization, tenant isolation, financial and data integrity, concurrency, migrations and architecture.
 
-**Reviewer of record (Owner decision 2026-11-03).** The CTO review role is performed by an **independent Claude reviewer**, every time.
-- **Who:** a separate Claude session or agent, not the implementing Claude. It starts from fresh context.
-- **How:** it makes no changes to code, branches, data, infrastructure or providers. It reviews the exact head SHA, uses the Supabase, GitHub and Vercel MCP connectors and Graphify for evidence, and returns **READY FOR MERGE**, **BLOCKED** or **FAILED -- CTO HELP NEEDED**.
-- **Posting:** it may post only its own review and checkpoint on GitHub. If it cannot post, the orchestrating session posts its output verbatim, unedited, with the reviewer's session or agent ID and the reviewed SHA.
-- **Two-reviewer gate:** two such reviewers, each with its own fresh context.
-- **ChatGPT** (the earlier CTO) may still be used when the Owner asks. It is no longer required. Elsewhere in these documents, "CTO" means the reviewer of record.
+**Two Codex reviewers (Owner decision 2026-11-14).** The same two independent Codex reviewers review completed work across assigned chats, including documentation changes. This replaces the mandatory Claude reviewer assignment from 2026-11-03. Elsewhere, the CTO review gate means this pair acting within their respective responsibilities, with both verdicts required.
+
+- Both reviewers independently inspect the exact final head SHA and current evidence. They are separate from the implementer and each other. Each reviews its full responsibility scope and relevant dependencies using current GitHub evidence, relevant MCP connectors and Graphify. Record unavailable evidence honestly.
+- Reviews are read-only for code, branches, data, infrastructure and providers. Reviewers may post their own GitHub review/checkpoint. An orchestrating chat may post a review verbatim with reviewer identity and reviewed SHA if the reviewer cannot post it.
+- Either reviewer may block completion with supported evidence. The implementation chat fixes and retests the findings, then both reviewers recheck the changed head using the dependency-aware checkpoint process. Completion requires both reviewers to return READY FOR MERGE on the final SHA and required exact-head CI evidence.
+- Verdicts are **READY FOR MERGE**, **BLOCKED**, or **FAILED -- CTO HELP NEEDED**. Only the Owner authorizes merge, deployment and production/database mutations. Product and user-facing wording decisions remain with the Owner.
+- The independent Evidence Verification Agent severity gate below remains mandatory. A finding's author cannot independently verify their own claim. Review assignments alone do not establish verification evidence.
+- Prior valid reviews retain their historical validity and recorded scope. The reviewer change does not retroactively invalidate reviews or releases. New changes still trigger the existing dependency and exact-SHA rechecks.
+
+### Coordination across chats
+
+The Owner-designated coordinator assigns bounded work, records ownership/status/conflicts, and routes completed work to the same reviewer pair. When the pair lives in another chat, send the review request to that hosting chat with branch, worktree, PR, exact SHA, acceptance criteria and evidence. Reuse the pair rather than creating replacement reviewers.
+
+All Owner product questions, verification requests and approvals go through the coordinator. Queue requests and present one selectable question at a time, with options and a recommendation. Relay the Owner's answer to the implementation chat and record material decisions on GitHub. Implementation chats continue independent authorized work while an answer is pending. Coordination is explicit work by the assigned chats, with no implied global background monitoring.
 
 ## Evidence Hierarchy
 
@@ -57,15 +66,15 @@ Apply this inside the **existing** Phase A/implementation/CTO workflow; do not c
 
 For security, payments, financial state, migrations, authorization, concurrency, state transitions, cross-tenant behavior, privileged RPCs, and other high-blast-radius work:
 
-1. Claude performs **Phase A audit + blast-radius mapping** first.
-2. Claude posts all substantive evidence to the GitHub issue, not chat.
-3. Claude ends Phase A with explicit **AGREE** or **PUSHBACK** on the proposed architecture.
-4. The CTO reviewer independently reads GitHub, verifies repository/database/runtime evidence, and makes the CTO architecture decision.
-5. Claude and the CTO reviewer must substantively agree before implementation.
+1. The implementation agent performs **Phase A audit + blast-radius mapping** first.
+2. The implementation agent posts all substantive evidence to the GitHub issue, not chat.
+3. The implementation agent ends Phase A with explicit **AGREE** or **PUSHBACK** on the proposed architecture.
+4. The CTO reviewers independently read GitHub and verify repository/database/runtime evidence within their responsibilities before recording the architecture decision.
+5. The implementation agent and the CTO reviewers must substantively agree before implementation.
 6. If they cannot agree on a genuine product/business tradeoff, escalate to Owner with a concise decision question and recommended options.
-7. Claude implements only after agreement, on a dedicated branch/PR.
-8. Claude runs executable tests/CI, posts evidence to GitHub, then stops.
-9. The CTO reviewer independently reviews the exact final PR head SHA and returns **READY FOR MERGE** or **BLOCKED**.
+7. The implementation agent implements only after agreement, on a dedicated branch/PR.
+8. The implementation agent runs executable tests/CI, posts evidence to GitHub, then stops.
+9. Both Codex reviewers independently review the exact final PR head SHA and each return **READY FOR MERGE** or **BLOCKED**.
 10. Owner separately authorizes merge.
 11. Protected-main CI must pass after merge.
 12. Deployment and production/database mutation are separate authorization phases unless Owner explicitly combines them.

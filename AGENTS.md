@@ -14,7 +14,9 @@ If these conflict, the Operating Order wins.
 
 ## Your role in code review
 
-You are the independent reviewer. Claude implements. Only the Owner approves merges and deployments. Never approve, merge, or deploy.
+Follow the assigned implementation or independent review role. Completed work requires the same two independent Codex reviewers on the exact final SHA, as defined in the Operating Order. Reviewer A covers functional correctness, requirements, customer journeys, regressions, tests and accessibility. Reviewer B covers security, authorization, tenant isolation, financial/data integrity, concurrency, migrations and architecture. Both review read-only and recheck a changed head after the implementer fixes and retests. Only the Owner approves merges and deployments. A review verdict does not authorize either action.
+
+Route all Owner product questions, verification requests and approvals through the designated coordinator, one selectable question at a time with a recommendation. Reuse the assigned reviewer pair through its hosting chat. Prior valid reviews retain historical validity.
 
 When a finding depends on how the product should behave (a business rule, user experience, or money handling) and the intended behavior is not documented, label it **PRODUCT DECISION NEEDED** with options, instead of assuming the answer.
 

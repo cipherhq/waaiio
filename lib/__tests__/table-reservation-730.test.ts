@@ -974,6 +974,11 @@ describe('#730: Admin API and security', () => {
     mockChain.in = vi.fn().mockReturnValue(mockChain);
     mockChain.gte = vi.fn().mockReturnValue(mockChain);
     mockChain.lte = vi.fn().mockReturnValue(mockChain);
+    mockChain.is = vi.fn().mockReturnValue(mockChain);
+    mockChain.range = vi.fn().mockReturnValue(mockChain);
+    mockChain.order = vi.fn().mockReturnValue(mockChain);
+    mockChain.lt = vi.fn().mockReturnValue(mockChain);
+    mockChain.gt = vi.fn().mockResolvedValue({ data: [], error: null });
     // Return empty — Table A has no bookings (B's bookings are filtered out)
     mockChain.limit = vi.fn().mockResolvedValue({ data: [] });
     const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockChain) }) } as any;
@@ -1027,6 +1032,11 @@ describe('#730: Admin API and security', () => {
     mockChain.in = vi.fn().mockReturnValue(mockChain);
     mockChain.gte = vi.fn().mockReturnValue(mockChain);
     mockChain.lte = vi.fn().mockReturnValue(mockChain);
+    mockChain.is = vi.fn().mockReturnValue(mockChain);
+    mockChain.range = vi.fn().mockReturnValue(mockChain);
+    mockChain.order = vi.fn().mockReturnValue(mockChain);
+    mockChain.lt = vi.fn().mockReturnValue(mockChain);
+    mockChain.gt = vi.fn().mockResolvedValue({ data: [], error: null });
     mockChain.limit = vi.fn().mockResolvedValue({ data: bookings });
     const mockSupabase = { from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(mockChain) }) } as any;
 
