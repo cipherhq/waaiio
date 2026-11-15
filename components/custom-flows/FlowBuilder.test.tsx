@@ -3,6 +3,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FlowBuilder } from './FlowBuilder';
+import { createTemplate } from '@/lib/custom-flow-builder/templates';
 
 const definition = { id: 'flow', name: 'Saved flow', status: 'draft', greeting: 'Welcome', fallback_message: 'Try again', nodes: [
   { id: 'a', type: 'message', text: 'First', next: 'b' }, { id: 'b', type: 'message', text: 'Last', next: null },
@@ -13,8 +14,14 @@ beforeEach(() => {
   row = { id: 'flow', version: 1, definition: structuredClone(definition), published_definition: structuredClone(definition), published_version: 1 };
   calls = [];
   vi.stubGlobal('fetch', vi.fn(async (_url: string, options?: RequestInit) => {
+    if (_url.startsWith('/api/custom-flows/data')) return {ok:true,json:async()=>({tables:[],rows:[]})};
     if (!options?.method) return { ok: true, json: async () => ({ flows: [structuredClone(row)] }) };
     const body = JSON.parse(String(options.body)); calls.push(body);
+    if (_url === '/api/custom-flows/setup') {
+      body.action='setup';
+      row.definition=createTemplate({...body,timezone:'Africa/Lagos',currency:'NGN'}).definition as typeof definition;
+      row.id=body.id;row.version=1;
+    }
     if (body.action === 'create') { row.definition = body.definition; row.version = 1; }
     if (body.action === 'save') { row.definition = body.definition; row.version++; }
     if (body.action === 'restore') { row.definition = structuredClone(row.published_definition); row.version++; }
@@ -36,8 +43,11 @@ describe('FlowBuilder user journeys', () => {
   it('creates, saves, validates, previews, publishes, edits and resets a new flow', async () => {
     render(<FlowBuilder businessId="business" />);
     await screen.findByRole('option', { name: 'Saved flow' });
-    fireEvent.click(screen.getByRole('button', { name: 'New flow' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start blank' }));
     fireEvent.change(screen.getByLabelText('Flow name'), { target: { value: 'New flow' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    fireEvent.click(await screen.findByRole('button', {name:'Advanced editor'}));
+    fireEvent.click(screen.getByRole('button', {name:'Remove block'}));
     fireEvent.change(screen.getByLabelText('Greeting'), { target: { value: 'New greeting' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add message' }));
     fireEvent.change(screen.getAllByLabelText('Message').find(element => element.tagName === 'TEXTAREA')!, { target: { value: 'Hello' } });
@@ -47,27 +57,27 @@ describe('FlowBuilder user journeys', () => {
     await screen.findByText('No validation errors.');
     fireEvent.click(screen.getByRole('button', { name: 'Restart preview' }));
     await screen.findByText('New greeting');
-    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish flow' }));
     await screen.findByText('Flow published.');
     fireEvent.change(screen.getByLabelText('Greeting'), { target: { value: 'Unsaved replacement' } });
     fireEvent.click(screen.getByRole('button', { name: 'Reset draft to published' }));
     await screen.findByText('Draft reset to published.');
     expect((screen.getByLabelText('Greeting') as HTMLInputElement).value).toBe('New greeting');
-    expect(calls.map(call => call.action)).toEqual(['create', 'validate', 'preview', 'publish', 'restore']);
+    expect(calls.map(call => call.action)).toEqual(['setup','save', 'validate', 'preview', 'publish', 'restore']);
   });
 
   it('keeps reorder draft-only until save and explicit publish', async () => {
     await open();
     fireEvent.click(screen.getByRole('button', { name: 'Move up: 2. Message' }));
     expect(calls).toHaveLength(0);
-    expect((screen.getByRole('button', { name: 'Publish' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Publish flow' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     await screen.findByText('Draft saved.');
     expect(calls[0].definition.nodes.map((node: Record<string, string>) => node.id)).toEqual(['b', 'a']);
     expect(calls[0].definition.start_node).toBe('b');
     expect(calls[0].definition.nodes.map((node: Record<string, string>) => node.next)).toEqual(['a', null]);
     expect(row.published_definition.nodes[0].id).toBe('a');
-    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish flow' }));
     await screen.findByText('Flow published.');
     expect(calls[1].action).toBe('publish');
     expect(calls[1].version).toBe(2);

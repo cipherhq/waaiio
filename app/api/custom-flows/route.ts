@@ -1,25 +1,13 @@
+import { authorize, boundedBody, fail, flowColumns as columns } from '@/lib/custom-flow-builder/server';
 import { NextResponse, type NextRequest } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { requireCapability } from '@/lib/capabilities/api-guard';
 import { validateDefinition } from '@/lib/bot/custom-flow/definition';
 import { excessiveMessageChains, readDraft, record } from '@/lib/custom-flow-builder/definition';
 import { previewDraft } from '@/lib/custom-flow-builder/preview';
+import { guidedReadiness } from '@/lib/custom-flow-builder/readiness';
+import { businessData } from '@/lib/bot/custom-flow/sources';
 
-const columns = 'id,business_id,name,status,definition,version,published_definition,published_version,updated_at';
-const fail = (error: string, status: number) => NextResponse.json({ error }, { status });
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-
-async function authorize(businessId: unknown) {
-  const db = await createClient();
-  const { data: { user } } = await db.auth.getUser();
-  if (!user) return fail('unauthorized', 401);
-  if (!uuid(businessId)) return fail('invalid_business', 400);
-  const guard = await requireCapability(db, createServiceClient(), { businessId, userId: user.id, capability: 'custom_flow', action: 'create_new' });
-  if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
-  if (guard.business.status !== 'active') return fail('business_not_active', 403);
-  return { db, businessId };
-}
 
 export async function GET(request: NextRequest) {
   const auth = await authorize(request.nextUrl.searchParams.get('businessId'));
@@ -27,21 +15,6 @@ export async function GET(request: NextRequest) {
   const { data, error } = await auth.db.from('custom_flows').select(columns).eq('business_id', auth.businessId).order('created_at', { ascending: false });
   if (error) return fail('read_failed', 500);
   return NextResponse.json({ flows: data }, { headers: { 'Cache-Control': 'no-store' } });
-}
-
-async function boundedBody(request: NextRequest): Promise<unknown> {
-  const reader = request.body?.getReader();
-  if (!reader) throw new Error('invalid_body');
-  const decoder = new TextDecoder();
-  let bytes = 0, body = '';
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    bytes += chunk.value.byteLength;
-    if (bytes > 256 * 1024) { await reader.cancel(); throw new Error('body_too_large'); }
-    body += decoder.decode(chunk.value, { stream: true });
-  }
-  return JSON.parse(body + decoder.decode());
 }
 
 export async function POST(request: NextRequest) {
@@ -68,6 +41,14 @@ export async function POST(request: NextRequest) {
     draft = readDraft(action === 'restore' ? row?.published_definition : action === 'publish' ? row?.definition : body.definition, id, businessId);
   } catch (error) { return fail(error instanceof Error ? error.message : 'invalid_definition', 400); }
 
+  if (draft.guided || draft.business_bindings) {
+    try {
+      const settings = await businessData(db,businessId,draft.business_bindings ?? []);
+      if (!settings.timezone || !settings.currency) return fail('missing_business_settings',422);
+      draft = { ...draft,timezone:settings.timezone,currency:settings.currency };
+    } catch { return fail('read_failed',500); }
+  }
+
   if (action === 'validate' || action === 'publish' || action === 'preview') {
     const errors = validateDefinition(draft);
     const longChains = excessiveMessageChains(draft);
@@ -84,6 +65,15 @@ export async function POST(request: NextRequest) {
     });
     if (invalidFields.length) return NextResponse.json({ error: 'invalid_lookup_fields', nodes: invalidFields.map(node => node.id), errors }, { status: 422 });
     if (errors.length) return NextResponse.json({ error: 'invalid_definition', errors }, { status: 422 });
+    // Preview may exercise incomplete content/fallbacks. Publishing cannot
+    // silently remove sections or publish an empty selected lookup.
+    if (action !== 'preview') {
+      try {
+        const ready = await guidedReadiness(db,businessId,draft);
+        if (ready.missingBusiness) return fail('missing_business_settings',422);
+        if (ready.sections.length) return NextResponse.json({error:'incomplete_sections',sections:ready.sections},{status:422});
+      } catch { return fail('table_read_failed',500); }
+    }
     if (action === 'validate') return NextResponse.json({ errors: [] });
     if (action === 'preview') {
       if (!Array.isArray(body.inputs) || body.inputs.length > 50 || body.inputs.some(input => typeof input !== 'string' || input.length > 2000)) return fail('invalid_preview_input', 400);

@@ -1,0 +1,289 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "0",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "smallint"
+   },
+   "after_sha256": "3dce7ef1d9dd5e7f68caa167ddd1993e4ff2704eb0200e6b54d23ad08dab1080",
+   "identity": "column:public.custom_flow_tables.editor_schema_version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "jsonb"
+   },
+   "after_sha256": "64b143d87ef79d9abd82ed81c440484a73ca388318df93824a5f1157fd70c590",
+   "identity": "column:public.custom_flows.creation_payload",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (editor_schema_version = ANY (ARRAY[0, 1]))",
+    "validated": true
+   },
+   "after_sha256": "266053f3a400094c4e642efd3bd134855121d507570e131b3d88c5baf6a6bf9b",
+   "identity": "constraint:public.custom_flow_tables.custom_flow_tables_editor_schema_version_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (creation_payload IS NULL OR jsonb_typeof(creation_payload) = 'object'::text)",
+    "validated": true
+   },
+   "after_sha256": "85c85ef6a1c2a0246325b382caaf0f21f423427c3fb11a31f6f640ca3f9864e5",
+   "identity": "constraint:public.custom_flows.custom_flows_creation_payload_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_id uuid, p_business_id uuid, p_request jsonb, p_definition jsonb, p_tables jsonb",
+    "body_sha256": "2f730f1576f59d6c89b3c8e3da1ed876527e0b4a944ef70dfa85962cb9236976",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "custom_flows",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "a20f63eed31569601abef6dbe22bce44c949d0b98b911f0f9456c3bf33efc125",
+   "identity": "function:public.create_custom_flow_template(p_id uuid, p_business_id uuid, p_request jsonb, p_definition jsonb, p_tables jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_columns jsonb",
+    "body_sha256": "cd336c1c5edac65b10e843f62ad136a6dcd0c7af328424100d66bdb338b06346",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "af5327351563f352a0a6c1a0a19e9e98e6b6b8727f7c65b797730b71907f5986",
+   "identity": "function:public.custom_flow_columns_valid(p_columns jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_columns jsonb, p_data jsonb",
+    "body_sha256": "96609cdc926c51f522f9978c02a2527f56711742be4b6228e3fe0cafa67c57ad",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "i"
+   },
+   "after_sha256": "96b61156745ee462253e0a68c3574463833745b893d9f2d7e3f50a74c9f3805f",
+   "identity": "function:public.custom_flow_row_shape_valid(p_columns jsonb, p_data jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "1acdc632774adf7633fe0959272b447942c53909ee16e046f5b0a8683b8ab1c0",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "0a17e0c7ca400551b77d75cd26a991e00b1c2ce9f239610decf3dae4200f3ab5",
+   "identity": "function:public.guard_custom_flow_creation_payload()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "7bb57bfa81313d863bba8526d17a7a0799a298badd1124f8977b00b7d8f745a6",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "39b38b48d29d66badead63eaf18edcf46da34fe85d83efb8b4272bd668224c65",
+   "identity": "function:public.guard_custom_flow_table_row()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "8029ab1aff7c8e19568f59e26e3a08fc116c90fd0c11846d9014861550484551",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f0409c2733ad6cd83223d5b801a04839b8f05fd9295eb456a598722bf08ef753",
+   "identity": "function:public.guard_custom_flow_table_schema()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_custom_flow_table_row BEFORE INSERT OR DELETE OR UPDATE ON custom_flow_table_rows FOR EACH ROW EXECUTE FUNCTION guard_custom_flow_table_row()",
+    "enabled": "O"
+   },
+   "after_sha256": "59fea47b8e1e9e4e9dc02755860b3c0fb8f1bee1ba7db3f87a190b9b19cd9b89",
+   "identity": "trigger:public.custom_flow_table_rows.guard_custom_flow_table_row",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_custom_flow_table_schema BEFORE INSERT OR UPDATE ON custom_flow_tables FOR EACH ROW EXECUTE FUNCTION guard_custom_flow_table_schema()",
+    "enabled": "O"
+   },
+   "after_sha256": "3906ec0044d8e53364c79e66970146d5659c4711f8ed2a4b5f465adeafd832ef",
+   "identity": "trigger:public.custom_flow_tables.guard_custom_flow_table_schema",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER guard_custom_flow_creation_payload BEFORE UPDATE ON custom_flows FOR EACH ROW EXECUTE FUNCTION guard_custom_flow_creation_payload()",
+    "enabled": "O"
+   },
+   "after_sha256": "9b57f1ec217f0263c13d8cb9de712da7819e44cd0884d23a51f149ccc3ed25e4",
+   "identity": "trigger:public.custom_flows.guard_custom_flow_creation_payload",
+   "operation": "add"
+  }
+ ],
+ "migration": "543_custom_flow_guided_setup.sql",
+ "migration_sha256": "f63d288481c9eb7f9dddbf56fc3afee623e60a67e3d9db4980cef08bb6c42427",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

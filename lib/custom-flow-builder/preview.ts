@@ -53,8 +53,12 @@ export async function previewDraft(readonlyDb: SupabaseClient, businessId: strin
         insert: (row: Row) => new MemoryQuery(memory[table], 'insert', row),
         update: (row: Row) => new MemoryQuery(memory[table], 'update', row),
       };
-      if (!['businesses', 'business_capabilities', 'capability_overrides', 'custom_flow_tables', 'custom_flow_table_rows'].includes(table)) throw new Error('preview_table_not_allowed');
+      if (!['businesses', 'business_capabilities', 'capability_overrides', 'custom_flow_tables', 'custom_flow_table_rows', 'countries', 'products', 'services', 'events', 'event_ticket_types'].includes(table)) throw new Error('preview_table_not_allowed');
       return { select(columns: string) {
+        // Ticket ownership lives on events; force an inner parent scope even
+        // though the shared resolver also checks the requested event first.
+        if (table === 'event_ticket_types') return readonlyDb.from(table).select(`${columns},events!inner(business_id)`).eq('events.business_id', businessId);
+        if (table === 'countries') return readonlyDb.from(table).select('currency_code');
         let query = readonlyDb.from(table).select(columns).eq(table === 'businesses' ? 'id' : 'business_id', businessId);
         if (table === 'custom_flow_tables') query = query.eq('flow_id', draft.id);
         return query;
