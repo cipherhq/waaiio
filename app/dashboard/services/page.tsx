@@ -722,13 +722,14 @@ export default function ServicesPage() {
               {showDuration && (
                 <div className="ml-1 pb-2 space-y-2">
                   <div>
-                    <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
+                    <label htmlFor="service-duration" className="mb-1 block text-xs text-gray-500">Duration (minutes)</label>
+                    <input id="service-duration" type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
                       placeholder="e.g. 30" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                     <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">minutes</span>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Buffer time <Tooltip text={FIELD_TOOLTIPS['service.buffer']} /></p>
-                    <input type="number" min={0} step={5} value={form.buffer_minutes || ''} onChange={(e) => setForm({ ...form, buffer_minutes: Number(e.target.value) || 0 })}
+                    <label htmlFor="service-buffer" className="block text-xs text-gray-500 mb-1">Buffer time (minutes) <Tooltip text={FIELD_TOOLTIPS['service.buffer']} /></label>
+                    <input id="service-buffer" type="number" min={0} step={5} value={form.buffer_minutes || ''} onChange={(e) => setForm({ ...form, buffer_minutes: Number(e.target.value) || 0 })}
                       placeholder="e.g. 10" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                     <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">min cleanup/prep</span>
                   </div>
@@ -953,9 +954,9 @@ export default function ServicesPage() {
 
                 {/* Max capacity */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max bookings per time slot</label>
+                  <label htmlFor="service-capacity" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max bookings per time slot</label>
                   <p className="mb-1 text-xs text-gray-400 dark:text-gray-500">0 = unlimited. Prevents overbooking.</p>
-                  <input type="number" min={0} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
+                  <input id="service-capacity" type="number" min={0} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
                     onChange={(e) => setForm({ ...form, ...{ max_capacity: Number(e.target.value) || null } } as Service)}
                     placeholder="Unlimited" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                 </div>
