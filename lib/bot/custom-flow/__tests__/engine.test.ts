@@ -855,3 +855,121 @@ describe('template substitution', () => {
     expect(substitute('Hello {{name}}, {{missing}}!', { name: 'Ada' })).toBe('Hello Ada, !');
   });
 });
+
+describe('published business-menu entry', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const def = { ...FESTIVAL_DEF, id, entry_keyword: null };
+  async function fixture() {
+    const { publishedFlowChoices, rememberFlowMenu } = await import('../menu');
+    const { handleCustomFlowMenu } = await import('../menu-entry');
+    const { supabase, db } = createFakeSupabase(seedFor([def]));
+    const sender = createRecordingSender();
+    const session = { id: 'menu-session', business_id: BUSINESS_A, current_step: 'select_capability', version: 0, session_data: { keep: 'preserved' } as Record<string, unknown> };
+    rememberFlowMenu(session, BUSINESS_A, ['cap_chat', `cf-start:${id}`]);
+    let version = 0;
+    const rpc = vi.fn(async (_name: string, args: Record<string, any>) => {
+      if (args.p_expected_version !== version) return { data: { success: false, reason: 'version_conflict' }, error: null };
+      version++;
+      return { data: { success: true, version }, error: null };
+    });
+    Object.assign(supabase, { rpc });
+    const args = { supabase, sender, businessId: BUSINESS_A, from: PHONE, text: `cf-start:${id}`, session, isPinStep: false, isBusinessCode: vi.fn(async () => false) };
+    return { supabase, db, sender, session, rpc, args, handleCustomFlowMenu, publishedFlowChoices };
+  }
+  it('lists only valid published tenant snapshots and never an edited draft name', async () => {
+    const f = await fixture();
+    f.db.custom_flows[0].name = 'Unpublished new name';
+    f.db.custom_flows.push({ ...flowRow(BUSINESS_B, { ...def, id: '22222222-2222-4222-8222-222222222222' }) });
+    f.db.custom_flows.push({ ...flowRow(BUSINESS_A, { ...def, id: '33333333-3333-4333-8333-333333333333' }), status: 'draft' });
+    f.db.custom_flows.push({ ...flowRow(BUSINESS_A, { ...def, id: '44444444-4444-4444-8444-444444444444' }), published_definition: {} });
+    expect(await f.publishedFlowChoices(f.supabase, BUSINESS_A)).toEqual([{ id, name: def.name }]);
+  });
+  it('claims a displayed blank-keyword flow once, preserves unrelated data, and runs existing rendering', async () => {
+    const f = await fixture();
+    Object.assign(f.session.session_data, { _cap_menu_page: 1, _cap_menu_total_pages: 2 });
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'started' });
+    expect(f.session.session_data).toEqual({ keep: 'preserved' });
+    expect(f.session.version).toBe(1);
+    expect(f.db.custom_flow_sessions).toHaveLength(1);
+    expect(f.sender.buttons[0].body).toBe(def.greeting);
+    expect(f.sender.bindBusiness).toHaveBeenCalledWith(BUSINESS_A);
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'unavailable' });
+    expect(f.db.custom_flow_sessions).toHaveLength(1);
+  });
+  it('resolves the displayed numeric ID despite database ordering changes', async () => {
+    const f = await fixture();
+    f.db.custom_flows.unshift(flowRow(BUSINESS_A, { ...def, id: '00000000-0000-4000-8000-000000000000' }));
+    expect(await f.handleCustomFlowMenu({ ...f.args, text: '2' })).toEqual({ kind: 'started' });
+    expect(f.db.custom_flow_sessions[0].flow_id).toBe(id);
+  });
+  it('maps ordinary options and navigation without starting a custom flow', async () => {
+    const f = await fixture();
+    expect(await f.handleCustomFlowMenu({ ...f.args, text: '1' })).toEqual({ kind: 'mapped', text: 'cap_chat' });
+    (f.session.session_data._custom_flow_menu as any).postbacks[0] = 'cap_nav_more';
+    expect(await f.handleCustomFlowMenu({ ...f.args, text: '1' })).toEqual({ kind: 'mapped', text: 'cap_nav_more' });
+    expect(f.rpc).not.toHaveBeenCalled();
+  });
+  it.each(['foreign', 'unpublished', 'invalid', 'disabled', 'deleted'])('rechecks %s at selection and consumes failed claims without a session or greeting', async kind => {
+    const f = await fixture();
+    if (kind === 'foreign') f.db.custom_flows[0].business_id = BUSINESS_B;
+    if (kind === 'unpublished') f.db.custom_flows[0].status = 'draft';
+    if (kind === 'invalid') f.db.custom_flows[0].published_definition = {};
+    if (kind === 'disabled') f.db.business_capabilities[0].is_enabled = false;
+    if (kind === 'deleted') f.db.custom_flows = [];
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'unavailable' });
+    expect(f.session.session_data._custom_flow_menu).toBeUndefined();
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+    expect(f.sender.sendButtons).not.toHaveBeenCalled();
+    expect(f.sender.sendText).not.toHaveBeenCalled();
+  });
+  it.each(['business', 'session', 'step', 'malformed', 'not-displayed'])('rejects %s context without claiming or starting', async kind => {
+    const f = await fixture();
+    if (kind === 'business') f.session.business_id = BUSINESS_B;
+    if (kind === 'session') f.session.id = 'another-session';
+    if (kind === 'step') f.session.current_step = 'select_date';
+    if (kind === 'malformed') f.args.text = 'cf-start:bad';
+    if (kind === 'not-displayed') f.args.text = 'cf-start:22222222-2222-4222-8222-222222222222';
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'unavailable' });
+    expect(f.rpc).not.toHaveBeenCalled();
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+  });
+  it('fails a lost CAS without sending a greeting or starting', async () => {
+    const f = await fixture();
+    f.rpc.mockResolvedValueOnce({ data: { success: false, reason: 'version_conflict' }, error: null } as any);
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'unavailable' });
+    expect(f.db.custom_flow_sessions).toHaveLength(0);
+    expect(f.sender.sendButtons).not.toHaveBeenCalled();
+  });
+  it('allows only one concurrent claim from independently loaded copies', async () => {
+    const f = await fixture();
+    const other = structuredClone(f.session);
+    const results = await Promise.all([f.handleCustomFlowMenu(f.args), f.handleCustomFlowMenu({ ...f.args, session: other })]);
+    expect(results.map(r => r.kind).sort()).toEqual(['started', 'unavailable']);
+    expect(f.db.custom_flow_sessions).toHaveLength(1);
+    expect(f.sender.buttons).toHaveLength(1);
+  });
+  it('keeps numeric replies with an active custom flow and rejects old starts without logging them', async () => {
+    const f = await fixture();
+    await new CustomFlowEngine(f.args).startById(BUSINESS_A, PHONE, id);
+    expect(await f.handleCustomFlowMenu({ ...f.args, text: '1' })).toEqual({ kind: 'pass' });
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'unavailable' });
+    expect(f.db.custom_flow_logs.some(row => row.input?.startsWith('cf-start:'))).toBe(false);
+    expect(f.rpc).not.toHaveBeenCalled();
+  });
+  it('preserves PIN steps and exact business-code priority', async () => {
+    const f = await fixture();
+    expect(await f.handleCustomFlowMenu({ ...f.args, text: '12', isPinStep: true })).toEqual({ kind: 'pass' });
+    expect(await f.handleCustomFlowMenu({ ...f.args, text: '12', isBusinessCode: async () => true })).toEqual({ kind: 'pass' });
+    expect(f.rpc).not.toHaveBeenCalled();
+  });
+  it('rechecks active sessions that appear after the claim', async () => {
+    const f = await fixture();
+    f.rpc.mockImplementationOnce(async () => {
+      f.db.custom_flow_sessions.push({ id: 'racing-session', business_id: BUSINESS_A, whatsapp_number: PHONE, is_active: true });
+      return { data: { success: true, version: 1 }, error: null };
+    });
+    expect(await f.handleCustomFlowMenu(f.args)).toEqual({ kind: 'unavailable' });
+    expect(f.db.custom_flow_sessions).toHaveLength(1);
+    expect(f.sender.sendButtons).not.toHaveBeenCalled();
+  });
+});
