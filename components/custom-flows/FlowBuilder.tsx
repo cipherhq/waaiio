@@ -31,6 +31,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
+  const [feedbackLocation, setFeedbackLocation] = useState<'editor' | 'actions' | 'preview'>('editor');
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
   const [inputs, setInputs] = useState<string[]>([]);
   const [reply, setReply] = useState('');
@@ -41,7 +42,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     fetch(`/api/custom-flows?businessId=${encodeURIComponent(businessId)}`, { signal: controller.signal, cache: 'no-store' })
       .then(async response => { if (!response.ok) throw new Error('load'); return response.json(); })
       .then(body => setRows(body.flows))
-      .catch(error => { if (error.name !== 'AbortError') setNotice('Unable to load flows. Try again.'); })
+      .catch(error => { if (error.name !== 'AbortError') { setFeedbackLocation('editor'); setNotice('Unable to load flows. Try again.'); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [businessId]);
@@ -69,6 +70,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     if (kind === 'publish' && !window.confirm('Publish this draft? Customers will use these changes.')) return;
     if (kind === 'restore' && !window.confirm('Reset the draft to the currently published flow? Draft changes will be replaced.')) return;
     setBusy(true); setNotice(''); setErrors([]);
+    setFeedbackLocation(kind === 'preview' ? 'preview' : 'actions');
     try {
       const response = await fetch('/api/custom-flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessId, id: row?.id, version: row?.version, action: kind === 'save' && !row ? 'create' : kind, definition: draft, inputs: previewInputs }) });
       const body = await response.json();
@@ -105,6 +107,10 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       {draft?.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {blockLabel(node, draft?.guided)}</option>)}
     </select>;
   }
+  const feedback = <>
+    {notice && <p role="status">{notice}</p>}
+    {errors.length > 0 && <ul role="alert" className="list-inside list-disc text-red-700">{errors.map((error, index) => <li key={index}>{error}</li>)}</ul>}
+  </>;
   return <div className="space-y-6" aria-busy={busy || loading}>
     <header><h1 className="text-2xl font-semibold">Custom flows</h1><p className="mt-2 max-w-2xl text-gray-600 dark:text-gray-400">Edit a draft, preview it, then publish when you’re ready. Customers keep using the published flow until you publish.</p></header>
     <div className="flex flex-wrap items-center gap-3">
@@ -115,8 +121,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       <button className={buttonClass} disabled={dirty || tableDirty || busy || !!setup} onClick={()=>setSetup('blank')}>Start blank</button>
     </div>
     {setup&&<FlowSetup businessId={businessId} template={setup} onCancel={()=>setSetup(null)} onCreated={flow=>{setRows(current=>[flow,...current.filter(item=>item.id!==flow.id)]);choose(flow);setSetup(null);}}/>}
-    {notice && <p role="status">{notice}</p>}
-    {errors.length > 0 && <ul role="alert" className="list-inside list-disc text-red-700">{errors.map((error, index) => <li key={index}>{error}</li>)}</ul>}
+    {feedbackLocation === 'editor' && feedback}
     {draft && !setup && <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
       <fieldset disabled={busy} className="min-w-0 space-y-5">
         <div className="grid gap-4 rounded-xl border p-5 sm:grid-cols-2">
@@ -128,7 +133,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
         {draft.guided&&<section className="space-y-3 rounded-xl border p-5">
           <h2 className="font-semibold">Business details</h2><p>Choose the business details to use in this flow.</p>
           <div className="grid gap-3 sm:grid-cols-2">{BUSINESS_FIELDS.map(field=><div key={field}><label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={draft.business_bindings?.includes(field)??false} onChange={e=>edit({...draft,business_bindings:e.target.checked?[...(draft.business_bindings??[]),field]:(draft.business_bindings??[]).filter(f=>f!==field)})}/>{field.replaceAll('_',' ')} — Linked to Settings</label><p className="whitespace-pre-wrap break-words text-sm">{businessValue(field,businessDetails[field])}</p></div>)}</div>
-          {draft.guided.sections.map(section=><label key={section.id} className="flex min-h-11 items-center justify-between gap-3">{section.label}<button className={buttonClass} onClick={()=>{try{edit(toggleSection(draft,section.id));}catch{setNotice('This section has custom connections. Update them in the advanced editor before turning it off.');}}}>{section.enabled?'Turn section off':section.label}</button></label>)}
+          {draft.guided.sections.map(section=><label key={section.id} className="flex min-h-11 items-center justify-between gap-3">{section.label}<button className={buttonClass} onClick={()=>{try{edit(toggleSection(draft,section.id));}catch{setFeedbackLocation('editor');setNotice('This section has custom connections. Update them in the advanced editor before turning it off.');}}}>{section.enabled?'Turn section off':section.label}</button></label>)}
           <button className={buttonClass} onClick={()=>setAdvanced(v=>!v)} aria-expanded={advanced}>Advanced editor</button><p className="text-sm">Changes here update the same flow.</p>
         </section>}
         {row&&<TableEditor key={row.id} businessId={businessId} flowId={row.id} onDirty={setTableDirty} onSaved={()=>{setMessages([]);setInputs([]);}}/>}
@@ -159,11 +164,15 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           </>}
         </section>)}
         </>}
+        <div className="space-y-3">
+        {feedbackLocation === 'actions' && feedback}
         <div className="flex flex-wrap gap-2"><button className={`${buttonClass} bg-purple-700 text-white`} disabled={!draft.name.trim()||tableDirty} onClick={() => action('save')}>Save draft</button><button className={buttonClass} disabled={!row||tableDirty} onClick={() => action('validate')}>Validate</button><button className={buttonClass} disabled={!row || dirty||tableDirty} onClick={() => action('publish')}>Publish flow</button><button className={buttonClass} disabled={!row?.published_definition||tableDirty} onClick={() => action('restore')}>Reset draft to published</button></div>
+        </div>
         <p className="text-sm">Publishing updates the menu and flow structure.</p><p className="text-sm">This resets the flow structure. Saved table information stays unchanged.</p>
       </fieldset>
       <aside className="h-fit space-y-4 rounded-3xl border-4 border-gray-800 bg-gray-50 p-4 dark:bg-gray-950 xl:sticky xl:top-6">
         <h2 className="font-semibold">Preview draft</h2><p className="text-sm text-gray-500">Preview only. No messages are sent.</p>
+        {feedbackLocation === 'preview' && feedback}
         <button className={buttonClass} disabled={!row || busy||tableDirty} onClick={() => action('preview', [])}>Restart preview</button>
         <div className="max-h-[28rem] space-y-3 overflow-y-auto" aria-live="polite">{messages.map((message, index) => <div key={index} className={`rounded-xl p-3 ${message.input ? 'ml-6 bg-purple-100 text-gray-900' : 'mr-4 border bg-white text-gray-900'}`}>
           <p className="whitespace-pre-wrap break-words">{message.text}</p>
