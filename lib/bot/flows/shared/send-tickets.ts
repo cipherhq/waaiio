@@ -283,7 +283,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     }
   } catch (pdfErr) {
     if (pdfErr instanceof EventTicketEmissionError && pdfErr.reason !== 'ticket_provider_rejected') throw pdfErr;
-    logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
+    logger.error('[TICKETS] PDF generation failed (ticket images already sent):', pdfErr);
   }
 
   logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);

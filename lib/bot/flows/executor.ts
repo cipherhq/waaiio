@@ -32,7 +32,7 @@ import { isFinancialDenial, RefusedSendError } from '@/lib/bot/financial-denial'
 import { after } from 'next/server';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
-import { awaitWhatsAppDelivery, DeliveryWaitBudget, PROMPT_DELIVERY_BUDGET_MS } from '@/lib/channels/delivery-wait';
+import { awaitWhatsAppDelivery, DeliveryWaitBudget, PROMPT_DELIVERY_BUDGET_MS, registerDeliveryWait } from '@/lib/channels/delivery-wait';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logDropoff } from '@/lib/bot/flow-analytics';
 import { FlowExecutionCollector, createScopedSender, generateExecutionId } from './instrumentation';
@@ -1107,10 +1107,13 @@ export class FlowExecutor {
         const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!, tCtx) : messages[i];
         const mediaWamid = await this.sendSingleMessage(to, msg, sender);
         sent++;
+        const waitForMedia = Boolean(mediaWamid) && i < messages.length - 1;
+        // Register before any other work so an early "delivered" status is not missed.
+        if (waitForMedia && this.supabase) await registerDeliveryWait(this.supabase, mediaWamid!);
         const afterSend = messages[i]._afterSend;
         if (afterSend) await afterSend().catch(err => logger.warn('[EXECUTOR] After-send step failed:', (err as Error).message));
-        if (mediaWamid && i < messages.length - 1) {
-          await awaitWhatsAppDelivery(this.supabase, [mediaWamid], { budget: deliveryBudget });
+        if (waitForMedia) {
+          await awaitWhatsAppDelivery(this.supabase, [mediaWamid], { budget: deliveryBudget, alreadyRegistered: true });
         }
       } catch (err) {
         if (isFinancialDenial(err)) {

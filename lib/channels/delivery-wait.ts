@@ -77,6 +77,8 @@ export async function advanceDeliveryWait(supabase: SupabaseClient, wamid: strin
 }
 
 export interface AwaitDeliveryOptions {
+  /** The caller already registered these wamids right after sending. */
+  alreadyRegistered?: boolean;
   timeoutMs?: number;
   budget?: DeliveryWaitBudget;
   pollMs?: number;
@@ -107,7 +109,7 @@ export async function awaitWhatsAppDelivery(
   let result: AwaitDeliveryResult = 'skipped';
   try {
     if (timeoutMs <= 0) return 'skipped';
-    for (const id of ids) await registerDeliveryWait(supabase, id);
+    if (!options.alreadyRegistered) for (const id of ids) await registerDeliveryWait(supabase, id);
     for (;;) {
       const { data, error } = await supabase.from(TABLE).select('wamid, status').in('wamid', ids);
       if (error || !Array.isArray(data)) { result = 'skipped'; break; }

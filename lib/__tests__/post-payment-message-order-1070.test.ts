@@ -1,6 +1,6 @@
 /**
  * #1070 (Owner decision 2026-11-16, option A): after a paid ticket purchase the
- * customer receives, in order: confirmation text → ticket PDF → ticket image →
+ * customer receives, in order: confirmation text → ticket image → ticket PDF →
  * receipt PDF → later messages (loyalty text, follow-up: card step/opt-in/menu),
  * with a bounded WhatsApp delivery wait after each media group. The order is the
  * same for every gateway because every gateway webhook reaches the shared

@@ -12,7 +12,7 @@ import { logger } from '@/lib/logger';
 import { MetaApiError } from './meta-api-error';
 import * as flowAssets from '@/lib/whatsapp-forms/meta-flow-asset';
 import { partyRsvpFormsEnabled } from '@/lib/whatsapp-forms/release-gate';
-import { fetchUploadSource, isUploadSourceAllowed, MEDIA_UPLOAD_BUDGET_MS, type UploadMediaKind } from './media-upload';
+import { fetchUploadSource, isUploadSourceAllowed, MEDIA_UPLOAD_BUDGET_MS, nextUploadSliceMs, type UploadMediaKind } from './media-upload';
 
 export interface MetaCloudCredentials {
   accessToken: string;
@@ -121,6 +121,8 @@ export class MetaCloudService {
   private readonly baseUrl = `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}`;
   /** #1070: after one upload times out, use `link` for the rest of this request. */
   private mediaUploadDisabled = false;
+  /** Upload time used by this instance (one per request); capped by MEDIA_UPLOAD_TOTAL_BUDGET_MS. */
+  private mediaUploadSpentMs = 0;
 
   constructor(credentials?: MetaCloudCredentials) {
     this.accessToken = (credentials?.accessToken || process.env.META_CLOUD_ACCESS_TOKEN || '').trim();
@@ -372,7 +374,10 @@ export class MetaCloudService {
    */
   private async tryUploadFromUrl(url: string, kind: UploadMediaKind, filename: string): Promise<string | null> {
     if (this.mediaUploadDisabled || !isUploadSourceAllowed(url)) return null;
-    const signal = AbortSignal.timeout(MEDIA_UPLOAD_BUDGET_MS);
+    const sliceMs = nextUploadSliceMs(this.mediaUploadSpentMs);
+    if (sliceMs === 0) return null;
+    const signal = AbortSignal.timeout(sliceMs);
+    const started = Date.now();
     try {
       const source = await fetchUploadSource(url, kind, signal);
       if (!source) {
@@ -386,6 +391,8 @@ export class MetaCloudService {
       if (name === 'TimeoutError' || name === 'AbortError') this.mediaUploadDisabled = true;
       logger.warn(`[META-MEDIA] ${kind} upload failed (${name || 'error'}); sending by link`);
       return null;
+    } finally {
+      this.mediaUploadSpentMs += Date.now() - started;
     }
   }
 

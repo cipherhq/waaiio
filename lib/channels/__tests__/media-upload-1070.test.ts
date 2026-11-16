@@ -195,3 +195,34 @@ describe('#1070 upload before send', () => {
     expect(messageBody().document).toEqual({ id: 'PRE-ID', filename: 'x.pdf' });
   });
 });
+
+describe('#1070 total upload allowance per request (review P1)', () => {
+  it('slices never exceed the per-upload cap and stop once the total allowance is used', async () => {
+    const { nextUploadSliceMs, MEDIA_UPLOAD_BUDGET_MS, MEDIA_UPLOAD_TOTAL_BUDGET_MS } = await import('@/lib/channels/media-upload');
+    expect(nextUploadSliceMs(0)).toBe(MEDIA_UPLOAD_BUDGET_MS);
+    expect(nextUploadSliceMs(MEDIA_UPLOAD_TOTAL_BUDGET_MS - 2500)).toBe(2500);
+    expect(nextUploadSliceMs(MEDIA_UPLOAD_TOTAL_BUDGET_MS - 500)).toBe(0);
+    expect(nextUploadSliceMs(MEDIA_UPLOAD_TOTAL_BUDGET_MS)).toBe(0);
+  });
+
+  it('a many-ticket send stops uploading once slow uploads use the allowance, and the rest go by link', async () => {
+    let clock = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    // Each upload takes 4.5 s (just under its own 6 s cap), so no timeout ever disables uploads.
+    uploadRoute = () => { clock += 4500; return new Response(JSON.stringify({ id: 'MEDIA-SLOW' }), { status: 200 }); };
+    const svc = cloud();
+    const sentBy: string[] = [];
+    for (let n = 1; n <= 6; n++) {
+      fetchCalls = [];
+      await svc.sendImage({ to: '2348000000001', imageUrl: `${APP}/api/tickets/image?code=T${n}` });
+      const body = messageBody();
+      sentBy.push(body.image.id ? 'id' : 'link');
+    }
+    nowSpy.mockRestore();
+    // 4.5 + 4.5 = 9 s used; 1 s left is the minimum slice, so a third upload still starts;
+    // after that the allowance is gone and every remaining ticket is sent by link at once.
+    expect(sentBy.slice(0, 2)).toEqual(['id', 'id']);
+    expect(sentBy.slice(-3)).toEqual(['link', 'link', 'link']);
+    expect(sentBy.filter(s => s === 'id').length).toBeLessThanOrEqual(3);
+  });
+});

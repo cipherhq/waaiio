@@ -22,6 +22,18 @@ export const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const MAX_DOCUMENT_UPLOAD_BYTES = 16 * 1024 * 1024;
 /** One budget for fetch + upload together; past it the `link` send is used. */
 export const MEDIA_UPLOAD_BUDGET_MS = 6000;
+/**
+ * Total upload time allowed per MetaCloudService (one per resolved request). Uploads run
+ * inside ticket emission windows on 60 s payment webhooks, so a large party must never
+ * spend unbounded time uploading; past this every send uses `link` immediately.
+ */
+export const MEDIA_UPLOAD_TOTAL_BUDGET_MS = 10_000;
+/** Below this remaining allowance an upload is not attempted. */
+const MIN_UPLOAD_SLICE_MS = 1000;
+export function nextUploadSliceMs(spentMs: number): number {
+  const remaining = MEDIA_UPLOAD_TOTAL_BUDGET_MS - spentMs;
+  return remaining < MIN_UPLOAD_SLICE_MS ? 0 : Math.min(MEDIA_UPLOAD_BUDGET_MS, remaining);
+}
 
 const MAX_REDIRECTS = 2;
 const SUPABASE_STORAGE_PREFIX = '/storage/v1/object/';
