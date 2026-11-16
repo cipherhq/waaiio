@@ -8,7 +8,8 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
-import { canonicalSavedCardPhone, isSharedPlatformPaystackCompatible } from './saved-card-compat';
+import { canonicalSavedCardPhone } from './saved-card-compat';
+import { paystackPaymentMatchesSavedCardScope, resolvePaystackSavedCardScope, withSavedCardScope } from './saved-card-scope';
 
 // ─── Payment-customer resolver (K4) ───
 
@@ -98,7 +99,7 @@ export async function checkSavedCardOfferEligibility(
   if (payment.business_id !== businessId) return { eligible: false, reason: 'business_mismatch' };
 
   const meta = (payment.metadata || {}) as Record<string, unknown>;
-  if (meta.payment_origin !== 'platform') return { eligible: false, reason: 'not_platform' };
+  if (meta.payment_origin !== 'platform' && meta.payment_origin !== 'byo') return { eligible: false, reason: 'not_platform' };
 
   const auth = meta._card_authorization as Record<string, unknown> | undefined;
   if (!auth?.reusable || !auth?.authorization_code || !auth?.email) return { eligible: false, reason: 'auth_not_eligible' };
@@ -108,16 +109,18 @@ export async function checkSavedCardOfferEligibility(
   if (!paymentPhone) return { eligible: false, reason: 'customer_unresolved' };
   if (paymentPhone !== canonPhone) return { eligible: false, reason: 'customer_mismatch' };
 
-  // K7: fail-closed compatibility read
-  const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
-  if (!compat.compatible) return { eligible: false, reason: compat.reason };
+  // K7: fail-closed compatibility read. The card is saved on the Paystack account
+  // that took this payment: Waaiio's shared account or this merchant's own (#1065).
+  const scope = await resolvePaystackSavedCardScope(supabase, businessId);
+  if (!scope.eligible) return { eligible: false, reason: scope.reason };
+  if (!paystackPaymentMatchesSavedCardScope(payment, businessId, scope)) return { eligible: false, reason: 'payment_scope_mismatch' };
 
   // K7: fail-closed saved-card read
   const phoneN = canonPhone.slice(1);
-  const { data: existing, error: savedErr } = await supabase.from('saved_payment_methods')
+  const { data: existing, error: savedErr } = await withSavedCardScope(supabase.from('saved_payment_methods')
     .select('id, authorization_code, card_last4')
     .in('customer_phone', [canonPhone, phoneN])
-    .eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+    .eq('is_active', true).eq('gateway', 'paystack'), scope).maybeSingle();
   if (savedErr) return { eligible: false, reason: 'saved_card_read_error' };
 
   const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
@@ -494,7 +497,7 @@ export async function startSavedCardFromPaymentId(
   }
 
   const meta = (payment.metadata || {}) as Record<string, unknown>;
-  if (meta.payment_origin !== 'platform') { await sendText(from, 'This payment cannot be used to save a card.'); return; }
+  if (meta.payment_origin !== 'platform' && meta.payment_origin !== 'byo') { await sendText(from, 'This payment cannot be used to save a card.'); return; }
 
   const auth = meta._card_authorization as Record<string, unknown> | undefined;
   if (!auth?.reusable || !auth?.authorization_code || !auth?.email) {
@@ -502,14 +505,17 @@ export async function startSavedCardFromPaymentId(
     return;
   }
 
-  const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
-  if (!compat.compatible) { await sendText(from, 'Card saving is not available for this business.'); return; }
+  const scope = await resolvePaystackSavedCardScope(supabase, businessId);
+  if (!scope.eligible || !paystackPaymentMatchesSavedCardScope(payment, businessId, scope)) {
+    await sendText(from, 'Card saving is not available for this business.');
+    return;
+  }
 
   // Current saved card state
-  const { data: existingMethods, error: savedErr } = await supabase.from('saved_payment_methods')
+  const { data: existingMethods, error: savedErr } = await withSavedCardScope(supabase.from('saved_payment_methods')
     .select('id, authorization_code, customer_code, card_last4, card_brand')
     .in('customer_phone', [canonPhone, phoneN])
-    .eq('is_active', true).eq('gateway', 'paystack');
+    .eq('is_active', true).eq('gateway', 'paystack'), scope);
 
   if (savedErr) { await sendText(from, 'Could not check your saved card. Try again.'); return; }
   if (existingMethods && existingMethods.length > 1) {

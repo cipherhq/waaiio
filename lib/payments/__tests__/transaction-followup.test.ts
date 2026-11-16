@@ -94,16 +94,22 @@ describe('paid completion gates', () => {
   });
 
   it.each([
-    ['BYO', { payment_origin: 'byo', byo: true }],
     ['Connect', { payment_origin: 'connect', connect: true }],
-    ['legacy BYO flag', { byo: true }],
+    ['legacy Connect flag', { connect: true }],
   ])('%s Paystack payment skips the card step and continues to opt-in/menu', async (_label, metadata) => {
     const client = db({ metadata }); await resumePaidTransactionFollowup(client as any, 'pay');
     expect(m.claim).not.toHaveBeenCalled(); expect(m.eligibility).not.toHaveBeenCalled(); expect(m.offer).not.toHaveBeenCalled();
     expect(m.resume).toHaveBeenCalledWith(client, 'pay', { cardResolved: true });
   });
-  it('releases a BYO follow-up already stuck in card_active (pre-fix rows)', async () => {
-    const client = db({ state: 'card_active', metadata: { payment_origin: 'byo' } });
+  it.each([
+    ['BYO', { payment_origin: 'byo', byo: true }],
+    ['legacy BYO flag', { byo: true }],
+  ])('%s Paystack payment now takes the card step like a shared-account payment (#1065)', async (_label, metadata) => {
+    const client = db({ metadata }); await resumePaidTransactionFollowup(client as any, 'pay');
+    expect(m.claim).toHaveBeenCalledTimes(1);
+  });
+  it('releases a Connect follow-up already stuck in card_active (pre-fix rows)', async () => {
+    const client = db({ state: 'card_active', metadata: { payment_origin: 'connect' } });
     await resumePaidTransactionFollowup(client as any, 'pay');
     expect(m.claim).not.toHaveBeenCalled();
     expect(m.resume).toHaveBeenCalledWith(client, 'pay', { cardResolved: true });

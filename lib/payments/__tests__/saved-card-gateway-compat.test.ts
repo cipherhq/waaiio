@@ -55,6 +55,7 @@ function createSupabase(opts: {
     chain.eq = vi.fn(() => chain);
     chain.not = vi.fn(() => chain);
     chain.in = vi.fn(() => chain);
+    chain.is = vi.fn(() => chain);
 
     chain.maybeSingle = vi.fn(async () => {
       if (table === 'business_payment_credentials') {

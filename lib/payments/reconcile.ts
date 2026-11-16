@@ -98,7 +98,7 @@ export async function reconcilePayment(
 
   // Persist reusable Paystack authorization before Payment Authority can run
   // Stage 3 confirmation and its Save Card offer. The RPC independently checks
-  // this result against the canonical payment row and platform origin.
+  // this result against the canonical payment row and a platform or own-account origin.
   if (verified.provider === 'paystack' && verified.cardAuthorization) {
     await persistPaystackCardAuthorization(
       supabase,

@@ -20,7 +20,7 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     .select('id').eq('payment_id', paymentId)
     .in('delivery_status', ['accepted', 'sent', 'delivered', 'read']).limit(1);
   if (deliveryError || !delivered?.length) return;
-  // BYO/Connect Paystack payments never get a card offer, so they skip the card
+  // Connect Paystack payments never get a card offer, so they skip the card
   // step instead of holding the conversation while nothing can resolve it.
   const { paystackPaymentCannotSaveCard } = await import('./saved-card-compat');
   if (paystackPaymentCannotSaveCard(payment)) {
@@ -64,7 +64,8 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     }
     // Only proven ineligibility skips card saving; lookup failures remain retryable.
     if (!['payment_not_eligible', 'not_platform', 'auth_not_eligible', 'same_auth_already_saved',
-      'gateway_mismatch', 'byo_paystack', 'paystack_connect'].includes(eligibility.reason || '')) return;
+      'gateway_mismatch', 'byo_paystack', 'paystack_connect', 'payment_scope_mismatch',
+      'byo_paystack_credential_unavailable'].includes(eligibility.reason || '')) return;
   }
   await resumeTransactionFollowupForPayment(supabase, paymentId, { cardResolved: true });
 }

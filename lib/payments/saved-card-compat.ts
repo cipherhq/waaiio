@@ -29,14 +29,12 @@ export function savedCardSessionPhone(canonPhone: string): string {
 }
 
 /**
- * A Paystack payment taken on the merchant's own account (BYO) or a Connect
- * account can never be saved as a Waaiio card: the card authorization belongs
- * to that account (the same rule as the 'not_platform' eligibility reason).
+ * A Paystack payment taken on a Connect account can never save a card. A payment on
+ * the merchant's own account (BYO) can, scoped to that merchant (#1065).
  */
 export function paystackPaymentCannotSaveCard(payment: { gateway?: unknown; metadata?: unknown }): boolean {
   if (payment.gateway !== 'paystack') return false;
-  const origin = resolvePaymentOrigin((payment.metadata || {}) as Record<string, unknown>);
-  return origin === 'byo' || origin === 'connect';
+  return resolvePaymentOrigin((payment.metadata || {}) as Record<string, unknown>) === 'connect';
 }
 
 // ─── Gateway-neutral internal email alias ───
@@ -106,12 +104,12 @@ export async function classifyBusinessPaymentCredential(
   businessId: string,
 ): Promise<{
   classification: 'platform' | 'platform_subaccount' | 'byo' | 'connect' | 'ambiguous' | 'error';
-  credential?: { id: string; secret_key?: string | null; platform_subaccount_code?: string | null; connect_account_id?: string | null };
+  credential?: { id: string; gateway?: string | null; secret_key?: string | null; platform_subaccount_code?: string | null; connect_account_id?: string | null };
 }> {
   try {
     const { data: creds, error } = await supabase
       .from('business_payment_credentials')
-      .select('id, secret_key, platform_subaccount_code, connect_account_id, connection_type')
+      .select('id, gateway, secret_key, platform_subaccount_code, connect_account_id, connection_type')
       .eq('business_id', businessId)
       .eq('is_active', true)
       .not('verified_at', 'is', null)

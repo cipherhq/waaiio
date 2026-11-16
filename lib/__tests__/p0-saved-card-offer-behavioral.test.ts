@@ -104,7 +104,7 @@ function buildMockSupabase(overrides: {
 
   const fromFn = vi.fn().mockImplementation((table: string) => {
     const chain: Record<string, unknown> = {};
-    ['select', 'eq', 'in', 'or', 'order', 'limit', 'not', 'gte', 'update', 'delete'].forEach(m => {
+    ['select', 'eq', 'is', 'in', 'or', 'order', 'limit', 'not', 'gte', 'update', 'delete'].forEach(m => {
       chain[m] = vi.fn().mockReturnValue(chain);
     });
     chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -761,7 +761,7 @@ describe('K10: Saved-card offer behavioral tests', () => {
     });
     const fromFn = vi.fn().mockImplementation((table: string) => {
       const chain: Record<string, unknown> = {};
-      ['select', 'eq', 'in', 'or', 'not', 'order', 'limit', 'update', 'delete'].forEach(m => {
+      ['select', 'eq', 'is', 'in', 'or', 'not', 'order', 'limit', 'update', 'delete'].forEach(m => {
         chain[m] = vi.fn().mockReturnValue(chain);
       });
       chain.single = vi.fn().mockResolvedValue({ data: null, error: null });

@@ -497,9 +497,9 @@ describe('durable transaction follow-up sequence', () => {
     expect(tables.transaction_followups[0].state).toBe('done');
   });
 
-  it('explicit navigation releases a BYO card step that can never get an offer', async () => {
+  it('explicit navigation releases a Connect card step that can never get an offer', async () => {
     const { db, tables } = database();
-    tables.payments.push({ id: payment, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'byo', byo: true } });
+    tables.payments.push({ id: payment, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'connect', connect: true } });
     await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment }));
     await claimTransactionCardStep(db, payment);
     await dismissTransactionFollowups(db, { from: phone, channelId: channel });
@@ -508,9 +508,9 @@ describe('durable transaction follow-up sequence', () => {
     expect(mocks.record).not.toHaveBeenCalled();
   });
 
-  it('explicit navigation keeps a claimed Waaiio-collected card step that may still send its offer', async () => {
+  it.each(['platform', 'byo'])('explicit navigation keeps a claimed %s card step that may still send its offer', async origin => {
     const { db, tables } = database();
-    tables.payments.push({ id: payment, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'platform' } });
+    tables.payments.push({ id: payment, business_id: biz, gateway: 'paystack', metadata: { payment_origin: origin } });
     await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment }));
     await claimTransactionCardStep(db, payment);
     await dismissTransactionFollowups(db, { from: phone, channelId: channel });
@@ -526,10 +526,10 @@ describe('durable transaction follow-up sequence', () => {
     expect(tables.transaction_followups[0].state).toBe('card_active');
   });
 
-  it('a stuck BYO order no longer blocks the next payment once the customer moves on (staging 2026-11-12)', async () => {
+  it('a stuck Connect order no longer blocks the next payment once the customer moves on (staging 2026-11-12)', async () => {
     const { db, tables } = database();
     const order = '30000000-0000-4000-8000-000000000002';
-    tables.payments.push({ id: order, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'byo' } });
+    tables.payments.push({ id: order, business_id: biz, gateway: 'paystack', metadata: { payment_origin: 'connect' } });
     await startTransactionFollowup(db, start({ waitForCard: true, paymentId: order, completionKey: 'payment:order', kind: 'ordering' }));
     await claimTransactionCardStep(db, order);
     await startTransactionFollowup(db, start({ waitForCard: true, paymentId: payment, completionKey: 'payment:booking', kind: 'scheduling' }));

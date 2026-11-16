@@ -345,7 +345,7 @@ export async function dismissTransactionFollowups(db: SupabaseClient, input: {
     if (offerError) throw new Error(`transaction_followup_dismiss_offer:${offerError.code}`);
     if (!offer) {
       // A claimed card step with no offer may still be about to send one, except
-      // for a payment that can never save a card (BYO/Connect): release that one.
+      // for a payment that can never save a card (Connect): release that one.
       const { data: paid, error: paidError } = await db.from('payments').select('gateway,metadata')
         .eq('id', row.payment_id).eq('business_id', row.business_id).maybeSingle();
       if (paidError) throw new Error(`transaction_followup_dismiss_payment:${paidError.code}`);
