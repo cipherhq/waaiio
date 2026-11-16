@@ -210,18 +210,39 @@ describe('#379 Stripe saved-payment adapter behavior', () => {
     expect(state.inserts).toHaveLength(1);
 
     const evidenceUpdate = state.updates.find(u =>
-      typeof u.gateway_status === 'string' && u.gateway_status.startsWith('dispatched_error;'),
+      typeof u.gateway_status === 'string' && u.gateway_status.startsWith('stripe:'),
     );
     expect(evidenceUpdate).toBeDefined();
-    expect(evidenceUpdate!.gateway_status).toContain('http=400');
-    expect(evidenceUpdate!.gateway_status).toContain('class=config_error');
-    expect(evidenceUpdate!.gateway_status).toContain('type=invalid_request_error');
-    expect(evidenceUpdate!.gateway_status).toContain('code=parameter_missing');
+    // Must fit payments.gateway_status varchar(50), or the real write fails (#1068).
+    expect(evidenceUpdate!.gateway_status).toBe('stripe:400:parameter_missing:config_error');
+    expect(String(evidenceUpdate!.gateway_status).length).toBeLessThanOrEqual(50);
     expect(evidenceUpdate).not.toHaveProperty('status');
     expect(String(evidenceUpdate!.gateway_status)).not.toContain('Missing required parameter');
 
     // Canonical row was fenced before provider dispatch and remains the same row.
     expect(state.updates[0]).toEqual({ provider_init_state: 'dispatched' });
+  });
+
+  it('a Stripe-refused request fails the payment with evidence that fits gateway_status (#1068)', async () => {
+    mockChargeStripeSavedCard.mockResolvedValue({
+      status: 'declined',
+      errorMessage: 'Saved card payment could not be completed',
+      errorEvidence: {
+        httpStatus: 400,
+        type: 'invalid_request_error',
+        code: 'unknown',
+        param: 'payment_method_types',
+        classification: 'request_rejected',
+      },
+    });
+
+    const { supabase, state } = makeSupabase({ paymentId: 'pay-rejected' });
+    const result = await savedPaymentAdapter.chargeSavedMethod(supabase, CHARGE_OPTS);
+
+    expect(result).toEqual({ status: 'declined', message: 'Saved card payment could not be completed', shouldDeactivate: false });
+    const failed = state.updates.find(u => u.status === 'failed');
+    expect(failed).toEqual({ status: 'failed', gateway_status: 'stripe:400:payment_method_types:request_rejected' });
+    expect(String(failed!.gateway_status).length).toBeLessThanOrEqual(50);
   });
 
   it('persists exact WhatsApp channel provenance on the canonical saved-card payment', async () => {

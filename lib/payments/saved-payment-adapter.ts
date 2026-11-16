@@ -175,19 +175,21 @@ function sanitizeStripeEvidenceToken(value: string | undefined, fallback = 'unkn
   return raw.replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 64) || fallback;
 }
 
+// payments.gateway_status is varchar(50); a longer value makes the whole write fail (#1068).
 function formatStripeDispatchEvidence(evidence: {
   httpStatus: number;
   type: string;
   code: string;
+  param?: string;
   classification: string;
 }): string {
+  const reason = evidence.code && evidence.code !== 'unknown' ? evidence.code : (evidence.param || evidence.type);
   return [
-    'dispatched_error',
-    `http=${Number.isFinite(evidence.httpStatus) ? evidence.httpStatus : 0}`,
-    `class=${sanitizeStripeEvidenceToken(evidence.classification)}`,
-    `type=${sanitizeStripeEvidenceToken(evidence.type)}`,
-    `code=${sanitizeStripeEvidenceToken(evidence.code)}`,
-  ].join(';').slice(0, 200);
+    'stripe',
+    Number.isFinite(evidence.httpStatus) ? evidence.httpStatus : 0,
+    sanitizeStripeEvidenceToken(reason),
+    sanitizeStripeEvidenceToken(evidence.classification),
+  ].join(':').slice(0, 50);
 }
 
 /**
@@ -734,7 +736,10 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       }
 
       await supabase.from('payments')
-        .update({ status: 'failed', gateway_status: result.errorMessage || 'declined' })
+        .update({
+          status: 'failed',
+          gateway_status: result.errorEvidence ? formatStripeDispatchEvidence(result.errorEvidence) : (result.errorMessage || 'declined').slice(0, 50),
+        })
         .eq('id', payRow.id)
         .eq('provider_init_state', 'dispatched');
       return { status: 'declined', message: result.errorMessage || 'Card declined', shouldDeactivate: false };
@@ -750,6 +755,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         httpStatus: result.errorEvidence.httpStatus,
         errorType: result.errorEvidence.type,
         errorCode: result.errorEvidence.code,
+        errorParam: result.errorEvidence.param,
         classification: result.errorEvidence.classification,
       });
       await supabase.from('payments')

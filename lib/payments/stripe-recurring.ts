@@ -92,7 +92,8 @@ export async function createRecurringCheckout(opts: {
     params['subscription_data[transfer_data][destination]'] = opts.stripeAccountId;
   }
 
-  const data = await stripeRequest('/checkout/sessions', 'POST', params);
+  const { createCardOnlyCheckoutSession } = await import('./stripe-checkout-failure');
+  const data = await createCardOnlyCheckoutSession(stripeSecretKey, params);
 
   if (!data.id || !data.url) {
     logger.withContext({ op: 'stripe.recurring-checkout', gateway: 'stripe', providerInfo: safeProviderError(data) }).error('Stripe recurring checkout failed');

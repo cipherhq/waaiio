@@ -77,3 +77,34 @@ export function mayFallbackFromLegacyPaymentMethodTypes(data: unknown, hasLegacy
   return evidence.param === 'payment_method_types'
     || /^payment_method_types\[[0-9]{1,4}\]$/.test(evidence.param || '');
 }
+
+/** The same card-only policy expressed with Endive's `allowed_payment_method_types`. */
+export function withEndiveCardAllowlist(params: Record<string, string>): Record<string, string> {
+  const next = { ...params };
+  delete next['payment_method_types[0]'];
+  next['allowed_payment_method_types[0]'] = 'card';
+  return next;
+}
+
+/**
+ * Create a card-only Stripe Checkout Session with the legacy parameter, retrying
+ * once with the Endive allowlist only on Stripe's parameter-scoped 400 (#1068).
+ * No idempotency key is used by these callers, and a validated 400 created nothing.
+ */
+export async function createCardOnlyCheckoutSession(
+  stripeKey: string,
+  params: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const post = async (body: Record<string, string>) => {
+    const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString(),
+    });
+    const data = await response.json() as Record<string, unknown>;
+    return { ...data, __waaiio_http_status: response.status };
+  };
+  const first = await post(params);
+  if (!mayFallbackFromLegacyPaymentMethodTypes(first, Boolean(params['payment_method_types[0]']))) return first;
+  return post(withEndiveCardAllowlist(params));
+}

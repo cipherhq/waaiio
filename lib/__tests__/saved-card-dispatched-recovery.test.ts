@@ -37,7 +37,9 @@ vi.mock('@/lib/payments/reconcile', () => ({
   reconcilePayment: mockReconcilePayment,
 }));
 
-vi.mock('@/lib/payments/stripe-saved-card', () => ({
+vi.mock('@/lib/payments/stripe-saved-card', async (importOriginal) => ({
+  // Real PaymentIntent replay (#1068 shared Endive fallback); fetch stays the stub.
+  ...await importOriginal<typeof import('@/lib/payments/stripe-saved-card')>(),
   createAuthAttempt: mockCreateAuthAttempt,
 }));
 
