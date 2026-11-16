@@ -65,6 +65,8 @@ import {
 } from '@/lib/messaging/customer-message-guard';
 import { isFinancialDenial, RefusedSendError } from '@/lib/bot/financial-denial';
 import { MetaCloudSender } from '@/lib/channels/message-sender';
+import { checkoutProgress, withCheckoutReply } from '@/lib/messaging/checkout-reply-progress';
+import type { FlowContext } from '@/lib/bot/flows/types';
 
 const BIZ = 'b0000000-0000-4000-a000-000000000536';
 const CUSTOMER = '2348031234567';
@@ -78,6 +80,7 @@ function fakeDb(opts: {
   sessionData?: Record<string, unknown>;
   rpc?: (name: string, args: Record<string, unknown>) => RpcResult;
   sessionError?: boolean;
+  sessionId?: string;
 }) {
   const rpcCalls: Array<[string, Record<string, unknown>]> = [];
   const db = {
@@ -88,7 +91,7 @@ function fakeDb(opts: {
         if (table === 'businesses') return { data: { metadata: opts.metadata ?? {} }, error: null };
         if (table === 'bot_sessions') {
           if (opts.sessionError) return { data: null, error: { message: 'boom' } };
-          return { data: opts.step ? { current_step: opts.step, session_data: opts.sessionData ?? {} } : null, error: null };
+          return { data: opts.step ? { id: opts.sessionId, current_step: opts.step, session_data: opts.sessionData ?? {} } : null, error: null };
         }
         throw new Error(`unexpected table ${table}`);
       });
@@ -294,6 +297,16 @@ describe('recordInvalidInput', () => {
   });
 });
 
+it('preserves a legacy payment-step allowance across replies in the same inbound', async () => {
+  const state = { step: 'process_order', rpc: (name: string) => ({ data: name === 'record_customer_daily_reply' ? { over_limit: true } : false, error: null }) };
+  const { db, rpcCalls } = fakeDb(state);
+  const handle = createCustomerReplyGuard(db, CUSTOMER);
+  await expect(handle.guard(BIZ, CUSTOMER)).resolves.toBeUndefined();
+  state.step = 'select_capability';
+  await expect(handle.guard(BIZ, CUSTOMER)).resolves.toBeUndefined();
+  expect(rpcCalls.filter(([name]) => name === 'record_customer_daily_reply')).toHaveLength(1);
+});
+
 describe('MetaCloudSender with the customer reply guard', () => {
   function sender(guard?: (b: string, r: string) => Promise<void>) {
     const cloud = { sendText: vi.fn().mockResolvedValue({ messageId: 'wamid.1' }) };
@@ -322,6 +335,19 @@ describe('MetaCloudSender with the customer reply guard', () => {
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
     await expect(s.sendText({ to: CUSTOMER, text: 'This quote is no longer available.' })).rejects.toBeInstanceOf(CustomerDailyLimitError);
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['insufficient_allowance_balance', 'spend_cap_exceeded'])('checkout progress still reaches financial authority and respects %s', async (reason) => {
+    const { db, rpcCalls } = fakeDb({ step: 'collect_address', sessionId: 's1060', rpc: name => ({ data: name === 'record_customer_daily_reply' ? { over_limit: true } : false, error: null }) });
+    const handle = createCustomerReplyGuard(db, CUSTOMER);
+    const { s, cloud } = sender(handle.guard);
+    const ctx = { supabase: db, from: CUSTOMER, business: { id: BIZ }, session: { id: 's1060', business_id: BIZ, session_data: { active_capability: 'ordering', cart: [{ product_id: 'p1', price: 1, quantity: 1 }] } } } as unknown as FlowContext;
+    h.authorize.mockResolvedValue({ data: { enforcement_required: true, authorized: false, reason }, error: null });
+    await expect(withCheckoutReply(checkoutProgress(ctx, 'select_delivery_zone', 'collect_address'), () => s.sendText({ to: CUSTOMER, text: 'Address prompt' }))).rejects.toThrow(reason);
+    expect(rpcCalls.filter(([name]) => name === 'record_customer_daily_reply')).toHaveLength(1);
+    expect(h.createAttempt).toHaveBeenCalledOnce();
+    expect(h.authorize).toHaveBeenCalledWith('check_or_authorize_send', { p_attempt_id: 'attempt-1' });
+    expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
   it('sends normally when the guard allows it', async () => {
