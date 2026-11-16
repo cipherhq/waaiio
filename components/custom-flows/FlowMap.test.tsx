@@ -27,7 +27,13 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     if (url.startsWith('/api/custom-flows/data')) return { ok: true, json: async () => ({ tables: [], rows: [] }) };
     if (!options?.method) return { ok: true, json: async () => ({ flows: structuredClone(flows) }) };
-    posts.push(JSON.parse(String(options.body)));
+    const body = JSON.parse(String(options.body)); posts.push(body);
+    if (['save', 'publish', 'restore'].includes(body.action)) {
+      const flow = flows.find(item => item.id === body.id)!;
+      if (body.action === 'save') { flow.definition = body.definition; flow.version++; }
+      return { ok: true, json: async () => ({ flow: structuredClone(flow) }) };
+    }
+    if (body.action === 'validate') return { ok: true, json: async () => ({ errors: [] }) };
     return { ok: true, json: async () => ({ messages: [] }) };
   }));
 });
@@ -67,6 +73,26 @@ describe('Your flows list', () => {
     fireEvent.click(other);
     expect(screen.getByRole('option', { name: 'Opening hours' }).getAttribute('aria-selected')).toBe('true');
     expect((screen.getByLabelText('Greeting') as HTMLInputElement).value).toBe('Changed');
+    const listbox = screen.getByRole('listbox', { name: 'Custom flows' });
+    const hint = document.getElementById(listbox.getAttribute('aria-describedby')!)!;
+    expect(hint.textContent).toBe('Save or discard changes to switch flows.');
+    expect(screen.getByText('Save or discard changes to switch flows.')).toBe(hint);
+  });
+
+  it('treats a click or Enter on the already-selected flow as a no-op', async () => {
+    await openFlow('Lagos fest');
+    const edit = screen.getByRole('button', { name: 'Edit 3. Message' });
+    fireEvent.click(edit);
+    fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Changed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await screen.findByText('Draft saved.');
+    const selected = screen.getByRole('option', { name: 'Lagos fest' });
+    fireEvent.click(selected);
+    fireEvent.keyDown(selected, { key: 'Enter' });
+    // choose() would have closed the open editor and cleared the notice.
+    expect(edit.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Draft saved.')).toBeTruthy();
+    expect(screen.queryByText('Save or discard changes to switch flows.')).toBeNull();
   });
 });
 
@@ -107,6 +133,41 @@ describe('Step map', () => {
     fireEvent.click(edit);
     expect(screen.queryByLabelText('Message', { selector: 'textarea' })).toBeNull();
     expect(posts).toHaveLength(0);
+  });
+
+  it('keeps open step editors after save, check, publish and reset of the same flow, and resets them for another flow', async () => {
+    await openFlow('Lagos fest');
+    const editButton = () => screen.getByRole('button', { name: 'Edit 3. Message' });
+    fireEvent.click(editButton());
+    expect(screen.getByRole('button', { name: 'Edit 1. Menu prompt' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Bye' } });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    for (const [button, notice] of [['Save draft', 'Draft saved.'], ['Check for problems', 'No validation errors.'], ['Publish flow', 'Flow published.'], ['Reset draft to published', 'Draft reset to published.']]) {
+      fireEvent.click(screen.getByRole('button', { name: button }));
+      await screen.findByText(notice);
+      expect(editButton().getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByRole('button', { name: 'Edit 1. Menu prompt' }).getAttribute('aria-expanded')).toBe('true');
+    }
+    expect(posts.map(post => post.action)).toEqual(['save', 'validate', 'publish', 'restore']);
+    fireEvent.click(screen.getByRole('option', { name: 'Opening hours' }));
+    expect(screen.getByRole('button', { name: 'Edit 1. Message' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('option', { name: 'Lagos fest' }));
+    expect(editButton().getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Edit 1. Menu prompt' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('treats any empty message next as Ends and any empty lookup next as Back to start', async () => {
+    // Engine rule: a message continues only `if (node.next)`; a lookup falls back to the start step.
+    flows[1].definition = { ...plain, nodes: [
+      { id: 'a', type: 'message', text: 'Empty string next', next: '' },
+      { id: 'b', type: 'message', text: 'Undefined next' },
+      { id: 'c', type: 'lookup', table: 'faqs', search_fields: ['question'], reply: 'x', no_match: 'y', next: '' },
+    ] } as unknown as typeof plain;
+    await openFlow('Opening hours');
+    const map = screen.getByRole('region', { name: 'Step map' });
+    expect(within(map).getAllByText('Ends')).toHaveLength(2);
+    expect(within(map).getAllByText('Back to start')).toHaveLength(1);
+    expect(within(map).queryByText(/Not connected yet|Goes to/)).toBeNull();
   });
 
   it('keeps settings in a panel opened from the top bar', async () => {

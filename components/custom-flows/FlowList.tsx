@@ -10,10 +10,12 @@ export interface FlowListItem { id: string; name: string; live: boolean }
  * While the editor has unsaved work every option is disabled, matching the
  * previous dropdown's guard.
  */
-export function FlowList({ flows, selectedId, disabled, onChoose }: {
+export function FlowList({ flows, selectedId, disabled, lockedMessage, onChoose }: {
   flows: FlowListItem[];
   selectedId: string | null;
   disabled: boolean;
+  /** Shown, and linked to the list, while unsaved work locks it. */
+  lockedMessage?: string;
   onChoose: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -35,7 +37,7 @@ export function FlowList({ flows, selectedId, disabled, onChoose }: {
     else if (event.key === 'ArrowUp') { event.preventDefault(); focusAt(index - 1); }
     else if (event.key === 'Home') { event.preventDefault(); focusAt(0); }
     else if (event.key === 'End') { event.preventDefault(); focusAt(visible.length - 1); }
-    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!disabled) onChoose(id); }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!disabled && id !== selectedId) onChoose(id); }
   }
 
   return <div className="space-y-3">
@@ -47,13 +49,14 @@ export function FlowList({ flows, selectedId, disabled, onChoose }: {
     </label>
     {flows.length > 0 && visible.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">No flows match your search.</p>}
     {flows.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">No flows yet. Start with a template or start blank.</p>}
-    {visible.length > 0 && <ul ref={list} role="listbox" aria-label="Custom flows" className="space-y-1">
+    {disabled && lockedMessage && <p id="flow-list-locked" className="text-sm text-amber-800 dark:text-amber-200">{lockedMessage}</p>}
+    {visible.length > 0 && <ul ref={list} role="listbox" aria-label="Custom flows" aria-describedby={disabled && lockedMessage ? 'flow-list-locked' : undefined} className="space-y-1">
       {visible.map((flow, index) => {
         const selected = flow.id === selectedId;
         return <li key={flow.id} role="option" aria-selected={selected} aria-disabled={disabled || undefined}
           aria-describedby={`flow-status-${flow.id}`} tabIndex={flow.id === tabbable ? 0 : -1}
           onFocus={() => setFocusId(flow.id)} onKeyDown={event => onKeyDown(event, index, flow.id)}
-          onClick={() => { if (!disabled) onChoose(flow.id); }}
+          onClick={() => { if (!disabled && flow.id !== selectedId) onChoose(flow.id); }}
           className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand ${selected
             ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-100'
             : 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'} ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}>

@@ -51,9 +51,10 @@ export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor
 
   function exitFor(node: CustomFlowNode, index: number): Exit {
     if (node.type === 'menu') return null;
-    // Same runtime rule as the engine: a lookup with no next returns to the start step.
-    const next = node.type === 'lookup' ? node.next ?? startId : node.next;
-    if (next === null || next === undefined) return { kind: 'end', label: 'Ends' };
+    // Same runtime rules as the engine: a message with no next (any falsy value)
+    // ends; a lookup with no next returns to the start step.
+    const next = node.type === 'lookup' ? node.next || startId : node.next;
+    if (!next) return { kind: 'end', label: 'Ends' };
     if (next === startId) return { kind: 'start', label: 'Back to start' };
     if (next === draft.nodes[index + 1]?.id) return null;
     const target = labelOf(next);

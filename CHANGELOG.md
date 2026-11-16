@@ -9,6 +9,7 @@
   - `components/custom-flows/TableEditor.tsx`, `SourcePicker.tsx`: clearer labels and spacing, plus a readable row list that selects a row exactly as the Row code menu does.
   - Tests: `FlowMap.test.tsx` (new). `FlowBuilder.test.tsx` changed only for layout: pick the flow from the listbox option, button text "Check for problems", and open lookup steps on the map before checking their Next step menus.
 - **Unchanged:** all API routes, actions, payloads and their order, `lib/**`, migrations, capability gating, validation limits, confirms, dirty-navigation and beforeunload guards, Publish disabled while dirty, guided template flow, and table saves going live immediately. No new dependency.
+- **Review follow-up (P2s):** top bar first on mobile; visible "Save or discard changes to switch flows." line on the locked list; open step editors stay open after save/check/publish/reset of the same flow; re-choosing the selected flow is a no-op; the map treats any empty message `next` as Ends and any empty lookup `next` as Back to start (engine rule). Tests added in `FlowMap.test.tsx`.
 - **What could break:** anything that looked for the "Custom flows" combobox or the "Validate" button text; layouts at tablet widths (preview sits under the map below 1280px).
 
 ## 2026-11-13 — Pidgin replies: send certified phrase-book text without AI translation

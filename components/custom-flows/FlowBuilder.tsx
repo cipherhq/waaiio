@@ -77,9 +77,12 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   function edit(next: EditableFlow) { setDraft(next); setDirty(true); setMessages([]); setInputs([]); setErrors([]); setNotice(''); }
   function choose(selected: FlowRow) {
     setRow(selected); setDraft(withOrderMetadata(selected.definition)); setDirty(false); setTableDirty(false); setAdvanced(false); setMessages([]); setInputs([]); setErrors([]); setNotice('');
-    // Open the start step so the map shows where customers begin.
+    // Same flow returned by save/validate/publish/reset: keep the merchant's open
+    // editors, dropping any step that no longer exists. A different flow opens
+    // at its start step so the map shows where customers begin.
     const start = selected.definition.start_node ?? selected.definition.nodes[0]?.id;
-    setOpenSteps(start ? [start] : []);
+    if (selected.id === row?.id) setOpenSteps(current => current.filter(id => selected.definition.nodes.some(node => node.id === id)));
+    else setOpenSteps(start ? [start] : []);
   }
   function updateNode(next: CustomFlowNode) { if (draft) edit({ ...draft, nodes: draft.nodes.map(node => node.id === next.id ? next : node) }); }
   function add(type: CustomFlowNode['type']) {
@@ -185,7 +188,9 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       {/* Left rail. On mobile the page stacks: flows, map, preview. */}
       <div className="min-w-0 space-y-4 lg:col-start-1 lg:row-span-2 lg:row-start-1 xl:row-span-1">
         <section aria-label="Flows" className={`${cardClass} space-y-4`}>
-          <FlowList flows={rows.map(item => ({ id: item.id, name: item.definition.name, live: !!item.published_definition }))} selectedId={row?.id ?? null} disabled={pickerLocked} onChoose={id => { const selected = rows.find(item => item.id === id); if (selected) choose(selected); }} />
+          <FlowList flows={rows.map(item => ({ id: item.id, name: item.definition.name, live: !!item.published_definition }))} selectedId={row?.id ?? null} disabled={pickerLocked}
+            lockedMessage={dirty || tableDirty || setup ? 'Save or discard changes to switch flows.' : undefined}
+            onChoose={id => { if (id === row?.id) return; const selected = rows.find(item => item.id === id); if (selected) choose(selected); }} />
           {loading && <p className="text-sm text-gray-600 dark:text-gray-400">Loading flows…</p>}
           <div className="space-y-2 border-t border-gray-100 pt-4 dark:border-gray-700">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">New flow</h2>
@@ -215,8 +220,9 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       </div>
 
       {/* Centre: top bar, step map and data. */}
-      <div className="min-w-0 space-y-6 lg:col-start-2 lg:row-start-1">
-        {editing && <section aria-label="Flow actions" className={`${cardClass} min-w-0 space-y-3`}>
+      {/* Below lg this wrapper is display:contents, so the top bar can sort first on mobile. */}
+      <div className="contents lg:col-start-2 lg:row-start-1 lg:block lg:min-w-0 lg:space-y-6">
+        {editing && <section aria-label="Flow actions" className={`${cardClass} order-first min-w-0 space-y-3 lg:order-none`}>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -260,7 +266,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
             {!editable && <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">This guided flow is built from your sections. Open the advanced editor to change steps.</p>}
             <FlowMap draft={draft} editable={editable} openSteps={openSteps} onToggleStep={toggleStep} renderEditor={stepEditor} />
           </fieldset>
-          <section aria-labelledby="flow-data-heading" className={`${cardClass} space-y-6`}>
+          <section aria-labelledby="flow-data-heading" className={`${cardClass} min-w-0 space-y-6`}>
             <div>
               <h2 id="flow-data-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Data</h2>
               <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">The details customers can look up, such as artists, vendors or FAQs.</p>
