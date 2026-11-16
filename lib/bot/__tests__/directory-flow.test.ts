@@ -781,8 +781,9 @@ describe('WhatsApp Directory Flow', () => {
     const anchor = 'Outside a business flow';
     const idx = src.indexOf(anchor);
     expect(idx).toBeGreaterThan(-1);
-    // 900-char window covers the full connect fallback block (including null-search guard)
-    const block = src.slice(idx, idx + 900);
+    // 1200-char window covers the full connect fallback block (null-search guard and
+    // the #1072 exact-name handoff before the session is persisted)
+    const block = src.slice(idx, idx + 1200);
     // Must use createDirectorySession
     expect(block).toContain('createDirectorySession');
     // Must NOT contain raw .delete() or raw .insert() on bot_sessions
@@ -847,5 +848,182 @@ describe('WhatsApp Directory Flow', () => {
     const dirUpdated = db._updated.find((u: any) => u.current_step === 'directory_results');
     expect(dirInserted).toBeUndefined();
     expect(dirUpdated).toBeUndefined();
+  });
+
+  // ─── #1072: search typed on a business menu, id postbacks, exact names ───
+
+  /** Run the first handleMessage for real; capture (do not run) recursive calls. */
+  function captureRecursion(bot: any) {
+    const orig = bot.handleMessage.bind(bot);
+    const calls: any[][] = [];
+    bot.handleMessage = vi.fn().mockImplementation(async (...args: any[]) => {
+      calls.push(args);
+      if (calls.length === 1) return orig(...args);
+    });
+    return calls;
+  }
+
+  /** The session's business is active (CAP-001 revalidation reads it with .single()). */
+  function withActiveBusiness(db: any) {
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({
+        id: 'biz-001', name: 'Test Salon', slug: 'test', category: 'salon', flow_type: 'scheduling',
+        subscription_tier: 'growth', trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+        metadata: {}, country_code: 'NG', status: 'active', is_whitelabel: false, operating_hours: null,
+      }, { asList: true });
+      return origFrom(t);
+    });
+    const origRpc = db.rpc;
+    db.rpc = vi.fn().mockImplementation((fn: string, args: any) => fn === 'update_session_cas'
+      ? Promise.resolve({ data: { success: true, version: 1 }, error: null })
+      : origRpc(fn, args));
+    return db;
+  }
+
+  it('#1072 "search salons in Lekki" on a shared business menu goes to the directory', async () => {
+    const db = withActiveBusiness(buildMock({ existingSession: bizSession('select_capability') }));
+    const { bot } = createBot(db);
+    const deactivate = vi.spyOn(bot as any, 'deactivateSession');
+    const calls = captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'search salons in Lekki', 'text', SHARED_PNID);
+    expect(deactivate).toHaveBeenCalledWith('ses-biz');
+    // Re-dispatched as a fresh directory search: no business bound, no provenance.
+    expect(calls[1]).toBeDefined();
+    expect(calls[1][1]).toBe('salons in Lekki');
+    expect(calls[1][4]).toBeUndefined();
+    expect(calls[1][7]).toBeUndefined();
+  });
+
+  // ("Book appointment" restarts the business flow before #1072's check — unchanged.)
+  it.each(['1', 'cap_scheduling', 'salon prices'])(
+    '#1072 a real menu choice ("%s") on a shared business menu stays with the business',
+    async (text) => {
+      const db = withActiveBusiness(buildMock({ existingSession: bizSession('select_capability') }));
+      const { bot } = createBot(db);
+      const deactivate = vi.spyOn(bot as any, 'deactivateSession');
+      const calls = captureRecursion(bot);
+      await bot.handleMessage(PHONE, text, 'text', SHARED_PNID);
+      expect(deactivate).not.toHaveBeenCalledWith('ses-biz');
+      expect(calls).toHaveLength(1); // no re-dispatch to the directory
+    },
+  );
+
+  it('#1072 review: a question on a shared business menu stays with the business', async () => {
+    const db = withActiveBusiness(buildMock({ existingSession: bizSession('select_capability') }));
+    const { bot } = createBot(db);
+    const deactivate = vi.spyOn(bot as any, 'deactivateSession');
+    const calls = captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'Do you deliver to Lekki?', 'text', SHARED_PNID);
+    expect(deactivate).not.toHaveBeenCalledWith('ses-biz');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('#1072 review: the redirected search keeps the conversation language', async () => {
+    const session = { ...bizSession('select_capability') };
+    session.session_data = { ...session.session_data, _detected_language: 'pcm' } as any;
+    const db = withActiveBusiness(buildMock({ existingSession: session }));
+    const { bot } = createBot(db);
+    captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'search barbers in Lekki', 'text', SHARED_PNID);
+    expect((bot as any).redirectedDirectoryLang).toBe('pcm');
+
+    // The re-dispatched no-session search replies in that language.
+    const db2 = buildMock();
+    const { bot: bot2, sender: sender2 } = createBot(db2);
+    (bot2 as any).redirectedDirectoryLang = 'pcm';
+    await bot2.handleMessage(PHONE, 'zzqxv', 'text', SHARED_PNID);
+    expect(msgs(sender2).some(m => textOf(m).includes('I no find any business'))).toBe(true);
+    const saved = db2._inserted.find((x: any) => x.current_step === 'directory_results');
+    expect(saved?.session_data._detected_language).toBe('pcm');
+  });
+
+  it('#1072 a menu search on a dedicated number never leaves the business', async () => {
+    const db = buildMock({ existingSession: bizSession('select_capability') });
+    db.rpc = vi.fn().mockImplementation((fn: string) => {
+      if (fn === 'get_bot_context') {
+        return Promise.resolve({ data: {
+          has_session: true, ambiguous: false, session: bizSession('select_capability'),
+          business: { id: 'biz-001', name: 'Test', slug: 'test', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: new Date(Date.now() + 30*86400000).toISOString(), metadata: {}, country_code: 'NG', is_whitelabel: false, payment_gateway: null, status: 'active', operating_hours: null },
+          capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], capability_overrides: [],
+        }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { bot } = createBot(db);
+    const deactivate = vi.spyOn(bot as any, 'deactivateSession');
+    await bot.handleMessage(PHONE, 'search salons in Lekki', 'text', SHARED_PNID, 'biz-001');
+    expect(deactivate).not.toHaveBeenCalledWith('ses-biz');
+    expect(db._inserted.find((x: any) => x.current_step === 'directory_results')).toBeUndefined();
+  });
+
+  it('#1072 dir_biz_<id> tap on a stored result enters it with provenance fuzzy', async () => {
+    const id = '00000000-0000-4000-8000-000000000042';
+    const db = buildMock({
+      existingSession: dirSession({
+        _directory_postbacks: 'id',
+        _directory_results: [{ businessId: id, name: 'FBK', botCode: 'FBK', category: 'salon', city: 'Lagos' }],
+      }),
+    });
+    const origFrom = db.from;
+    db.from = vi.fn().mockImplementation((t: string) => {
+      if (t === 'businesses') return chain({ id, bot_code: 'FBK', status: 'active' }, { asList: true });
+      return origFrom(t);
+    });
+    const { bot } = createBot(db);
+    const calls = captureRecursion(bot);
+    await bot.handleMessage(PHONE, `dir_biz_${id}`, 'list', SHARED_PNID);
+    const recursive = calls.find(c => c[8]?.businessId === id);
+    expect(recursive).toBeDefined();
+    expect(recursive![1]).toBe('FBK');
+    expect(recursive![7]).toBe('fuzzy');
+    expect(recursive![8]).toMatchObject({ id: 'ses-dir', conversationVersion: 3 });
+  });
+
+  it('#1072 a stale dir_biz_<id> tap is answered and never searched or entered', async () => {
+    const db = buildMock({ existingSession: dirSession({ _directory_postbacks: 'id', _directory_results: [] }) });
+    const { bot, sender } = createBot(db);
+    const calls = captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'dir_biz_00000000-0000-4000-8000-000000000099', 'list', SHARED_PNID);
+    expect(calls).toHaveLength(1);
+    expect(msgs(sender).some(m => textOf(m).includes('That list has changed'))).toBe(true);
+    expect(msgs(sender).some(m => textOf(m).includes('No businesses found'))).toBe(false);
+  });
+
+  it('#1072 an exact business name typed in the directory opens it directly', async () => {
+    const id = '00000000-0000-4000-8000-000000000077';
+    const db = buildMock({
+      existingSession: dirSession(),
+      fuzzyResults: [{ id, name: 'JaneLux', bot_code: 'JANELUX', category: 'shop', city: 'Lekki', state: 'Lagos', country_code: 'NG', match_score: 1 }],
+    });
+    const { bot, sender } = createBot(db);
+    const calls = captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'jane lux', 'text', SHARED_PNID);
+    const recursive = calls.find(c => c[8]?.businessId === id);
+    expect(recursive).toBeDefined();
+    expect(recursive![1]).toBe('JANELUX');
+    expect(recursive![7]).toBe('fuzzy');
+    expect(msgs(sender).some(m => /No exact match|close/.test(textOf(m)))).toBe(false);
+  });
+
+  it('#1072 home sends one greeting (no duplicate prompt) and keeps the country scope', async () => {
+    const db = buildMock();
+    const { bot, sender } = createBot(db);
+    await bot.handleMessage(PHONE, 'home', 'text', SHARED_PNID);
+    expect(msgs(sender).filter(m => /What would you like to find/.test(textOf(m)))).toHaveLength(0);
+    expect(msgs(sender).filter(m => textOf(m).includes('I can help you find businesses'))).toHaveLength(1);
+    const saved = [...db._inserted, ...db._updated].find((x: any) => x.session_data?._directory_mode);
+    expect(saved?.session_data._directory_country).toBe('NG');
+  });
+
+  it('#1072 Browse categories button lists categories', async () => {
+    const db = buildMock({
+      existingSession: dirSession({ _directory_postbacks: 'id', _directory_results: [] }),
+      searchResults: [{ id: 'b1', category: 'salon' }, { id: 'b2', category: 'salon' }, { id: 'b3', category: 'spa' }],
+    });
+    const { bot, sender } = createBot(db);
+    await bot.handleMessage(PHONE, 'dir_categories', 'button', SHARED_PNID);
+    const list = msgs(sender).find(m => m.type === 'list');
+    expect(list?.items?.map(i => i.title)).toEqual(['Salon', 'Spa']);
   });
 });

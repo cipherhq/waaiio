@@ -222,8 +222,9 @@ describe('Business search: results first, past businesses labelled as past', () 
     expect(sent.map(s => s.kind)).toEqual(['list', 'buttons']);
     expect(sent[0].body).toContain("Search results for 'salon in Lekki': I found 2 businesses. Tap below to choose one.");
     expect(sent[1].body).toBe(PAST_HEADER);
-    // Old Gym was already a search result, so only Old Spa is offered as past
-    expect(sent[1].ids).toEqual(['biz_0']);
+    // Old Gym was already a search result, so only Old Spa is offered as past.
+    // #1072: the button carries the business id, not a list position.
+    expect(sent[1].ids).toEqual(['dir_biz_biz-past-1']);
     expect(sent.some(s => s.body.includes('Did you mean'))).toBe(false);
 
     const dirSession = supabase._inserted.find(r => r.current_step === 'directory_results');
@@ -231,7 +232,7 @@ describe('Business search: results first, past businesses labelled as past', () 
     expect(dirSession?.session_data._directory_results).toHaveLength(2);
   });
 
-  it('2. no results: plain "No businesses found" first, then past businesses', async () => {
+  it('2. no results: "No businesses found" with Search again / Browse categories, then past businesses', async () => {
     mockReturningBusinesses = [OLD_SPA];
     const supabase = createSupabase();
     const { bot, cloud } = makeBot(supabase);
@@ -239,10 +240,13 @@ describe('Business search: results first, past businesses labelled as past', () 
     await bot.handleMessage(PHONE, 'barbers in Ikoyi', 'text');
 
     const sent = sentBodies(cloud);
-    expect(sent.map(s => s.kind)).toEqual(['text', 'buttons']);
+    // #1072: the no-results reply offers options; the place search is widened to the
+    // country first ("barbers" is a category), and nothing was found there either.
+    expect(sent.map(s => s.kind)).toEqual(['buttons', 'buttons']);
     expect(sent[0].body).toBe("No businesses found for 'barbers in Ikoyi'. Try a different name, area or category, or browse waaiio.com/directory.");
+    expect(sent[0].ids).toEqual(['dir_find', 'dir_categories']);
     expect(sent[1].body).toBe(PAST_HEADER);
-    expect(sent[1].ids).toEqual(['biz_0']);
+    expect(sent[1].ids).toEqual(['dir_biz_biz-past-1']);
   });
 
   it('3. close name match: labelled close match first, past businesses in a separate message', async () => {
