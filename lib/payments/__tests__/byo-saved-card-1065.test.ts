@@ -63,8 +63,9 @@ function fakeDb(rows: Record<string, Row | Row[] | null>) {
     chain.insert = vi.fn((p: unknown) => { call.op = 'insert'; call.payload = p; return chain; });
     chain.update = vi.fn((p: unknown) => { call.op = 'update'; call.payload = p; return chain; });
     chain.delete = vi.fn(() => { call.op = 'delete'; return chain; });
-    chain.single = vi.fn(async () => ({ data: call.op === 'insert' ? { id: 'pay-new' } : answer()[0] ?? null, error: null }));
-    chain.maybeSingle = vi.fn(async () => ({ data: call.op === 'insert' ? { id: 'pay-new' } : answer()[0] ?? null, error: null }));
+    const written = () => call.op === 'insert' || call.op === 'update';
+    chain.single = vi.fn(async () => ({ data: written() ? { id: 'pay-new' } : answer()[0] ?? null, error: null }));
+    chain.maybeSingle = vi.fn(async () => ({ data: written() ? { id: 'pay-new' } : answer()[0] ?? null, error: null }));
     // A guarded UPDATE ... select('id') proves exactly one row moved.
     chain.then = (res: (v: unknown) => unknown) =>
       Promise.resolve({ data: call.op === 'update' ? [{ id: 'pay-new' }] : answer(), error: null }).then(res);
@@ -334,5 +335,23 @@ describe('review follow-ups (#1065)', () => {
     await handleRemoveCard(db as never, send, PHONE, { business_id: BIZ } as never);
     expect(calls.some(c => c.table === 'saved_payment_methods' && c.op === 'delete')).toBe(false);
     expect(send).toHaveBeenCalledWith(PHONE, 'Could not check your saved card. Please try again.');
+  });
+});
+
+describe('merchant moved to a different Paystack account (Owner option B)', () => {
+  it('Paystack\'s real refusal of an unknown card is a clean decline, so the customer pays by link', async () => {
+    h.routing.mockResolvedValue({ isByo: true, byoSecretKey: 'merchant-key-1065', byoPlatformSubaccount: 'ACCT_new', providerConnectionId: CRED, platformFeeAmount: 3 });
+    // Verbatim Paystack test-mode response to charge_authorization with an unknown code (2026-11-16).
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      json: async () => ({ status: false, message: 'Authorization code is invalid', type: 'validation_error', code: 'invalid_authorization_code' }),
+    }) as unknown as Response));
+    const { db, calls } = fakeDb({ payments: null });
+    const outcome = await chargeSavedCard(db as never, {
+      savedMethod: { id: 'm-byo', gateway: 'paystack', authorization_code: 'AUTH_old_account', customer_code: null, authorization_email: 'ada@gmail.com',
+        stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4081', card_brand: 'visa', byo_business_id: BIZ },
+      amount: 100, currency: 'NGN', email: 'ada@gmail.com', reference: 'REF-moved', businessId: BIZ,
+    });
+    expect(outcome).toEqual({ outcome: 'declined', reference: 'REF-moved', message: 'Authorization code is invalid' });
+    expect(calls.find(c => c.table === 'payments' && c.op === 'update')?.payload).toMatchObject({ status: 'failed' });
   });
 });
