@@ -22,7 +22,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { truncTitle } from '@/lib/bot/utils/truncate';
 import { getFlowCopy, fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { parseDirectoryQuery, GENERIC_NOUNS, type DirectoryQueryResult } from '@/lib/marketplace/query-parser';
-import { detectCategoryIntent } from '@/lib/bot/fuzzy-match';
+import { detectCategoryIntent, CATEGORY_KEYWORDS } from '@/lib/bot/fuzzy-match';
 import {
   searchMarketplace,
   searchFuzzy,
@@ -32,6 +32,7 @@ import {
   type MarketplaceResult,
   type MarketplaceSearchCriteria,
   type FuzzySuggestion,
+  placeTierFor,
 } from '@/lib/marketplace/search';
 import { resolvePlace, placeCountryName, isKnownPlace } from '@/lib/marketplace/place-aliases';
 import { checkRateLimitAsync } from '@/lib/rate-limit';
@@ -204,6 +205,39 @@ function nameContains(name: string, text: string): boolean {
 }
 
 /**
+ * Exact-name auto-entry is allowed only for text that is not a generic word, a
+ * detected category or a known place: a business named "Salon" or "Lagos" must
+ * not capture that search (#1072 review).
+ */
+export function exactNameMayEnter(text: string, country: string | null): boolean {
+  const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t || GENERIC_NOUNS.has(t)) return false;
+  if (CATEGORY_WORDS.has(t) || CATEGORY_WORDS.has(t.replace(/(es|s)$/, ''))) return false;
+  return !isKnownPlace(t, country, true) && !placeCountryName(t);
+}
+
+/** Category keys and keywords as whole words ("salon", "restaurant", "barber"). */
+const CATEGORY_WORDS: ReadonlySet<string> = new Set(
+  Object.entries(CATEGORY_KEYWORDS).flatMap(([key, words]) => [key.replace(/_/g, ' '), ...words])
+    .map((w) => w.toLowerCase()),
+);
+
+/**
+ * Exact-name pick from the "Did you mean?" path: directory-eligible and, when the
+ * shared number's country is known, in that country.
+ */
+export async function exactNamePickAllowed(
+  supabase: SupabaseClient,
+  businessId: string,
+  country: string | null,
+): Promise<boolean> {
+  if (!(await isBusinessDirectoryEligible(supabase, businessId))) return false;
+  if (!country) return true;
+  const { data, error } = await supabase.from('businesses').select('country_code').eq('id', businessId).maybeSingle();
+  return !error && (data as { country_code?: string | null } | null)?.country_code === country;
+}
+
+/**
  * Category or free-text filter for a place search (#1072): a category, a generic
  * word with a category synonym ("shops"), a name ("boutique"), or nothing for a
  * generic word or a place alone ("businesses in Lekki", "Lekki").
@@ -267,8 +301,13 @@ export async function handleDirectorySearch(
   const out = new DirectoryReply(send, from, text, sharedCountry, lang);
 
   // 1. Exact business name (case/space-insensitive): unique → enter, several → list them.
+  // Never for a generic word, category or place ("Salon", "Lagos"), and only in the
+  // shared number's country when known (#1072 review).
   const nameMatches = await searchFuzzy(supabase, text, sharedCountry, hiddenIds);
-  const exact = nameMatches.filter((s) => s.botCode && sameBusinessName(s.name, text));
+  const exact = exactNameMayEnter(text, sharedCountry)
+    ? nameMatches.filter((s) => s.botCode && sameBusinessName(s.name, text)
+      && (!sharedCountry || s.countryCode === sharedCountry))
+    : [];
   if (exact.length === 1) {
     return {
       ...base(text, sharedCountry), _directory_results: [], _directory_suggestions: [], _directory_total: 0,
@@ -297,7 +336,14 @@ export async function handleDirectorySearch(
     const inPlace = await search({ ...filter, place, country: place.countryCode || sharedCountry || undefined });
     if (!inPlace.ok && !inPlace.locationFailed) return out.unavailable();
     if (inPlace.ok && inPlace.results.length > 0) {
-      return out.results(inPlace.results, inPlace.hasMore, correctionPrefix, true);
+      // "Laurel, Maryland" where nothing is in Laurel itself: say so before the region.
+      const areaOnly = { ...place, stateTerms: [], stateExact: [], stateAreaTerms: [], stateAreaExact: [] };
+      const areaMissing = !place.known && place.areaTerms.length > 0
+        && !inPlace.results.some((r) => placeTierFor(areaOnly, r) === 0);
+      const notice = areaMissing
+        ? fillFlowCopy(lang, 'directory.widened', { place: searchLabel(place.areaTerms[0]) })
+        : '';
+      return out.results(inPlace.results, inPlace.hasMore, [correctionPrefix, notice].filter(Boolean).join('\n\n'), true);
     }
     // Nothing in the place: widen to the country for a category or name (a place
     // alone is never widened, so a search never lists a whole country).
@@ -580,7 +626,14 @@ export async function handleDirectorySelection(
     const hit = [...results, ...sugs].find((r) => r.id.toLowerCase() === id && r.botCode);
     if (hit) return pickIfEligible(hit);
     const past = (sessionData.suggestions || []).find((p) => p.id.toLowerCase() === id);
-    if (past?.bot_code) return { businessId: past.id, botCode: past.bot_code, source: 'past' };
+    if (past?.bot_code) {
+      // Past businesses are re-checked like results (#1072 review).
+      if (await isBusinessDirectoryEligible(supabase, past.id)) {
+        return { businessId: past.id, botCode: past.bot_code, source: 'past' };
+      }
+      await send.sendPlatformText(from, getFlowCopy(lang, 'directory.business_unavailable'));
+      return null;
+    }
     return stale();
   }
 
@@ -737,24 +790,37 @@ function searchResultsText(query: string, count: number, lang?: string): string 
 
 // ── Search typed on a business menu (#1072) ───────────────
 
-const MENU_ACTION_WORDS = /\b(book|booking|order|buy|pay|reserve|appointment|ticket|tickets|donate|give|cancel|reschedule|my)\b/i;
+const MENU_ACTION_WORDS = /\b(book|booking|order|buy|pay|reserve|appointment|table|tables|ticket|tickets|donate|give|cancel|reschedule|my|out|more|menu|price|prices|hours)\b/i;
+
+/** A question to the business ("Do you deliver to Lekki?") is never a directory search. */
+const QUESTION_RE = /^(do|does|did|can|could|is|are|will|would|where|how|what|which|who|when|why)\b/i;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * An explicit directory search typed on a business's menu: "search …", "find …",
- * or "<category> in <known place>" ("salons in Lekki"). Returns the text to search,
- * or null for anything else (real menu choices are left to the menu).
+ * or "<category> in|near|around <known place>" ("salons in Lekki"). Returns the
+ * text to search, or null for anything else (real menu choices and questions to
+ * the business stay with the business). Only clear searches qualify (#1072 review):
+ * no questions, no fuzzy-corrected categories, no menu action words.
  */
 export function explicitDirectorySearch(text: string): string | null {
   const t = text.replace(/\s+/g, ' ').trim();
   if (!t || t.length > 120) return null;
+  if (t.includes('?') || QUESTION_RE.test(t)) return null;
   const verb = t.match(/^(?:search|find)\s+(?:for\s+)?(.+)$/i);
   if (verb) {
     const rest = verb[1].trim();
-    return rest && !/^(my|me)\b/i.test(rest) ? rest : null;
+    if (!rest || /^(my|me)\b/i.test(rest) || MENU_ACTION_WORDS.test(rest)) return null;
+    return rest;
   }
   const parsed = parseDirectoryQuery(t, null);
-  if (!parsed.locationText || parsed.needsLocation || !parsed.subject) return null;
+  if (!parsed.locationText || parsed.needsLocation || !parsed.subject || parsed.correctedFrom) return null;
   if (MENU_ACTION_WORDS.test(parsed.subject)) return null;
+  // Only "in" / "near" / "around" + the place ("to" / "at" / "for" read as questions or orders).
+  if (!new RegExp(`\\b(in|near|around)\\s+${escapeRegExp(parsed.locationText)}$`, 'i').test(t)) return null;
   const isCategory = parsed.categories.length > 0 || GENERIC_NOUNS.has(parsed.subject.toLowerCase());
   if (!isCategory) return null;
   return isKnownPlace(parsed.locationText, null, false) ? t : null;

@@ -66,7 +66,7 @@ import { ConversationOrchestrator } from './conversation-orchestrator';
 import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
-import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds, isBusinessDirectoryEligible } from '@/lib/marketplace/search';
+import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
 import { parseDirectoryQuery } from '@/lib/marketplace/query-parser';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
 import {
@@ -84,6 +84,8 @@ import {
   explicitDirectorySearch,
   isDirectoryPickPostback,
   sameBusinessName,
+  exactNameMayEnter,
+  exactNamePickAllowed,
   CONNECT_PATTERN,
   type DirectorySessionData,
 } from './handlers/directory-search';
@@ -94,6 +96,8 @@ export class BotService {
   private inboundRecorded = false;
   /** #1072: a menu-typed search is re-dispatched to the directory at most once per message. */
   private directorySearchRedispatched = false;
+  /** #1072: language of the business conversation a menu search was redirected from. */
+  private redirectedDirectoryLang: string | undefined;
   private readonly ctx: BotContext;
 
   constructor(
@@ -1460,7 +1464,9 @@ export class BotService {
         if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
         const dirSend = this.buildDirectorySend();
         const searchData = await handleDirectorySearch(
-          this.supabase, dirSend, from, keyword, null, directoryLanguage(session?.session_data),
+          this.supabase, dirSend, from, keyword,
+          sharedConversation ? await this.sharedChannelCountry(sharedConversation.channelId) : null,
+          directoryLanguage(session?.session_data),
         );
         if (!searchData) return; // rate-limited or unavailable — reply already sent, preserve existing session
         if (searchData._directory_enter) {
@@ -1490,6 +1496,7 @@ export class BotService {
       const directoryText = explicitDirectorySearch(text);
       if (directoryText) {
         this.directorySearchRedispatched = true;
+        this.redirectedDirectoryLang = directoryLanguage(session.session_data);
         await this.deactivateSession(session.id);
         return this.handleMessage(from, directoryText, messageType, destinationPhone);
       }
@@ -1926,8 +1933,9 @@ export class BotService {
       // #1072: one directory-eligible business's exact name (case/space-insensitive)
       // opens it directly instead of "No exact match … this name is close".
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0 && !isCategoryMatch) {
-        const exactNames = pendingSuggestions.filter(s => s.bot_code && sameBusinessName(s.name, text));
-        if (exactNames.length === 1 && await isBusinessDirectoryEligible(this.supabase, exactNames[0].id)) {
+        const exactNames = exactNameMayEnter(text, sharedNumberCountry)
+          ? pendingSuggestions.filter(s => s.bot_code && sameBusinessName(s.name, text)) : [];
+        if (exactNames.length === 1 && await exactNamePickAllowed(this.supabase, exactNames[0].id, sharedNumberCountry)) {
           return this.enterExactDirectoryMatch(from, messageType, destinationPhone,
             { businessId: exactNames[0].id, botCode: exactNames[0].bot_code }, session, sharedConversation);
         }
@@ -3233,7 +3241,7 @@ export class BotService {
 
       // ── Unrecognized text — run a directory search immediately ──
       {
-        const searchLang = directoryLanguage(session?.session_data);
+        const searchLang = directoryLanguage(session?.session_data) ?? this.redirectedDirectoryLang;
         const searchData = await handleDirectorySearch(
           this.supabase, dirSend, from, text, sharedNumberCountry, searchLang,
         );
@@ -3255,6 +3263,7 @@ export class BotService {
           await this.navigationChannelData(from, destinationPhone, {
             _directory_mode: true, _directory_country: sharedNumberCountry, ...(searchData || {}),
             ...(pastBusinesses.length > 0 ? { suggestions: pastBusinesses } : {}),
+            ...(searchLang ? { _detected_language: searchLang } : {}),
           }),
         );
         if (!dirSearchSess) {
@@ -5104,6 +5113,12 @@ export class BotService {
     });
     if (error) throw new Error('Cannot persist channel-bound business navigation');
     return { ...data, _inbound_channel_id: channel.id, _conversation_version: context?.version ?? 0 };
+  }
+
+  /** Country of a shared inbound channel (directory scope), or null. */
+  private async sharedChannelCountry(channelId: string): Promise<string | null> {
+    const { data } = await this.supabase.from('whatsapp_channels').select('country_code').eq('id', channelId).maybeSingle();
+    return (data as { country_code?: string | null } | null)?.country_code || null;
   }
 
   /**

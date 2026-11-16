@@ -909,6 +909,35 @@ describe('WhatsApp Directory Flow', () => {
     },
   );
 
+  it('#1072 review: a question on a shared business menu stays with the business', async () => {
+    const db = withActiveBusiness(buildMock({ existingSession: bizSession('select_capability') }));
+    const { bot } = createBot(db);
+    const deactivate = vi.spyOn(bot as any, 'deactivateSession');
+    const calls = captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'Do you deliver to Lekki?', 'text', SHARED_PNID);
+    expect(deactivate).not.toHaveBeenCalledWith('ses-biz');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('#1072 review: the redirected search keeps the conversation language', async () => {
+    const session = { ...bizSession('select_capability') };
+    session.session_data = { ...session.session_data, _detected_language: 'pcm' } as any;
+    const db = withActiveBusiness(buildMock({ existingSession: session }));
+    const { bot } = createBot(db);
+    captureRecursion(bot);
+    await bot.handleMessage(PHONE, 'search barbers in Lekki', 'text', SHARED_PNID);
+    expect((bot as any).redirectedDirectoryLang).toBe('pcm');
+
+    // The re-dispatched no-session search replies in that language.
+    const db2 = buildMock();
+    const { bot: bot2, sender: sender2 } = createBot(db2);
+    (bot2 as any).redirectedDirectoryLang = 'pcm';
+    await bot2.handleMessage(PHONE, 'zzqxv', 'text', SHARED_PNID);
+    expect(msgs(sender2).some(m => textOf(m).includes('I no find any business'))).toBe(true);
+    const saved = db2._inserted.find((x: any) => x.current_step === 'directory_results');
+    expect(saved?.session_data._detected_language).toBe('pcm');
+  });
+
   it('#1072 a menu search on a dedicated number never leaves the business', async () => {
     const db = buildMock({ existingSession: bizSession('select_capability') });
     db.rpc = vi.fn().mockImplementation((fn: string) => {

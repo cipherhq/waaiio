@@ -10,3 +10,12 @@
 - Tests: `lib/marketplace/__tests__/place-search-1072.test.ts`, `lib/bot/__tests__/directory-search-1072.test.ts`, new cases in `directory-flow.test.ts`; existing directory suites updated where they pinned the old criteria (`locationText`+`_addressHint`, 3× fetch, plain-text no-results, `biz_0`/`dir_result_N` buttons, the second home prompt).
 - Unchanged: eligibility (active, bot_code, discovery_enabled, not suspended, admin hidden list), bot_code direct entry, search rate limit, payment/booking flows, `/api/directory` filters (it now also fetches in name order with the 200-row pool).
 - Could break: a business stored with only a free-text address and no city/state/area is found by a place only if the address names it; a US state abbreviation only in the address (", MD 20707") is not matched. No migration.
+- Review fixes: on a business menu only clear searches go to the directory — never a question (do/does/can/is/where/… or "?"), a fuzzy-corrected category, "to"/"at" connectors, or menu words ("find a table", "find tickets", "find out more"); the redirected search keeps the conversation language. Exact-name auto-entry never fires for a generic word, category word or place ("Salon", "Lagos" list instead), and from the "Did you mean?" picker / connect fallback only in the shared number's country (connect fallback now passes the country). A past-business `dir_biz_` tap is re-checked for directory eligibility. "Laurel, Maryland" on a Nigerian number (Laurel not found in the Lagos-area Maryland) now says "Nothing found in Laurel…" before listing the region.
+
+### Known follow-ups
+- The 200-row ranking pool can truncate very large states before ranking.
+- The place filter URL grows with large admin-hidden lists (`not.in`) and big states.
+- Open-now for hours past midnight checks only today's hours (yesterday's late window is not considered).
+- The AI-path marketplace search (`bot.service` `searchMarketplace` with `locationText`) still uses the old city/address-hint path.
+- "Browse categories" (`dir_categories`) has no rate limit.
+- A menu search redirect closes the business session before the (possibly rate-limited) directory search runs.

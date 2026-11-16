@@ -174,6 +174,44 @@ describe('#1072 names, parse problems and no results', () => {
   });
 });
 
+describe('#1072 review: exact-name guards and partial places', () => {
+  it.each([
+    ['Salon', biz(uid(20), 'Salon', { category: 'salon', city: 'Ikeja', state: 'Lagos' })],
+    ['Restaurants', biz(uid(21), 'Restaurants', { category: 'restaurant', city: 'Ikeja', state: 'Lagos' })],
+    ['Lagos', biz(uid(22), 'Lagos', { category: 'shop', city: 'Ikeja', state: 'Lagos' })],
+  ])('a business named "%s" does not capture that search word', async (text, row) => {
+    const { data } = await search(text, [row as Row, JANELUX]);
+    expect(data?._directory_enter).toBeUndefined();
+  });
+
+  it('exactNameMayEnter allows a real name and blocks generic words, categories and places', async () => {
+    const { exactNameMayEnter } = await import('@/lib/bot/handlers/directory-search');
+    expect(exactNameMayEnter('JaneLux', 'NG')).toBe(true);
+    expect(exactNameMayEnter('Food for Thought', 'NG')).toBe(true);
+    for (const t of ['shops', 'Salon', 'barbers', 'Lekki', 'Maryland', 'Nigeria']) expect(exactNameMayEnter(t, 'NG')).toBe(false);
+  });
+
+  it('exact-name picks from the picker path respect the shared number country', async () => {
+    const { exactNamePickAllowed } = await import('@/lib/bot/handlers/directory-search');
+    const ghana = biz(uid(23), 'Accra Glow', { country_code: 'GH' });
+    const { db } = directoryFakeDb([ghana, JANELUX]);
+    expect(await exactNamePickAllowed(db, uid(23), 'NG')).toBe(false);
+    expect(await exactNamePickAllowed(db, uid(23), null)).toBe(true);
+    expect(await exactNamePickAllowed(db, uid(1), 'NG')).toBe(true);
+  });
+
+  it('"Laurel, Maryland" on a Nigerian number says nothing is in Laurel before listing the region', async () => {
+    const { send } = await search('Laurel, Maryland', [JANELUX, IKEJA], 'NG');
+    const body = String(send.sendPlatformList.mock.calls[0][1].body);
+    expect(body).toContain('Nothing found in Laurel');
+  });
+
+  it('"Laurel, Maryland" on a US number lists Laurel without the notice', async () => {
+    const { send } = await search('Laurel, Maryland', [LAUREL], 'US');
+    expect(String(send.sendPlatformList.mock.calls[0][1].body)).not.toContain('Nothing found');
+  });
+});
+
 describe('#1072 browse categories', () => {
   it('lists only categories with eligible businesses, then searches the tapped one', async () => {
     const { db } = directoryFakeDb([JANELUX, IKEJA, FOOD_CAFE, LAUREL], { hiddenIds: [uid(4)] });
@@ -238,10 +276,17 @@ describe('#1072 stable postbacks', () => {
     expect(allText(send3)).toMatch(/list has changed/i);
   });
 
-  it('a past business button opens it as a past pick', async () => {
-    const { db } = directoryFakeDb([]);
+  it('a past business button opens it as a past pick after an eligibility check', async () => {
+    const { db } = directoryFakeDb([biz(uid(9), 'Old Spa', { bot_code: 'OLDSPA' })]);
     expect(await handleDirectorySelection(db, sender(), PHONE, `dir_biz_${uid(9)}`, session()))
       .toEqual({ businessId: uid(9), botCode: 'OLDSPA', source: 'past' });
+  });
+
+  it('a past business that is no longer eligible is refused', async () => {
+    const { db } = directoryFakeDb([biz(uid(9), 'Old Spa', { bot_code: 'OLDSPA', messaging_suspended: true })]);
+    const send = sender();
+    expect(await handleDirectorySelection(db, send, PHONE, `dir_biz_${uid(9)}`, session())).toBeNull();
+    expect(allText(send)).toMatch(/currently unavailable/);
   });
 
   it('returning greeting and directory past-business buttons carry ids', async () => {
@@ -260,6 +305,9 @@ describe('#1072 stable postbacks', () => {
 describe('#1072 search typed on a business menu', () => {
   it.each([
     ['search salons in Lekki', 'salons in Lekki'],
+    ['search barbers in Lekki', 'barbers in Lekki'],
+    ['find salons near Ikoyi', 'salons near Ikoyi'],
+    ['barbers in Lekki', 'barbers in Lekki'],
     ['find JaneLux', 'JaneLux'],
     ['Search for spa', 'spa'],
     ['salons in Lekki', 'salons in Lekki'],
@@ -268,7 +316,11 @@ describe('#1072 search typed on a business menu', () => {
     expect(explicitDirectorySearch(text)).toBe(expected);
   });
 
-  it.each(['1', 'Book appointment', 'book a haircut in Lekki', 'find my bookings', 'pay', 'Glow Studio', 'salon', 'shops in MD', 'Food for Thought'])(
+  it.each(['1', 'Book appointment', 'book a haircut in Lekki', 'find my bookings', 'pay', 'Glow Studio', 'salon', 'shops in MD', 'Food for Thought',
+    // #1072 review: questions, fuzzy-corrected categories, "to"/"at", menu actions
+    'Do you deliver to Lekki?', 'Do you have a branch in Lekki?', 'Do you have shops in Lekki', 'do you have shops in Lekki',
+    'Where are you in Lekki', 'salons in Lekki?', 'Can I find salons in Lekki', 'delivery to Lekki', 'salons at Lekki',
+    'find a table', 'find tickets', 'find out more', 'search menu'])(
     '"%s" stays with the business menu',
     (text) => {
       expect(explicitDirectorySearch(text)).toBeNull();
