@@ -229,7 +229,7 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
     captureInArgs?: (field: string, values: string[]) => void;
   }) {
     // Mock chain matches the global saved-card query:
-    // .from().select().in(phone).eq(is_active).eq(gateway).is(provider_credential_id, null).limit(2)
+    // .from().select().in(phone).eq(is_active).eq(gateway).is(byo_business_id, null).limit(2)
     // No .eq('business_id') — global card model; the shared-account scope is the .is() (#1065).
     const sb: any = {
       from: vi.fn().mockReturnValue({
@@ -240,7 +240,7 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
                   is: vi.fn().mockImplementation((field: string, value: null) => {
-                    if (field !== 'provider_credential_id' || value !== null) throw new Error('shared-account scope filter expected');
+                    if (field !== 'byo_business_id' || value !== null) throw new Error('shared-account scope filter expected');
                     return {
                       limit: vi.fn().mockResolvedValue({
                         data: opts.returnRows ?? null,
@@ -1108,7 +1108,7 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
 
   /**
    * Build a supabase mock matching the global saved-card query chain:
-   * .from().select().in(customer_phone).eq(is_active).eq(gateway).is(provider_credential_id, null).limit(2)
+   * .from().select().in(customer_phone).eq(is_active).eq(gateway).is(byo_business_id, null).limit(2)
    * No .eq(business_id) — global card model.
    */
   function buildListingSb(opts: {
@@ -1133,9 +1133,9 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
                     ? opts.returnRows.filter((r: any) => r.gateway === value)
                     : null;
                   return {
-                    // .is('provider_credential_id', null) — shared-account scope (#1065)
+                    // .is('byo_business_id', null) — shared-account scope (#1065)
                     is: vi.fn().mockImplementation((scopeField: string, scopeValue: null) => {
-                      if (scopeField !== 'provider_credential_id' || scopeValue !== null) throw new Error('shared-account scope filter expected');
+                      if (scopeField !== 'byo_business_id' || scopeValue !== null) throw new Error('shared-account scope filter expected');
                       return {
                         limit: vi.fn().mockResolvedValue({
                           data: opts.returnError ? null : filtered,

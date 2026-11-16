@@ -1,28 +1,24 @@
 -- Migration 544: Save Card on a merchant's own Paystack account (BYO) (#1065 step 1).
 -- A card authorized on a merchant's own Paystack account can only be charged with
--- that merchant's key, so it is scoped to the exact credential connection that
--- issued it. NULL provider_credential_id = Waaiio shared-account card (unchanged).
--- No backfill: every existing row stays a shared-account card.
+-- that merchant's key, so it belongs to that merchant. Owner decision 2026-11-16:
+-- the card stays with the merchant when it re-enters its key (a new credential row);
+-- if the merchant moves to a different Paystack account, Paystack refuses the old
+-- card and the customer pays by link. NULL byo_business_id = Waaiio shared-account
+-- card (unchanged). No backfill: every existing row stays a shared-account card.
 
 ALTER TABLE public.saved_payment_methods
-  ADD COLUMN IF NOT EXISTS provider_credential_id UUID
-    REFERENCES public.business_payment_credentials(id) ON DELETE CASCADE;
-
-ALTER TABLE public.saved_payment_methods
-  DROP CONSTRAINT IF EXISTS chk_saved_pm_byo_business;
-ALTER TABLE public.saved_payment_methods
-  ADD CONSTRAINT chk_saved_pm_byo_business
-  CHECK (provider_credential_id IS NULL OR business_id IS NOT NULL);
+  ADD COLUMN IF NOT EXISTS byo_business_id UUID
+    REFERENCES public.businesses(id) ON DELETE CASCADE;
 
 -- One active shared card per customer+gateway (as before), plus at most one
--- active card per customer on each merchant's own Paystack connection.
+-- active own-account card per customer at each merchant.
 DROP INDEX IF EXISTS public.idx_saved_pm_customer_gateway_active;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_pm_platform_active
   ON public.saved_payment_methods (customer_phone, gateway)
-  WHERE is_active = true AND provider_credential_id IS NULL;
+  WHERE is_active = true AND byo_business_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_pm_byo_active
-  ON public.saved_payment_methods (customer_phone, provider_credential_id)
-  WHERE is_active = true AND provider_credential_id IS NOT NULL;
+  ON public.saved_payment_methods (customer_phone, byo_business_id)
+  WHERE is_active = true AND byo_business_id IS NOT NULL;
 
 -- Same body as M427 except payment_origin may also be 'byo'. Attributes are
 -- restated in full (DB-002): SECURITY DEFINER, search_path = pg_catalog, pg_temp.

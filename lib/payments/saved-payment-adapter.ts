@@ -217,7 +217,7 @@ async function lookupAuthorizedMethod(
   pin_hash: string | null;
   pin_attempts: number;
   pin_locked_until: string | null;
-  provider_credential_id: string | null;
+  byo_business_id: string | null;
 } | null> {
   // Customer-scoped lookup: methodId + customer_phone + is_active.
   const { canonicalSavedCardPhone } = await import('./saved-card-compat');
@@ -226,7 +226,7 @@ async function lookupAuthorizedMethod(
   const phoneN = phoneP.slice(1);
   const { data } = await supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, provider_credential_id')
+    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, byo_business_id')
     .eq('id', methodId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
@@ -259,7 +259,7 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
 
     // Customer-scoped lookup (global card); the card must be on this business's Paystack account (#1065)
     const method = await lookupAuthorizedMethod(supabase, opts.methodId, opts.businessId, opts.customerPhone);
-    if (!method || (method.provider_credential_id ?? null) !== scope.credentialId) {
+    if (!method || (method.byo_business_id ?? null) !== scope.byoBusinessId) {
       return { status: 'method_not_found' };
     }
 

@@ -121,7 +121,7 @@ interface SavedMethod {
   card_last4: string | null;
   card_brand: string | null;
   /** Set when the card lives on a merchant's own Paystack account (#1065); null = Waaiio shared account. */
-  provider_credential_id?: string | null;
+  byo_business_id?: string | null;
 }
 
 /**
@@ -147,7 +147,7 @@ export async function getSavedPaymentMethod(
   // Customer-scoped query: no business_id filter (global saved card), fenced to the scope's account
   const { data, error } = await withSavedCardScope(supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone, provider_credential_id')
+    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone, byo_business_id')
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
     .eq('gateway', 'paystack'), scope)
@@ -187,7 +187,7 @@ export type SavedCardOutcome =
  * 5. No existing row → INSERT canonical row first, fail closed if error
  * 6. Call provider → charged / declined / indeterminate
  *
- * A card saved on a merchant's own Paystack account (provider_credential_id set,
+ * A card saved on a merchant's own Paystack account (byo_business_id set,
  * #1065) is charged with that merchant's key; a caller-supplied byoSecretKey is
  * still refused so the key always comes from the routing authority.
  */
@@ -409,18 +409,18 @@ async function chargePaystackAuthorization(
 
   // Resolved after Step 0 so an earlier pending charge always reconciles first.
   // A merchant's own-account card is charged with that merchant's key and the same reversed
-  // split as its normal checkout (#1065), and only on the connection that issued the card.
-  let byoRouting: { secretKey: string; platformSubaccount: string; credentialId: string; platformFeeAmount: number } | null = null;
-  if (opts.savedMethod.provider_credential_id) {
+  // split as its normal checkout (#1065), only at the merchant that saved it, with its current key.
+  let byoRouting: { secretKey: string; platformSubaccount: string; connectionId: string; platformFeeAmount: number } | null = null;
+  if (opts.savedMethod.byo_business_id) {
     const { resolvePaymentRoutingAuthority } = await import('./resolve-stripe-routing');
     const routing = await resolvePaymentRoutingAuthority(supabase, opts.businessId, 'paystack', opts.amount);
     if (!routing?.isByo || !routing.byoSecretKey || !routing.byoPlatformSubaccount
-      || routing.providerConnectionId !== opts.savedMethod.provider_credential_id) {
+      || !routing.providerConnectionId || opts.savedMethod.byo_business_id !== opts.businessId) {
       return { outcome: 'declined', reference: opts.reference, message: 'Saved card is not available for this business' };
     }
     byoRouting = {
       secretKey: routing.byoSecretKey, platformSubaccount: routing.byoPlatformSubaccount,
-      credentialId: routing.providerConnectionId, platformFeeAmount: routing.platformFeeAmount,
+      connectionId: routing.providerConnectionId, platformFeeAmount: routing.platformFeeAmount,
     };
   }
   // Waaiio's fee goes to Waaiio's subaccount on the merchant's account; the merchant keeps the rest.
@@ -571,7 +571,7 @@ async function chargePaystackAuthorization(
       business_id: opts.businessId,
       saved_method: true,
       payment_origin: byoRouting ? 'byo' : 'platform',
-      ...(byoRouting && { byo: true, byo_business_id: opts.businessId, provider_connection_id: byoRouting.credentialId }),
+      ...(byoRouting && { byo: true, byo_business_id: opts.businessId, provider_connection_id: byoRouting.connectionId }),
       ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
       ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
     },

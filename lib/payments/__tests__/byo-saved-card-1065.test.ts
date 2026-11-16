@@ -1,6 +1,7 @@
 /**
  * #1065 step 1: Save Card on a merchant's own Paystack account (BYO).
- * A BYO card lives on the exact credential connection that issued it, is offered and
+ * A BYO card belongs to the merchant whose Paystack account took the payment (and stays
+ * with it when the merchant re-enters its key, Owner decision 2026-11-16), is offered and
  * charged only at that merchant (with that merchant's key and the normal BYO reversed
  * split), and never mixes with the customer's Waaiio shared-account card.
  * Real saved-card-scope / saved-card-compat / charge-saved / saved-card-offer modules;
@@ -73,7 +74,7 @@ function fakeDb(rows: Record<string, Row | Row[] | null>) {
 }
 const scopeFilter = (calls: Array<{ table: string; filters: unknown[][] }>) =>
   calls.filter(c => c.table === 'saved_payment_methods')
-    .flatMap(c => c.filters.filter(f => f[1] === 'provider_credential_id'));
+    .flatMap(c => c.filters.filter(f => f[1] === 'byo_business_id'));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -82,11 +83,11 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('saved-card scope', () => {
-  it('shared-account business → shared scope; own Paystack account → that connection; others ineligible', async () => {
+  it('shared-account business → shared scope; own Paystack account → that merchant; others ineligible', async () => {
     expect(await resolvePaystackSavedCardScope(fakeDb({ business_payment_credentials: null }).db as never, BIZ))
-      .toEqual({ eligible: true, credentialId: null });
+      .toEqual({ eligible: true, byoBusinessId: null });
     expect(await resolvePaystackSavedCardScope(fakeDb({ business_payment_credentials: BYO_CREDENTIAL }).db as never, BIZ))
-      .toEqual({ eligible: true, credentialId: CRED });
+      .toEqual({ eligible: true, byoBusinessId: BIZ });
     expect(await resolvePaystackSavedCardScope(fakeDb({ business_payment_credentials: { ...BYO_CREDENTIAL, gateway: 'flutterwave' } }).db as never, BIZ))
       .toEqual({ eligible: false, reason: 'byo_paystack_credential_unavailable' });
     expect(await resolvePaystackSavedCardScope(fakeDb({ business_payment_credentials: { id: 'x', gateway: 'paystack', secret_key: null, platform_subaccount_code: null, connect_account_id: 'ACCT_c' } }).db as never, BIZ))
@@ -97,31 +98,34 @@ describe('saved-card scope', () => {
   });
 
   it('a payment matches only the account that took it', () => {
-    const byo = { metadata: { payment_origin: 'byo', byo_business_id: BIZ, provider_connection_id: CRED } };
-    expect(paystackPaymentMatchesSavedCardScope(byo, BIZ, { credentialId: CRED })).toBe(true);
-    expect(paystackPaymentMatchesSavedCardScope(byo, BIZ, { credentialId: OLD_CRED })).toBe(false);
-    expect(paystackPaymentMatchesSavedCardScope(byo, 'other-biz', { credentialId: CRED })).toBe(false);
-    expect(paystackPaymentMatchesSavedCardScope(byo, BIZ, { credentialId: null })).toBe(false);
-    expect(paystackPaymentMatchesSavedCardScope({ metadata: { payment_origin: 'platform' } }, BIZ, { credentialId: null })).toBe(true);
-    expect(paystackPaymentMatchesSavedCardScope({ metadata: { payment_origin: 'platform' } }, BIZ, { credentialId: CRED })).toBe(false);
+    const byo = { metadata: { payment_origin: 'byo', byo_business_id: BIZ, provider_connection_id: OLD_CRED } };
+    // Taken on an earlier key entry of the same merchant: still this merchant's card.
+    expect(paystackPaymentMatchesSavedCardScope(byo, BIZ, { byoBusinessId: BIZ })).toBe(true);
+    expect(paystackPaymentMatchesSavedCardScope(byo, 'other-biz', { byoBusinessId: 'other-biz' })).toBe(false);
+    expect(paystackPaymentMatchesSavedCardScope(byo, BIZ, { byoBusinessId: null })).toBe(false);
+    expect(paystackPaymentMatchesSavedCardScope({ metadata: { payment_origin: 'platform' } }, BIZ, { byoBusinessId: null })).toBe(true);
+    expect(paystackPaymentMatchesSavedCardScope({ metadata: { payment_origin: 'platform' } }, BIZ, { byoBusinessId: BIZ })).toBe(false);
   });
 });
 
 describe('checkout lookup shows only the card for this business\'s account', () => {
-  it('own-account merchant → its connection only; shared merchant → shared card only', async () => {
-    const byo = fakeDb({ business_payment_credentials: BYO_CREDENTIAL, saved_payment_methods: [{ id: 'm-byo', gateway: 'paystack', customer_phone: PHONE, provider_credential_id: CRED }] });
+  it('own-account merchant → its own card only; shared merchant → shared card only', async () => {
+    const byo = fakeDb({ business_payment_credentials: BYO_CREDENTIAL, saved_payment_methods: [{ id: 'm-byo', gateway: 'paystack', customer_phone: PHONE, byo_business_id: BIZ }] });
     expect((await getSavedPaymentMethod(byo.db as never, BIZ, PHONE))?.id).toBe('m-byo');
-    expect(scopeFilter(byo.calls)).toEqual([['eq', 'provider_credential_id', CRED]]);
+    expect(scopeFilter(byo.calls)).toEqual([['eq', 'byo_business_id', BIZ]]);
 
-    const shared = fakeDb({ business_payment_credentials: null, saved_payment_methods: [{ id: 'm-shared', gateway: 'paystack', customer_phone: PHONE, provider_credential_id: null }] });
+    const shared = fakeDb({ business_payment_credentials: null, saved_payment_methods: [{ id: 'm-shared', gateway: 'paystack', customer_phone: PHONE, byo_business_id: null }] });
     expect((await getSavedPaymentMethod(shared.db as never, BIZ, PHONE))?.id).toBe('m-shared');
-    expect(scopeFilter(shared.calls)).toEqual([['is', 'provider_credential_id', null]]);
+    expect(scopeFilter(shared.calls)).toEqual([['is', 'byo_business_id', null]]);
   });
 
-  it('a card from another connection is never charged (merchant reconnected a different account)', async () => {
+  it.each([
+    ['another merchant\'s card', 'other-biz'],
+    ['a Waaiio shared-account card', null],
+  ])('%s is never charged at an own-account merchant', async (_label, cardScope) => {
     const { db } = fakeDb({
       business_payment_credentials: BYO_CREDENTIAL,
-      saved_payment_methods: { id: 'm-old', gateway: 'paystack', customer_phone: PHONE, authorization_email: 'a@b.co', provider_credential_id: OLD_CRED },
+      saved_payment_methods: { id: 'm-old', gateway: 'paystack', customer_phone: PHONE, authorization_email: 'a@b.co', byo_business_id: cardScope },
     });
     const outcome = await savedPaymentAdapter.chargeSavedMethod(db as never, {
       methodId: 'm-old', businessId: BIZ, customerPhone: PHONE, amount: 100, currency: 'NGN', reference: 'REF-x',
@@ -137,18 +141,18 @@ describe('save offer after an own-account payment', () => {
     metadata: { _card_authorization: auth, ...meta },
   });
 
-  it('offers Save when the payment was taken on the merchant\'s current connection', async () => {
+  it('offers Save after an own-account payment at this merchant', async () => {
     const { db, calls } = fakeDb({
       payments: payment({ payment_origin: 'byo', byo: true, byo_business_id: BIZ, provider_connection_id: CRED }),
       profiles: { phone: PHONE }, business_payment_credentials: BYO_CREDENTIAL, saved_payment_methods: null,
     });
     expect(await checkSavedCardOfferEligibility(db as never, 'pay-1', PHONE, BIZ)).toMatchObject({ eligible: true, offerType: 'save' });
-    expect(scopeFilter(calls)).toEqual([['eq', 'provider_credential_id', CRED]]);
+    expect(scopeFilter(calls)).toEqual([['eq', 'byo_business_id', BIZ]]);
   });
 
-  it('does not offer for a payment taken on an earlier connection', async () => {
+  it('does not offer for an own-account payment recorded for a different merchant', async () => {
     const { db } = fakeDb({
-      payments: payment({ payment_origin: 'byo', byo: true, byo_business_id: BIZ, provider_connection_id: OLD_CRED }),
+      payments: payment({ payment_origin: 'byo', byo: true, byo_business_id: 'other-biz', provider_connection_id: CRED }),
       profiles: { phone: PHONE }, business_payment_credentials: BYO_CREDENTIAL,
     });
     expect(await checkSavedCardOfferEligibility(db as never, 'pay-1', PHONE, BIZ)).toEqual({ eligible: false, reason: 'payment_scope_mismatch' });
@@ -163,7 +167,7 @@ describe('save offer after an own-account payment', () => {
 describe('paying with an own-account saved card', () => {
   const method = {
     id: 'm-byo', gateway: 'paystack', authorization_code: 'AUTH_byo', customer_code: 'CUS_1', authorization_email: 'ada@gmail.com',
-    stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4081', card_brand: 'visa', provider_credential_id: CRED,
+    stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4081', card_brand: 'visa', byo_business_id: BIZ,
   };
   const routing = { isByo: true, byoSecretKey: 'merchant-key-1065', byoPlatformSubaccount: 'ACCT_waaiio', providerConnectionId: CRED, platformFeeAmount: 3 };
 
@@ -193,8 +197,21 @@ describe('paying with an own-account saved card', () => {
     expect(insert.metadata).toMatchObject({ payment_origin: 'byo', byo: true, byo_business_id: BIZ, provider_connection_id: CRED, saved_method: true });
   });
 
-  it('declines without calling Paystack when the card\'s connection is no longer the merchant\'s active one', async () => {
+  it('keeps working after the merchant re-enters its key (new connection id); charge uses the current one', async () => {
     h.routing.mockResolvedValue({ ...routing, providerConnectionId: OLD_CRED });
+    const sent = stubPaystack();
+    const { db, calls } = fakeDb({ payments: null });
+    const outcome = await chargeSavedCard(db as never, {
+      savedMethod: method, amount: 100, currency: 'NGN', email: 'ada@gmail.com', reference: 'REF-byo', businessId: BIZ,
+    });
+    expect(outcome).toMatchObject({ outcome: 'charged' });
+    expect(sent[0].headers.Authorization).toBe('Bearer merchant-key-1065');
+    const insert = calls.find(c => c.table === 'payments' && c.op === 'insert')?.payload as Row;
+    expect((insert.metadata as Row).provider_connection_id).toBe(OLD_CRED);
+  });
+
+  it('declines without calling Paystack when the merchant no longer uses its own Paystack account', async () => {
+    h.routing.mockResolvedValue({ isByo: false });
     const sent = stubPaystack();
     const outcome = await chargeSavedCard(fakeDb({ payments: null }).db as never, {
       savedMethod: method, amount: 100, currency: 'NGN', email: 'ada@gmail.com', reference: 'REF-byo', businessId: BIZ,
@@ -207,7 +224,7 @@ describe('paying with an own-account saved card', () => {
     const sent = stubPaystack();
     const { db, calls } = fakeDb({ payments: null, businesses: { payout_mode: 'platform_managed' } });
     await chargeSavedCard(db as never, {
-      savedMethod: { ...method, provider_credential_id: null }, amount: 100, currency: 'NGN', email: 'x@whatsapp.waaiio.com', reference: 'REF-p', businessId: BIZ,
+      savedMethod: { ...method, byo_business_id: null }, amount: 100, currency: 'NGN', email: 'x@whatsapp.waaiio.com', reference: 'REF-p', businessId: BIZ,
     });
     expect(h.routing).not.toHaveBeenCalled();
     expect(sent[0]?.headers.Authorization).toBe('Bearer platform-key-1065');
@@ -233,18 +250,18 @@ describe('saving and removing an own-account card in the bot', () => {
     },
   });
 
-  it('PIN save stores the card on the merchant connection that took the payment', async () => {
+  it('PIN save stores the card for the merchant whose account took the payment', async () => {
     const { db, calls } = fakeDb({ payments: byoPayment, business_payment_credentials: BYO_CREDENTIAL, saved_payment_methods: null });
     db.rpc.mockResolvedValue({ data: { success: true, version: 2 }, error: null });
     const { handleCardPinStep } = await import('@/lib/bot/handlers/saved-cards');
     await handleCardPinStep(db as never, vi.fn(async () => {}), PHONE.slice(1), session({}) as never, '4321');
     const insert = calls.find(c => c.table === 'saved_payment_methods' && c.op === 'insert')?.payload as Row;
-    expect(insert).toMatchObject({ business_id: BIZ, provider_credential_id: CRED, authorization_code: 'AUTH_byo', gateway: 'paystack' });
+    expect(insert).toMatchObject({ business_id: BIZ, byo_business_id: BIZ, authorization_code: 'AUTH_byo', gateway: 'paystack' });
   });
 
-  it('PIN save refuses a payment from an earlier connection', async () => {
+  it('PIN save refuses an own-account payment recorded for a different merchant', async () => {
     const { db, calls } = fakeDb({
-      payments: { ...byoPayment, metadata: { ...byoPayment.metadata, provider_connection_id: OLD_CRED } },
+      payments: { ...byoPayment, metadata: { ...byoPayment.metadata, byo_business_id: 'other-biz' } },
       business_payment_credentials: BYO_CREDENTIAL,
     });
     const send = vi.fn(async () => {});
@@ -260,7 +277,7 @@ describe('saving and removing an own-account card in the bot', () => {
     const { handleCardPinStep } = await import('@/lib/bot/handlers/saved-cards');
     await handleCardPinStep(db as never, vi.fn(async () => {}), PHONE.slice(1), session({}) as never, '4321');
     const insert = calls.find(c => c.table === 'saved_payment_methods' && c.op === 'insert')?.payload as Row;
-    expect(insert).toMatchObject({ provider_credential_id: null });
+    expect(insert).toMatchObject({ byo_business_id: null });
   });
 
   it('remove card at an own-account merchant removes only that merchant\'s card; elsewhere only the shared card', async () => {
@@ -268,12 +285,12 @@ describe('saving and removing an own-account card in the bot', () => {
     const byo = fakeDb({ business_payment_credentials: BYO_CREDENTIAL, saved_payment_methods: [{ card_last4: '4081', card_brand: 'visa' }] });
     await handleRemoveCard(byo.db as never, vi.fn(async () => {}), PHONE, { business_id: BIZ } as never);
     expect(byo.calls.find(c => c.table === 'saved_payment_methods' && c.op === 'delete')?.filters)
-      .toContainEqual(['eq', 'provider_credential_id', CRED]);
+      .toContainEqual(['eq', 'byo_business_id', BIZ]);
 
     const shared = fakeDb({ saved_payment_methods: [{ card_last4: '1111', card_brand: 'visa' }] });
     await handleRemoveCard(shared.db as never, vi.fn(async () => {}), PHONE, null);
     expect(shared.calls.find(c => c.table === 'saved_payment_methods' && c.op === 'delete')?.filters)
-      .toContainEqual(['is', 'provider_credential_id', null]);
+      .toContainEqual(['is', 'byo_business_id', null]);
   });
 });
 
@@ -298,7 +315,7 @@ describe('review follow-ups (#1065)', () => {
     const v1 = h.calculateFee;
     const outcome = await chargeSavedCard(db as never, {
       savedMethod: { id: 'm-byo', gateway: 'paystack', authorization_code: 'AUTH_byo', customer_code: null, authorization_email: 'ada@gmail.com',
-        stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4081', card_brand: 'visa', provider_credential_id: CRED },
+        stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4081', card_brand: 'visa', byo_business_id: BIZ },
       amount: 100, currency: 'NGN', email: 'ada@gmail.com', reference: 'REF-v1', businessId: BIZ, transactionCategory: 'scheduling',
     });
     expect(outcome).toEqual({ outcome: 'charged', paymentId: 'pay-new', reference: 'REF-v1' });

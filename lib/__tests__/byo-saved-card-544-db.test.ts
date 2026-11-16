@@ -53,23 +53,27 @@ describe.skipIf(!dbUrl)('M544 own-account Paystack saved cards', () => {
     }
   });
 
-  it('allows one shared and one own-account card per customer, scoped to the issuing connection', () => {
+  it('allows one shared card plus one card per own-account merchant, kept across key re-entry', () => {
     seed();
+    const otherBiz = randomUUID();
+    sql(`INSERT INTO businesses (id,owner_id,name,slug,address,city,phone,country_code,status)
+      VALUES ('${otherBiz}','${ownerId}','Other BYO','byo-card-${otherBiz}','1 Test','Lagos','+2340000545','NG','active')`);
     sql(card('', `,'AUTH-SHARED'`));
     // A shared card and the merchant's own-account card coexist.
-    sql(card(',business_id,provider_credential_id', `,'AUTH-BYO','${businessId}','${credentialId}'`));
+    sql(card(',business_id,byo_business_id', `,'AUTH-BYO','${businessId}','${businessId}'`));
     // A second active shared card is still rejected.
     expect(sqlError(card('', `,'AUTH-SHARED-2'`))).toContain('idx_saved_pm_platform_active');
-    // A second active card on the same connection is rejected.
-    expect(sqlError(card(',business_id,provider_credential_id', `,'AUTH-BYO-2','${businessId}','${credentialId}'`)))
+    // A second active card at the same merchant is rejected.
+    expect(sqlError(card(',business_id,byo_business_id', `,'AUTH-BYO-2','${businessId}','${businessId}'`)))
       .toContain('idx_saved_pm_byo_active');
-    // A card from an earlier connection of the same merchant is a separate scope.
-    sql(card(',business_id,provider_credential_id', `,'AUTH-BYO-OLD','${businessId}','${oldCredentialId}'`));
-    // An own-account card must name its business.
-    expect(sqlError(card(',provider_credential_id', `,'AUTH-BYO-NOBIZ','${credentialId}'`))).toContain('chk_saved_pm_byo_business');
+    // Another merchant's own account is a separate scope.
+    sql(card(',business_id,byo_business_id', `,'AUTH-BYO-OTHER','${otherBiz}','${otherBiz}'`));
 
-    // Removing a connection removes only its cards.
+    // Re-entering the merchant key (new credential row, old one removed) keeps the card.
     sql(`DELETE FROM business_payment_credentials WHERE id='${oldCredentialId}'`);
+    expect(sql(`SELECT count(*) FROM saved_payment_methods WHERE customer_phone='${phone}'`)).toBe('3');
+    // Deleting a merchant removes only its own-account card.
+    sql(`DELETE FROM businesses WHERE id='${otherBiz}'`);
     expect(sql(`SELECT string_agg(authorization_code, ',' ORDER BY authorization_code) FROM saved_payment_methods WHERE customer_phone='${phone}'`))
       .toBe('AUTH-BYO,AUTH-SHARED');
     sql(`DELETE FROM saved_payment_methods WHERE customer_phone='${phone}'`);
