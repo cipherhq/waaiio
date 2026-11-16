@@ -217,7 +217,26 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     businessLogoUrl = bizTier?.logo_url || undefined;
   } catch (err) { logger.warn('[TICKETS] Failed to fetch subscription tier, defaulting to free:', err); subscriptionTier = 'free'; }
 
-  // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
+  // 3. Send ticket images via WhatsApp first (Owner order, #1070): the ticket the customer
+  // shows at the door, then the PDF copy.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+  for (const ticket of tickets) {
+    const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
+    const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nShow this at the entrance\n🔗 ${verifyUrl}`;
+    const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
+
+    try {
+      await emitTicketArtifact(opts, 'whatsapp', `image:${ticket.ticketCode}`, () => sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'service', noRetry: true }));
+      logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
+    } catch (err) {
+      if (!(err instanceof EventTicketEmissionError) || err.reason !== 'ticket_provider_rejected') throw err;
+      logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
+      // A successful text fallback still preserves a usable ticket/verification URL.
+      const fallbackText = await t(caption);
+      await emitTicketArtifact(opts, 'whatsapp', `text:${ticket.ticketCode}`, () => sender.sendText({ to: phone, text: fallbackText, messageCategory: 'service', noRetry: true }));
+    }
+  }
+  // 4. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
   try {
     // Slice 5B: Resolve deterministic ticket PDF labels
     let ticketPdfLabels: import('@/lib/pdf/localize-pdf').TicketPdfLabels | undefined;
@@ -267,24 +286,6 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
   }
 
-  // 4. Send ticket images via WhatsApp (Edge-generated image with QR code)
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-  for (const ticket of tickets) {
-    const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
-    const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nShow this at the entrance\n🔗 ${verifyUrl}`;
-    const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
-
-    try {
-      await emitTicketArtifact(opts, 'whatsapp', `image:${ticket.ticketCode}`, () => sender.sendImage({ to: phone, imageUrl, caption, messageCategory: 'service', noRetry: true }));
-      logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
-    } catch (err) {
-      if (!(err instanceof EventTicketEmissionError) || err.reason !== 'ticket_provider_rejected') throw err;
-      logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
-      // A successful text fallback still preserves a usable ticket/verification URL.
-      const fallbackText = await t(caption);
-      await emitTicketArtifact(opts, 'whatsapp', `text:${ticket.ticketCode}`, () => sender.sendText({ to: phone, text: fallbackText, messageCategory: 'service', noRetry: true }));
-    }
-  }
   logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
 }
 

@@ -186,9 +186,9 @@ beforeEach(() => {
 
 const EXPECTED_ORDER = [
   'text:✅ *Ticket Confirmed!*',
-  'document:AfroFest - Tickets.pdf',
   'image:TK-1',
-  'delivered:wamid.doc2,wamid.img3',
+  'document:AfroFest - Tickets.pdf',
+  'delivered:wamid.img2,wamid.doc3',
   'document:receipt-WA-TK-9318.pdf',
   'delivered:wamid.doc4',
 ];
@@ -203,7 +203,7 @@ describe('#1070 post-payment message order — shared sendProactiveConfirmation'
     ['flutterwave', 'platform'],
     ['square', 'platform'],
   ] as const) {
-    it(`${gateway}/${origin}: confirmation → ticket PDF → ticket image → receipt → later messages → follow-up`, async () => {
+    it(`${gateway}/${origin}: confirmation → ticket image → ticket PDF → receipt → later messages → follow-up`, async () => {
       const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
       const result = await sendProactiveConfirmation(fakeDb(gateway, origin) as never, { id: 'pay-1070', amount: 5000, booking_id: 'bk-1070' } as never);
 
