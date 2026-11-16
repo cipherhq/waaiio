@@ -320,7 +320,8 @@ describe('#1072 search typed on a business menu', () => {
     // #1072 review: questions, fuzzy-corrected categories, "to"/"at", menu actions
     'Do you deliver to Lekki?', 'Do you have a branch in Lekki?', 'Do you have shops in Lekki', 'do you have shops in Lekki',
     'Where are you in Lekki', 'salons in Lekki?', 'Can I find salons in Lekki', 'delivery to Lekki', 'salons at Lekki',
-    'find a table', 'find tickets', 'find out more', 'search menu'])(
+    'find a table', 'find tickets', 'find out more', 'search menu',
+    'delivery in Lekki', 'I need delivery in Lekki', 'please deliver in Lekki', 'pickup in Ikeja'])(
     '"%s" stays with the business menu',
     (text) => {
       expect(explicitDirectorySearch(text)).toBeNull();

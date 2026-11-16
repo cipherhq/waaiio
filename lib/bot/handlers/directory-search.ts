@@ -790,7 +790,7 @@ function searchResultsText(query: string, count: number, lang?: string): string 
 
 // ── Search typed on a business menu (#1072) ───────────────
 
-const MENU_ACTION_WORDS = /\b(book|booking|order|buy|pay|reserve|appointment|table|tables|ticket|tickets|donate|give|cancel|reschedule|my|out|more|menu|price|prices|hours)\b/i;
+const MENU_ACTION_WORDS = /\b(book|booking|order|buy|pay|reserve|appointment|table|tables|ticket|tickets|donate|give|cancel|reschedule|my|out|more|menu|price|prices|hours|deliver|delivers|delivery|pickup|pick)\b/i;
 
 /** A question to the business ("Do you deliver to Lekki?") is never a directory search. */
 const QUESTION_RE = /^(do|does|did|can|could|is|are|will|would|where|how|what|which|who|when|why)\b/i;
