@@ -172,13 +172,16 @@ export async function handleRemoveCard(
   // Paystack: hard DELETE (existing behavior, unchanged)
   // Stripe: soft revoke (is_active=false) + durable cleanup outbox for provider detach
 
-  // Try Paystack first (existing behavior)
-  const { data: paystackDeleted } = await supabase
+  // Try Paystack first (existing behavior). At a merchant using its own Paystack account
+  // only that merchant's card is removed; everywhere else only the shared card (#1065).
+  const { resolvePaystackSavedCardScope, withSavedCardScope } = await import('@/lib/payments/saved-card-scope');
+  const scope = session?.business_id ? await resolvePaystackSavedCardScope(supabase, session.business_id) : null;
+  const { data: paystackDeleted } = await withSavedCardScope(supabase
     .from('saved_payment_methods')
     .delete()
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
-    .eq('gateway', 'paystack')
+    .eq('gateway', 'paystack'), scope?.eligible ? scope : { credentialId: null })
     .select('card_last4, card_brand');
 
   if (paystackDeleted && paystackDeleted.length > 0) {
@@ -273,6 +276,8 @@ export async function handleCardPinStep(
 
   // F6: Re-read durable source payment at PIN completion (don't trust session cache alone)
   const paymentId = d._save_card_payment_id as string | undefined;
+  // NULL = Waaiio shared-account card; set only for a merchant's own Paystack account (#1065).
+  let providerCredentialId: string | null = null;
   if (paymentId) {
     const { data: sourcePayment } = await supabase.from('payments')
       .select('id, status, gateway, metadata')
@@ -286,9 +291,19 @@ export async function handleCardPinStep(
       return;
     }
     const freshMeta = (sourcePayment.metadata || {}) as Record<string, unknown>;
-    if (freshMeta.payment_origin === 'byo' || freshMeta.payment_origin === 'connect') {
+    if (freshMeta.payment_origin === 'connect' || (freshMeta.payment_origin === 'byo' && sourcePayment.gateway !== 'paystack')) {
       await localSend(from, 'This payment cannot be used to save a card.');
       return;
+    }
+    if (freshMeta.payment_origin === 'byo') {
+      // Own-account card: only on the merchant's current Paystack connection that took this payment.
+      const { resolvePaystackSavedCardScope, paystackPaymentMatchesSavedCardScope } = await import('@/lib/payments/saved-card-scope');
+      const scope = await resolvePaystackSavedCardScope(supabase, businessId);
+      if (!scope.eligible || scope.credentialId === null || !paystackPaymentMatchesSavedCardScope(sourcePayment, businessId, scope)) {
+        await localSend(from, 'This payment cannot be used to save a card.');
+        return;
+      }
+      providerCredentialId = scope.credentialId;
     }
     if (sourcePayment.gateway === 'paystack') {
       const freshAuth = freshMeta._card_authorization as Record<string, unknown> | undefined;
@@ -364,6 +379,7 @@ export async function handleCardPinStep(
       business_id: businessId,
       customer_phone: phoneP,
       gateway,
+      provider_credential_id: providerCredentialId,
       authorization_code: auth.authorization_code as string,
       customer_code: (auth.customer_code as string) || null,
       authorization_email: authEmail,
@@ -393,8 +409,10 @@ export async function handleCardPinStep(
       session.version = casCleanResult.version;
 
       if (insertError.code === '23505') {
-        const { data: existing } = await supabase.from('saved_payment_methods')
-          .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+        const { withSavedCardScope } = await import('@/lib/payments/saved-card-scope');
+        const { data: existing } = await withSavedCardScope(supabase.from('saved_payment_methods')
+          .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack'),
+        { credentialId: providerCredentialId }).maybeSingle();
         if (existing?.authorization_code === (auth.authorization_code as string)) {
           await localSend(from, 'Your card is already saved.');
         } else {
@@ -411,8 +429,10 @@ export async function handleCardPinStep(
     // R6-B2: Track commitProven + exact method/version for fenced confirmation
     const offerId = d._save_card_offer_id as string | undefined;
     if (offerId) {
-      const savedMethod = await supabase.from('saved_payment_methods')
-        .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+      const { withSavedCardScope } = await import('@/lib/payments/saved-card-scope');
+      const savedMethod = await withSavedCardScope(supabase.from('saved_payment_methods')
+        .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack'),
+      { credentialId: providerCredentialId }).maybeSingle();
       if (savedMethod?.data) {
         const savedMethodId = savedMethod.data.id as string;
         const credentialVersion = (savedMethod.data.credential_version || 1) as number;
@@ -699,7 +719,7 @@ export async function handleReplacementPinStep(
 
   const { data: method } = await supabase
     .from('saved_payment_methods')
-    .select('id, authorization_code, customer_code, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, gateway')
+    .select('id, authorization_code, customer_code, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, gateway, provider_credential_id')
     .eq('id', methodId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
@@ -736,7 +756,7 @@ export async function handleReplacementPinStep(
 
   const meta = (paymentRow.metadata || {}) as Record<string, unknown>;
   // C7: Revalidate source origin + reusable + compatibility at PIN completion
-  if (meta.payment_origin !== 'platform') {
+  if (meta.payment_origin !== 'platform' && meta.payment_origin !== 'byo') {
     await localSend(from, 'This payment cannot be used to replace your card.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
@@ -791,10 +811,12 @@ export async function handleReplacementPinStep(
     });
     return;
   }
+  // The new card and the card it replaces must be on the same Paystack account (#1065).
+  const { resolvePaystackSavedCardScope, paystackPaymentMatchesSavedCardScope, withSavedCardScope } = await import('@/lib/payments/saved-card-scope');
+  const scope = await resolvePaystackSavedCardScope(supabase, businessId);
   {
-    const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
-    const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
-    if (!compat.compatible) {
+    if (!scope.eligible || !paystackPaymentMatchesSavedCardScope(paymentRow, businessId, scope)
+      || (method.provider_credential_id ?? null) !== scope.credentialId) {
       await localSend(from, 'Card replacement is not available for this business\'s payment setup.');
       await supabase.rpc('update_session_cas', {
         p_session_id: session.id, p_expected_version: session.version ?? 0,
@@ -828,8 +850,9 @@ export async function handleReplacementPinStep(
     return;
   }
 
-  // 6. CAS-protected conditional UPDATE (customer-scoped, no business_id fence)
-  const { data: updateResult, error: updateError } = await supabase
+  // 6. CAS-protected conditional UPDATE (customer-scoped, no business_id fence; fenced to
+  // the card's Paystack account so a shared card never becomes an own-account card or back)
+  const { data: updateResult, error: updateError } = await withSavedCardScope(supabase
     .from('saved_payment_methods')
     .update({
       authorization_code: newAuth.authorization_code as string,
@@ -851,7 +874,7 @@ export async function handleReplacementPinStep(
     .eq('gateway', 'paystack')
     .eq('is_active', true)
     .eq('authorization_code', method.authorization_code!)
-    .eq('customer_code', method.customer_code!)
+    .eq('customer_code', method.customer_code!), scope.eligible ? scope : { credentialId: null })
     .select('id');
 
   if (updateError) {

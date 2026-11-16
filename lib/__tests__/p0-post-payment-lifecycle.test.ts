@@ -229,8 +229,8 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
     captureInArgs?: (field: string, values: string[]) => void;
   }) {
     // Mock chain matches the global saved-card query:
-    // .from().select().in(phone).eq(is_active).eq(gateway).limit(2)
-    // No .eq('business_id') — global card model.
+    // .from().select().in(phone).eq(is_active).eq(gateway).is(provider_credential_id, null).limit(2)
+    // No .eq('business_id') — global card model; the shared-account scope is the .is() (#1065).
     const sb: any = {
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -239,9 +239,14 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
             return {
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
-                  limit: vi.fn().mockResolvedValue({
-                    data: opts.returnRows ?? null,
-                    error: opts.returnError ?? null,
+                  is: vi.fn().mockImplementation((field: string, value: null) => {
+                    if (field !== 'provider_credential_id' || value !== null) throw new Error('shared-account scope filter expected');
+                    return {
+                      limit: vi.fn().mockResolvedValue({
+                        data: opts.returnRows ?? null,
+                        error: opts.returnError ?? null,
+                      }),
+                    };
                   }),
                 }),
               }),
@@ -1103,7 +1108,7 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
 
   /**
    * Build a supabase mock matching the global saved-card query chain:
-   * .from().select().in(customer_phone).eq(is_active).eq(gateway).limit(2)
+   * .from().select().in(customer_phone).eq(is_active).eq(gateway).is(provider_credential_id, null).limit(2)
    * No .eq(business_id) — global card model.
    */
   function buildListingSb(opts: {
@@ -1128,9 +1133,15 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
                     ? opts.returnRows.filter((r: any) => r.gateway === value)
                     : null;
                   return {
-                    limit: vi.fn().mockResolvedValue({
-                      data: opts.returnError ? null : filtered,
-                      error: opts.returnError ?? null,
+                    // .is('provider_credential_id', null) — shared-account scope (#1065)
+                    is: vi.fn().mockImplementation((scopeField: string, scopeValue: null) => {
+                      if (scopeField !== 'provider_credential_id' || scopeValue !== null) throw new Error('shared-account scope filter expected');
+                      return {
+                        limit: vi.fn().mockResolvedValue({
+                          data: opts.returnError ? null : filtered,
+                          error: opts.returnError ?? null,
+                        }),
+                      };
                     }),
                   };
                 }),

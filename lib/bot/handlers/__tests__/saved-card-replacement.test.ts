@@ -15,7 +15,7 @@ const mockFrom = vi.fn();
 
 function chain() {
   const c: Record<string, unknown> = {};
-  ['select', 'eq', 'in', 'or', 'order', 'limit', 'update', 'delete', 'gte', 'not'].forEach(m => {
+  ['select', 'eq', 'is', 'in', 'or', 'order', 'limit', 'update', 'delete', 'gte', 'not'].forEach(m => {
     (c as Record<string, unknown>)[m] = vi.fn().mockReturnValue(c);
   });
   c.single = vi.fn().mockResolvedValue({ data: null, error: null });

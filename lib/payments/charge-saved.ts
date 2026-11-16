@@ -7,7 +7,7 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
 import { normalizeError } from '@/lib/errors';
 import { resolveTrialStatus } from '@/lib/trial-status';
-import { paystackMerchantSplit } from './paystack-split';
+import { paystackByoSplit, paystackMerchantSplit } from './paystack-split';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -120,6 +120,8 @@ interface SavedMethod {
   stripe_customer_id: string | null;
   card_last4: string | null;
   card_brand: string | null;
+  /** Set when the card lives on a merchant's own Paystack account (#1065); null = Waaiio shared account. */
+  provider_credential_id?: string | null;
 }
 
 /**
@@ -131,23 +133,24 @@ export async function getSavedPaymentMethod(
   businessId: string,
   customerPhone: string,
 ): Promise<SavedMethod | null> {
-  // Positive compatibility check — only shared-platform Paystack businesses
-  const { isSharedPlatformPaystackCompatible } = await import('./saved-card-compat');
-  const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
-  if (!compat.compatible) return null;
+  // Positive compatibility check: the shared-account card at shared-account businesses,
+  // or this merchant's own-account card at a merchant using its own Paystack (#1065).
+  const { resolvePaystackSavedCardScope, withSavedCardScope } = await import('./saved-card-scope');
+  const scope = await resolvePaystackSavedCardScope(supabase, businessId);
+  if (!scope.eligible) return null;
 
   const { canonicalSavedCardPhone } = await import('./saved-card-compat');
   const phoneP = canonicalSavedCardPhone(customerPhone);
   if (!phoneP) return null; // Invalid phone — fail closed
   const phoneN = phoneP.slice(1);
 
-  // Customer-scoped query: no business_id filter (global saved card)
-  const { data, error } = await supabase
+  // Customer-scoped query: no business_id filter (global saved card), fenced to the scope's account
+  const { data, error } = await withSavedCardScope(supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone')
+    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone, provider_credential_id')
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
-    .eq('gateway', 'paystack')
+    .eq('gateway', 'paystack'), scope)
     .limit(2);
 
   if (error) {
@@ -248,7 +251,25 @@ async function chargePaystackAuthorization(
     donorName?: string | null;
   },
 ): Promise<SavedCardOutcome> {
-  if (!paystackSecretKey) {
+  // A merchant's own-account card is charged with that merchant's key and the same reversed
+  // split as its normal checkout (#1065), and only on the connection that issued the card.
+  let byoRouting: { secretKey: string; platformSubaccount: string; credentialId: string; platformFeeAmount: number } | null = null;
+  if (opts.savedMethod.provider_credential_id) {
+    const { resolvePaymentRoutingAuthority } = await import('./resolve-stripe-routing');
+    const routing = await resolvePaymentRoutingAuthority(supabase, opts.businessId, 'paystack', opts.amount);
+    if (!routing?.isByo || !routing.byoSecretKey || !routing.byoPlatformSubaccount
+      || routing.providerConnectionId !== opts.savedMethod.provider_credential_id) {
+      return { outcome: 'declined', reference: opts.reference, message: 'Saved card is not available for this business' };
+    }
+    byoRouting = {
+      secretKey: routing.byoSecretKey, platformSubaccount: routing.byoPlatformSubaccount,
+      credentialId: routing.providerConnectionId, platformFeeAmount: routing.platformFeeAmount,
+    };
+  }
+  // Waaiio's fee goes to Waaiio's subaccount on the merchant's account; the merchant keeps the rest.
+  const byoSplit = (feeKobo: number) => paystackByoSplit(byoRouting!.platformSubaccount, Math.round(opts.amount * 100) - feeKobo);
+  const chargeSecretKey = byoRouting ? byoRouting.secretKey : paystackSecretKey;
+  if (!chargeSecretKey) {
     return { outcome: 'declined', reference: opts.reference, message: 'Payment gateway not configured' };
   }
 
@@ -451,8 +472,8 @@ async function chargePaystackAuthorization(
           return { outcome: 'declined', reference: opts.reference, message: 'Business lookup failed' };
         }
 
-        // Subaccount identity (no fee calculation)
-        if (bizForFee.payout_mode === 'direct_split') {
+        // Subaccount identity (no fee calculation); own-account cards use the reversed split below
+        if (!byoRouting && bizForFee.payout_mode === 'direct_split') {
           const { data: payout, error: payoutErr } = await supabase
             .from('payout_accounts')
             .select('subaccount_code')
@@ -481,7 +502,7 @@ async function chargePaystackAuthorization(
         }
 
         const scBasis = {
-          payment_routing: 'platform' as const,
+          payment_routing: byoRouting ? 'byo' as const : 'platform' as const,
           tier: scTier,
           is_in_trial: scTrial,
           custom_fee_percentage: bizForFee.custom_fee_percentage != null ? Number(bizForFee.custom_fee_percentage) : null,
@@ -499,7 +520,9 @@ async function chargePaystackAuthorization(
         // Calculate provider split from pinned snapshot (not live getPlatformFees)
         const { calculateFee } = await import('@/lib/payments/calculateFee');
         const v1Fee = calculateFee(opts.amount, scBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
-        if (splitSubaccount) {
+        if (byoRouting) {
+          splitParams = byoSplit(Math.round(v1Fee.feeTotal * 100));
+        } else if (splitSubaccount) {
           // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
           splitParams = paystackMerchantSplit(splitSubaccount, Math.round(v1Fee.feeTotal * 100));
         }
@@ -512,7 +535,9 @@ async function chargePaystackAuthorization(
   }
 
   // v0 fallback: resolve split from live fee authority (only when v1 was NOT selected)
-  if (v1Fields.fee_policy_version !== 1) {
+  if (v1Fields.fee_policy_version !== 1 && byoRouting) {
+    splitParams = byoSplit(Math.round(byoRouting.platformFeeAmount * 100));
+  } else if (v1Fields.fee_policy_version !== 1) {
     const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
     if (splitResult.mode === 'split') {
       // Merchant subaccount bears Paystack's fee (Owner decision 2026-11-08).
@@ -544,7 +569,8 @@ async function chargePaystackAuthorization(
     metadata: {
       business_id: opts.businessId,
       saved_method: true,
-      payment_origin: 'platform',
+      payment_origin: byoRouting ? 'byo' : 'platform',
+      ...(byoRouting && { byo: true, byo_business_id: opts.businessId, provider_connection_id: byoRouting.credentialId }),
       ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
       ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
     },
@@ -557,7 +583,9 @@ async function chargePaystackAuthorization(
     logger.error('[SAVED-CARD] Tax payment reservation failed', error);
     return { outcome: 'declined', reference: opts.reference, message: 'Payment reservation failed' };
   }
-  if (taxReservation && splitSubaccount) {
+  if (taxReservation && byoRouting) {
+    splitParams = byoSplit(taxReservation.fee.totalMinor);
+  } else if (taxReservation && splitSubaccount) {
     splitParams = paystackMerchantSplit(splitSubaccount, taxReservation.fee.totalMinor);
   }
   const { data: payRow, error: insertErr } = taxReservation
@@ -614,7 +642,7 @@ async function chargePaystackAuthorization(
       const res = await fetch('https://api.paystack.co/transaction/charge_authorization', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${paystackSecretKey}`,
+          Authorization: `Bearer ${chargeSecretKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
