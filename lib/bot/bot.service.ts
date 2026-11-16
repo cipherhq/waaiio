@@ -1,4 +1,4 @@
-import { DIRECTORY_PROMPT, isSharedConversation, repeatSessionData, persistDirectoryEntry } from './flows/shared/navigation';
+import { isSharedConversation, repeatSessionData, persistDirectoryEntry } from './flows/shared/navigation';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -66,7 +66,7 @@ import { ConversationOrchestrator } from './conversation-orchestrator';
 import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
-import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
+import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds, isBusinessDirectoryEligible } from '@/lib/marketplace/search';
 import { parseDirectoryQuery } from '@/lib/marketplace/query-parser';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
 import {
@@ -77,6 +77,13 @@ import {
   handleDirectorySearch,
   handleDirectorySelection,
   handleConnectCommand,
+  handleDirectoryCategorySearch,
+  sendDirectoryCategories,
+  directoryCategoryFromPostback,
+  directoryLanguage,
+  explicitDirectorySearch,
+  isDirectoryPickPostback,
+  sameBusinessName,
   CONNECT_PATTERN,
   type DirectorySessionData,
 } from './handlers/directory-search';
@@ -85,6 +92,8 @@ export class BotService {
   private readonly flowExecutor: FlowExecutor;
   /** #536: the shared pause/repeat check has run for this inbound message. */
   private inboundRecorded = false;
+  /** #1072: a menu-typed search is re-dispatched to the directory at most once per message. */
+  private directorySearchRedispatched = false;
   private readonly ctx: BotContext;
 
   constructor(
@@ -316,6 +325,9 @@ export class BotService {
     // by stripSharedChannelBusinessAuthority (channel-resolver.ts:38-44).
     if (HOME_PATTERN.test(text.trim()) && !preResolvedBusinessId) {
       const navigationData = await this.navigationChannelData(from, destinationPhone, {});
+      // #1072: keep the shared number's country scope and the customer's language.
+      let homeCountry: string | null = null;
+      let homeLang: string | undefined;
       // Do not deactivate a session belonging to another inbound number.
       if (navigationData._inbound_channel_id) {
         const { data: context, error } = await this.supabase.rpc('get_shared_conversation', {
@@ -323,6 +335,10 @@ export class BotService {
         });
         if (error) throw error;
         if (context?.session?.id) await this.deactivateSession(context.session.id);
+        homeLang = directoryLanguage(context?.session?.session_data);
+        const { data: homeChannel } = await this.supabase.from('whatsapp_channels')
+          .select('country_code').eq('id', navigationData._inbound_channel_id).maybeSingle();
+        homeCountry = (homeChannel as { country_code?: string | null } | null)?.country_code || null;
       }
       // S-1 (#256): Explicitly transition to platform discovery
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
@@ -331,14 +347,15 @@ export class BotService {
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       const saved = await persistDirectoryEntry(this.supabase, from, {
         ...navigationData, _directory_mode: true, suggestions: recentBiz.slice(0, 2),
+        _directory_country: homeCountry, ...(homeLang ? { _detected_language: homeLang } : {}),
       });
       if (!saved) {
         await this.sendPlatformText(from, 'I could not open directory search on this number. Please try again shortly, or browse https://www.waaiio.com/directory. Your existing bookings and payments have not been cancelled.');
         return;
       }
-      if (recentBiz.length > 0) await sendReturningGreeting(dirSend, from, recentBiz, null);
-      else await sendDirectoryGreeting(dirSend, from);
-      await this.sendPlatformText(from, DIRECTORY_PROMPT);
+      // The greeting already says what to type (#1072: no second prompt).
+      if (recentBiz.length > 0) await sendReturningGreeting(dirSend, from, recentBiz, null, homeLang);
+      else await sendDirectoryGreeting(dirSend, from, homeLang);
       return;
     }
 
@@ -1443,9 +1460,12 @@ export class BotService {
         if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
         const dirSend = this.buildDirectorySend();
         const searchData = await handleDirectorySearch(
-          this.supabase, dirSend, from, keyword, null,
+          this.supabase, dirSend, from, keyword, null, directoryLanguage(session?.session_data),
         );
         if (!searchData) return; // rate-limited or unavailable — reply already sent, preserve existing session
+        if (searchData._directory_enter) {
+          return this.enterExactDirectoryMatch(from, messageType, destinationPhone, searchData._directory_enter, session, sharedConversation);
+        }
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         // On 23505 retry via CAS-UPDATE. Never silent on collision.
         const connectProfile = await getProfile();
@@ -1458,6 +1478,20 @@ export class BotService {
           Sentry.captureException(new Error('createDirectorySession failed in connect/switch fallback'));
         }
         return;
+      }
+    }
+
+    // #1072: an explicit search ("search …", "find …", "salons in Lekki") typed on a
+    // shared-number business menu goes to the directory, not to menu matching.
+    // Dedicated numbers never leave their business; real menu choices are unchanged.
+    if (session?.business_id && session.current_step === 'select_capability' && sharedConversation
+      && !preResolvedBusinessId && !this.directorySearchRedispatched
+      && messageType !== 'button' && messageType !== 'list') {
+      const directoryText = explicitDirectorySearch(text);
+      if (directoryText) {
+        this.directorySearchRedispatched = true;
+        await this.deactivateSession(session.id);
+        return this.handleMessage(from, directoryText, messageType, destinationPhone);
       }
     }
 
@@ -1887,6 +1921,16 @@ export class BotService {
       if (!businessId && pendingSuggestions && pendingSuggestions.length > 0
         && (isCategoryMatch || parseDirectoryQuery(text, sharedNumberCountry).locationText)) {
         pendingSuggestions = undefined;
+      }
+
+      // #1072: one directory-eligible business's exact name (case/space-insensitive)
+      // opens it directly instead of "No exact match … this name is close".
+      if (!businessId && pendingSuggestions && pendingSuggestions.length > 0 && !isCategoryMatch) {
+        const exactNames = pendingSuggestions.filter(s => s.bot_code && sameBusinessName(s.name, text));
+        if (exactNames.length === 1 && await isBusinessDirectoryEligible(this.supabase, exactNames[0].id)) {
+          return this.enterExactDirectoryMatch(from, messageType, destinationPhone,
+            { businessId: exactNames[0].id, botCode: exactNames[0].bot_code }, session, sharedConversation);
+        }
       }
 
       // Close name matches — search results come first; businesses the
@@ -3189,17 +3233,22 @@ export class BotService {
 
       // ── Unrecognized text — run a directory search immediately ──
       {
+        const searchLang = directoryLanguage(session?.session_data);
         const searchData = await handleDirectorySearch(
-          this.supabase, dirSend, from, text, sharedNumberCountry,
+          this.supabase, dirSend, from, text, sharedNumberCountry, searchLang,
         );
-        // Returning customer: past businesses after the results, labelled as past (biz_N).
+        if (searchData?._directory_enter) {
+          return this.enterExactDirectoryMatch(from, messageType, destinationPhone, searchData._directory_enter, session, sharedConversation);
+        }
+        // Returning customer: past businesses after the results, labelled as past
+        // (buttons carry the business id, #1072).
         // Not when the search was refused (rate limit / unavailable): one reply per message.
         const shownIds = new Set([
           ...(searchData?._directory_results || []).map(r => r.businessId),
           ...(searchData?._directory_suggestions || []).map(s => s.id),
         ]);
         const pastBusinesses = searchData ? recentBusinesses.filter(b => !shownIds.has(b.id)).slice(0, 3) : [];
-        await sendPastBusinesses(dirSend, from, pastBusinesses, 0);
+        await sendPastBusinesses(dirSend, from, pastBusinesses, 'id', searchLang);
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         const dirSearchSess = await this.createDirectorySession(
           from, profile?.id || null, 'directory_results',
@@ -3933,6 +3982,27 @@ export class BotService {
       if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
       const dirSend = this.buildDirectorySend();
       const dirData = session.session_data as unknown as DirectorySessionData;
+      const dirLang = directoryLanguage(session.session_data);
+      const dirCountry = dirData._directory_country || null;
+      const saveDirectory = async (data: DirectorySessionData) => {
+        await this.supabase.from('bot_sessions').update({
+          current_step: 'directory_results',
+          session_data: { ...session.session_data, ...data },
+        }).eq('id', session.id);
+      };
+      // A directory pick enters the business: search picks as 'fuzzy', past businesses
+      // as 'returning_customer' (the provenance each had before #1072).
+      const enterPick = async (pick: { businessId: string; botCode: string }, provenance: 'fuzzy' | 'returning_customer') => {
+        if (sharedConversation) {
+          return this.handleMessage(from, pick.botCode, messageType, destinationPhone,
+            undefined, undefined, undefined, provenance, {
+              id: session.id, version: session.version ?? 0,
+              conversationVersion: sharedConversation.version, businessId: pick.businessId,
+            });
+        }
+        await this.deactivateSession(session.id);
+        await this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance);
+      };
 
       // Navigation commands → restart directory
       if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|directory|search)$/i.test(text)) {
@@ -3941,51 +4011,38 @@ export class BotService {
         return;
       }
 
-      // "Find a business" button from returning greeting
+      // "Find a business" / "Search again" button
       if (text === 'dir_find') {
-        const { getFlowCopy } = await import('./flows/flow-localization');
-        await this.sendPlatformText(from, getFlowCopy(undefined, 'directory.search_prompt'));
+        await this.sendPlatformText(from, getFlowCopy(dirLang, 'directory.search_prompt'));
         return;
       }
 
-      // Handle result/suggestion selection (dir_result_N, dir_sug_N, numeric)
-      if (step === 'directory_results' || dirData._directory_results || dirData._directory_suggestions) {
-        const selection = await handleDirectorySelection(this.supabase, dirSend, from, text, dirData);
-        if (selection) {
-          if (sharedConversation) {
-            return this.handleMessage(from, selection.botCode, messageType, destinationPhone,
-              undefined, undefined, undefined, 'fuzzy', {
-                id: session.id, version: session.version ?? 0,
-                conversationVersion: sharedConversation.version, businessId: selection.businessId,
-              });
-          }
-          await this.deactivateSession(session.id);
-          // Directory handoffs set resolution source to 'fuzzy' — user-initiated search pick
-          await this.handleMessage(from, selection.botCode, messageType, destinationPhone, selection.businessId, undefined, undefined, 'fuzzy');
-          return;
-        }
-        // dir_find was handled above; dir_result/dir_sug that didn't match → fall through to search
+      // "Browse categories" button and a category picked from that list (#1072)
+      if (text === 'dir_categories') {
+        await sendDirectoryCategories(this.supabase, dirSend, from, dirCountry, dirLang);
+        return;
+      }
+      const pickedCategory = directoryCategoryFromPostback(text);
+      if (pickedCategory) {
+        const catData = await handleDirectoryCategorySearch(this.supabase, dirSend, from, pickedCategory, dirCountry, dirLang);
+        if (catData) await saveDirectory(catData);
+        return;
       }
 
-      // Returning-customer quick-pick buttons (biz_0, biz_1)
+      // Result, close match or past business (dir_biz_<uuid>; legacy dir_result_N /
+      // dir_sug_N; numeric). Ids are checked against this session's stored lists.
+      const selection = await handleDirectorySelection(this.supabase, dirSend, from, text, dirData, dirLang);
+      if (selection) return enterPick(selection, selection.source === 'past' ? 'returning_customer' : 'fuzzy');
+      // A stale or unavailable pick was answered; never run it as a search.
+      if (isDirectoryPickPostback(text)) return;
+
+      // Returning-customer quick-pick buttons from before #1072 (biz_0, biz_1)
       const bizBtnMatch = text.match(/^biz_(\d+)$/i);
       if (bizBtnMatch && dirData.suggestions) {
         const idx = parseInt(bizBtnMatch[1], 10);
         const picks = (dirData.suggestions as Array<{ id: string; name: string; bot_code: string }>);
         const pick = picks[idx];
-        if (pick) {
-          if (sharedConversation) {
-            return this.handleMessage(from, pick.bot_code, messageType, destinationPhone,
-              undefined, undefined, undefined, 'returning_customer', {
-                id: session.id, version: session.version ?? 0,
-                conversationVersion: sharedConversation.version, businessId: pick.id,
-              });
-          }
-          await this.deactivateSession(session.id);
-          // Returning-customer pick — resolution source 'returning_customer'
-          await this.handleMessage(from, pick.bot_code, messageType, destinationPhone, pick.id, undefined, undefined, 'returning_customer');
-          return;
-        }
+        if (pick) return enterPick({ businessId: pick.id, botCode: pick.bot_code }, 'returning_customer');
       }
 
       // Check if text is a bot code (exact match bypasses directory)
@@ -4009,7 +4066,7 @@ export class BotService {
       if (connectMatch) {
         const connectResult = await handleConnectCommand(
           this.supabase, dirSend, from, connectMatch[1].trim(),
-          dirData._directory_country || null,
+          dirCountry, dirLang,
         );
         if (connectResult.action === 'enter') {
           await this.deactivateSession(session.id);
@@ -4018,17 +4075,11 @@ export class BotService {
           return;
         }
         if (connectResult.action === 'suggestions' && connectResult.sessionData) {
-          await this.supabase.from('bot_sessions').update({
-            current_step: 'directory_results',
-            session_data: { ...session.session_data, ...connectResult.sessionData },
-          }).eq('id', session.id);
+          await saveDirectory(connectResult.sessionData);
           return;
         }
         if (connectResult.action === 'search' && connectResult.sessionData) {
-          await this.supabase.from('bot_sessions').update({
-            current_step: 'directory_results',
-            session_data: { ...session.session_data, ...connectResult.sessionData },
-          }).eq('id', session.id);
+          await saveDirectory(connectResult.sessionData);
           return;
         }
         // action === 'none' → fall through to directory search below
@@ -4036,14 +4087,17 @@ export class BotService {
 
       // Run a directory search with the text
       const searchData = await handleDirectorySearch(
-        this.supabase, dirSend, from, text,
-        dirData._directory_country || null,
+        this.supabase, dirSend, from, text, dirCountry, dirLang,
       );
+      if (searchData?._directory_enter) return enterPick(searchData._directory_enter, 'fuzzy');
       if (searchData) {
-        await this.supabase.from('bot_sessions').update({
-          current_step: 'directory_results',
-          session_data: { ...session.session_data, ...searchData },
-        }).eq('id', session.id);
+        // No results: also offer the businesses the customer used before (#1072).
+        let past: Array<{ id: string; name: string; bot_code: string }> = [];
+        if (!searchData._directory_results?.length && !searchData._directory_suggestions?.length) {
+          past = (await this.findReturningCustomerBusinesses(from, null, dirCountry)).slice(0, 3);
+          await sendPastBusinesses(dirSend, from, past, 'id', dirLang);
+        }
+        await saveDirectory({ ...searchData, ...(past.length > 0 ? { suggestions: past } : {}) });
       }
       return;
     }
@@ -4482,7 +4536,7 @@ export class BotService {
     const skipIntentLLM = casFreeTextSteps.includes(step) || ['edit_name', 'edit_address', 'enter_donor_name', 'waitlist_collect_name', 'collect_guest_names', 'enter_donation_amount', 'collect_design_notes', 'collect_measurements', 'feedback_comment', 'rsvp_dietary', 'airport_pickup_flight'].includes(step);
     // Skip AI classification for deterministic postback IDs — these are button/list taps
     // that will be handled by the flow executor's step-specific validate() function
-    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|dir_result_\d+|dir_sug_\d+|dir_find|\d{1,2})$/.test(text)
+    const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|dir_result_\d+|dir_sug_\d+|dir_biz_[0-9a-f-]{36}|dir_cat_[a-z0-9_]{1,40}|dir_categories|dir_find|\d{1,2})$/.test(text)
       || (messageType === 'button' || messageType === 'list');
     let resumedCanonical: import('./canonical-understanding').CanonicalUnderstanding | null = null;
     // CAS-004 and the AI layer below both need the session business's tier/category and
@@ -5050,6 +5104,27 @@ export class BotService {
     });
     if (error) throw new Error('Cannot persist channel-bound business navigation');
     return { ...data, _inbound_channel_id: channel.id, _conversation_version: context?.version ?? 0 };
+  }
+
+  /**
+   * #1072: enter the one business whose exact name was typed — a directory pick
+   * ('fuzzy' provenance), handed off the same way as the connect command's exact match.
+   */
+  private async enterExactDirectoryMatch(
+    from: string, messageType: string, destinationPhone: string | undefined,
+    pick: { businessId: string; botCode: string },
+    session: BotSession | null,
+    sharedConversation: { version: number } | null,
+  ): Promise<void> {
+    if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+    if (sharedConversation) {
+      return this.handleMessage(from, pick.botCode, messageType, destinationPhone,
+        undefined, undefined, undefined, 'fuzzy', {
+          conversationVersion: sharedConversation.version, businessId: pick.businessId,
+        });
+    }
+    if (session) await this.deactivateSession(session.id);
+    return this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, 'fuzzy', undefined, true);
   }
 
   private async createDirectorySession(

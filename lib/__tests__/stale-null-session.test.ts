@@ -263,9 +263,10 @@ describe('Stale null-business session fix', () => {
     );
     expect(fallbackCalls.length).toBe(0);
 
-    // Normal flow continues — user receives a directory reply ('sometext' → search → no results)
-    const dirCalls = cloud.sendText.mock.calls.filter(
-      (c: any[]) => typeof c[0]?.text === 'string' && c[0].text.includes('No businesses found for')
+    // Normal flow continues — user receives a directory reply ('sometext' → search → no results;
+    // #1072: the no-results reply carries Search again / Browse categories buttons)
+    const dirCalls = cloud.sendButtons.mock.calls.filter(
+      (c: any[]) => typeof c[0]?.bodyText === 'string' && c[0].bodyText.includes('No businesses found for')
     );
     expect(dirCalls.length).toBeGreaterThan(0);
   });
@@ -955,7 +956,9 @@ describe('Stale null-business session fix', () => {
       business_id: null, current_step: 'directory_search',
       session_data: expect.objectContaining({ _inbound_channel_id: 'shared-channel' }),
     }));
-    expect(spyPT.mock.calls.some((c: any[]) => c[0]?.text?.includes('restaurants in Ikoyi'))).toBe(true);
+    // #1072: no separate prompt after the greeting; the returning greeting itself says what to type.
+    expect(spyPB.mock.calls.some((c: any[]) => c[0]?.body?.includes('restaurants in Ikoyi'))).toBe(true);
+    expect(spyPT.mock.calls.some((c: any[]) => c[0]?.text?.includes('What would you like to find'))).toBe(false);
   });
 
   // ── Localization: suggestion-step replies must be platform-scoped AND translated ──
@@ -1918,7 +1921,8 @@ describe('Stale null-business session fix', () => {
     // Only 1 INSERT (the initial 23505) — no retry because session was non-expired
     expect(insertCount27).toBe(1);
     // One search reply (no results) — no error reply
-    const searchReply = cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('No businesses found for'));
+    // #1072: the no-results reply is a buttons message (Search again / Browse categories)
+    const searchReply = cloud.sendButtons.mock.calls.filter((c: any[]) => c[0]?.bodyText?.includes('No businesses found for'));
     expect(searchReply.length).toBeGreaterThan(0);
     expect(cloud.sendText.mock.calls.filter((c: any[]) => c[0]?.text?.includes('Something went wrong')).length).toBe(0);
   });

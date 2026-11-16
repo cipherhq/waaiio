@@ -882,6 +882,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Close matches',
     'directory.no_results_for': 'No businesses found for \'{query}\'. Try a different name, area or category, or browse waaiio.com/directory.',
     'directory.past_businesses': 'You\'ve used these businesses before. Would you like to continue with one of them?',
+    // Directory search step 1 (#1072): no-results options, widened search, stale taps, categories
+    'directory.search_again_button': 'Search again',
+    'directory.browse_categories_button': 'Browse categories',
+    'directory.widened': 'Nothing found in {place}, so here are matches from other areas.',
+    'directory.stale_selection': 'That list has changed. Please search again, e.g. *restaurants in Ikoyi* or a business name.',
+    'directory.categories_title': 'Categories',
+    'directory.categories_body': 'Choose a category to see businesses.',
+    'directory.view_categories': 'View categories',
   },
 
   // ─────────────────────────────────────────────────────────────
@@ -1721,6 +1729,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Names wey near am',
     'directory.no_results_for': 'I no find any business for \'{query}\'. Try another name, area or category, or check waaiio.com/directory.',
     'directory.past_businesses': 'You don use these businesses before. You wan continue with one of dem?',
+    // Directory search step 1 (#1072)
+    'directory.search_again_button': 'Search again',
+    'directory.browse_categories_button': 'See categories',
+    'directory.widened': 'I no find anything for {place}, so na matches from other areas be dis.',
+    'directory.stale_selection': 'That list don change. Abeg search again, e.g. *restaurants in Ikoyi* or the business name.',
+    'directory.categories_title': 'Categories',
+    'directory.categories_body': 'Pick one category make you see the businesses.',
+    'directory.view_categories': 'See categories',
   },
 
   yo: {
@@ -2495,6 +2511,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Close matches',
     'directory.no_results_for': 'No businesses found for \'{query}\'. Try a different name, area or category, or browse waaiio.com/directory.',
     'directory.past_businesses': 'You\'ve used these businesses before. Would you like to continue with one of them?',
+    // Directory search step 1 (#1072): no-results options, widened search, stale taps, categories
+    'directory.search_again_button': 'Search again',
+    'directory.browse_categories_button': 'Browse categories',
+    'directory.widened': 'Nothing found in {place}, so here are matches from other areas.',
+    'directory.stale_selection': 'That list has changed. Please search again, e.g. *restaurants in Ikoyi* or a business name.',
+    'directory.categories_title': 'Categories',
+    'directory.categories_body': 'Choose a category to see businesses.',
+    'directory.view_categories': 'View categories',
   },
   ig: {
     invalidSelection: 'Nhọrọ ahụ adịghị. Pịa otu n\'ime nhọrọ ndị dị n\'elu.',
@@ -3268,6 +3292,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Close matches',
     'directory.no_results_for': 'No businesses found for \'{query}\'. Try a different name, area or category, or browse waaiio.com/directory.',
     'directory.past_businesses': 'You\'ve used these businesses before. Would you like to continue with one of them?',
+    // Directory search step 1 (#1072) — English until native review
+    'directory.search_again_button': 'Search again',
+    'directory.browse_categories_button': 'Browse categories',
+    'directory.widened': 'Nothing found in {place}, so here are matches from other areas.',
+    'directory.stale_selection': 'That list has changed. Please search again, e.g. *restaurants in Ikoyi* or a business name.',
+    'directory.categories_title': 'Categories',
+    'directory.categories_body': 'Choose a category to see businesses.',
+    'directory.view_categories': 'View categories',
   },
   ha: {
     invalidSelection: 'Wannan zaɓi baya nan. Taɓa ɗayan zaɓuɓɓukan da ke sama.',
@@ -4041,6 +4073,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Close matches',
     'directory.no_results_for': 'No businesses found for \'{query}\'. Try a different name, area or category, or browse waaiio.com/directory.',
     'directory.past_businesses': 'You\'ve used these businesses before. Would you like to continue with one of them?',
+    // Directory search step 1 (#1072) — English until native review
+    'directory.search_again_button': 'Search again',
+    'directory.browse_categories_button': 'Browse categories',
+    'directory.widened': 'Nothing found in {place}, so here are matches from other areas.',
+    'directory.stale_selection': 'That list has changed. Please search again, e.g. *restaurants in Ikoyi* or a business name.',
+    'directory.categories_title': 'Categories',
+    'directory.categories_body': 'Choose a category to see businesses.',
+    'directory.view_categories': 'View categories',
   },
   tw: {
     invalidSelection: 'Yiyi no nni ho. Pɛ wo nsam so kɔ ne mu biara wɔ supra.',
@@ -4814,6 +4854,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Close matches',
     'directory.no_results_for': 'No businesses found for \'{query}\'. Try a different name, area or category, or browse waaiio.com/directory.',
     'directory.past_businesses': 'You\'ve used these businesses before. Would you like to continue with one of them?',
+    // Directory search step 1 (#1072) — English until native review
+    'directory.search_again_button': 'Search again',
+    'directory.browse_categories_button': 'Browse categories',
+    'directory.widened': 'Nothing found in {place}, so here are matches from other areas.',
+    'directory.stale_selection': 'That list has changed. Please search again, e.g. *restaurants in Ikoyi* or a business name.',
+    'directory.categories_title': 'Categories',
+    'directory.categories_body': 'Choose a category to see businesses.',
+    'directory.view_categories': 'View categories',
   },
   fr: {
     invalidSelection: 'Cette option n\'est pas disponible. Tapez l\'un des choix ci-dessus.',
@@ -5587,6 +5635,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Noms proches',
     'directory.no_results_for': 'Aucune entreprise trouvée pour « {query} ». Essayez un autre nom, quartier ou catégorie, ou consultez waaiio.com/directory.',
     'directory.past_businesses': 'Vous avez déjà utilisé ces entreprises. Voulez-vous continuer avec l\'une d\'elles ?',
+    // Directory search step 1 (#1072)
+    'directory.search_again_button': 'Nouvelle recherche',
+    'directory.browse_categories_button': 'Voir catégories',
+    'directory.widened': 'Rien trouvé à {place}, voici des résultats d\'autres quartiers.',
+    'directory.stale_selection': 'Cette liste a changé. Veuillez refaire une recherche, p. ex. *restaurants in Ikoyi* ou le nom d\'une entreprise.',
+    'directory.categories_title': 'Catégories',
+    'directory.categories_body': 'Choisissez une catégorie pour voir les entreprises.',
+    'directory.view_categories': 'Voir catégories',
   },
   es: {
     invalidSelection: 'Esa opción no está disponible. Toque una de las opciones anteriores.',
@@ -6360,6 +6416,14 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'directory.close_matches_title': 'Nombres parecidos',
     'directory.no_results_for': 'No se encontraron negocios para "{query}". Prueba otro nombre, zona o categoría, o visita waaiio.com/directory.',
     'directory.past_businesses': 'Ya has usado estos negocios. ¿Quieres continuar con uno de ellos?',
+    // Directory search step 1 (#1072)
+    'directory.search_again_button': 'Buscar de nuevo',
+    'directory.browse_categories_button': 'Ver categorías',
+    'directory.widened': 'No encontramos nada en {place}, aquí hay resultados de otras zonas.',
+    'directory.stale_selection': 'Esa lista cambió. Busca de nuevo, p. ej. *restaurants in Ikoyi* o el nombre de un negocio.',
+    'directory.categories_title': 'Categorías',
+    'directory.categories_body': 'Elige una categoría para ver negocios.',
+    'directory.view_categories': 'Ver categorías',
   },
 };
 
@@ -6495,6 +6559,7 @@ export const PLACEHOLDER_SCHEMA: ReadonlyMap<string, readonly string[]> = new Ma
   ['updates.opted_out', ['businessName']],
   ['updates.confirm', ['businessName']],
   ['updates.confirm_business', ['businessName']],
+  ['directory.widened', ['place']],
 ]);
 
 /** Keys used as WhatsApp button titles (max 20 chars). */
@@ -6550,11 +6615,14 @@ export const BUTTON_TITLE_KEYS: readonly string[] = [
   'yes', 'stayHere',
   // Customer updates confirmation (#591 Q6)
   'updates.confirm_yes', 'updates.confirm_no',
+  // Directory search (#1072)
+  'directory.search_again_button', 'directory.browse_categories_button', 'directory.view_categories',
 ];
 
 /** Keys used as WhatsApp list titles (max 24 chars). */
 export const LIST_TITLE_KEYS: readonly string[] = [
   'menu.title',
+  'directory.categories_title',
   'account.title', 'account.my_bookings', 'account.my_orders',
   'account.my_giving', 'account.my_invoices', 'account.my_contracts',
   'account.my_quotes', 'account.my_points', 'account.subscriptions',

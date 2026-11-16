@@ -60,6 +60,9 @@ const FAMILY_LABELS: Record<string, string> = {
   waitlist: 'waitlist',
 };
 
+/** Labels that take "is" ("that service is…", #1072); the plural labels take "are". */
+const SINGULAR_LABELS: ReadonlySet<string> = new Set(['that service', 'ordering', 'queue check-in', 'waitlist']);
+
 export interface RecoveryOptions {
   /** The semantic family the customer requested */
   requestedFamily?: SemanticFamily;
@@ -91,7 +94,7 @@ export function buildRecoveryMessage(opts: RecoveryOptions): string {
   const parts: string[] = [];
 
   // Statement: what's unavailable
-  parts.push(`Sorry, ${requestedLabel} ${requestedLabel === 'ordering' ? 'is' : 'are'} not available here right now.`);
+  parts.push(`Sorry, ${requestedLabel} ${SINGULAR_LABELS.has(requestedLabel) ? 'is' : 'are'} not available here right now.`);
 
   // Valid alternatives
   if (alternatives.length > 0) {
