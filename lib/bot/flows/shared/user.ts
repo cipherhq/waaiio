@@ -93,7 +93,7 @@ const RESERVED_EMAIL_TLDS = new Set(['invalid', 'test', 'example', 'localhost'])
 
 /** True when an email's top-level domain is reserved and can never receive mail. */
 export function isReservedEmailDomain(email: string): boolean {
-  const domain = email.trim().toLowerCase().split('@').pop() || '';
+  const domain = (email.trim().toLowerCase().split('@').pop() || '').replace(/\.+$/, '');
   return RESERVED_EMAIL_TLDS.has(domain.split('.').pop() || '');
 }
 
