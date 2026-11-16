@@ -176,3 +176,47 @@ describe('merchant messaging top-up by Stripe (#1068)', () => {
     expect(updates).toContainEqual({ table: 'messaging_topup_purchases', provider_checkout_id: 'cs_topup' });
   });
 });
+
+describe('merchant plan subscription by Stripe (#1068)', () => {
+  it('creates the subscription Checkout Session on an Endive account', async () => {
+    const chain = (table: string): Record<string, unknown> => {
+      const c: Record<string, unknown> = {};
+      for (const m of ['select', 'eq']) c[m] = vi.fn(() => c);
+      const row: Record<string, Row> = {
+        businesses: { id: 'biz-1', owner_id: 'user-1', country_code: 'US' },
+        countries: { pricing: { growth: { price: 20 } } },
+        profiles: { email: 'owner@example.com' },
+      };
+      c.single = vi.fn(async () => ({ data: row[table] ?? null, error: null }));
+      return c;
+    };
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: 'user-1' } } }) }, from: chain }),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ from: chain, rpc: vi.fn() }) }));
+    vi.doMock('@/lib/payments/gateway-resolver', () => ({
+      resolveBusinessGateway: async () => ({ gateway: 'stripe', currency: 'USD', countryCode: 'US', source: 'country_default' }),
+    }));
+    vi.doMock('@/lib/payments/provider-preflight', () => ({
+      verifyStripeReadiness: async () => ({ ok: true }),
+      verifyStripePrice: async () => ({ ok: true }),
+    }));
+    const calls = stubStripe(endiveAccount({ id: 'cs_plan', url: 'https://checkout.stripe.test/plan' }));
+    const { POST } = await import('@/app/api/onboarding/subscribe/route');
+    const res = await POST(new Request('http://localhost/api/onboarding/subscribe', {
+      method: 'POST', body: JSON.stringify({ business_id: 'biz-1', plan: 'growth' }),
+    }) as never);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ authorization_url: 'https://checkout.stripe.test/plan', reference: 'cs_plan' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body).toMatchObject({
+      mode: 'subscription',
+      'allowed_payment_method_types[0]': 'card',
+      'line_items[0][price_data][unit_amount]': '2000',
+      'line_items[0][price_data][recurring][interval]': 'month',
+      'metadata[business_id]': 'biz-1',
+      'metadata[plan]': 'growth',
+    });
+    expect(calls[1].body).not.toHaveProperty('payment_method_types[0]');
+  });
+});

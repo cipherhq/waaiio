@@ -873,3 +873,96 @@ describe('R2-B1: Lifecycle-aware reconciliation after PI succeeded', () => {
     expect(result.outcome).toBe('succeeded');
   });
 });
+
+// #1068: Stripe API 2026-09-30.endive rejects legacy payment_method_types (HTTP 400,
+// nothing created). Recovery shares the live Endive fallback and closes out refusals.
+describe('recoverDispatchedSavedCardPayment on a Stripe Endive account (#1068)', () => {
+  const ENDIVE_REJECTION = { error: { type: 'invalid_request_error', param: 'payment_method_types', message: 'The `payment_method_types` parameter is no longer supported.' } };
+  const LEGACY_PAYMENT = {
+    ...VALID_PAYMENT,
+    metadata: { ...VALID_PAYMENT.metadata, pi_params: { ...VALID_PAYMENT.metadata.pi_params, 'payment_method_types[0]': 'card' } },
+  };
+  let originalFetch: typeof globalThis.fetch;
+
+  function capturingSupabase(payment: Record<string, unknown>, casRows = 1) {
+    const updates: Record<string, unknown>[] = [];
+    const updateChain = {
+      eq: vi.fn().mockReturnThis(),
+      select: vi.fn().mockResolvedValue({ data: casRows > 0 ? [{ id: payment.id }] : [], error: null }),
+    };
+    const supabase = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: payment, error: null }),
+        }),
+        update: vi.fn((v: Record<string, unknown>) => { updates.push(v); return updateChain; }),
+      }),
+    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+    return { supabase, updates };
+  }
+  function stub(reply: (body: string) => { status: number; json: unknown }) {
+    const calls: Array<{ key: string; body: string }> = [];
+    globalThis.fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = String(init?.body || '');
+      calls.push({ key: (init?.headers as Record<string, string>)['Idempotency-Key'], body });
+      const { status, json } = reply(body);
+      return { ok: status < 300, status, json: async () => json } as unknown as Response;
+    }) as unknown as typeof globalThis.fetch;
+    return calls;
+  }
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    process.env.STRIPE_SECRET_KEY = 'stripe-test-key-1068';
+    mockReconcilePayment.mockClear();
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it('stored legacy params converge through the card allowlist retry to provider_confirmed', async () => {
+    const calls = stub(body => body.includes('payment_method_types%5B0%5D') && !body.includes('allowed_')
+      ? { status: 400, json: ENDIVE_REJECTION } : { status: 200, json: { id: 'pi_endive', status: 'succeeded' } });
+    const { supabase, updates } = capturingSupabase(LEGACY_PAYMENT);
+
+    const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
+
+    expect(result.outcome).toBe('succeeded');
+    expect(calls.map(c => c.key)).toEqual(['sc_charge_pay-123', 'sc_charge_pay-123_endive_card']);
+    expect(calls[1].body).toContain('allowed_payment_method_types%5B0%5D=card');
+    expect(updates[0]).toMatchObject({ gateway_reference: 'pi_endive', provider_init_state: 'provider_confirmed' });
+    expect(mockReconcilePayment).toHaveBeenCalledWith(supabase, 'pay-123', 'saved_card');
+  });
+
+  it('any other 400 invalid_request_error closes the payment as failed (nothing was charged)', async () => {
+    stub(() => ({ status: 400, json: { error: { type: 'invalid_request_error', code: 'parameter_invalid_integer', param: 'amount' } } }));
+    const { supabase, updates } = capturingSupabase(VALID_PAYMENT);
+
+    const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
+
+    expect(result).toMatchObject({ outcome: 'declined' });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].status).toBe('failed');
+    // payments.gateway_status is varchar(50).
+    expect(String(updates[0].gateway_status)).toBe('provider_terminal_stripe_rejected:parameter_invali');
+    expect(String(updates[0].gateway_status).length).toBeLessThanOrEqual(50);
+  });
+
+  it('a lost close-out race converges instead of reporting declined', async () => {
+    stub(() => ({ status: 400, json: { error: { type: 'invalid_request_error', param: 'amount' } } }));
+    const { supabase } = capturingSupabase(VALID_PAYMENT, 0);
+
+    const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
+
+    expect(result.outcome).not.toBe('declined');
+  });
+
+  it('an idempotency_error is never closed out', async () => {
+    stub(() => ({ status: 400, json: { error: { type: 'idempotency_error', message: 'Keys for idempotent requests can only be used with the same parameters' } } }));
+    const { supabase, updates } = capturingSupabase(VALID_PAYMENT);
+
+    const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
+
+    expect(result.outcome).toBe('indeterminate');
+    expect(updates.some(u => u.status === 'failed')).toBe(false);
+  });
+});

@@ -85,6 +85,8 @@ function makeSupabase(opts: {
   existingPayment?: Record<string, unknown> | null;
   paymentId?: string;
   donationIntentResult?: { data?: unknown; error?: unknown };
+  /** Simulate the 'failed' write matching no row (e.g. already moved on). */
+  failedWriteMissesRow?: boolean;
 } = {}) {
   const state: MockState = { inserts: [], updates: [], updateFilters: [], rpcCalls: [], events: [] };
   const paymentId = opts.paymentId || 'pay-new-1';
@@ -99,6 +101,7 @@ function makeSupabase(opts: {
     from: vi.fn((table: string) => {
       let operation: 'read' | 'insert' | 'update' = 'read';
       let filters: Array<[string, unknown]> = [];
+      let lastUpdate: Record<string, unknown> | null = null;
 
       const chain: any = {
         select: vi.fn(() => chain),
@@ -120,6 +123,7 @@ function makeSupabase(opts: {
         }),
         update: vi.fn((payload: Record<string, unknown>) => {
           operation = 'update';
+          lastUpdate = payload;
           state.updates.push(payload);
           state.updateFilters.push(filters);
           filters = [];
@@ -141,8 +145,9 @@ function makeSupabase(opts: {
           return { data: null, error: null };
         }),
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
+          const missed = opts.failedWriteMissesRow && lastUpdate?.status === 'failed';
           const result = table === 'payments' && operation === 'update'
-            ? { data: [{ id: paymentId }], error: null }
+            ? { data: missed ? [] : [{ id: paymentId }], error: null }
             : { data: null, error: null };
           return Promise.resolve(result).then(resolve, reject);
         },
@@ -243,6 +248,19 @@ describe('#379 Stripe saved-payment adapter behavior', () => {
     const failed = state.updates.find(u => u.status === 'failed');
     expect(failed).toEqual({ status: 'failed', gateway_status: 'stripe:400:payment_method_types:request_rejected' });
     expect(String(failed!.gateway_status).length).toBeLessThanOrEqual(50);
+  });
+
+  it('does not offer another way to pay unless the payment was provably marked failed (#1068)', async () => {
+    mockChargeStripeSavedCard.mockResolvedValue({
+      status: 'declined',
+      errorMessage: 'Saved card payment could not be completed',
+      errorEvidence: { httpStatus: 400, type: 'invalid_request_error', code: 'unknown', param: 'amount', classification: 'request_rejected' },
+    });
+
+    const { supabase } = makeSupabase({ paymentId: 'pay-unrecorded', failedWriteMissesRow: true });
+    const result = await savedPaymentAdapter.chargeSavedMethod(supabase, CHARGE_OPTS);
+
+    expect(result).toEqual({ status: 'indeterminate', paymentId: 'pay-unrecorded', message: 'Decline could not be recorded' });
   });
 
   it('persists exact WhatsApp channel provenance on the canonical saved-card payment', async () => {

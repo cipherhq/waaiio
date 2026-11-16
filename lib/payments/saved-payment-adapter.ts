@@ -735,13 +735,20 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
           : {status:'indeterminate',paymentId:payRow.id,message:'Decline allocation needs reconciliation'};
       }
 
-      await supabase.from('payments')
+      // Only offer the customer another way to pay once this row is provably failed;
+      // otherwise a later recovery replay could still charge it (#1068).
+      const { data: failedRows, error: failErr } = await supabase.from('payments')
         .update({
           status: 'failed',
           gateway_status: result.errorEvidence ? formatStripeDispatchEvidence(result.errorEvidence) : (result.errorMessage || 'declined').slice(0, 50),
         })
         .eq('id', payRow.id)
-        .eq('provider_init_state', 'dispatched');
+        .eq('provider_init_state', 'dispatched')
+        .eq('status', 'pending')
+        .select('id');
+      if (failErr || !failedRows || failedRows.length !== 1) {
+        return { status: 'indeterminate', paymentId: payRow.id, message: 'Decline could not be recorded' };
+      }
       return { status: 'declined', message: result.errorMessage || 'Card declined', shouldDeactivate: false };
     }
 

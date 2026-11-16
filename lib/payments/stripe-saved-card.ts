@@ -40,6 +40,8 @@ export interface StripeResponse {
  * `payment_method_types` with a parameter-scoped 400 that creates nothing (#1068); only
  * then retry once with the Endive card allowlist under a derived key. Live dispatch and
  * recovery both use this, so a replay converges on the same idempotent PaymentIntent.
+ * The first key stores no result on that rejection: never roll the account API version
+ * back below Endive while a saved-card payment is dispatched, or a replay could charge twice.
  */
 export async function postSavedCardPaymentIntent(
   params: Record<string, string>,
