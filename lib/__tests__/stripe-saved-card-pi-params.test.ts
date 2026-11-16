@@ -90,7 +90,7 @@ describe('#379: Card-only PI params', () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe('#379: Error evidence persistence', () => {
-  it('config/invalid_request error returns indeterminate (not decline) with error message', async () => {
+  it('400 invalid_request at PaymentIntent creation fails cleanly as not charged (#1068), never echoing Stripe text', async () => {
     vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_dummy');
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -113,16 +113,37 @@ describe('#379: Error evidence persistence', () => {
       idempotencyKey: 'sc_charge_test_err',
     });
 
-    expect(result.status).not.toBe('declined');
-    expect(result.status).toBe('indeterminate');
-    expect(result.errorMessage).toContain('config');
-    expect(result.errorMessage).toContain('400');
+    // Stripe validated and refused the request: no PaymentIntent, nothing charged.
+    expect(result.status).toBe('declined');
+    expect(result.errorMessage).toBe('Saved card payment could not be completed');
+    expect(result.errorMessage).not.toContain('return_url');
     expect(result.errorEvidence).toEqual({
       httpStatus: 400,
       type: 'invalid_request_error',
       code: 'parameter_missing',
-      classification: 'config_error',
+      classification: 'request_rejected',
     });
+    // Not a legacy-parameter rejection, so no Endive retry.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    vi.unstubAllEnvs();
+  });
+
+  it('auth/config errors (401) still return indeterminate, not a decline', async () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'stripe-test-key-401');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: { type: 'authentication_error', message: 'Invalid API Key provided' } }),
+    });
+
+    const { chargeStripeSavedCard } = await import('../payments/stripe-saved-card');
+    const result = await chargeStripeSavedCard({
+      customerId: 'cus_test', paymentMethodId: 'pm_test', amountCents: 12000, currency: 'USD', idempotencyKey: 'sc_charge_test_401',
+    });
+
+    expect(result.status).toBe('indeterminate');
+    expect(result.errorEvidence).toMatchObject({ httpStatus: 401, classification: 'config_error' });
 
     vi.unstubAllEnvs();
   });

@@ -456,7 +456,7 @@ export async function POST(request: NextRequest) {
     const amountInCents = Math.round(monthlyPrice * 100);
     const tierName = plan === 'growth' ? 'Pro' : 'Premium';
 
-    const stripeBody = new URLSearchParams({
+    const stripeBody: Record<string, string> = {
       'payment_method_types[0]': 'card',
       'line_items[0][quantity]': '1',
       mode: 'subscription',
@@ -468,28 +468,21 @@ export async function POST(request: NextRequest) {
       'metadata[billing_interval]': 'month',
       'metadata[type]': 'whatsapp_subscription',
       'metadata[user_id]': user.id,
-    });
+    };
 
     if (hasStripeRef && typeof stripePriceRef === 'string') {
-      stripeBody.set('line_items[0][price]', stripePriceRef);
-      stripeBody.set('currency', currency.toLowerCase());
+      stripeBody['line_items[0][price]'] = stripePriceRef;
+      stripeBody.currency = currency.toLowerCase();
     } else {
-      stripeBody.set('line_items[0][price_data][currency]', currency.toLowerCase());
-      stripeBody.set('line_items[0][price_data][product_data][name]', `Waaiio ${tierName} Plan (Monthly)`);
-      stripeBody.set('line_items[0][price_data][unit_amount]', String(amountInCents));
-      stripeBody.set('line_items[0][price_data][recurring][interval]', 'month');
+      stripeBody['line_items[0][price_data][currency]'] = currency.toLowerCase();
+      stripeBody['line_items[0][price_data][product_data][name]'] = `Waaiio ${tierName} Plan (Monthly)`;
+      stripeBody['line_items[0][price_data][unit_amount]'] = String(amountInCents);
+      stripeBody['line_items[0][price_data][recurring][interval]'] = 'month';
     }
 
-    const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: stripeBody.toString(),
-    });
-
-    const data = await response.json();
+    // #1068: Stripe API 2026-09-30.endive rejects the legacy card-only parameter.
+    const { createCardOnlyCheckoutSession } = await import('@/lib/payments/stripe-checkout-failure');
+    const data = await createCardOnlyCheckoutSession(stripeKey, stripeBody) as { id?: string; url?: string; error?: { message?: string } };
 
     if (!data.url) {
       return NextResponse.json(

@@ -251,7 +251,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
     }
 
-    const stripeBody = new URLSearchParams({
+    const stripeBody: Record<string, string> = {
       'payment_method_types[0]': 'card',
       'line_items[0][quantity]': '1',
       mode: 'payment',
@@ -261,22 +261,14 @@ export async function POST(request: NextRequest) {
       'metadata[type]': 'messaging_topup',
       'metadata[purchase_id]': purchaseId,
       'metadata[business_id]': business_id,
-    });
+      'line_items[0][price_data][currency]': currency.toLowerCase(),
+      'line_items[0][price_data][product_data][name]': 'Waaiio Messaging Credit Top-Up',
+      'line_items[0][price_data][unit_amount]': String(package_amount_minor),
+    };
 
-    stripeBody.set('line_items[0][price_data][currency]', currency.toLowerCase());
-    stripeBody.set('line_items[0][price_data][product_data][name]', 'Waaiio Messaging Credit Top-Up');
-    stripeBody.set('line_items[0][price_data][unit_amount]', String(package_amount_minor));
-
-    const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: stripeBody.toString(),
-    });
-
-    const data = await response.json();
+    // #1068: Stripe API 2026-09-30.endive rejects the legacy card-only parameter.
+    const { createCardOnlyCheckoutSession } = await import('@/lib/payments/stripe-checkout-failure');
+    const data = await createCardOnlyCheckoutSession(stripeKey, stripeBody) as { id?: string; url?: string; error?: { message?: string } };
 
     if (!data.url) {
       await service
