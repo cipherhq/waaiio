@@ -176,6 +176,13 @@ export async function handleRemoveCard(
   // only that merchant's card is removed; everywhere else only the shared card (#1065).
   const { resolvePaystackSavedCardScope, withSavedCardScope } = await import('@/lib/payments/saved-card-scope');
   const scope = session?.business_id ? await resolvePaystackSavedCardScope(supabase, session.business_id) : null;
+  const unknownAccount = ['credential_lookup_error', 'gateway_resolution_error', 'gateway_resolution_failed',
+    'ambiguous_credential_state', 'byo_paystack_credential_unavailable'];
+  if (scope && !scope.eligible && unknownAccount.includes(scope.reason)) {
+    // Account unknown (lookup failed): never fall back to deleting the shared card.
+    await sendText(from, 'Could not check your saved card. Please try again.');
+    return;
+  }
   const { data: paystackDeleted } = await withSavedCardScope(supabase
     .from('saved_payment_methods')
     .delete()

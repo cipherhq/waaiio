@@ -11,8 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => {
   // charge-saved reads the platform key at import time.
   process.env.PAYSTACK_SECRET_KEY = 'platform-key-1065';
-  return { gateway: vi.fn(), routing: vi.fn() };
+  return { gateway: vi.fn(), routing: vi.fn(), calculateFee: vi.fn() };
 });
+vi.mock('@/lib/trial-status', () => ({ resolveTrialStatus: async () => false }));
+vi.mock('@/lib/payments/calculateFee', () => ({
+  calculateFee: (...a: unknown[]) => h.calculateFee(...a),
+  validateV1Snapshot: () => null,
+}));
 vi.mock('../gateway-resolver', () => ({ resolveBusinessGateway: (...a: unknown[]) => h.gateway(...a) }));
 vi.mock('../resolve-stripe-routing', () => ({ resolvePaymentRoutingAuthority: (...a: unknown[]) => h.routing(...a) }));
 vi.mock('@/lib/logger', () => {
@@ -48,10 +53,9 @@ function fakeDb(rows: Record<string, Row | Row[] | null>) {
       return Array.isArray(r) ? r : (r ? [r] : []);
     };
     const chain: Record<string, unknown> = {};
-    for (const m of ['select', 'eq', 'is', 'in', 'not', 'order', 'limit', 'or']) {
+    for (const m of ['select', 'eq', 'is', 'in', 'not', 'order', 'limit', 'or', 'lte', 'gte']) {
       chain[m] = vi.fn((...args: unknown[]) => {
         if (m !== 'select') call.filters.push([m, ...args]);
-        if (m === 'limit') return Promise.resolve({ data: answer(), error: null });
         return chain;
       });
     }
@@ -60,7 +64,9 @@ function fakeDb(rows: Record<string, Row | Row[] | null>) {
     chain.delete = vi.fn(() => { call.op = 'delete'; return chain; });
     chain.single = vi.fn(async () => ({ data: call.op === 'insert' ? { id: 'pay-new' } : answer()[0] ?? null, error: null }));
     chain.maybeSingle = vi.fn(async () => ({ data: call.op === 'insert' ? { id: 'pay-new' } : answer()[0] ?? null, error: null }));
-    chain.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: answer(), error: null }).then(res);
+    // A guarded UPDATE ... select('id') proves exactly one row moved.
+    chain.then = (res: (v: unknown) => unknown) =>
+      Promise.resolve({ data: call.op === 'update' ? [{ id: 'pay-new' }] : answer(), error: null }).then(res);
     return chain;
   });
   return { db: { from, rpc: vi.fn(async (): Promise<{ data: unknown; error: unknown }> => ({ data: null, error: null })) }, calls };
@@ -268,5 +274,48 @@ describe('saving and removing an own-account card in the bot', () => {
     await handleRemoveCard(shared.db as never, vi.fn(async () => {}), PHONE, null);
     expect(shared.calls.find(c => c.table === 'saved_payment_methods' && c.op === 'delete')?.filters)
       .toContainEqual(['is', 'provider_credential_id', null]);
+  });
+});
+
+describe('review follow-ups (#1065)', () => {
+  it('fee policy v1: own-account split uses the pinned fee with routing "byo"', async () => {
+    h.routing.mockResolvedValue({ isByo: true, byoSecretKey: 'merchant-key-1065', byoPlatformSubaccount: 'ACCT_waaiio', providerConnectionId: CRED, platformFeeAmount: 99 });
+    const sent: Array<{ body: Row }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      sent.push({ body: JSON.parse(String(init?.body || '{}')) });
+      return { json: async () => ({ status: true, data: { status: 'success' } }) } as unknown as Response;
+    }));
+    const snapshot = {
+      fee_policy_enabled: true,
+      tiers: { free: { feePercentage: 5, feeFlat: 0 } },
+    };
+    const { db, calls } = fakeDb({
+      payments: null,
+      platform_config_versions: { id: 'cfg-1', config_snapshot: snapshot },
+      businesses: { subscription_tier: 'free', trial_ends_at: null, custom_fee_percentage: null, custom_fee_flat: null, payout_mode: 'platform_managed' },
+    });
+    h.calculateFee.mockReturnValue({ feeTotal: 5 });
+    const v1 = h.calculateFee;
+    const outcome = await chargeSavedCard(db as never, {
+      savedMethod: { id: 'm-byo', gateway: 'paystack', authorization_code: 'AUTH_byo', customer_code: null, authorization_email: 'ada@gmail.com',
+        stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '4081', card_brand: 'visa', provider_credential_id: CRED },
+      amount: 100, currency: 'NGN', email: 'ada@gmail.com', reference: 'REF-v1', businessId: BIZ, transactionCategory: 'scheduling',
+    });
+    expect(outcome).toEqual({ outcome: 'charged', paymentId: 'pay-new', reference: 'REF-v1' });
+    expect(v1.mock.calls[0][1]).toMatchObject({ payment_routing: 'byo' });
+    // Pinned v1 fee (5.00), not the live routing fee (99): merchant keeps 95.00 of 100.00.
+    expect(sent[0].body).toMatchObject({ subaccount: 'ACCT_waaiio', transaction_charge: 9500, bearer: 'account' });
+    const insert = calls.find(c => c.table === 'payments' && c.op === 'insert')?.payload as Row;
+    expect(insert).toMatchObject({ fee_policy_version: 1, fee_basis: expect.objectContaining({ payment_routing: 'byo' }) });
+  });
+
+  it('remove card never falls back to the shared card when the merchant account cannot be read', async () => {
+    const { handleRemoveCard } = await import('@/lib/bot/handlers/saved-cards');
+    h.gateway.mockRejectedValue(new Error('db down'));
+    const { db, calls } = fakeDb({ saved_payment_methods: [{ card_last4: '1111', card_brand: 'visa' }] });
+    const send = vi.fn(async () => {});
+    await handleRemoveCard(db as never, send, PHONE, { business_id: BIZ } as never);
+    expect(calls.some(c => c.table === 'saved_payment_methods' && c.op === 'delete')).toBe(false);
+    expect(send).toHaveBeenCalledWith(PHONE, 'Could not check your saved card. Please try again.');
   });
 });

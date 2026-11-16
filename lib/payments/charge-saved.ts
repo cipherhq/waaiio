@@ -187,9 +187,9 @@ export type SavedCardOutcome =
  * 5. No existing row → INSERT canonical row first, fail closed if error
  * 6. Call provider → charged / declined / indeterminate
  *
- * BYO saved-card charging is NOT supported in this implementation. If byoSecretKey
- * is supplied, fail closed — the payment_origin cannot be verified without a durable
- * provider connection identity.
+ * A card saved on a merchant's own Paystack account (provider_credential_id set,
+ * #1065) is charged with that merchant's key; a caller-supplied byoSecretKey is
+ * still refused so the key always comes from the routing authority.
  */
 export async function chargeSavedCard(
   supabase: SupabaseClient,
@@ -251,28 +251,6 @@ async function chargePaystackAuthorization(
     donorName?: string | null;
   },
 ): Promise<SavedCardOutcome> {
-  // A merchant's own-account card is charged with that merchant's key and the same reversed
-  // split as its normal checkout (#1065), and only on the connection that issued the card.
-  let byoRouting: { secretKey: string; platformSubaccount: string; credentialId: string; platformFeeAmount: number } | null = null;
-  if (opts.savedMethod.provider_credential_id) {
-    const { resolvePaymentRoutingAuthority } = await import('./resolve-stripe-routing');
-    const routing = await resolvePaymentRoutingAuthority(supabase, opts.businessId, 'paystack', opts.amount);
-    if (!routing?.isByo || !routing.byoSecretKey || !routing.byoPlatformSubaccount
-      || routing.providerConnectionId !== opts.savedMethod.provider_credential_id) {
-      return { outcome: 'declined', reference: opts.reference, message: 'Saved card is not available for this business' };
-    }
-    byoRouting = {
-      secretKey: routing.byoSecretKey, platformSubaccount: routing.byoPlatformSubaccount,
-      credentialId: routing.providerConnectionId, platformFeeAmount: routing.platformFeeAmount,
-    };
-  }
-  // Waaiio's fee goes to Waaiio's subaccount on the merchant's account; the merchant keeps the rest.
-  const byoSplit = (feeKobo: number) => paystackByoSplit(byoRouting!.platformSubaccount, Math.round(opts.amount * 100) - feeKobo);
-  const chargeSecretKey = byoRouting ? byoRouting.secretKey : paystackSecretKey;
-  if (!chargeSecretKey) {
-    return { outcome: 'declined', reference: opts.reference, message: 'Payment gateway not configured' };
-  }
-
   // ── Step 0: Check existing canonical payment for this reference ──
   // Prevents double-charge on repeated taps and handles recovery.
   // Fail closed on lookup error — never call provider without confirming no existing charge.
@@ -427,6 +405,29 @@ async function chargePaystackAuthorization(
     if (existing.status === 'failed') {
       return { outcome: 'previously_declined', reference: opts.reference };
     }
+  }
+
+  // Resolved after Step 0 so an earlier pending charge always reconciles first.
+  // A merchant's own-account card is charged with that merchant's key and the same reversed
+  // split as its normal checkout (#1065), and only on the connection that issued the card.
+  let byoRouting: { secretKey: string; platformSubaccount: string; credentialId: string; platformFeeAmount: number } | null = null;
+  if (opts.savedMethod.provider_credential_id) {
+    const { resolvePaymentRoutingAuthority } = await import('./resolve-stripe-routing');
+    const routing = await resolvePaymentRoutingAuthority(supabase, opts.businessId, 'paystack', opts.amount);
+    if (!routing?.isByo || !routing.byoSecretKey || !routing.byoPlatformSubaccount
+      || routing.providerConnectionId !== opts.savedMethod.provider_credential_id) {
+      return { outcome: 'declined', reference: opts.reference, message: 'Saved card is not available for this business' };
+    }
+    byoRouting = {
+      secretKey: routing.byoSecretKey, platformSubaccount: routing.byoPlatformSubaccount,
+      credentialId: routing.providerConnectionId, platformFeeAmount: routing.platformFeeAmount,
+    };
+  }
+  // Waaiio's fee goes to Waaiio's subaccount on the merchant's account; the merchant keeps the rest.
+  const byoSplit = (feeKobo: number) => paystackByoSplit(byoRouting!.platformSubaccount, Math.round(opts.amount * 100) - feeKobo);
+  const chargeSecretKey = byoRouting ? byoRouting.secretKey : paystackSecretKey;
+  if (!chargeSecretKey) {
+    return { outcome: 'declined', reference: opts.reference, message: 'Payment gateway not configured' };
   }
 
   // ── Step 1: Resolve fee-policy gate FIRST, then split ──

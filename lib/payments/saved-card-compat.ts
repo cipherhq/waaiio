@@ -29,13 +29,11 @@ export function savedCardSessionPhone(canonPhone: string): string {
 }
 
 /**
- * A Paystack payment taken on the merchant's own account (BYO) or a Connect
- * account can never be saved as a Waaiio card: the card authorization belongs
- * to that account (the same rule as the 'not_platform' eligibility reason).
+ * A Paystack payment taken on a Connect account can never save a card. A payment on
+ * the merchant's own account (BYO) can, scoped to that merchant (#1065).
  */
 export function paystackPaymentCannotSaveCard(payment: { gateway?: unknown; metadata?: unknown }): boolean {
   if (payment.gateway !== 'paystack') return false;
-  // A merchant's own Paystack account (byo) can save cards scoped to that merchant (#1065).
   return resolvePaymentOrigin((payment.metadata || {}) as Record<string, unknown>) === 'connect';
 }
 
