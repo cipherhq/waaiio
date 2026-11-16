@@ -1,3 +1,16 @@
+## 2026-11-16 — Custom flow builder: step map, flow list and WhatsApp preview (UI only, #1074)
+
+- **Why:** The Owner approved a clearer layout for `/dashboard/custom-flows` (issue #1074, parent #1013). The old page was a dropdown, a long settings grid and a flat list of block cards.
+- **What changed:**
+  - `components/custom-flows/FlowBuilder.tsx`: new layout. Left rail with "Your flows", New flow and "Add a step" tiles plus the existing `BlockOrder` reorder ("Step order"). Top bar with flow name, Draft / Live / Unsaved changes status, entry keyword, Settings, Check for problems (the existing validate action), Save draft, Publish flow (primary) and Reset draft to published. Settings (name, greeting, fallback, keyword, language, time zone, currency, start block) move into a panel opened from the top bar; it stays mounted so unsaved values are kept. Guided business details, sections, Advanced editor and `TableEditor` sit in a "Data" panel. Step editors are unchanged and open inside their step on the map (the start step opens by default; new steps open when added).
+  - `components/custom-flows/FlowList.tsx` (new): searchable "Your flows" listbox (accessible name "Custom flows") with Draft/Live tags and arrow-key focus; locked while there are unsaved changes, as the dropdown was.
+  - `components/custom-flows/FlowMap.tsx` (new): read-only step map — start pill ("Customer sends KEYWORD" or "Starts at …"), every step in editor order, menu options with their destinations, and "Ends" / "Back to start" / "Goes to …" / "Not connected yet" pills from each step's `next` (a lookup without `next` shows "Back to start", the engine's rule).
+  - `components/custom-flows/WhatsAppPreview.tsx` (new): WhatsApp-styled phone for the existing `preview` action (dark-mode aware). Keeps Restart preview, the Message field, Preview draft button, aria-live transcript, aria-busy, disabled older options and transcript-only scrolling.
+  - `components/custom-flows/TableEditor.tsx`, `SourcePicker.tsx`: clearer labels and spacing, plus a readable row list that selects a row exactly as the Row code menu does.
+  - Tests: `FlowMap.test.tsx` (new). `FlowBuilder.test.tsx` changed only for layout: pick the flow from the listbox option, button text "Check for problems", and open lookup steps on the map before checking their Next step menus.
+- **Unchanged:** all API routes, actions, payloads and their order, `lib/**`, migrations, capability gating, validation limits, confirms, dirty-navigation and beforeunload guards, Publish disabled while dirty, guided template flow, and table saves going live immediately. No new dependency.
+- **What could break:** anything that looked for the "Custom flows" combobox or the "Validate" button text; layouts at tablet widths (preview sits under the map below 1280px).
+
 ## 2026-11-13 — Pidgin replies: send certified phrase-book text without AI translation
 
 - **Why:**

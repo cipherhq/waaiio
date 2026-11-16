@@ -36,7 +36,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function open() {
   render(<FlowBuilder businessId="business" />);
   await screen.findByRole('option', { name: 'Saved flow' });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Custom flows' }), { target: { value: 'flow' } });
+  // Layout change (#1074): the flow dropdown is now the "Your flows" listbox.
+  fireEvent.click(screen.getByRole('option', { name: 'Saved flow' }));
 }
 
 describe('FlowBuilder user journeys', () => {
@@ -53,7 +54,7 @@ describe('FlowBuilder user journeys', () => {
     fireEvent.change(screen.getAllByLabelText('Message').find(element => element.tagName === 'TEXTAREA')!, { target: { value: 'Hello' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
     await screen.findByText('Draft saved.');
-    fireEvent.click(screen.getByRole('button', { name: 'Validate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check for problems' }));
     await screen.findByText('No validation errors.');
     fireEvent.click(screen.getByRole('button', { name: 'Restart preview' }));
     await screen.findByText('New greeting');
@@ -123,6 +124,9 @@ describe('FlowBuilder user journeys', () => {
     await open();
     fireEvent.click(screen.getByRole('button', { name: 'Advanced editor' }));
     const labels = ['1. Menu prompt', '2. Artists — Lookup', '3. Vendors — Lookup', '4. Ticket Types — Lookup', '5. News — Lookup', '6. FAQs — Lookup'];
+    // Layout change (#1074): step editors open from the step map; the start step opens by default.
+    for (const label of labels.slice(1)) fireEvent.click(screen.getByRole('button', { name: `Edit ${label}` }));
+    expect(screen.getAllByLabelText('Next step')).toHaveLength(5);
     for (const label of labels) {
       expect(screen.getByRole('heading', { name: label })).toBeTruthy();
       expect(screen.getByRole('button', { name: label })).toBeTruthy();
@@ -156,7 +160,7 @@ describe('FlowBuilder user journeys', () => {
   it('shows validation rejection and success beside the bottom actions without changing the flow', async () => {
     await open();
     const before = structuredClone(row);
-    const validate = screen.getByRole('button', { name: 'Validate' });
+    const validate = screen.getByRole('button', { name: 'Check for problems' });
     const actions = validate.parentElement!.parentElement!;
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'incomplete_sections', errors: ['A selected section needs information.'] }) } as Response);
     fireEvent.click(validate);
@@ -191,7 +195,7 @@ describe('FlowBuilder user journeys', () => {
 
   it('shows preview failure beside preview and clears earlier action feedback', async () => {
     await open();
-    fireEvent.click(screen.getByRole('button', { name: 'Validate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check for problems' }));
     await screen.findByText('No validation errors.');
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'preview_unavailable' }) } as Response);
     fireEvent.click(screen.getByRole('button', { name: 'Restart preview' }));
@@ -290,7 +294,7 @@ describe('FlowBuilder user journeys', () => {
     render(<FlowBuilder businessId="business" />);
     await screen.findByText('Unable to load flows. Try again.');
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Validate' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Check for problems' })).toBeNull();
   });
 
   it('retains edits on a stale-save response', async () => {

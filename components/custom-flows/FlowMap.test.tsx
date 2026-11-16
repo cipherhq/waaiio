@@ -1,0 +1,146 @@
+// @vitest-environment jsdom
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { FlowBuilder } from './FlowBuilder';
+
+// Rendered tests for the #1074 layout: flow list, step map, settings panel and
+// WhatsApp-style preview. API traffic is mocked at fetch; the payloads are the
+// existing ones and must not change.
+const festival = { id: 'fest', name: 'Lagos fest', status: 'draft', greeting: 'Welcome', fallback_message: 'Try again', entry_keyword: 'FEST', start_node: 'main', nodes: [
+  { id: 'main', type: 'menu', text: 'What would you like?', options: [{ label: 'Artists', next: 'artists' }, { label: 'Say goodbye', next: 'bye' }, { label: 'Broken', next: 'gone' }] },
+  { id: 'artists', type: 'lookup', table: 'artists', search_fields: ['name'], prompt: 'Type an artist name.', reply: '{{name}}', no_match: 'None' },
+  { id: 'bye', type: 'message', text: 'Goodbye for now', next: null },
+] };
+const plain = { id: 'plain', name: 'Opening hours', status: 'draft', greeting: 'Hi', fallback_message: 'Sorry', nodes: [
+  { id: 'a', type: 'message', text: 'We open at 9', next: null },
+] };
+type Flow = typeof festival | typeof plain;
+let flows: Array<{ id: string; version: number; definition: Flow; published_definition: Flow | null; published_version: number | null }>;
+let posts: Array<Record<string, any>>;
+beforeEach(() => {
+  flows = [
+    { id: 'fest', version: 1, definition: structuredClone(festival), published_definition: structuredClone(festival), published_version: 1 },
+    { id: 'plain', version: 1, definition: structuredClone(plain), published_definition: null, published_version: null },
+  ];
+  posts = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.startsWith('/api/custom-flows/data')) return { ok: true, json: async () => ({ tables: [], rows: [] }) };
+    if (!options?.method) return { ok: true, json: async () => ({ flows: structuredClone(flows) }) };
+    posts.push(JSON.parse(String(options.body)));
+    return { ok: true, json: async () => ({ messages: [] }) };
+  }));
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+async function openFlow(name: string, details = {}) {
+  render(<FlowBuilder businessId="business" businessDetails={details} />);
+  fireEvent.click(await screen.findByRole('option', { name }));
+}
+
+describe('Your flows list', () => {
+  it('filters by name, shows Draft or Live, and selects a flow by click or keyboard', async () => {
+    render(<FlowBuilder businessId="business" />);
+    const list = await screen.findByRole('listbox', { name: 'Custom flows' });
+    expect(within(list).getAllByRole('option').map(option => option.textContent)).toEqual(['Lagos festLive', 'Opening hoursDraft']);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search flows' }), { target: { value: 'open' } });
+    expect(within(screen.getByRole('listbox', { name: 'Custom flows' })).getAllByRole('option').map(option => option.textContent)).toEqual(['Opening hoursDraft']);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search flows' }), { target: { value: 'zzz' } });
+    expect(screen.getByText('No flows match your search.')).toBeTruthy();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search flows' }), { target: { value: '' } });
+    const first = screen.getByRole('option', { name: 'Lagos fest' });
+    first.focus();
+    fireEvent.keyDown(first, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Opening hours' }));
+    fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+    expect(screen.getByRole('option', { name: 'Opening hours' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('heading', { name: 'Opening hours' })).toBeTruthy();
+    expect(posts).toHaveLength(0);
+  });
+
+  it('locks the list while the draft has unsaved changes', async () => {
+    await openFlow('Opening hours');
+    fireEvent.change(screen.getByLabelText('Greeting'), { target: { value: 'Changed' } });
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    const other = screen.getByRole('option', { name: 'Lagos fest' });
+    expect(other.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(other);
+    expect(screen.getByRole('option', { name: 'Opening hours' }).getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByLabelText('Greeting') as HTMLInputElement).value).toBe('Changed');
+  });
+});
+
+describe('Step map', () => {
+  it('draws start, every step, menu branches and terminal pills', async () => {
+    await openFlow('Lagos fest');
+    const map = screen.getByRole('region', { name: 'Step map' });
+    expect(within(map).getByText('Customer sends FEST')).toBeTruthy();
+    for (const heading of ['1. Menu prompt', '2. Artists — Lookup', '3. Message']) expect(within(map).getByRole('heading', { name: heading })).toBeTruthy();
+    const branches = within(map).getByRole('list', { name: 'Options for 1. Menu prompt' });
+    expect(within(branches).getAllByRole('listitem').map(item => item.textContent)).toEqual([
+      'Artists→goes to2. Artists — Lookup', 'Say goodbye→goes to3. Message', 'Broken→goes toNot connected yet',
+    ]);
+    // Lookup without next returns to the start step at runtime; a message with next null ends.
+    expect(within(map).getByText('Back to start')).toBeTruthy();
+    expect(within(map).getByText('Ends')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Flow actions' })).getByText('Live')).toBeTruthy();
+  });
+
+  it('starts at the start step when there is no entry keyword', async () => {
+    await openFlow('Opening hours');
+    expect(within(screen.getByRole('region', { name: 'Step map' })).getByText('Starts at 1. Message')).toBeTruthy();
+    expect(screen.getAllByText('Draft').length).toBeGreaterThan(0);
+  });
+
+  it('opens a step editor in place when the step is clicked, without any request', async () => {
+    await openFlow('Lagos fest');
+    const edit = screen.getByRole('button', { name: 'Edit 3. Message' });
+    expect(edit.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByDisplayValue('Goodbye for now')).toBeNull();
+    fireEvent.click(edit);
+    expect(edit.getAttribute('aria-expanded')).toBe('true');
+    const editor = document.getElementById(edit.getAttribute('aria-controls')!)!;
+    expect((within(editor).getByLabelText('Message') as HTMLTextAreaElement).value).toBe('Goodbye for now');
+    fireEvent.change(within(editor).getByLabelText('Message'), { target: { value: 'See you soon' } });
+    expect(within(screen.getByRole('region', { name: 'Step map' })).getByText('See you soon', { selector: 'p' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Publish flow' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(edit);
+    expect(screen.queryByLabelText('Message', { selector: 'textarea' })).toBeNull();
+    expect(posts).toHaveLength(0);
+  });
+
+  it('keeps settings in a panel opened from the top bar', async () => {
+    await openFlow('Lagos fest');
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    expect(settings.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('textbox', { name: 'Greeting' })).toBeNull();
+    fireEvent.click(settings);
+    expect(settings.getAttribute('aria-expanded')).toBe('true');
+    expect((screen.getByRole('textbox', { name: 'Greeting' }) as HTMLInputElement).value).toBe('Welcome');
+    expect(screen.getByRole('combobox', { name: 'Start block' })).toBeTruthy();
+  });
+});
+
+describe('WhatsApp preview', () => {
+  it('renders customer and bot bubbles, images and option buttons from the preview response', async () => {
+    await openFlow('Lagos fest', { name: 'Lagos Fest Ltd' });
+    const preview = screen.getByRole('complementary');
+    expect(within(preview).getByText('Lagos Fest Ltd')).toBeTruthy();
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [
+      { text: 'Welcome' }, { text: 'What would you like?', options: [{ label: 'Artists', value: 'cf:main:0' }, { label: 'Say goodbye', value: 'cf:main:1' }] },
+      { text: 'Artists', input: true }, { text: 'Type an artist name.', image: 'https://example.com/poster.png' },
+    ] }) } as Response);
+    fireEvent.click(within(preview).getByRole('button', { name: 'Restart preview' }));
+    await within(preview).findByText('Type an artist name.');
+    const row = (text: string) => within(preview).getByText(text, { selector: 'p' }).closest('.flex')!;
+    expect(row('Welcome').className).toContain('justify-start');
+    expect(row('Artists').className).toContain('justify-end');
+    expect(row('Type an artist name.').className).toContain('justify-start');
+    expect(row('Type an artist name.').querySelector('img')!.getAttribute('src')).toBe('https://example.com/poster.png');
+    // Options before the latest customer input are history and stay disabled.
+    for (const name of ['Artists', 'Say goodbye']) expect((within(preview).getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+    const requests = vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === 'POST').map(call => JSON.parse(String(call[1]!.body)));
+    expect(requests.map(request => [request.action, request.inputs])).toEqual([['preview', []]]);
+    await waitFor(() => expect(preview.getAttribute('aria-busy')).toBe('false'));
+  });
+});
