@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { FlowContext } from '../../types';
 import { createMemoryDb } from '@/lib/__tests__/helpers/memory-db';
 import { persistStoreCustomerEmail, resolveStoreCustomerEmail } from '../customer-email';
+import { isReservedEmailDomain, isReusableCustomerEmail } from '../user';
 import { orderingFlow } from '../../ordering.flow';
 import { schedulingFlow } from '../../scheduling.flow';
 import { reservationFlow } from '../../reservation.flow';
@@ -137,6 +138,42 @@ describe('business-scoped returning customer email', () => {
     const db = { from: vi.fn(() => { throw new Error('offline'); }) };
     expect(await flow.steps.find(s => s.id === 'collect_email')!.validate('new@example.com', context(db)))
       .toMatchObject({ valid: true, data: { email: 'new@example.com' } });
+  });
+  describe('reserved test domains (WA-BK-6924: Paystack rejected qa@example.invalid)', () => {
+    const reserved = ['qa@example.invalid', 'QA@Shop.TEST', 'a@b.example', 'a@host.localhost'];
+    it.each(reserved)('classifies %s as reserved', email => {
+      expect(isReservedEmailDomain(email)).toBe(true);
+      expect(isReusableCustomerEmail(email)).toBe(false);
+    });
+    it.each(['ada@gmail.com', 'known@example.com', 'a@invalid.com', 'a@test.ng', 'a@mytest.co'])('keeps %s usable', email => {
+      expect(isReservedEmailDomain(email)).toBe(false);
+      expect(isReusableCustomerEmail(email)).toBe(true);
+    });
+    it.each(flows)('asks again instead of reusing a saved reserved email in $id', async flow => {
+      const db = createMemoryDb({ customer_profiles: [{ ...profile, email: 'qa@example.invalid' }],
+        bookings: [{ business_id: 'store', guest_phone: phone, guest_email: 'qa@example.invalid' }] });
+      const ctx = context(db, { email: 'qa@example.invalid', customer_email: 'qa@example.invalid' });
+      expect(await flow.steps.find(s => s.id === 'collect_email')!.skipIf!(ctx)).toBe(false);
+    });
+    it('falls back to an older real same-store email rather than a newer reserved one', async () => {
+      const db = createMemoryDb({ bookings: [
+        { business_id: 'store', guest_phone: phone, guest_email: 'real@gmail.com', created_at: '2026-10-01' },
+        { business_id: 'store', guest_phone: phone, guest_email: 'qa@example.invalid', created_at: '2026-11-15' },
+      ] });
+      expect(await resolveStoreCustomerEmail(db as any, 'store', phone)).toBe('real@gmail.com');
+    });
+    it.each(flows)('rejects a typed reserved email with the invalid-email reply and stores nothing in $id', async flow => {
+      const db = createMemoryDb();
+      const result = await flow.steps.find(s => s.id === 'collect_email')!.validate('QA@Example.Invalid', context(db));
+      expect(result.valid).toBe(false);
+      expect(result.errorMessage).toMatch(/valid email/i);
+      expect(db.tables.customer_profiles ?? []).toEqual([]);
+    });
+    it('never persists a reserved email to the customer profile', async () => {
+      const db = createMemoryDb({ customer_profiles: [profile] });
+      await persistStoreCustomerEmail(db as any, 'store', phone, 'qa@example.invalid');
+      expect(db.tables.customer_profiles[0].email).toBe('Known@Example.com');
+    });
   });
   it('normalizes ordering aliases using valid session email even if customer_email is invalid', async () => {
     const ctx = context(createMemoryDb(), { customer_email: 'invalid', email: 'Session@Example.com' });

@@ -87,6 +87,16 @@ export async function createWhatsAppUser(
   }
 }
 
+// Reserved top-level domains (RFC 2606, RFC 6761): no real mailbox can exist there, and
+// payment providers reject them (Paystack invalid_params on merchant own-account routes).
+const RESERVED_EMAIL_TLDS = new Set(['invalid', 'test', 'example', 'localhost']);
+
+/** True when an email's top-level domain is reserved and can never receive mail. */
+export function isReservedEmailDomain(email: string): boolean {
+  const domain = email.trim().toLowerCase().split('@').pop() || '';
+  return RESERVED_EMAIL_TLDS.has(domain.split('.').pop() || '');
+}
+
 /**
  * True only for a reusable customer-provided email.
  * Generated WhatsApp fallback addresses must not suppress a future email prompt.
@@ -95,6 +105,7 @@ export function isReusableCustomerEmail(email: unknown): email is string {
   if (typeof email !== 'string') return false;
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return false;
+  if (isReservedEmailDomain(normalized)) return false;
 
   const fallbackDomain = (process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com')
     .trim()
