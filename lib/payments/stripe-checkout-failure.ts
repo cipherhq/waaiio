@@ -83,9 +83,11 @@ export function mayFallbackFromLegacyPaymentMethodTypes(data: unknown, hasLegacy
   // PaymentIntent creation reports the same Endive rejection without `param` (#1070,
   // staging req_BJ8Z3NDbhXJ5yy). Accept only Stripe's documented code or its exact
   // message prefix; the message is matched here and never logged.
+  // A raw `param` that failed the safe-token check names some other field: never retry.
+  const raw = isRecord(data) && isRecord(data.error) ? data.error : undefined;
+  if (!raw || (raw.param !== undefined && raw.param !== null && raw.param !== '')) return false;
   if (evidence.code === 'payment_method_types_no_longer_supported') return true;
-  const message = isRecord(data) && isRecord(data.error) ? data.error.message : undefined;
-  return typeof message === 'string' && LEGACY_TYPES_REJECTION.test(message);
+  return typeof raw.message === 'string' && LEGACY_TYPES_REJECTION.test(raw.message);
 }
 
 /** The same card-only policy expressed with Endive's `allowed_payment_method_types`. */

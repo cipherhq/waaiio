@@ -276,6 +276,8 @@ describe('#718 — Error shape edge cases: missing or absent param (CTO review)'
     expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { ...msg.error, type: 'card_error' }, __waaiio_http_status: 400 }, true)).toBe(false);
     // A param naming another field wins over the message.
     expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { ...msg.error, param: 'amount' }, __waaiio_http_status: 400 }, true)).toBe(false);
+    // An unsafe raw param (fails the safe-token check) is still a param: no retry.
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { ...msg.error, param: 'Amount' }, __waaiio_http_status: 400 }, true)).toBe(false);
     // Only Stripe's exact prefix counts.
     expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { type: 'invalid_request_error', message: 'Note: The `payment_method_types` parameter is no longer supported.' }, __waaiio_http_status: 400 }, true)).toBe(false);
   });

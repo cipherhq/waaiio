@@ -37,9 +37,9 @@ export interface StripeResponse {
 
 /**
  * Create the saved-card PaymentIntent. Stripe API 2026-09-30.endive rejects the legacy
- * `payment_method_types` with a parameter-scoped 400 that creates nothing (#1068); only
- * then retry once with the Endive card allowlist under a derived key. Live dispatch and
- * recovery both use this, so a replay converges on the same idempotent PaymentIntent.
+ * `payment_method_types` with a 400 that creates nothing (#1068; on PaymentIntents the
+ * rejection carries no `param`, #1070); only then retry once with the Endive card
+ * allowlist under a derived key. Live dispatch and recovery both use this, so a replay converges on the same idempotent PaymentIntent.
  * The first key stores no result on that rejection: never roll the account API version
  * back below Endive while a saved-card payment is dispatched, or a replay could charge twice.
  */
