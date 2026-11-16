@@ -32,6 +32,7 @@ import { isFinancialDenial, RefusedSendError } from '@/lib/bot/financial-denial'
 import { after } from 'next/server';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
+import { awaitWhatsAppDelivery, DeliveryWaitBudget, PROMPT_DELIVERY_BUDGET_MS } from '@/lib/channels/delivery-wait';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logDropoff } from '@/lib/bot/flow-analytics';
 import { FlowExecutionCollector, createScopedSender, generateExecutionId } from './instrumentation';
@@ -1098,14 +1099,19 @@ export class FlowExecutor {
     let sent = 0;
     let refusedAt = -1;
     let refusal: unknown;
+    // #1070: media is delivered asynchronously by Meta; wait (bounded) for it to reach
+    // the phone before the next message so product/event images arrive before options.
+    const deliveryBudget = new DeliveryWaitBudget(PROMPT_DELIVERY_BUDGET_MS);
     for (let i = 0; i < messages.length; i++) {
       try {
         const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!, tCtx) : messages[i];
-        await this.sendSingleMessage(to, msg, sender);
+        const mediaWamid = await this.sendSingleMessage(to, msg, sender);
         sent++;
         const afterSend = messages[i]._afterSend;
         if (afterSend) await afterSend().catch(err => logger.warn('[EXECUTOR] After-send step failed:', (err as Error).message));
-        // Sequential sends preserve ordering — no artificial delay needed
+        if (mediaWamid && i < messages.length - 1) {
+          await awaitWhatsAppDelivery(this.supabase, [mediaWamid], { budget: deliveryBudget });
+        }
       } catch (err) {
         if (isFinancialDenial(err)) {
           // #976: no balance (or spend cap reached). The rest of the batch would be refused too,
@@ -1190,7 +1196,8 @@ export class FlowExecutor {
     return localizeMessage(msg, lang, tCtx);
   }
 
-  private async sendSingleMessage(to: string, msg: PromptMessage, sender?: MessageSender): Promise<void> {
+  /** Sends one prompt message. Returns the WAMID for an image/document (for #1070 delivery waits). */
+  private async sendSingleMessage(to: string, msg: PromptMessage, sender?: MessageSender): Promise<string | undefined> {
     const s = sender || this.sender;
     switch (msg.type) {
       case 'text':
@@ -1209,13 +1216,12 @@ export class FlowExecutor {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           imageUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(imageUrl)}`;
         }
-        await s.sendImage({ to, imageUrl, caption: msg.caption });
-        break;
+        return (await s.sendImage({ to, imageUrl, caption: msg.caption }))?.messageId;
       }
       case 'document':
-        await s.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
-        break;
+        return (await s.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption }))?.messageId;
     }
+    return undefined;
   }
 
   private async sendText(to: string, text: string, sender?: MessageSender): Promise<void> {

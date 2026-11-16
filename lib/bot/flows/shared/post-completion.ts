@@ -55,6 +55,8 @@ interface PostCompletionParams {
   receiptBalanceDue?: number;
   /** Already-resolved MetaCloudService for the sender's channel (decrypted credentials, correct WABA) */
   cloud?: MetaCloudService;
+  /** #1070: awaited right after the receipt step, before any later customer message. Must not throw. */
+  afterReceipt?: () => Promise<void>;
 }
 
 function generateReferralCode(): string {
@@ -293,6 +295,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       logger.withContext({ op: 'post-completion.auto-receipt', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Auto-receipt error');
     }
   }
+  if (params.afterReceipt) await params.afterReceipt().catch(() => undefined);
 
   // 1. Loyalty — award points (skip for giving/donation, and require explicit opt-in)
   const loyaltyEnabled = meta.loyalty_earning_enabled === true;

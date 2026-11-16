@@ -22,6 +22,7 @@ import { checkBankTransferEligibility, createPendingTransfer, formatBankTransfer
 import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
+import { awaitWhatsAppDelivery } from '@/lib/channels/delivery-wait';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -357,7 +358,7 @@ export const ticketingFlow: FlowDefinition = {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           imgUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(imgUrl)}`;
         }
-        await ctx.sender.sendImage({
+        const imageSend = await ctx.sender.sendImage({
           to: ctx.from,
           imageUrl: imgUrl,
           caption: eventDetails,
@@ -366,8 +367,10 @@ export const ticketingFlow: FlowDefinition = {
         // Mark that image was already sent (avoid re-send on validation retry)
         ctx.session.session_data._image_sent = true;
 
-        // 3 second delay — WhatsApp needs time to download, thumbnail, and deliver the image
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // #1070: wait (bounded) until WhatsApp delivered the image before the buttons.
+        // When delivery cannot be observed, keep the previous fixed 3 second delay.
+        const waited = await awaitWhatsAppDelivery(ctx.supabase, [imageSend?.messageId]);
+        if (waited === 'skipped') await new Promise(resolve => setTimeout(resolve, 3000));
 
         return [{
           type: 'buttons',

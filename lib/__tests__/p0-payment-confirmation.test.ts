@@ -260,8 +260,8 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     mockRpc.mockImplementation((name: string) => {
       if (name === 'renew_payment_confirmation_claim') {
         renewCount++;
-        // Checkpoints 1,2 succeed; checkpoint 3 fails
-        if (renewCount <= 2) return Promise.resolve({ data: { renewed: true }, error: null });
+        // #1070: checkpoint 1, pre-delivery, 4a (tickets) and post-completion renewals succeed; checkpoint 3 fails
+        if (renewCount <= 4) return Promise.resolve({ data: { renewed: true }, error: null });
         return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
       }
       if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
@@ -270,7 +270,27 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
     expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
-    expect(renewCount).toBe(3); // stopped at checkpoint 3
+    expect(renewCount).toBe(5); // stopped at checkpoint 3
+  });
+
+  it('17a. #1070 renewal at checkpoint 4a (before tickets) fails → no tickets, no post-completion, no finalize', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        if (renewCount <= 2) return Promise.resolve({ data: { renewed: true }, error: null });
+        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    const result = await sendProactiveConfirmation(s, pay);
+    expect(result).toEqual({ status: 'processing', retryable: true });
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_free_ticket_booking', expect.anything());
+    expect(renewCount).toBe(3);
   });
 
   it('18. renewal at checkpoint 4 fails → no tickets/emails, no finalize', async () => {
@@ -279,25 +299,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     mockRpc.mockImplementation((name: string) => {
       if (name === 'renew_payment_confirmation_claim') {
         renewCount++;
-        if (renewCount <= 3) return Promise.resolve({ data: { renewed: true }, error: null });
-        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
-      }
-      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
-      return Promise.resolve({ data: null, error: null });
-    });
-    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    await sendProactiveConfirmation(s, pay);
-    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
-    expect(renewCount).toBe(4);
-  });
-
-  it('19. renewal at checkpoint 5 fails → no session mutation, no finalize', async () => {
-    let renewCount = 0;
-    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
-    mockRpc.mockImplementation((name: string) => {
-      if (name === 'renew_payment_confirmation_claim') {
-        renewCount++;
-        // Allow 5 successes (original 4 checkpoints + 1 Slice 5A pre-delivery), fail on 6th (checkpoint 5)
+        // #1070: tickets moved to checkpoint 4a; checkpoint 4 (6th renewal) now guards customer emails
         if (renewCount <= 5) return Promise.resolve({ data: { renewed: true }, error: null });
         return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
       }
@@ -307,7 +309,26 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
     expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
-    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
+    expect(renewCount).toBe(6);
+  });
+
+  it('19. renewal at checkpoint 5 fails → no session mutation, no finalize', async () => {
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        // Allow 6 successes (original 4 checkpoints + 1 Slice 5A pre-delivery + #1070 4a), fail on 7th (checkpoint 5)
+        if (renewCount <= 6) return Promise.resolve({ data: { renewed: true }, error: null });
+        return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
+    expect(renewCount).toBe(7); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal + #1070 checkpoint 4a
   });
 
   it('20. successful flow reaches all 5 checkpoints + finalize', async () => {
@@ -323,7 +344,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
+    expect(renewCount).toBe(7); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal + #1070 checkpoint 4a
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
@@ -381,7 +402,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay); // default mock: total=deposit=50 → no balance
-    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
+    expect(renewCount).toBe(7); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal + #1070 checkpoint 4a
     expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
   });
@@ -499,7 +520,7 @@ describe('B4: Slice 5A translation + claim fencing', () => {
 
     // Translation failed but flow completes normally with English
     // All 6 renewals should succeed (translation failure doesn't interrupt the claim chain)
-    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
+    expect(renewCount).toBe(7); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal + #1070 checkpoint 4a
     expect(result.status).toBe('completed');
   });
 
@@ -648,7 +669,7 @@ describe('B4: Slice 5A translation + claim fencing', () => {
     const result = await sendProactiveConfirmation(s, pay);
 
     // Flow completes normally with all renewals
-    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
+    expect(renewCount).toBe(7); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal + #1070 checkpoint 4a
     expect(result.status).toBe('completed');
   });
 });

@@ -12,6 +12,7 @@ import { logger } from '@/lib/logger';
 import { MetaApiError } from './meta-api-error';
 import * as flowAssets from '@/lib/whatsapp-forms/meta-flow-asset';
 import { partyRsvpFormsEnabled } from '@/lib/whatsapp-forms/release-gate';
+import { fetchUploadSource, isUploadSourceAllowed, MEDIA_UPLOAD_BUDGET_MS, type UploadMediaKind } from './media-upload';
 
 export interface MetaCloudCredentials {
   accessToken: string;
@@ -60,6 +61,8 @@ export interface CloudImageMessage {
   to: string;
   imageUrl: string;
   caption?: string;
+  /** Already-uploaded WhatsApp media id; sent instead of the link. */
+  mediaId?: string;
 }
 
 export interface CloudDocumentMessage {
@@ -67,6 +70,8 @@ export interface CloudDocumentMessage {
   documentUrl: string;
   filename: string;
   caption?: string;
+  /** Already-uploaded WhatsApp media id; sent instead of the link. */
+  mediaId?: string;
 }
 
 // ── Template Types ──
@@ -114,6 +119,8 @@ export class MetaCloudService {
   private readonly phoneNumberId: string;
   private readonly wabaId: string;
   private readonly baseUrl = `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}`;
+  /** #1070: after one upload times out, use `link` for the rest of this request. */
+  private mediaUploadDisabled = false;
 
   constructor(credentials?: MetaCloudCredentials) {
     this.accessToken = (credentials?.accessToken || process.env.META_CLOUD_ACCESS_TOKEN || '').trim();
@@ -300,12 +307,14 @@ export class MetaCloudService {
   // ── Send Image Message ──
 
   async sendImage(message: CloudImageMessage): Promise<{ messageId: string }> {
+    // #1070: upload first so the image is not fetched by Meta after later messages.
+    const mediaId = message.mediaId || await this.tryUploadFromUrl(message.imageUrl, 'image', 'image');
     const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       to: message.to,
       type: 'image',
       image: {
-        link: message.imageUrl,
+        ...(mediaId ? { id: mediaId } : { link: message.imageUrl }),
         caption: message.caption || undefined,
       },
     });
@@ -315,18 +324,69 @@ export class MetaCloudService {
   // ── Send Document Message ──
 
   async sendDocument(message: CloudDocumentMessage): Promise<{ messageId: string }> {
+    const mediaId = message.mediaId || await this.tryUploadFromUrl(message.documentUrl, 'document', message.filename);
     const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
       to: message.to,
       type: 'document',
       document: {
-        link: message.documentUrl,
+        ...(mediaId ? { id: mediaId } : { link: message.documentUrl }),
         filename: message.filename,
         caption: message.caption || undefined,
       },
     });
     return { messageId: response.messages[0].id };
+  }
+
+  // ── Upload Media ──
+
+  /** Upload a file to this phone number's WhatsApp media store; returns the media id. */
+  async uploadMedia(
+    file: { data: Uint8Array<ArrayBuffer>; mimeType: string; filename: string },
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', file.mimeType);
+    form.append('file', new Blob([file.data], { type: file.mimeType }), file.filename);
+    const res = await fetch(`${this.baseUrl}/${this.phoneNumberId}/media`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+      body: form,
+      signal: signal ?? AbortSignal.timeout(MEDIA_UPLOAD_BUDGET_MS),
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new MetaApiError(errorData?.error?.message || `Media upload error: ${res.status}`, res.status, errorData?.error?.code, errorData?.error?.error_subcode);
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!body?.id) throw new Error('Meta media upload returned no id');
+    return String(body.id);
+  }
+
+  /**
+   * #1070: fetch an allowlisted URL (this app or our Supabase Storage) and upload it.
+   * Returns null for anything else or on any failure, so the caller sends by link.
+   * Never fetches a non-allowlisted URL. Never throws.
+   */
+  private async tryUploadFromUrl(url: string, kind: UploadMediaKind, filename: string): Promise<string | null> {
+    if (this.mediaUploadDisabled || !isUploadSourceAllowed(url)) return null;
+    const signal = AbortSignal.timeout(MEDIA_UPLOAD_BUDGET_MS);
+    try {
+      const source = await fetchUploadSource(url, kind, signal);
+      if (!source) {
+        logger.info(`[META-MEDIA] ${kind} not uploadable; sending by link`);
+        return null;
+      }
+      const uploadName = kind === 'image' ? (source.mimeType === 'image/png' ? 'image.png' : 'image.jpg') : filename;
+      return await this.uploadMedia({ ...source, filename: uploadName }, signal);
+    } catch (err) {
+      const name = (err as Error)?.name;
+      if (name === 'TimeoutError' || name === 'AbortError') this.mediaUploadDisabled = true;
+      logger.warn(`[META-MEDIA] ${kind} upload failed (${name || 'error'}); sending by link`);
+      return null;
+    }
   }
 
   // ── Mark Message as Read ──

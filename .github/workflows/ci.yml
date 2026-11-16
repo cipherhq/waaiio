@@ -4031,7 +4031,7 @@ jobs:
 
           echo "Running M426/M427 payment and saved-card DB tests..."
           set +e
-          OUTPUT=$(npx vitest run lib/__tests__/staging-payment-parity-527-db.test.ts lib/__tests__/saved-card-530-acl-db.test.ts lib/__tests__/byo-saved-card-544-db.test.ts 2>&1)
+          OUTPUT=$(npx vitest run lib/__tests__/staging-payment-parity-527-db.test.ts lib/__tests__/saved-card-530-acl-db.test.ts lib/__tests__/byo-saved-card-544-db.test.ts lib/__tests__/whatsapp-delivery-waits-545-db.test.ts 2>&1)
           TEST_EXIT=$?
           set -e
           echo "$OUTPUT"
