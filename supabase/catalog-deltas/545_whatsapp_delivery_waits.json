@@ -1,0 +1,207 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.whatsapp_delivery_waits.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'sent'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "251285562acc32db4f8948e8d0f3940e0f88a0029356ff7fed871759135ca999",
+   "identity": "column:public.whatsapp_delivery_waits.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.whatsapp_delivery_waits.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.whatsapp_delivery_waits.wamid",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (wamid)",
+    "validated": true
+   },
+   "after_sha256": "031007e747b4779a75917dd1fca11da8d09a4f1f2074075fcdd45d54f42081e1",
+   "identity": "constraint:public.whatsapp_delivery_waits.whatsapp_delivery_waits_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text]))",
+    "validated": true
+   },
+   "after_sha256": "851f5a3a0378cff788be31e6154dba14ee5ffa051d7c08db2646fd33a7dd377e",
+   "identity": "constraint:public.whatsapp_delivery_waits.whatsapp_delivery_waits_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(wamid)) >= 1 AND length(btrim(wamid)) <= 255)",
+    "validated": true
+   },
+   "after_sha256": "d26e25b0e0bca6e549d0ad0c161c9db960ae62f5c076ef8b7304b07426660202",
+   "identity": "constraint:public.whatsapp_delivery_waits.whatsapp_delivery_waits_wamid_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX idx_whatsapp_delivery_waits_created_at ON public.whatsapp_delivery_waits USING btree (created_at)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "a2005d3ced24ca91562d56a90c7c58bdc6bcaf15d11a9ea81a14d55557d1457d",
+   "identity": "index:public.whatsapp_delivery_waits.idx_whatsapp_delivery_waits_created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX whatsapp_delivery_waits_pkey ON public.whatsapp_delivery_waits USING btree (wamid)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "07ab0c976c35d4e5a8c9ae1a75a8add9d12764adc26e6d4c580850e0977d54b4",
+   "identity": "index:public.whatsapp_delivery_waits.whatsapp_delivery_waits_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+   "identity": "table:public.whatsapp_delivery_waits",
+   "operation": "add"
+  }
+ ],
+ "migration": "545_whatsapp_delivery_waits.sql",
+ "migration_sha256": "7f6157a848e63a48268e6d8a85584299d8114f60f4d979ad2506feb0c95a80eb",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

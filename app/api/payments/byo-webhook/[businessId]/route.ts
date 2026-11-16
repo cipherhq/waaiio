@@ -6,6 +6,9 @@ import { processPaystackChargeSuccess, processPaystackChargeFailed, type Success
 import { decryptToken } from '@/lib/encryption';
 import { resolvePaymentOrigin } from '@/lib/payments/provider-adapters';
 
+// Same limit as the other payment webhooks: confirmation now uploads media and waits for delivery (#1070).
+export const maxDuration = 60;
+
 // Terminal Paystack failure statuses — only these justify marking a payment failed
 const PAYSTACK_TERMINAL_FAILURES = new Set(['failed', 'reversed', 'abandoned']);
 // Terminal Flutterwave failure statuses

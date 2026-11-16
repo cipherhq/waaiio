@@ -14,6 +14,7 @@ import { getEntityBalance } from '@/lib/payments/entity-balance';
 import { loadInvoiceLineItems, loadTicketLine, ORDER_ITEMS_SELECT, toOrderLineItems } from '@/lib/receipts/line-items';
 import type { ReceiptLineItem } from '@/lib/pdf/receipt-generator';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { awaitWhatsAppDelivery, CONFIRMATION_DELIVERY_BUDGET_MS, DeliveryWaitBudget, trackMediaDeliveries } from '@/lib/channels/delivery-wait';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -979,6 +980,230 @@ export async function sendProactiveConfirmation(
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
 
+    // ── #1070: customer media order — confirmation → tickets → receipt → follow-up ──
+    // WhatsApp delivers images/documents asynchronously, so each media group is awaited
+    // (bounded per wait and per confirmation) before the next customer message.
+    const mediaWaitBudget = new DeliveryWaitBudget(CONFIRMATION_DELIVERY_BUDGET_MS);
+    const trackedMedia = resolved?.sender ? trackMediaDeliveries(resolved.sender, supabase) : null;
+    const awaitMediaGroup = async () => {
+      if (trackedMedia) await awaitWhatsAppDelivery(supabase, trackedMedia.take(), { budget: mediaWaitBudget });
+    };
+
+    // ── CHECKPOINT 4a: Renew before tickets (#1070: tickets now precede the receipt) ──
+    const preTicketDelivery = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+    if (!preTicketDelivery.ok) {
+      logger.warn(`${logPrefix} Ownership lost before tickets: ${preTicketDelivery.reason}`);
+      return { status: 'processing', retryable: true };
+    }
+    sideEffectsMayHaveOccurred = true; // tickets
+
+    // ── 8. Ticketing bookings: finalize inventory, create ticket rows, deliver ──
+    // Sequence: inventory finalization → canonical ticket rows → delivery
+    // Inventory finalization and ticket rows must succeed before confirmation is marked complete.
+    let ticketStateComplete = true; // non-ticketing bookings are "complete" by default
+    try {
+      if (payment.booking_id) {
+        const { data: ticketBooking, error: ticketBookingError } = await supabase
+          .from('bookings')
+          .select('flow_type, event_id, bot_session_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
+          .eq('id', payment.booking_id)
+          .single();
+
+        // BLOCKER 2: booking lookup error → fail closed
+        if (ticketBookingError) {
+          logSafeError(logPrefix, 'ticket-booking-lookup', ticketBookingError);
+          ticketStateComplete = false;
+        } else if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
+          ticketStateComplete = false; // must be proven complete
+          const ticketQty = ticketBooking.party_size || 1;
+
+          // ── 8a. Determine if event is typed (has event_ticket_types) ──
+          // Query ALL types (not just active) — a type purchased before deactivation is still valid
+          const { data: ticketTypes, error: typeQueryError } = await supabase
+            .from('event_ticket_types')
+            .select('id')
+            .eq('event_id', ticketBooking.event_id)
+            .limit(1);
+
+          // BLOCKER 1: type query error → fail closed (don't treat as untyped)
+          if (typeQueryError) {
+            logSafeError(logPrefix, 'ticket-type-query', typeQueryError);
+            // ticketStateComplete stays false → retryable
+          } else {
+            const isTypedEvent = (ticketTypes?.length ?? 0) > 0;
+
+            // ── 8b. Resolve ticket_type_id from EXACT originating bot session ──
+            let ticketTypeId: string | null = null;
+            let typeResolutionFailed = false;
+            if (ticketBooking.bot_session_id) {
+              const { data: originSession, error: sessionError } = await supabase
+                .from('bot_sessions')
+                .select('session_data')
+                .eq('id', ticketBooking.bot_session_id)
+                .single();
+              if (sessionError) {
+                logSafeError(logPrefix, 'ticket-type-session-lookup', sessionError);
+                typeResolutionFailed = true;
+              } else {
+                ticketTypeId = (originSession?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
+              }
+            } else if (isTypedEvent) {
+              typeResolutionFailed = true;
+            }
+
+            // ── 8c. For typed events, validate ticket_type_id belongs to this event ──
+            if (isTypedEvent && ticketTypeId && !typeResolutionFailed) {
+              const { data: typeOwnership, error: ownershipError } = await supabase
+                .from('event_ticket_types')
+                .select('id')
+                .eq('id', ticketTypeId)
+                .eq('event_id', ticketBooking.event_id)
+                .maybeSingle();
+              if (ownershipError || !typeOwnership) {
+                logger.error(`${logPrefix} ticket_type_id ${ticketTypeId} does not belong to event ${ticketBooking.event_id}`);
+                typeResolutionFailed = true;
+              }
+            }
+
+            if (isTypedEvent && (!ticketTypeId || typeResolutionFailed)) {
+              logger.error(`${logPrefix} Typed event ${ticketBooking.event_id} — cannot resolve ticket_type_id, failing closed`);
+              // ticketStateComplete stays false
+            } else {
+              const ticketModule = await import('@/lib/bot/flows/shared/send-tickets');
+              const finalizeInventory = async () => {
+                const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
+                  p_booking_id: payment.booking_id,
+                  p_event_id: ticketBooking.event_id,
+                  p_ticket_type_id: ticketTypeId,
+                  p_quantity: ticketQty,
+                });
+                if (finError || finResult?.success !== true) {
+                  throw new Error(`ticket_counter_finalize_failed:${finError?.message || finResult?.reason || 'unknown'}`);
+                }
+              };
+
+              if (manifestInitialized) {
+                const te = await import('@/lib/payments/terminal-effects');
+                const inventoryEffect = await te.driveInternalEffect(
+                  supabase, payment.id, 'ticket_inventory_finalization', claimToken, finalizeInventory,
+                );
+                if (!inventoryEffect.ok) throw new Error(inventoryEffect.error);
+              } else {
+                await finalizeInventory();
+              }
+
+              const { data: event, error: eventError } = await supabase
+                .from('events')
+                .select('id, name, date, time, venue, image_url, price')
+                .eq('id', ticketBooking.event_id)
+                .single();
+              if (eventError) throw new Error(`ticket_event_lookup_failed:${eventError.message}`);
+
+              // Resolve ticket type name + authoritative per-ticket price (display-only)
+              let ticketTypeName: string | undefined;
+              let ticketPrice: number | undefined;
+              if (ticketTypeId) {
+                const { data: ttRow } = await supabase.from('event_ticket_types')
+                  .select('name, price').eq('id', ticketTypeId).maybeSingle();
+                ticketTypeName = ttRow?.name || undefined;
+                ticketPrice = ttRow?.price != null ? Number(ttRow.price) : undefined;
+              }
+              // For untyped events, use the event's own price if available
+              if (ticketPrice === undefined && (event as any)?.price != null) {
+                ticketPrice = Number((event as any).price);
+              }
+
+              // Use authoritative payment currency read at top of function
+
+              const ticketOptions = {
+                supabase,
+                // #1070: tracked so the ticket media group can be awaited before the receipt.
+                sender: trackedMedia?.sender ?? resolved?.sender,
+                businessId,
+                bookingId: payment.booking_id,
+                eventId: ticketBooking.event_id,
+                eventName: event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event',
+                eventDate: new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
+                  weekday: 'long', day: 'numeric', month: 'long',
+                }),
+                eventTime: event?.time || ticketBooking.time || undefined,
+                venue: event?.venue || '',
+                guestName: ticketBooking.guest_name || 'Guest',
+                guestPhone: ticketBooking.guest_phone || customerPhone || '',
+                guestEmail: ticketBooking.guest_email || undefined,
+                referenceCode,
+                quantity: ticketQty,
+                amount: payment.amount,
+                countryCode,
+                // Presentation-only fields for enhanced ticket PDF
+                flyerUrl: (event as any)?.image_url || undefined,
+                ticketTypeName,
+                ticketPrice,
+                currencyCode: paymentCurrencyCode,
+                translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [
+                  event?.name, ticketBooking.guest_name, referenceCode, event?.venue,
+                ].filter(Boolean) as string[])) : undefined,
+              };
+
+              let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;
+              const convergeRows = async () => {
+                ticketResult = await ticketModule.ensureCanonicalTicketRows(ticketOptions);
+                if (!ticketResult.success || ticketResult.tickets.length !== ticketQty) {
+                  throw new Error(`ticket_rows_incomplete:${ticketResult.error || ticketResult.tickets.length}`);
+                }
+              };
+              if (manifestInitialized) {
+                const te = await import('@/lib/payments/terminal-effects');
+                const rowEffect = await te.driveInternalEffect(
+                  supabase, payment.id, 'ticket_row_creation', claimToken, convergeRows,
+                );
+                if (!rowEffect.ok) throw new Error(rowEffect.error);
+                if (!ticketResult) await convergeRows(); // terminal retry: authoritative row re-read/convergence
+
+                if (resolved?.sender) {
+                  const whatsappEffect = await te.driveExternalEffect(
+                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken,
+                    async () => {
+                      await ticketModule.deliverTicketsWhatsApp({ ...ticketOptions, tickets: ticketResult!.tickets });
+                      return true;
+                    },
+                  );
+                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
+                } else if (!whatsappOriginMissingChannel) {
+                  // Genuine non-WhatsApp flow: skip is valid
+                  const whatsappEffect = await te.skipOptionalEffect(
+                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
+                  );
+                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
+                }
+                // else: WhatsApp-origin missing channel — leave pending for retry
+                if (ticketBooking.guest_email) {
+                  const emailEffect = await te.driveExternalEffect(
+                    supabase, payment.id, 'ticket_delivery_email', claimToken,
+                    async () => {
+                      await ticketModule.deliverTicketsEmail({ ...ticketOptions, tickets: ticketResult!.tickets });
+                      return true;
+                    },
+                  );
+                  if (!emailEffect.ok) throw new Error(emailEffect.error);
+                }
+              } else {
+                const legacyResult = await ticketModule.sendTicketsAfterPurchase(ticketOptions);
+                ticketResult = legacyResult;
+              }
+              ticketStateComplete = !!ticketResult?.success && ticketResult.tickets.length === ticketQty;
+            }
+          }
+        }
+      }
+    } catch (ticketErr) {
+      logSafeError(logPrefix, 'ticket-send', ticketErr);
+      Sentry.captureException(ticketErr, { tags: { component: 'send-confirmation', operation: 'ticket-send' } });
+      ticketStateComplete = false;
+    }
+
+    await awaitMediaGroup();
+
     // ── Renew ownership before post-completion mutations ──
     const prePostCompletion = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!prePostCompletion.ok) {
@@ -1031,7 +1256,9 @@ export async function sendProactiveConfirmation(
           // Entity-correct serviceType: reservation uses booking semantics (#173)
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
-          sender: resolved?.sender, cloud: resolved?.cloud,
+          sender: trackedMedia?.sender ?? resolved?.sender, cloud: resolved?.cloud,
+          // #1070: receipt reaches the phone before any later message.
+          afterReceipt: awaitMediaGroup,
           amountPaid: payment.amount,
           // Skip automation for entities that don't have booking/order semantics (#173)
           skipAutomation: isOrderPayment || isCampaignPayment || isInvoicePayment,
@@ -1053,6 +1280,8 @@ export async function sendProactiveConfirmation(
         Sentry.captureException(pcErr, { tags: { component: 'send-confirmation', operation: 'post-completion' } });
       }
     }
+    // #1070: settle (and clean up) any customer media wait not yet awaited.
+    await awaitMediaGroup();
 
     // Post-completion internal effects (loyalty, CRM visit, referral, etc.) are driven
     // by exactly-once RPCs inside handlePostCompletion. The manifest completion for these
@@ -1256,217 +1485,13 @@ export async function sendProactiveConfirmation(
       } catch (notifyErr) { logSafeError(logPrefix, 'owner-notification', notifyErr); }
     }
 
-    // ── CHECKPOINT 4: Renew before tickets, customer emails, donation receipt ──
+    // ── CHECKPOINT 4: Renew before customer emails, donation receipt (tickets: 4a above) ──
     const preTickets = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preTickets.ok) {
       logger.warn(`${logPrefix} Ownership lost before tickets/emails: ${preTickets.reason}`);
       return { status: 'processing', retryable: true };
     }
-    sideEffectsMayHaveOccurred = true; // tickets, customer email, donation receipt
-
-    // ── 8. Ticketing bookings: finalize inventory, create ticket rows, deliver ──
-    // Sequence: inventory finalization → canonical ticket rows → delivery
-    // Inventory finalization and ticket rows must succeed before confirmation is marked complete.
-    let ticketStateComplete = true; // non-ticketing bookings are "complete" by default
-    try {
-      if (payment.booking_id) {
-        const { data: ticketBooking, error: ticketBookingError } = await supabase
-          .from('bookings')
-          .select('flow_type, event_id, bot_session_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
-          .eq('id', payment.booking_id)
-          .single();
-
-        // BLOCKER 2: booking lookup error → fail closed
-        if (ticketBookingError) {
-          logSafeError(logPrefix, 'ticket-booking-lookup', ticketBookingError);
-          ticketStateComplete = false;
-        } else if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
-          ticketStateComplete = false; // must be proven complete
-          const ticketQty = ticketBooking.party_size || 1;
-
-          // ── 8a. Determine if event is typed (has event_ticket_types) ──
-          // Query ALL types (not just active) — a type purchased before deactivation is still valid
-          const { data: ticketTypes, error: typeQueryError } = await supabase
-            .from('event_ticket_types')
-            .select('id')
-            .eq('event_id', ticketBooking.event_id)
-            .limit(1);
-
-          // BLOCKER 1: type query error → fail closed (don't treat as untyped)
-          if (typeQueryError) {
-            logSafeError(logPrefix, 'ticket-type-query', typeQueryError);
-            // ticketStateComplete stays false → retryable
-          } else {
-            const isTypedEvent = (ticketTypes?.length ?? 0) > 0;
-
-            // ── 8b. Resolve ticket_type_id from EXACT originating bot session ──
-            let ticketTypeId: string | null = null;
-            let typeResolutionFailed = false;
-            if (ticketBooking.bot_session_id) {
-              const { data: originSession, error: sessionError } = await supabase
-                .from('bot_sessions')
-                .select('session_data')
-                .eq('id', ticketBooking.bot_session_id)
-                .single();
-              if (sessionError) {
-                logSafeError(logPrefix, 'ticket-type-session-lookup', sessionError);
-                typeResolutionFailed = true;
-              } else {
-                ticketTypeId = (originSession?.session_data as Record<string, unknown>)?.ticket_type_id as string || null;
-              }
-            } else if (isTypedEvent) {
-              typeResolutionFailed = true;
-            }
-
-            // ── 8c. For typed events, validate ticket_type_id belongs to this event ──
-            if (isTypedEvent && ticketTypeId && !typeResolutionFailed) {
-              const { data: typeOwnership, error: ownershipError } = await supabase
-                .from('event_ticket_types')
-                .select('id')
-                .eq('id', ticketTypeId)
-                .eq('event_id', ticketBooking.event_id)
-                .maybeSingle();
-              if (ownershipError || !typeOwnership) {
-                logger.error(`${logPrefix} ticket_type_id ${ticketTypeId} does not belong to event ${ticketBooking.event_id}`);
-                typeResolutionFailed = true;
-              }
-            }
-
-            if (isTypedEvent && (!ticketTypeId || typeResolutionFailed)) {
-              logger.error(`${logPrefix} Typed event ${ticketBooking.event_id} — cannot resolve ticket_type_id, failing closed`);
-              // ticketStateComplete stays false
-            } else {
-              const ticketModule = await import('@/lib/bot/flows/shared/send-tickets');
-              const finalizeInventory = async () => {
-                const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
-                  p_booking_id: payment.booking_id,
-                  p_event_id: ticketBooking.event_id,
-                  p_ticket_type_id: ticketTypeId,
-                  p_quantity: ticketQty,
-                });
-                if (finError || finResult?.success !== true) {
-                  throw new Error(`ticket_counter_finalize_failed:${finError?.message || finResult?.reason || 'unknown'}`);
-                }
-              };
-
-              if (manifestInitialized) {
-                const te = await import('@/lib/payments/terminal-effects');
-                const inventoryEffect = await te.driveInternalEffect(
-                  supabase, payment.id, 'ticket_inventory_finalization', claimToken, finalizeInventory,
-                );
-                if (!inventoryEffect.ok) throw new Error(inventoryEffect.error);
-              } else {
-                await finalizeInventory();
-              }
-
-              const { data: event, error: eventError } = await supabase
-                .from('events')
-                .select('id, name, date, time, venue, image_url, price')
-                .eq('id', ticketBooking.event_id)
-                .single();
-              if (eventError) throw new Error(`ticket_event_lookup_failed:${eventError.message}`);
-
-              // Resolve ticket type name + authoritative per-ticket price (display-only)
-              let ticketTypeName: string | undefined;
-              let ticketPrice: number | undefined;
-              if (ticketTypeId) {
-                const { data: ttRow } = await supabase.from('event_ticket_types')
-                  .select('name, price').eq('id', ticketTypeId).maybeSingle();
-                ticketTypeName = ttRow?.name || undefined;
-                ticketPrice = ttRow?.price != null ? Number(ttRow.price) : undefined;
-              }
-              // For untyped events, use the event's own price if available
-              if (ticketPrice === undefined && (event as any)?.price != null) {
-                ticketPrice = Number((event as any).price);
-              }
-
-              // Use authoritative payment currency read at top of function
-
-              const ticketOptions = {
-                supabase,
-                sender: resolved?.sender,
-                businessId,
-                bookingId: payment.booking_id,
-                eventId: ticketBooking.event_id,
-                eventName: event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event',
-                eventDate: new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
-                  weekday: 'long', day: 'numeric', month: 'long',
-                }),
-                eventTime: event?.time || ticketBooking.time || undefined,
-                venue: event?.venue || '',
-                guestName: ticketBooking.guest_name || 'Guest',
-                guestPhone: ticketBooking.guest_phone || customerPhone || '',
-                guestEmail: ticketBooking.guest_email || undefined,
-                referenceCode,
-                quantity: ticketQty,
-                amount: payment.amount,
-                countryCode,
-                // Presentation-only fields for enhanced ticket PDF
-                flyerUrl: (event as any)?.image_url || undefined,
-                ticketTypeName,
-                ticketPrice,
-                currencyCode: paymentCurrencyCode,
-                translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [
-                  event?.name, ticketBooking.guest_name, referenceCode, event?.venue,
-                ].filter(Boolean) as string[])) : undefined,
-              };
-
-              let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;
-              const convergeRows = async () => {
-                ticketResult = await ticketModule.ensureCanonicalTicketRows(ticketOptions);
-                if (!ticketResult.success || ticketResult.tickets.length !== ticketQty) {
-                  throw new Error(`ticket_rows_incomplete:${ticketResult.error || ticketResult.tickets.length}`);
-                }
-              };
-              if (manifestInitialized) {
-                const te = await import('@/lib/payments/terminal-effects');
-                const rowEffect = await te.driveInternalEffect(
-                  supabase, payment.id, 'ticket_row_creation', claimToken, convergeRows,
-                );
-                if (!rowEffect.ok) throw new Error(rowEffect.error);
-                if (!ticketResult) await convergeRows(); // terminal retry: authoritative row re-read/convergence
-
-                if (resolved?.sender) {
-                  const whatsappEffect = await te.driveExternalEffect(
-                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken,
-                    async () => {
-                      await ticketModule.deliverTicketsWhatsApp({ ...ticketOptions, tickets: ticketResult!.tickets });
-                      return true;
-                    },
-                  );
-                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
-                } else if (!whatsappOriginMissingChannel) {
-                  // Genuine non-WhatsApp flow: skip is valid
-                  const whatsappEffect = await te.skipOptionalEffect(
-                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
-                  );
-                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
-                }
-                // else: WhatsApp-origin missing channel — leave pending for retry
-                if (ticketBooking.guest_email) {
-                  const emailEffect = await te.driveExternalEffect(
-                    supabase, payment.id, 'ticket_delivery_email', claimToken,
-                    async () => {
-                      await ticketModule.deliverTicketsEmail({ ...ticketOptions, tickets: ticketResult!.tickets });
-                      return true;
-                    },
-                  );
-                  if (!emailEffect.ok) throw new Error(emailEffect.error);
-                }
-              } else {
-                const legacyResult = await ticketModule.sendTicketsAfterPurchase(ticketOptions);
-                ticketResult = legacyResult;
-              }
-              ticketStateComplete = !!ticketResult?.success && ticketResult.tickets.length === ticketQty;
-            }
-          }
-        }
-      }
-    } catch (ticketErr) {
-      logSafeError(logPrefix, 'ticket-send', ticketErr);
-      Sentry.captureException(ticketErr, { tags: { component: 'send-confirmation', operation: 'ticket-send' } });
-      ticketStateComplete = false;
-    }
+    sideEffectsMayHaveOccurred = true; // customer email, donation receipt
 
     // ── 8b. Send email confirmation — always send if guest has email (WhatsApp + email) ──
     if (payment.booking_id && bookingFlowType !== 'ticketing') {
