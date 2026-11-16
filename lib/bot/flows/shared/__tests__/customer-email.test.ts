@@ -145,6 +145,9 @@ describe('business-scoped returning customer email', () => {
       expect(isReservedEmailDomain(email)).toBe(true);
       expect(isReusableCustomerEmail(email)).toBe(false);
     });
+    it.each(['qa@example.invalid.', 'a@b.test..'])('ignores trailing dots in %s', email => {
+      expect(isReservedEmailDomain(email)).toBe(true);
+    });
     it.each(['ada@gmail.com', 'known@example.com', 'a@invalid.com', 'a@test.ng', 'a@mytest.co'])('keeps %s usable', email => {
       expect(isReservedEmailDomain(email)).toBe(false);
       expect(isReusableCustomerEmail(email)).toBe(true);
