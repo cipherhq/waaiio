@@ -81,7 +81,7 @@ const BOOKING = {
 };
 
 /** In-memory database. Statuses of awaited WAMIDs are delivered by the time they are read. */
-function fakeDb(gateway: string, origin: string) {
+function fakeDb(gateway: string, origin: string, amount = 5000) {
   const waits = new Map<string, string>();
   const tableData = (table: string, op: string, sel: string): unknown => {
     switch (table) {
@@ -139,7 +139,7 @@ function fakeDb(gateway: string, origin: string) {
   }
 
   const rpcData: Record<string, unknown> = {
-    claim_payment_confirmation: { claimed: true, claim_token: 'tok-1070', payment_id: 'pay-1070', amount: 5000, booking_id: 'bk-1070', payment_authority_version: 1 },
+    claim_payment_confirmation: { claimed: true, claim_token: 'tok-1070', payment_id: 'pay-1070', amount, booking_id: 'bk-1070', payment_authority_version: 1 },
     renew_payment_confirmation_claim: { renewed: true },
     terminate_cancelled_event_confirmation: { terminated: false, reason: 'not_cancelled' },
     initialize_terminal_effects: { initialized: true },
@@ -227,4 +227,24 @@ describe('#1070 post-payment message order — shared sendProactiveConfirmation'
       expect(rpcNames.lastIndexOf('finalize_payment_confirmation')).toBeGreaterThan(rpcNames.lastIndexOf('reserve_terminal_effect'));
     });
   }
+});
+
+describe('#1070 paid confirmation copy — receipt hint only when no receipt is sent automatically', () => {
+  const confirmationText = () => String((customerSender.sendText.mock.calls[0]?.[0] as { text: string } | undefined)?.text);
+
+  it.each([['paystack', 'platform'], ['stripe', 'platform'], ['stripe', 'connect']] as const)(
+    '%s/%s paid amount: receipt PDF follows, so the confirmation has no "Type receipt" line', async (gateway, origin) => {
+      const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+      await sendProactiveConfirmation(fakeDb(gateway, origin) as never, { id: 'pay-1070', amount: 5000, booking_id: 'bk-1070' } as never);
+      expect(confirmationText()).toMatch(/Ticket Confirmed/);
+      expect(confirmationText()).not.toContain('Type *receipt*');
+      expect(events).toContain('document:receipt-WA-TK-9318.pdf');
+    });
+
+  it('zero amount: no automatic receipt, so the hint stays', async () => {
+    const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+    await sendProactiveConfirmation(fakeDb('paystack', 'platform', 0) as never, { id: 'pay-1070', amount: 0, booking_id: 'bk-1070' } as never);
+    expect(confirmationText()).toContain('Type *receipt* to get your receipt');
+    expect(events.some(e => e.startsWith('document:receipt-'))).toBe(false);
+  });
 });

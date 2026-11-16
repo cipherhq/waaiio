@@ -161,9 +161,10 @@ describe('F3: five-step delivery sequence', () => {
 
     expect(captured).toContain('Confirmed');
     expect(captured).toContain('Remaining balance');
-    expect(captured).toContain('receipt');
+    // #1070: the receipt PDF follows automatically, so no "Type receipt" line.
+    expect(captured).not.toContain('Type *receipt*');
     // Navigation belongs to the durable follow-up after card/consent, not this
-    // confirmation body. Receipt, balance and calendar guidance remain intact.
+    // confirmation body. Balance and calendar guidance remain intact.
     expect(captured).not.toContain('my bookings');
     expect(captured).toContain('cal.google.com/test');
     const { startTransactionFollowup } = await import('@/lib/bot/transaction-followups');
@@ -231,7 +232,7 @@ describe('F3: five-step delivery sequence', () => {
     expect(mockTransportSend).toHaveBeenCalledTimes(1);
     const sent = mockTransportSend.mock.calls[0][0].text;
     expect(sent).toContain('Confirmed');
-    expect(sent).toContain('receipt');
+    expect(sent).not.toContain('Type *receipt*'); // #1070: receipt PDF follows automatically
     expect(sent).toContain('cal.example.com/en');
     expect(sent).not.toContain('[FR]');
     expect(eventLog).toContain('claim_confirmation_delivery');
