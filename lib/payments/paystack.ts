@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
 import { normalizeError, safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
+import { paystackValidationDiagnostic } from './paystack-validation-diagnostic';
 import { paystackByoSplit, paystackMerchantSplit } from './paystack-split';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
@@ -88,6 +89,7 @@ export class PaystackGateway implements PaymentGateway {
         headers['X-Connect-Account'] = opts.connectAccountId;
       }
 
+      let httpStatus: unknown;
       const data = await observeProvider({
         gateway: 'paystack',
         amount: opts.amount, currency: opts.currency,
@@ -121,10 +123,11 @@ export class PaystackGateway implements PaymentGateway {
             },
           }),
         });
+        httpStatus = response.status;
         return response.json();
       });
       if (!data.status) {
-        logger.error('[PAYSTACK] Initialize failed:', safeProviderError(data));
+        logger.error('[PAYSTACK] Initialize failed:', safeProviderError(data), paystackValidationDiagnostic(data, httpStatus));
         throw new Error(data.message || 'Payment gateway rejected the request');
       }
 
