@@ -22,6 +22,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { requireCurrentCapability } from '@/lib/bot/flows/shared/capability-guard';
 import { parseDefinition, validateDefinition } from './definition';
 import { businessData } from './sources';
@@ -187,6 +188,7 @@ export class CustomFlowEngine {
       return result.allowed;
     } catch (err) {
       logger.error('[CUSTOM-FLOW] Entitlement check failed:', err);
+      reportFailure(err, { area: 'custom_flow', op: 'entitlement_check', businessId, capability: 'custom_flow' });
       return false;
     }
   }
@@ -619,6 +621,10 @@ export class CustomFlowEngine {
       else logger.warn(`[CUSTOM-FLOW] handoff ${node.capability} not entitled (${guard.reason}) business=${session.business_id}`);
     } catch (err) {
       logger.error('[CUSTOM-FLOW] Handoff check failed:', err);
+      reportFailure(err, {
+        area: 'custom_flow', op: 'handoff_check', businessId: session.business_id,
+        flowId: session.flow_id, sessionId: session.id, capability: node.capability,
+      });
     }
 
     if (record && this.deps.handOff) {
@@ -845,7 +851,7 @@ export class CustomFlowEngine {
     output: string | null,
   ): Promise<void> {
     try {
-      await this.deps.supabase.from('custom_flow_logs').insert({
+      const { error } = await this.deps.supabase.from('custom_flow_logs').insert({
         business_id: session.business_id,
         flow_id: session.flow_id,
         session_id: session.id,
@@ -854,6 +860,12 @@ export class CustomFlowEngine {
         input: input ? input.slice(0, LOG_INPUT_MAX) : null,
         output: output ? output.slice(0, LOG_OUTPUT_MAX) : null,
       });
+      if (error) {
+        reportFailure(error, {
+          area: 'custom_flow', op: 'log_insert', businessId: session.business_id,
+          flowId: session.flow_id, sessionId: session.id, level: 'warning',
+        });
+      }
     } catch {
       // Logging must never break the conversation.
     }

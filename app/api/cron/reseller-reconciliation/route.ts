@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
 
     if (resErr) {
       logger.error('Reseller reconciliation: failed to fetch resellers', resErr);
+      reportFailure(resErr, { area: 'cron', op: 'reseller_query', job: 'reseller-reconciliation' });
       return NextResponse.json({ error: 'Database error' }, { status: 500 });
     }
 
@@ -159,6 +161,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ reconciled, alerts });
   } catch (err) {
     logger.error('Reseller reconciliation failed', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'reseller-reconciliation' });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

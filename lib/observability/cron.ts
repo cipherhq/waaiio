@@ -8,6 +8,7 @@
 import { logger, type LogContext } from '@/lib/logger';
 import { generateRunId } from '@/lib/observability';
 import { safeLogErrorContext } from '@/lib/errors';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 interface CronTotals {
   processedCount?: number;
@@ -70,6 +71,7 @@ export function createCronLogger(job: string) {
         ...safeLogErrorContext(error),
         ...totals,
       } as LogContext).error('cron.failed');
+      reportFailure(error, { area: 'cron', op: 'cron.failed', job, runId });
     },
 
     skipped(reason: string) {
@@ -88,6 +90,10 @@ export function createCronLogger(job: string) {
         ...safeLogErrorContext(error),
         ...ctx,
       } as LogContext).error('cron.item.failed');
+      reportFailure(error, {
+        area: 'cron', op: 'cron.item_failed', job, runId,
+        businessId: ctx?.businessId, paymentId: ctx?.paymentId, gateway: ctx?.gateway,
+      });
     },
 
     itemSkipped(ctx?: CronItemContext) {

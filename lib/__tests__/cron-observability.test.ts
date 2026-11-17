@@ -392,10 +392,15 @@ describe('Behavioral: createCronLogger lifecycle', () => {
     cron.started();
     cron.failed(new Error('db connection lost'));
 
-    expect(captured.length).toBe(2);
+    // #1092: cron.failed is followed by reportFailure's own failure.reported line.
+    expect(captured.length).toBe(3);
     const failEntry = JSON.parse(captured[1]);
     expect(failEntry.runId).toBe(cron.runId);
     expect(failEntry.msg).toBe('cron.failed');
+    const reportEntry = JSON.parse(captured[2]);
+    expect(reportEntry.msg).toBe('failure.reported');
+    expect(reportEntry).toMatchObject({ area: 'cron', job: 'test-fail-job', runId: cron.runId, errorName: 'Error' });
+    expect(captured[2]).not.toContain('db connection lost');
 
     if (prevFormat === undefined) delete process.env.LOG_FORMAT;
     else process.env.LOG_FORMAT = prevFormat;

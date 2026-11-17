@@ -32,6 +32,7 @@ import { isFinancialDenial, RefusedSendError } from '@/lib/bot/financial-denial'
 import { after } from 'next/server';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { awaitWhatsAppDelivery, DeliveryWaitBudget, PROMPT_DELIVERY_BUDGET_MS, registerDeliveryWait } from '@/lib/channels/delivery-wait';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logDropoff } from '@/lib/bot/flow-analytics';
@@ -1124,6 +1125,7 @@ export class FlowExecutor {
           break;
         }
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
+        reportFailure(err, { area: 'whatsapp_send', op: 'flow_batch_send', businessId: this.currentBusinessId });
       }
     }
     if (this.currentBusinessId) {

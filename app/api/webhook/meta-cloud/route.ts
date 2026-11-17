@@ -13,6 +13,7 @@ import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
 import { logger, generateRequestId } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { transcribeAudio } from '@/lib/bot/transcription';
 import { checkAIFeature, incrementAIUsage, getVoiceNotSupportedMessage } from '@/lib/bot/ai-tier-guard';
 import { createWhatsAppUser } from '@/lib/bot/flows/shared/user';
@@ -838,6 +839,7 @@ export async function POST(request: NextRequest) {
               // received a partial response, but they will not receive duplicate responses
               // from a retry. The error is logged for operational visibility.
               msgLog.error('[META-WEBHOOK] Processing failed (event will be completed to prevent replay):', processingErr);
+              reportFailure(processingErr, { area: 'whatsapp_webhook', op: 'process_message', businessId: preResolvedBusinessId, requestId });
 
               // Try to send error guidance BEFORE terminalizing, while we still hold the claim
               try {
@@ -847,6 +849,7 @@ export async function POST(request: NextRequest) {
                 });
               } catch (fallbackErr) {
                 msgLog.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
+                reportFailure(fallbackErr, { area: 'whatsapp_webhook', op: 'fallback_reply', businessId: preResolvedBusinessId, requestId });
               }
 
               // Terminalize as completed — prevents retry/replay of already-sent side effects
@@ -868,6 +871,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
     log.error('[META-WEBHOOK] Error:', error);
+    reportFailure(error, { area: 'whatsapp_webhook', op: 'post', requestId });
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
 }

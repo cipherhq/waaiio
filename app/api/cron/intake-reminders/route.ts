@@ -4,6 +4,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 import { sendIntakeReminder } from '@/lib/intake/send';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
       .range(offset, offset + BATCH - 1);
     if (error) {
       logger.error('[CRON intake-reminders] Due query failed:', error.code || 'unknown');
+      reportFailure(error, { area: 'cron', op: 'due_query', job: 'intake-reminders' });
       return NextResponse.json({ error: 'query_failed', due, ...counts }, { status: 500 });
     }
     const rows = data || [];

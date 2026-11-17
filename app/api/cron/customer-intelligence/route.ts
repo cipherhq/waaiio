@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { reportFailure } from '@/lib/observability/report-failure';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ status: 'ok', updated });
   } catch (error) {
+    reportFailure(error, { area: 'cron', op: 'run', job: 'customer-intelligence' });
     return NextResponse.json({ status: 'error', message: (error as Error).message }, { status: 500 });
   }
 }

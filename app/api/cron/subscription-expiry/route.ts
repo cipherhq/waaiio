@@ -6,6 +6,7 @@ import { subscriptionExpiringEmail, subscriptionExpiredEmail } from '@/lib/email
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 /**
  * GET /api/cron/subscription-expiry
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
 
   if (fetchError) {
     logger.error('[CRON:SUBSCRIPTION-EXPIRY] Failed to fetch subscriptions:', fetchError.message);
+    reportFailure(fetchError, { area: 'cron', op: 'fetch', job: 'subscription-expiry' });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 

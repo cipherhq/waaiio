@@ -18,6 +18,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { safeLogErrorContext } from '@/lib/errors';
 import type { ConfirmationResult } from './send-confirmation';
 
@@ -484,6 +485,10 @@ async function executeStage2Through3(
 
   if (!finalizationResult.criticalSuccess) {
     logger.error(`${logPrefix} Critical business effects failed: ${finalizationResult.errors?.join(', ')}`);
+    reportFailure(new Error('critical business effects failed'), {
+      area: 'payment_success', op: 'critical_effects', paymentId: payment.id, gateway: payment.gateway,
+      errorCode: finalizationResult.errors?.[0]?.split(':')[0],
+    });
     try { await supabase.rpc('release_payment_finalization', { p_payment_id: payment.id, p_claim_token: claimToken }); } catch { /* release is best-effort */ }
     return retryable('critical_effects_failed', stagesPaid);
   }
@@ -496,6 +501,7 @@ async function executeStage2Through3(
   if (completeError) {
     logger.withContext({ op: 'authority.complete-finalization', ...safeLogErrorContext(completeError) })
       .error(`${logPrefix} complete_payment_finalization RPC error`);
+    reportFailure(completeError, { area: 'payment_success', op: 'complete_finalization_rpc', paymentId: payment.id, gateway: payment.gateway });
     return retryable('finalization_complete_rpc_error', stagesPaid);
   }
   if (!completeResult?.completed && !completeResult?.already_completed) {

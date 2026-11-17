@@ -4,6 +4,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { sendEmail } from '@/lib/email/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest) {
 
     if (feeErr) {
       logger.error('[PLATFORM_FEE_INVOICES] Failed to fetch fees:', feeErr.message);
+      reportFailure(feeErr, { area: 'cron', op: 'fee_query', job: 'platform-fee-invoices' });
       return NextResponse.json({ error: 'Database error' }, { status: 500 });
     }
 
@@ -185,6 +187,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: summary, generated, skipped });
   } catch (err) {
     logger.error('[PLATFORM_FEE_INVOICES] Error:', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'platform-fee-invoices' });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

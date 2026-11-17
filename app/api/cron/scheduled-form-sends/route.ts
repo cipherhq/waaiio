@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import {
   SEND_TIME_BUDGET_MS, TemplateLookupUnavailableError, loadInviteTemplate, sendFormInvites, summarize,
   type InviteTemplate, type RecipientOutcome,
@@ -101,6 +102,7 @@ export async function GET(request: NextRequest) {
     .order('updated_at', { ascending: true }).order('id', { ascending: true }).limit(MAX_CANDIDATES);
   if (error) {
     logger.error('[FORM SENDS] Due lookup failed:', error.message);
+    reportFailure(error, { area: 'cron', op: 'due_lookup', job: 'scheduled-form-sends' });
     return NextResponse.json({ error: 'Lookup failed' }, { status: 500 });
   }
   const picked = takeTurns((candidates || []) as Due[]).slice(0, MAX_SENDS_PER_RUN);

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 /** Resume only the follow-up enrolled by successful Stage 3, on its original channel. */
 export async function resumePaidTransactionFollowup(supabase: SupabaseClient, paymentId: string): Promise<void> {
@@ -6,6 +7,7 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
   const { checkAndOfferSavedCard, checkSavedCardOfferEligibility, checkStripeConsentAndOffer, retryPendingSavedCardOffer } = await import('./saved-card-offer');
   const { data: followup, error } = await supabase.from('transaction_followups')
     .select('business_id,phone,channel_id,state').eq('payment_id', paymentId).maybeSingle();
+  if (error) reportFailure(error, { area: 'followup', op: 'resume_paid.followup_read', paymentId });
   if (error || !followup) return;
   if (!['waiting_card', 'card_active'].includes(followup.state)) {
     await resumeTransactionFollowupForPayment(supabase, paymentId);
@@ -15,10 +17,12 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     .select('status,gateway,confirmation_sent_at,metadata').eq('id', paymentId)
     .eq('business_id', followup.business_id).maybeSingle();
   // Enrollment precedes finalization so a crash cannot lose the continuation.
+  if (paymentError) reportFailure(paymentError, { area: 'followup', op: 'resume_paid.payment_read', paymentId, businessId: followup.business_id });
   if (paymentError || payment?.status !== 'success' || !payment.confirmation_sent_at) return;
   const { data: delivered, error: deliveryError } = await supabase.from('payment_confirmation_deliveries')
     .select('id').eq('payment_id', paymentId)
     .in('delivery_status', ['accepted', 'sent', 'delivered', 'read']).limit(1);
+  if (deliveryError) reportFailure(deliveryError, { area: 'followup', op: 'resume_paid.delivery_read', paymentId, businessId: followup.business_id });
   if (deliveryError || !delivered?.length) return;
   // Connect Paystack payments never get a card offer, so they skip the card
   // step instead of holding the conversation while nothing can resolve it.
@@ -33,6 +37,7 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
   const { data: offer, error: offerError } = await supabase.from('payment_saved_card_offers')
     .select(CARD_OFFER_STEP_COLUMNS).eq('payment_id', paymentId).eq('business_id', followup.business_id)
     .eq('customer_phone', followup.phone).maybeSingle();
+  if (offerError) reportFailure(offerError, { area: 'followup', op: 'resume_paid.offer_read', paymentId, businessId: followup.business_id });
   if (offerError) return;
   if (offer) {
     // #1070: an accepted offer whose customer left the PIN step must not lock
@@ -51,6 +56,7 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     .in('whatsapp_number', [followup.phone, followup.phone.replace(/^\+/, '')])
     .eq('is_active', true).in('current_step', ['save_card_pin', 'replace_card_pin'])
     .limit(1);
+  if (pinError) reportFailure(pinError, { area: 'followup', op: 'resume_paid.pin_session_read', paymentId, businessId: followup.business_id });
   if (pinError || pins?.length) return;
   const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
   const resolved = await new ChannelResolver(supabase)

@@ -5,6 +5,7 @@ import { currentAnswers } from '@/lib/parties/rsvp-questions';
 import { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { truncTitle } from './utils/truncate';
 import { checkRateLimitAsync } from '@/lib/rate-limit';
 import type { MessageSender } from '@/lib/channels/message-sender';
@@ -4876,7 +4877,7 @@ export class BotService {
       } else {
         const fullMsg = err instanceof Error ? `${errMsg}\n${err.stack?.slice(0, 300)}` : errMsg;
         logger.error('[BOT] handleMessage CRASH:', fullMsg);
-        Sentry.captureException(err);
+        reportFailure(err, { area: 'bot', op: 'handle_message', businessId: preResolvedBusinessId });
         try { await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.'); } catch (_) { /* ignore */ }
       }
     }

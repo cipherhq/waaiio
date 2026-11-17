@@ -6,6 +6,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 import { hasProtectedProof, hasSuccessfulPayment } from '@/lib/payments/stale-transfers';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 /**
  * GET /api/cron/expire-transfers (Vercel Cron sends GET; POST kept for manual runs)
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest) {
 
     if (fetchErr) {
       logger.error('[EXPIRE_TRANSFERS] Fetch error:', fetchErr.message);
+      reportFailure(fetchErr, { area: 'cron', op: 'fetch', job: 'expire-transfers' });
       return NextResponse.json({ error: 'Failed to fetch expired transfers' }, { status: 500 });
     }
 
@@ -183,6 +185,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ expired: expiredCount });
   } catch (err) {
     logger.error('[EXPIRE_TRANSFERS] Error:', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'expire-transfers' });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

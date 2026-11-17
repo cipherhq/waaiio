@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { safeLogErrorContext } from '@/lib/errors';
 import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
@@ -20,6 +21,7 @@ import { awaitWhatsAppDelivery, CONFIRMATION_DELIVERY_BUDGET_MS, DeliveryWaitBud
 function logSafeError(prefix: string, label: string, error: unknown): void {
   logger.withContext({ op: `send-confirmation.${label}`, ...safeLogErrorContext(error) })
     .error(`${prefix} ${label.replace(/-/g, ' ')} error`);
+  reportFailure(error, { area: 'payment_success', op: `send_confirmation.${label}` });
 }
 
 // ── Centralized lifecycle RPC helpers ──
