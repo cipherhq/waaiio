@@ -15,7 +15,7 @@ import { Icons, MOVE_STEP_TYPE, NEW_STEP_TYPE, hasDragType } from './ui';
  * operations (appendBlock / reorderFlow); nothing here changes the graph.
  */
 
-const TYPE_NAME: Record<CustomFlowNode['type'], string> = { message: 'Message', menu: 'Buttons', lookup: 'Search my list', handoff: 'Use what you already have' };
+const TYPE_NAME: Record<CustomFlowNode['type'], string> = { message: 'Message', menu: 'Buttons', lookup: 'Search my list', handoff: 'Use what you already have', ask: 'Question' };
 
 type Exit = { kind: 'end' | 'start' | 'jump' | 'missing' | 'handoff'; label: string } | null;
 
@@ -124,7 +124,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
         const open = editable && openSteps.includes(node.id);
         const exit = exitFor(node, index);
         const summary = node.type === 'lookup' ? node.prompt || (node.table ? `Searches ${node.table}` : '')
-          : node.type === 'handoff' ? handoffSummary(node) : node.text;
+          : node.type === 'handoff' ? handoffSummary(node) : node.type === 'ask' ? node.question : node.text;
         const panelId = `flow-step-${node.id}`;
         const Icon = stepIcon(node);
         return <li key={node.id}>
@@ -139,7 +139,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
               const id = event.dataTransfer.getData(MOVE_STEP_TYPE);
               if (id && id !== node.id) onMoveStep?.(id, index);
             }}
-            className={`rounded-xl border border-l-4 ${node.type === 'handoff' ? 'border-l-accent' : 'border-l-brand'} bg-white shadow-sm transition-shadow duration-150 motion-reduce:transition-none dark:bg-gray-800 ${open && node.id === selectedId ? 'border-brand ring-2 ring-brand/30' : open ? 'border-brand-300' : 'border-gray-200 dark:border-gray-700'} ${target === index && moving !== node.id ? 'ring-2 ring-accent' : ''} ${moving === node.id ? 'opacity-60' : ''}`}>
+            className={`rounded-xl border border-l-4 ${node.type === 'handoff' ? 'border-l-accent' : node.type === 'ask' ? 'border-l-[#13795B]' : 'border-l-brand'} bg-white shadow-sm transition-shadow duration-150 motion-reduce:transition-none dark:bg-gray-800 ${open && node.id === selectedId ? 'border-brand ring-2 ring-brand/30' : open ? 'border-brand-300' : 'border-gray-200 dark:border-gray-700'} ${target === index && moving !== node.id ? 'ring-2 ring-accent' : ''} ${moving === node.id ? 'opacity-60' : ''}`}>
             <div className="relative flex items-start gap-3 p-4">
               {editable && <span draggable={canDrag} title="Drag to move this step" aria-hidden="true"
                 onDragStart={event => { if (!canDrag) { event.preventDefault(); return; } event.dataTransfer.setData(MOVE_STEP_TYPE, node.id); event.dataTransfer.effectAllowed = 'move'; setMoving(node.id); }}

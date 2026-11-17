@@ -1,4 +1,4 @@
-## 2026-11-17 — Custom Flow Phase 3, part 1: answer storage, Flow answers page, 12-month retention (#1085)
+## 2026-11-17 — Custom Flow Phase 3: question steps, Flow answers page, 12-month retention (#1085)
 
 - **Owner rules** (#1079 comment 6936919531):
   - Only the business owner and that business's own team see answers.
@@ -25,14 +25,31 @@
   - Owner-only delete, behind a confirm. PageHelp and EmptyState.
   - New Sidebar item "Flow answers", gated on `custom_flow`.
 - **Retention** `app/api/cron/custom-flow-answers-retention` runs daily at 01:30 UTC (`vercel.json`). It deletes answers older than 12 months in bounded batches, files before rows. If one business's files fail, its rows are kept for the next run and the job carries on with everyone else.
-- **Dates** `lib/bot/custom-flow/dates.ts`: upcoming-day list rows ("Sat 21 Nov") plus "Another date", the full confirmation ("Saturday, 21 November 2026") via the existing `formatDisplayDate` seam, and typed-date parsing. Not used by the engine yet.
+- **Dates** `lib/bot/custom-flow/dates.ts`: upcoming-day list rows ("Sat 21 Nov") plus "Another date", the full confirmation ("Saturday, 21 November 2026") via the existing `formatDisplayDate` seam, and typed-date parsing.
+- **Question steps** (new `ask` node; `lib/bot/custom-flow/types.ts`, `definition.ts`, `engine.ts`, `answers.ts`): Yes or no, Pick one, Pick a date, Short answer, Photo or PDF.
+  - Each shows as buttons or a list where WhatsApp allows; a date question lists the next 7 days plus "Another date", and confirms the chosen day in full.
+  - A valid answer is saved to `custom_flow_answers` (one run = the custom-flow session id) and the flow moves on; a question with no next step ends the chat politely.
+  - A wrong answer is re-asked with the merchant's (or our) retry message and is never saved; after two misses the customer is reminded of *menu* and *human*. Global words (menu, cancel, human) work as before.
+  - If the answer cannot be saved the customer is told and stays on the question.
+- **Photo/PDF intake** (`lib/bot/custom-flow/file-intake.ts`, `app/api/webhook/meta-cloud/route.ts`, `MetaCloudService.downloadMediaWithin` in `lib/channels/meta-cloud.ts`):
+  - An inbound image/document goes to the engine only when the customer's latest active custom-flow step (on a dedicated number, that business's) is a Photo or PDF question of an entitled business. Every other image, document, video, sticker or location keeps the existing "I can't process images or files yet" reply, as does any intake error.
+  - Checks: declared type must be JPEG/PNG/WebP/PDF before download; Meta's file size, the declared length and the bytes read must be ≤ 10 MB; the real type is read from the file's first bytes.
+  - Stored privately at `<business>/<flow>/<run>/<question>-<random>.<ext>` before the answer is saved; removed again if the answer can't be saved. Re-sending replaces the answer and removes the old file.
+- **Builder** (`StepPalette.tsx`, new `AskSettings.tsx`, `FlowBuilder.tsx`, `FlowMap.tsx`, `ui.tsx`, `block-label.ts`, `friendly-errors.ts`, `definition.ts`, `readiness.ts`, `preview.ts`):
+  - The "Ask a question" palette group works (the "Soon" placeholders and their code are removed), with a "?" tip and example on every field, a picture of the friendly date list and the full-date confirmation, and a note that Try it can't send files.
+  - Try it runs the real engine; answers there go to the preview's in-memory store only.
+  - The Custom flows page passes the business country so the builder formats dates like the bot.
 - **Tests:**
   - `lib/__tests__/custom-flow-answers-546.pg.test.ts` (real PostgreSQL; added to the CI pg step and the unit-job excludes)
+  - `lib/bot/custom-flow/__tests__/ask.test.ts` (real engine, in-memory DB and Storage)
+  - `lib/__tests__/custom-flow-file-webhook.test.ts` (real webhook route)
+  - `components/custom-flows/AskBuilder.test.tsx`; `PageBuilder.test.tsx`'s "Soon" test is replaced by one proving the five question steps work
   - `lib/custom-flow-responses/handlers.test.ts`
   - `components/custom-flows/FlowAnswers.test.tsx`
   - `lib/bot/custom-flow/dates.test.ts`
 - **Could break:**
-  - Nothing existing. The bot engine, webhook and builder are unchanged in this part.
+  - The webhook now looks up an active custom-flow session for inbound images/documents before its existing reply (one extra read). Audio, text and every other path are unchanged.
+  - Saving a file adds a download of up to 10 MB inside the webhook's time budget.
   - The new cron runs daily; until M546 is applied it fails harmlessly with `read_failed`.
   - The page lists the newest 1,000 answers and points to the CSV (up to 20,000) for more. When a cap is hit, the oldest customer's possibly incomplete answers are left out, and the CSV ends with a note saying it was capped.
   - Deleting a flow directly in the database now fails while that flow has answers.

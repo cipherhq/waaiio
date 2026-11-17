@@ -10,7 +10,8 @@ import { resolveBusinessRole } from '@/lib/capabilities/resolve-role';
 import { isUuid } from '@/lib/bot/custom-flow/data';
 import { fail } from '@/lib/custom-flow-builder/server';
 
-export const CUSTOM_FLOW_UPLOADS_BUCKET = 'custom-flow-uploads';
+import { CUSTOM_FLOW_UPLOADS_BUCKET } from '@/lib/bot/custom-flow/answers';
+export { CUSTOM_FLOW_UPLOADS_BUCKET };
 /** Short-lived link lifetime for an uploaded photo or PDF (seconds). */
 export const FILE_LINK_SECONDS = 300;
 /** Answers kept before the daily retention job deletes them. */

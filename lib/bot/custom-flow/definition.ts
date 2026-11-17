@@ -8,6 +8,9 @@
 import type { CustomFlowDefinition, CustomFlowNode } from './types';
 import { isUuid, readBusinessBindings, readGuided } from './data';
 
+/** Answer types an ask node may use (#1085). */
+export const ASK_ANSWER_TYPES = ['yes_no', 'choice', 'date', 'text', 'file'] as const;
+
 /** Capabilities a handoff node may name, and whether each takes a record (#1086). */
 export const HANDOFF_CAPABILITIES = ['ticketing', 'giving', 'payment', 'chat'] as const;
 
@@ -166,6 +169,38 @@ export function validateDefinition(definition: unknown): string[] {
           } else if (!isUuid(node.record_id)) {
             errors.push(`Handoff node "${node.id}" has a record that cannot be read. Choose it again.`);
           }
+        }
+        break;
+      }
+      case 'ask': {
+        if (!(ASK_ANSWER_TYPES as readonly string[]).includes(node.answer_type)) {
+          errors.push(`Question node "${node.id}" has no answer type. Choose what kind of answer it asks for.`);
+        }
+        if (typeof node.question !== 'string' || node.question.trim().length === 0) {
+          errors.push(`Question node "${node.id}" has no question.`);
+        } else if (node.question.length > 1000) {
+          errors.push(`Question node "${node.id}" has a question longer than 1000 characters.`);
+        }
+        if (node.answer_type === 'choice') {
+          const options = Array.isArray(node.options) ? node.options : [];
+          if (options.length < 2 || options.length > 10) {
+            errors.push(`Question node "${node.id}" needs 2 to 10 choices.`);
+          } else if (options.some(option => typeof option !== 'string' || !option.trim() || option.length > 24)) {
+            errors.push(`Question node "${node.id}" has a choice that is empty or longer than 24 characters.`);
+          } else if (new Set(options.map(option => option.trim().toLowerCase())).size !== options.length) {
+            errors.push(`Question node "${node.id}" has two choices with the same words.`);
+          }
+        } else if (node.options !== undefined && (!Array.isArray(node.options) || node.options.length > 0)) {
+          errors.push(`Question node "${node.id}" has choices, but only a "Pick one" question uses them.`);
+        }
+        if (node.allow_past !== undefined && typeof node.allow_past !== 'boolean') {
+          errors.push(`Question node "${node.id}" has an unreadable date setting.`);
+        }
+        if (node.retry_message !== undefined && (typeof node.retry_message !== 'string' || node.retry_message.length > 500)) {
+          errors.push(`Question node "${node.id}" has a retry message longer than 500 characters.`);
+        }
+        if (node.next !== null && node.next !== undefined) {
+          checkTarget(node.id, node.next, 'its next step');
         }
         break;
       }
