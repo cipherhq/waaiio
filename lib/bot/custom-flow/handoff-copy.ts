@@ -18,7 +18,7 @@ export const HANDOFF_UNAVAILABLE_TEXT: Record<CustomFlowHandoffCapability, strin
 
 /** The builder's line for where a handoff step passes people on (preview and step settings). */
 export function handoffPreviewNote(request: { capability: CustomFlowHandoffCapability; recordName: string | null }): string {
-  const feature = HANDOFF_FEATURE_NAME[request.capability];
+  const feature = HANDOFF_FEATURE_NAME[request.capability] ?? 'your feature';
   const target = request.recordName ? `${feature}: ${request.recordName}` : feature;
   return request.capability === 'chat'
     ? `Next, people continue in ${target}. Their messages appear on your Chat page.`

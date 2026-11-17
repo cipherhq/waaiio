@@ -81,7 +81,7 @@ export async function previewDraft(readonlyDb: SupabaseClient, businessId: strin
   const handOff = async (request: CapabilityHandoffRequest) => {
     messages.push({ text: handoffPreviewNote(request), note: true });
     // Ends the test chat here, as the real handoff ends the custom flow.
-    return request.closeCustomSession();
+    return (await request.closeCustomSession()) ? 'started' as const : 'unavailable' as const;
   };
   const engine = new CustomFlowEngine({ supabase: facade, sender, handOff });
   const from = 'preview-local';

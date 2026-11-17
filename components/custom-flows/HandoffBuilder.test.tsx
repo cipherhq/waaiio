@@ -17,6 +17,8 @@ type Def = typeof flowDef;
 let flow: { id: string; version: number; definition: Def; published_definition: Def | null; published_version: number | null };
 let posts: Array<Record<string, any>>;
 let sourceUrls: string[];
+let failSources = false;
+let noGiving = false;
 let nextPost: (body: Record<string, any>) => { ok: boolean; json: () => Promise<unknown> } | null;
 
 function dataTransfer() {
@@ -26,14 +28,15 @@ function dataTransfer() {
 beforeEach(() => {
   try { window.localStorage.setItem(WALKTHROUGH_KEY, 'done'); } catch { /* ignore */ }
   flow = { id: flowDef.id, version: 1, definition: structuredClone(flowDef), published_definition: null, published_version: null };
-  posts = []; sourceUrls = []; nextPost = () => null;
+  posts = []; sourceUrls = []; nextPost = () => null; failSources = false; noGiving = false;
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     if (!options?.method) {
       if (url.startsWith('/api/custom-flows/sources')) {
         sourceUrls.push(url);
+        if (failSources) return { ok: false, json: async () => ({ error: 'read_failed' }) };
         const records = url.includes('kind=event') ? [{ id: EVENT, name: 'Youth Retreat 2026', detail: '2026-12-12' }]
-          : url.includes('kind=giving') ? [{ id: OFFERING, name: 'Sunday Offering' }] : [];
+          : url.includes('kind=giving') && !noGiving ? [{ id: OFFERING, name: 'Sunday Offering' }] : [];
         return { ok: true, json: async () => ({ records }) };
       }
       if (url.startsWith('/api/custom-flows/data')) return { ok: true, json: async () => ({ tables: [] }) };
@@ -130,11 +133,36 @@ describe('Use what you already have', () => {
     expect(stored.nodes.at(-1)).toEqual({ id: stored.nodes.at(-1)!.id, type: 'handoff', capability: 'chat' });
   });
 
-  it('warns when a saved event is no longer available', async () => {
+  it('warns when a saved event is no longer available, only after the list has loaded', async () => {
     flow.definition.nodes.push({ id: 'tix', type: 'handoff', capability: 'ticketing', record_id: 'e0000000-0000-4000-8000-0000000000ff' });
     await openFlow();
     fireEvent.click(screen.getByRole('button', { name: 'Edit 3. Event tickets' }));
-    expect(await screen.findByText('The one you picked is no longer available. Choose another, or let people choose.')).toBeTruthy();
+    // First render: still loading, the saved choice is shown as chosen and no alert is raised.
+    expect(screen.queryByText('The one you picked is no longer available. Choose another, or let people choose.')).toBeNull();
+    expect(screen.getByRole('option', { name: 'Your chosen event' })).toBeTruthy();
+    await screen.findByRole('option', { name: 'Youth Retreat 2026 — 2026-12-12' });
+    expect(screen.getByText('The one you picked is no longer available. Choose another, or let people choose.')).toBeTruthy();
+  });
+
+  it('keeps the saved choice visible when the list fails, and Try again reloads it', async () => {
+    flow.definition.nodes.push({ id: 'tix', type: 'handoff', capability: 'ticketing', record_id: EVENT });
+    failSources = true;
+    await openFlow();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit 3. Event tickets' }));
+    expect(await screen.findByText('We couldn’t load your list.')).toBeTruthy();
+    expect((screen.getByLabelText('Which event') as HTMLSelectElement).selectedOptions[0].textContent).toBe('Your chosen event');
+    failSources = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByRole('option', { name: 'Youth Retreat 2026 — 2026-12-12' });
+    expect((screen.getByLabelText('Which event') as HTMLSelectElement).value).toBe(EVENT);
+    expect(screen.queryByText('We couldn’t load your list.')).toBeNull();
+  });
+
+  it('points Giving with no options to Donation Options', async () => {
+    noGiving = true;
+    await openFlow();
+    fireEvent.click(screen.getByRole('button', { name: 'Giving' }));
+    expect(await screen.findByText('You have no active giving options yet. Add one under Donation Options.')).toBeTruthy();
   });
 
   it('shows the preview line as a note, and a plain message when Go live finds an unavailable record', async () => {
@@ -148,6 +176,6 @@ describe('Use what you already have', () => {
     expect(note.tagName).toBe('P');
     expect(note.closest('[aria-live]')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Go live' }));
-    expect(await screen.findByText('A step uses an event or option that is no longer available. Open it and choose again.')).toBeTruthy();
+    expect(await screen.findByText('Step 3 (Event tickets) uses an event or option that is no longer available. Open it and choose again.')).toBeTruthy();
   });
 });

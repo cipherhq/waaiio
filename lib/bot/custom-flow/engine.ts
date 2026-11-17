@@ -623,13 +623,14 @@ export class CustomFlowEngine {
 
     if (record && this.deps.handOff) {
       await this.log(session, node.id, 'out', null, `Continues in ${node.capability}`);
-      const started = await this.deps.handOff({
+      const result = await this.deps.handOff({
         capability: node.capability,
         recordId: node.record_id ?? null,
         recordName: record.name,
         closeCustomSession: () => closeSession(supabase, session.id, session.business_id),
       });
-      if (started) return;
+      // 'stale': another message won the session race and owns the reply.
+      if (result !== 'unavailable') return;
     }
 
     await this.sendText(session, HANDOFF_UNAVAILABLE_TEXT[node.capability]);

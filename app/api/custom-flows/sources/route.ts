@@ -3,6 +3,7 @@ import { authorize, fail } from '@/lib/custom-flow-builder/server';
 import { businessData } from '@/lib/bot/custom-flow/sources';
 import { formatCurrencyCode } from '@/lib/constants';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isEventAvailable, todayUtc } from '@/lib/bot/custom-flow/handoff';
 
 export async function GET(request: NextRequest) {
   const params=request.nextUrl.searchParams;
@@ -36,12 +37,14 @@ export async function GET(request: NextRequest) {
  * business_id; publish and runtime re-check each choice.
  */
 async function handoffRecords(db: SupabaseClient, businessId: string, kind: 'event' | 'giving' | 'payment', search: string) {
-  const today=new Date().toISOString().split('T')[0];
+  const now=new Date();
   const query=kind==='event'
-    ? db.from('events').select('id,name,date').eq('business_id',businessId).eq('status','published').gte('date',today).order('date')
+    ? db.from('events').select('id,name,date,time,status,total_tickets,tickets_sold').eq('business_id',businessId).eq('status','published').gte('date',todayUtc(now)).order('date')
     : db.from('services').select('id,name').eq('business_id',businessId).eq('is_active',true).is('deleted_at',null)[kind==='giving'?'eq':'neq']('service_type','giving').order('name');
   const {data,error}=await query.ilike('name',`%${search}%`).limit(100);
   if(error)return fail('read_failed',500);
-  const records=(data ?? []).map(row=>({id:row.id as string,name:row.name as string,...(kind==='event' ? {detail:(row as {date?:string}).date ?? ''} : {})}));
+  // Same rule as publish and runtime: no sold-out or already-started events.
+  const usable=kind==='event' ? (data ?? []).filter(row=>isEventAvailable(row as Record<string,unknown>,now)) : (data ?? []);
+  const records=usable.map(row=>({id:row.id as string,name:row.name as string,...(kind==='event' ? {detail:(row as {date?:string}).date ?? ''} : {})}));
   return NextResponse.json({records},{headers:{'Cache-Control':'no-store'}});
 }

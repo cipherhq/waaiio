@@ -34,3 +34,14 @@
   - A customer who starts by keyword with no bot session now gets a bot session created at handoff. It has no `biz_resolution`, so it is treated as untrusted for first-message promo.
   - A handoff whose bot-session write loses a race shows the "not available" message, and the customer stays in the custom flow.
   - Event "upcoming" uses the UTC day, the same as ticketing.
+- **Review fixes (reviewers A and B):**
+  - The runner now returns `'started' | 'unavailable' | 'stale'`. A lost bot-session race (`version_conflict` or a concurrent insert) stays quiet instead of telling the customer "not available".
+  - It never inserts a bot session on a shared number, because that session must be bound to the shared conversation by the normal path.
+  - New `isEventAvailable` is shared by `checkHandoffRecord` and the event picker, so the picker no longer offers sold-out or already-started events that Go live would reject.
+  - `HandoffSettings`:
+    - starts in a loading state, so no false "no longer available" alert appears before the list loads;
+    - shows "Your chosen …" while loading or on error;
+    - adds a Try again button;
+    - shows a giving-specific empty message pointing to Donation Options;
+    - falls back safely on an unknown feature value.
+  - The Go live notice names the step ("Step 3 (Event tickets) uses …").

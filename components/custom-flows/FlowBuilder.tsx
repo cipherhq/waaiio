@@ -21,7 +21,7 @@ import { Walkthrough } from './Walkthrough';
 import { Field, buttonClass, cardClass, inputClass, lavenderClass } from './ui';
 import { BUSINESS_FIELDS,businessValue,type BusinessField,type DataTable } from '@/lib/bot/custom-flow/data';
 import { toggleSection } from '@/lib/custom-flow-builder/templates';
-import { friendlyErrors } from '@/lib/custom-flow-builder/friendly-errors';
+import { friendlyErrors, stepName } from '@/lib/custom-flow-builder/friendly-errors';
 
 interface FlowRow { id: string; definition: EditableFlow; version: number; published_definition: EditableFlow | null; published_version: number | null }
 interface Props { businessId: string; language?: string; timezone?: string; currency?: string; businessDetails?:Partial<Record<BusinessField,unknown>> }
@@ -221,7 +221,11 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           invalid_definition: 'Some steps aren’t finished yet. Fix them, then try again.',
           unavailable_handoff_record: 'A step uses an event or option that is no longer available. Open it and choose again.',
         };
-        setNotice(notices[body.error] ?? 'Unable to save changes. Try again.');
+        const unavailableStep = body.error === 'unavailable_handoff_record' && Array.isArray(body.nodes) && body.nodes.length
+          ? draft.nodes.findIndex(node => node.id === body.nodes[0]) : -1;
+        setNotice(unavailableStep >= 0
+          ? `${stepName(draft, draft.nodes[unavailableStep].id)} uses an event or option that is no longer available. Open it and choose again.`
+          : notices[body.error] ?? 'Unable to save changes. Try again.');
         return;
       }
       if (body.flow) {

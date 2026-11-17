@@ -122,7 +122,8 @@ describe('"Use what you already have" record picker (#1086)',()=>{
   const future=new Date(Date.now()+30*86400000).toISOString().split('T')[0];
   beforeEach(()=>{
     state.rows.events=[
-      {id:'e-own',business_id:businessId,name:'Youth Retreat',status:'published',date:future},
+      {id:'e-own',business_id:businessId,name:'Youth Retreat',status:'published',date:future,time:null,total_tickets:10,tickets_sold:2},
+      {id:'e-sold',business_id:businessId,name:'Sold out',status:'published',date:future,time:null,total_tickets:10,tickets_sold:10},
       {id:'e-past',business_id:businessId,name:'Last year',status:'published',date:'2020-01-01'},
       {id:'e-draft',business_id:businessId,name:'Draft event',status:'draft',date:future},
       {id:'e-other',business_id:otherId,name:'Other gala',status:'published',date:future},
@@ -134,6 +135,7 @@ describe('"Use what you already have" record picker (#1086)',()=>{
       {id:'s-other',business_id:otherId,name:'Their offering',is_active:true,deleted_at:null,service_type:'giving'},
     ];
   });
+  // e-sold is listed by status/date but excluded by the same rule publish uses (reviewer B).
   it.each([['event',['e-own']],['giving',['s-give']],['payment',['s-pay']]])('lists only this business\'s usable %s records',async(kind,ids)=>{
     const response=await sources(get('/sources',`&kind=${kind}`));
     expect(response.status).toBe(200);

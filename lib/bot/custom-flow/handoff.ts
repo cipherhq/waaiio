@@ -37,12 +37,35 @@ export interface CapabilityHandoffRequest {
   closeCustomSession: () => Promise<boolean>;
 }
 
-/** Returns true when the existing flow took over; false leaves the custom session as it was. */
-export type CapabilityHandoff = (request: CapabilityHandoffRequest) => Promise<boolean>;
+/**
+ * 'started': the existing flow took over. 'unavailable': nothing changed and the
+ * customer should be told. 'stale': another message for this customer won a
+ * session race; stay quiet, as quick-rebook does on a version conflict.
+ */
+export type CapabilityHandoffResult = 'started' | 'unavailable' | 'stale';
+export type CapabilityHandoff = (request: CapabilityHandoffRequest) => Promise<CapabilityHandoffResult>;
 
 /** UTC calendar day, the same rule ticketing uses for "upcoming". */
-function todayUtc(now: Date): string {
+export function todayUtc(now: Date): string {
   return now.toISOString().split('T')[0];
+}
+
+/**
+ * An event people can still buy tickets for: published, not past (today's
+ * start time not yet passed) and not sold out. Shared by the builder's event
+ * list and checkHandoffRecord, so the picker never offers what publish rejects.
+ */
+export function isEventAvailable(
+  event: { status?: unknown; date?: unknown; time?: unknown; total_tickets?: unknown; tickets_sold?: unknown },
+  now = new Date(),
+): boolean {
+  if (event.status !== 'published' || typeof event.date !== 'string') return false;
+  const today = todayUtc(now);
+  if (event.date < today) return false;
+  if (event.date === today && typeof event.time === 'string' && /^\d{2}:\d{2}/.test(event.time)) {
+    if (new Date(`${event.date}T${event.time.slice(0, 5)}:00Z`).getTime() <= now.getTime()) return false;
+  }
+  return Number(event.total_tickets) - Number(event.tickets_sold) > 0;
 }
 
 /**
@@ -68,13 +91,7 @@ export async function checkHandoffRecord(
     const { data: event, error } = await db.from('events')
       .select('id, business_id, name, status, date, time, total_tickets, tickets_sold')
       .eq('business_id', businessId).eq('id', recordId).maybeSingle();
-    if (error || !event || event.business_id !== businessId || event.status !== 'published') return null;
-    const today = todayUtc(now);
-    if (typeof event.date !== 'string' || event.date < today) return null;
-    if (event.date === today && typeof event.time === 'string' && /^\d{2}:\d{2}/.test(event.time)) {
-      if (new Date(`${event.date}T${event.time.slice(0, 5)}:00Z`).getTime() <= now.getTime()) return null;
-    }
-    if (Number(event.total_tickets) - Number(event.tickets_sold) <= 0) return null;
+    if (error || !event || event.business_id !== businessId || !isEventAvailable(event, now)) return null;
     return { name: String(event.name ?? '') };
   }
 
@@ -137,34 +154,36 @@ export async function startCapabilityHandoff(deps: {
   request: CapabilityHandoffRequest;
   /** Runs FlowExecutor.execute for the prepared session (BotService adds translation overrides). */
   execute: (session: BotSessionLike, input: string, business: Record<string, unknown>) => Promise<void>;
-}): Promise<boolean> {
+}): Promise<CapabilityHandoffResult> {
   const { supabase, from, businessId, request } = deps;
   const tag = `[CUSTOM-FLOW] handoff ${request.capability} business=${businessId}`;
 
   const { data: business, error: businessError } = await supabase.from('businesses').select('*').eq('id', businessId).maybeSingle();
   if (businessError || !business || business.status !== 'active') {
     logger.warn(`${tag}: business unavailable`);
-    return false;
+    return 'unavailable';
   }
   const capabilities = await loadEffectiveCapabilities(supabase, business);
   if (!capabilities || !capabilities.includes(request.capability)) {
     logger.warn(`${tag}: capability not in effective set`);
-    return false;
+    return 'unavailable';
   }
 
   // Same channel-identity rule as the new-session path (#219): a dedicated
   // channel must belong to this business; its id is kept for confirmations.
   let inboundChannelId: string | null = null;
+  let channelType: string | null = null;
   if (deps.destinationPhone) {
     const { data: channel, error } = await supabase.from('whatsapp_channels')
       .select('id, channel_type, business_id').eq('phone_number_id', deps.destinationPhone).eq('is_active', true).maybeSingle();
-    if (error) return false;
+    if (error) return 'unavailable';
     if (channel) {
       if (channel.channel_type === 'dedicated' && channel.business_id && channel.business_id !== businessId) {
         logger.error(`${tag}: dedicated channel belongs to another business`);
-        return false;
+        return 'unavailable';
       }
       inboundChannelId = channel.id;
+      channelType = channel.channel_type;
     }
   }
 
@@ -172,7 +191,7 @@ export async function startCapabilityHandoff(deps: {
   if (existing && existing.business_id !== businessId) {
     // Fail closed rather than replace another business's session.
     logger.warn(`${tag}: active bot session belongs to another business`);
-    return false;
+    return 'unavailable';
   }
 
   const firstStep = HANDOFF_FIRST_STEP[request.capability];
@@ -201,10 +220,16 @@ export async function startCapabilityHandoff(deps: {
     });
     if (error || !cas?.success) {
       logger.warn(`${tag}: bot session CAS lost (${error?.message ?? cas?.reason ?? 'unknown'})`);
-      return false;
+      return !error && cas?.reason === 'version_conflict' ? 'stale' : 'unavailable';
     }
     session = { ...existing, current_step: firstStep, session_data: sessionData, version: cas.version };
   } else {
+    // A new shared-number session must be bound to the shared conversation by
+    // the normal new-session path; never create one here (defence in depth).
+    if (channelType === 'shared') {
+      logger.warn(`${tag}: no bot session on a shared number`);
+      return 'unavailable';
+    }
     // Mirrors the new-session path's cleanup so the per-business unique index is free.
     const nowIso = new Date().toISOString();
     await supabase.from('bot_sessions').delete().eq('whatsapp_number', from).eq('business_id', businessId).eq('is_active', false);
@@ -220,14 +245,14 @@ export async function startCapabilityHandoff(deps: {
     }).select().single();
     if (error || !inserted) {
       logger.warn(`${tag}: bot session insert failed (${error?.code ?? 'no row'})`);
-      return false;
+      return error?.code === '23505' ? 'stale' : 'unavailable';
     }
     session = inserted as unknown as BotSessionLike;
   }
 
   // The custom session must be closed before the existing flow speaks, or
   // the customer's next reply would be read by the custom engine.
-  if (!(await request.closeCustomSession())) return false;
+  if (!(await request.closeCustomSession())) return 'unavailable';
   await deps.execute(session, request.recordId ?? '', business);
-  return true;
+  return 'started';
 }

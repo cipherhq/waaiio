@@ -13,7 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { CustomFlowEngine, tryHandleCustomFlow, DEFAULT_CLOSE_TEXT } from '../engine';
 import { validateDefinition } from '../definition';
-import { checkHandoffRecord, startCapabilityHandoff, type CapabilityHandoffRequest } from '../handoff';
+import { checkHandoffRecord, isEventAvailable, startCapabilityHandoff, type CapabilityHandoffRequest, type CapabilityHandoffResult } from '../handoff';
 import { HANDOFF_UNAVAILABLE_TEXT } from '../handoff-copy';
 import type { CustomFlowDefinition, CustomFlowHandoffCapability } from '../types';
 
@@ -145,11 +145,11 @@ function seed(def: CustomFlowDefinition, caps: string[] = ['custom_flow', 'ticke
 }
 
 /** Starts the flow by keyword and taps the "Continue" button that leads to the handoff step. */
-async function reachHandoff(def: CustomFlowDefinition, opts: { caps?: string[]; handOff?: (r: CapabilityHandoffRequest) => Promise<boolean> } = {}) {
+async function reachHandoff(def: CustomFlowDefinition, opts: { caps?: string[]; handOff?: (r: CapabilityHandoffRequest) => Promise<CapabilityHandoffResult> } = {}) {
   const { supabase, db } = fakeSupabase(seed(def, opts.caps));
   const sender = recordingSender();
   const requests: CapabilityHandoffRequest[] = [];
-  const handOff = opts.handOff ?? (async (request: CapabilityHandoffRequest) => { requests.push(request); return request.closeCustomSession(); });
+  const handOff = opts.handOff ?? (async (request: CapabilityHandoffRequest): Promise<CapabilityHandoffResult> => { requests.push(request); return (await request.closeCustomSession()) ? 'started' : 'unavailable'; });
   const engine = new CustomFlowEngine({ supabase, sender, handOff: async r => { if (opts.handOff) requests.push(r); return handOff(r); } });
   expect((await engine.handleMessage({ businessId: BIZ_A, from: PHONE, text: 'RETREAT' })).handled).toBe(true);
   if (def.start_node !== 'go') await engine.handleMessage({ businessId: BIZ_A, from: PHONE, text: 'cf:menu:0' });
@@ -194,7 +194,7 @@ describe('handoff step — engine hands each capability to the existing flow', (
   it('tryHandleCustomFlow passes BotService\'s handOff through to the engine', async () => {
     const def = handoffFlow('giving', OFFERING_A, true);
     const { supabase, db } = fakeSupabase(seed(def));
-    const handOff = vi.fn(async (r: CapabilityHandoffRequest) => r.closeCustomSession());
+    const handOff = vi.fn(async (r: CapabilityHandoffRequest): Promise<CapabilityHandoffResult> => ((await r.closeCustomSession()) ? 'started' : 'unavailable'));
     const handled = await tryHandleCustomFlow({ supabase, sender: recordingSender(), businessId: BIZ_A, from: PHONE, text: 'RETREAT', messageType: 'text', handOff });
     expect(handled).toBe(true);
     expect(handOff).toHaveBeenCalledTimes(1);
@@ -230,10 +230,27 @@ describe('handoff step — cross-business and unavailable records never hand off
   });
 
   it('BotService could not start the flow: the custom session stays and returns to the menu', async () => {
-    const { requests, active, sender } = await reachHandoff(handoffFlow('chat'), { handOff: async () => false });
+    const { requests, active, sender } = await reachHandoff(handoffFlow('chat'), { handOff: async () => 'unavailable' });
     expect(requests).toHaveLength(1);
     expect(sender.texts).toContain(HANDOFF_UNAVAILABLE_TEXT.chat);
     expect(active[0].current_node_id).toBe('menu');
+  });
+
+  it('a lost session race stays quiet: no "not available" message (reviewer A)', async () => {
+    const { requests, sender } = await reachHandoff(handoffFlow('chat'), { handOff: async () => 'stale' });
+    expect(requests).toHaveLength(1);
+    expect(sender.texts).not.toContain(HANDOFF_UNAVAILABLE_TEXT.chat);
+  });
+
+  it('isEventAvailable: published, upcoming, not started today, not sold out', () => {
+    const now = new Date('2026-11-17T12:00:00Z');
+    const ok = { status: 'published', date: '2026-11-18', time: null, total_tickets: 10, tickets_sold: 0 };
+    expect(isEventAvailable(ok, now)).toBe(true);
+    expect(isEventAvailable({ ...ok, status: 'draft' }, now)).toBe(false);
+    expect(isEventAvailable({ ...ok, date: '2026-11-16' }, now)).toBe(false);
+    expect(isEventAvailable({ ...ok, date: '2026-11-17', time: '11:00' }, now)).toBe(false);
+    expect(isEventAvailable({ ...ok, date: '2026-11-17', time: '18:00' }, now)).toBe(true);
+    expect(isEventAvailable({ ...ok, tickets_sold: 10 }, now)).toBe(false);
   });
 
   it('without a handOff dependency the step is treated as unavailable', async () => {
@@ -271,6 +288,7 @@ function runnerSeed(caps: string[] = ['ticketing', 'giving', 'payment', 'chat'])
     businesses: base.businesses, business_capabilities: base.business_capabilities, capability_overrides: [],
     whatsapp_channels: [
       { id: 'chan-shared', phone_number_id: 'pn-shared', channel_type: 'shared', business_id: null, is_active: true },
+      { id: 'chan-a', phone_number_id: 'pn-a', channel_type: 'dedicated', business_id: BIZ_A, is_active: true },
       { id: 'chan-b', phone_number_id: 'pn-b', channel_type: 'dedicated', business_id: BIZ_B, is_active: true },
     ],
     bot_sessions: [],
@@ -292,7 +310,7 @@ describe('startCapabilityHandoff — positions the bot session and runs the exis
     const order: string[] = [];
     const execute = vi.fn(async (session: Row, input: string) => { order.push('execute'); expect(session.current_step).toBe('select_event'); expect(input).toBe(EVENT_A); });
     const ok = await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, destinationPhone: 'pn-shared', botSession: existing(), userId: null, request: request('ticketing', EVENT_A, order), execute });
-    expect(ok).toBe(true);
+    expect(ok).toBe('started');
     expect(order).toEqual(['close', 'execute']);
     expect(rpcCalls).toHaveLength(1);
     const args = rpcCalls[0].args;
@@ -311,29 +329,37 @@ describe('startCapabilityHandoff — positions the bot session and runs the exis
   it('giving with an option: the payment flow validator gets _repeat_selection_id', async () => {
     const { supabase, rpcCalls } = fakeSupabase(runnerSeed());
     const execute = vi.fn(async () => {});
-    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('giving', OFFERING_A, []), execute })).toBe(true);
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('giving', OFFERING_A, []), execute })).toBe('started');
     expect(rpcCalls[0].args).toMatchObject({ p_current_step: 'select_category' });
     expect(rpcCalls[0].args.p_session_data).toMatchObject({ active_capability: 'giving', _repeat_selection_id: OFFERING_A });
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ current_step: 'select_category' }), OFFERING_A, expect.objectContaining({ id: BIZ_A }));
   });
 
-  it('no bot session (keyword start): inserts one at chat_start and shows the step prompt', async () => {
+  it('no bot session (keyword start on a dedicated number): inserts one at chat_start and shows the step prompt', async () => {
     const { supabase, db } = fakeSupabase(runnerSeed());
     db.bot_sessions.push({ id: 'old-inactive', whatsapp_number: PHONE, business_id: BIZ_A, is_active: false, expires_at: '2020-01-01T00:00:00Z' });
     const execute = vi.fn(async () => {});
-    const ok = await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, destinationPhone: 'pn-shared', botSession: null, userId: 'profile-1', request: request('chat', null, []), execute });
-    expect(ok).toBe(true);
+    const ok = await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, destinationPhone: 'pn-a', botSession: null, userId: 'profile-1', request: request('chat', null, []), execute });
+    expect(ok).toBe('started');
     expect(db.bot_sessions).toHaveLength(1);
     expect(db.bot_sessions[0]).toMatchObject({ whatsapp_number: PHONE, business_id: BIZ_A, user_id: 'profile-1', current_step: 'chat_start', is_active: true });
-    expect(db.bot_sessions[0].session_data).toMatchObject({ active_capability: 'chat', _inbound_channel_id: 'chan-shared' });
+    expect(db.bot_sessions[0].session_data).toMatchObject({ active_capability: 'chat', _inbound_channel_id: 'chan-a' });
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ current_step: 'chat_start' }), '', expect.anything());
   });
 
-  it('a lost CAS race: no close, no execute', async () => {
+  it('never creates a bot session on a shared number (it must be bound to the shared conversation)', async () => {
+    const { supabase, db } = fakeSupabase(runnerSeed());
+    const execute = vi.fn(async () => {});
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, destinationPhone: 'pn-shared', botSession: null, userId: null, request: request('chat', null, []), execute })).toBe('unavailable');
+    expect(db.bot_sessions).toHaveLength(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('a lost CAS race: stale, no close, no execute', async () => {
     const { supabase } = fakeSupabase(runnerSeed(), () => ({ data: { success: false, reason: 'version_conflict' }, error: null }));
     const order: string[] = [];
     const execute = vi.fn(async () => {});
-    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('ticketing', EVENT_A, order), execute })).toBe(false);
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('ticketing', EVENT_A, order), execute })).toBe('stale');
     expect(order).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -341,7 +367,7 @@ describe('startCapabilityHandoff — positions the bot session and runs the exis
   it('capability not in the effective set: refused before any write', async () => {
     const { supabase, rpcCalls } = fakeSupabase(runnerSeed(['giving']));
     const execute = vi.fn(async () => {});
-    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('ticketing', EVENT_A, []), execute })).toBe(false);
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('ticketing', EVENT_A, []), execute })).toBe('unavailable');
     expect(rpcCalls).toHaveLength(0);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -349,8 +375,8 @@ describe('startCapabilityHandoff — positions the bot session and runs the exis
   it('refuses another business\'s bot session and another business\'s dedicated channel', async () => {
     const { supabase, rpcCalls, db } = fakeSupabase(runnerSeed());
     const execute = vi.fn(async () => {});
-    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: { ...existing(), business_id: BIZ_B }, userId: null, request: request('chat', null, []), execute })).toBe(false);
-    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, destinationPhone: 'pn-b', botSession: null, userId: null, request: request('chat', null, []), execute })).toBe(false);
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: { ...existing(), business_id: BIZ_B }, userId: null, request: request('chat', null, []), execute })).toBe('unavailable');
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, destinationPhone: 'pn-b', botSession: null, userId: null, request: request('chat', null, []), execute })).toBe('unavailable');
     expect(rpcCalls).toHaveLength(0);
     expect(db.bot_sessions).toHaveLength(0);
     expect(execute).not.toHaveBeenCalled();
@@ -359,7 +385,7 @@ describe('startCapabilityHandoff — positions the bot session and runs the exis
   it('the custom session could not be closed: the existing flow does not start', async () => {
     const { supabase } = fakeSupabase(runnerSeed());
     const execute = vi.fn(async () => {});
-    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('chat', null, [], false), execute })).toBe(false);
+    expect(await startCapabilityHandoff({ supabase, from: PHONE, businessId: BIZ_A, botSession: existing(), userId: null, request: request('chat', null, [], false), execute })).toBe('unavailable');
     expect(execute).not.toHaveBeenCalled();
   });
 });
