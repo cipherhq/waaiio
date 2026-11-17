@@ -8,7 +8,7 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
-import { ensurePlus } from '@/lib/utils/phone';
+import { normalizeImportPhone } from '@/lib/customers/import-phone';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 
 /* ------------------------------------------------------------------ */
@@ -373,7 +373,8 @@ export default function CustomersPage() {
     const parsed = dataLines.map((line) => {
       const parts = line.split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
       const name = parts[0] || '';
-      const phone = (parts[1] || '').replace(/[\s\-()]/g, '');
+      const rawPhone = parts[1] || '';
+      const phone = normalizeImportPhone(rawPhone);
       const email = parts[2] || '';
 
       let valid = true;
@@ -381,13 +382,13 @@ export default function CustomersPage() {
 
       if (!phone) {
         valid = false;
-        issue = 'Missing phone';
+        issue = rawPhone.trim() ? 'Invalid phone number' : 'Missing phone';
       } else if (email && !EMAIL_RE.test(email)) {
         valid = false;
         issue = 'Invalid email';
       }
 
-      return { name, phone: phone ? ensurePlus(phone) : '', email, valid, issue };
+      return { name, phone: phone || rawPhone, email, valid, issue };
     });
 
     setImportParsed(parsed);

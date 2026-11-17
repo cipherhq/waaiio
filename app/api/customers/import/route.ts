@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
-import { ensurePlus } from '@/lib/utils/phone';
+import { normalizeImportPhone } from '@/lib/customers/import-phone';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -51,13 +51,14 @@ export async function POST(request: NextRequest) {
     const row = i + 1;
 
     // Validate phone — required
-    const rawPhone = (c.phone || '').replace(/[\s\-()]/g, '');
-    if (!rawPhone) {
-      errors.push({ row, reason: 'Missing phone number' });
+    const rawPhone = c?.phone;
+    const phone = normalizeImportPhone(rawPhone);
+    if (!phone) {
+      const missing = rawPhone == null || (typeof rawPhone === 'string' && !rawPhone.trim());
+      errors.push({ row, reason: missing ? 'Missing phone number' : 'Invalid phone number' });
       skipped++;
       continue;
     }
-    const phone = ensurePlus(rawPhone);
 
     // Validate email if provided
     const email = c.email?.trim() || null;
