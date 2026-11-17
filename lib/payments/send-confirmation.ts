@@ -743,7 +743,9 @@ export async function sendProactiveConfirmation(
   }
 
   const nextStepsKind = payment.order_id ? 'ordering' : payment.campaign_id ? 'crowdfunding' : payment.invoice_id ? 'invoice' : bookingFlowType || 'payment';
-  lines.push('', 'Type *receipt* to get your receipt');
+  // #1070: this text only reaches WhatsApp with a resolved sender, and then
+  // post-completion sends the receipt PDF itself for any amount above zero.
+  if (!(payment.amount > 0)) lines.push('', 'Type *receipt* to get your receipt');
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {
