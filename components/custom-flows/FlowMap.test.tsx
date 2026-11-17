@@ -48,9 +48,9 @@ describe('Your flows list', () => {
   it('filters by name, shows Draft or Live, and selects a flow by click or keyboard', async () => {
     render(<FlowBuilder businessId="business" />);
     const list = await screen.findByRole('listbox', { name: 'Custom flows' });
-    expect(within(list).getAllByRole('option').map(option => option.textContent)).toEqual(['Lagos festLive', 'Opening hoursDraft']);
+    expect(within(list).getAllByRole('option').map(option => option.textContent)).toEqual(['Lagos festLive', 'Opening hoursNot live yet']);
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search flows' }), { target: { value: 'open' } });
-    expect(within(screen.getByRole('listbox', { name: 'Custom flows' })).getAllByRole('option').map(option => option.textContent)).toEqual(['Opening hoursDraft']);
+    expect(within(screen.getByRole('listbox', { name: 'Custom flows' })).getAllByRole('option').map(option => option.textContent)).toEqual(['Opening hoursNot live yet']);
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search flows' }), { target: { value: 'zzz' } });
     expect(screen.getByText('No flows match your search.')).toBeTruthy();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search flows' }), { target: { value: '' } });
@@ -81,17 +81,17 @@ describe('Your flows list', () => {
 
   it('treats a click or Enter on the already-selected flow as a no-op', async () => {
     await openFlow('Lagos fest');
-    const edit = screen.getByRole('button', { name: 'Edit 3. Message' });
+    const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
     fireEvent.click(edit);
     fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Changed' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
-    await screen.findByText('Draft saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved.');
     const selected = screen.getByRole('option', { name: 'Lagos fest' });
     fireEvent.click(selected);
     fireEvent.keyDown(selected, { key: 'Enter' });
     // choose() would have closed the open editor and cleared the notice.
     expect(edit.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByText('Draft saved.')).toBeTruthy();
+    expect(screen.getByText('Saved.')).toBeTruthy();
     expect(screen.queryByText('Save or discard changes to switch flows.')).toBeNull();
   });
 });
@@ -100,11 +100,11 @@ describe('Step map', () => {
   it('draws start, every step, menu branches and terminal pills', async () => {
     await openFlow('Lagos fest');
     const map = screen.getByRole('region', { name: 'Step map' });
-    expect(within(map).getByText('Customer sends FEST')).toBeTruthy();
-    for (const heading of ['1. Menu prompt', '2. Artists — Lookup', '3. Message']) expect(within(map).getByRole('heading', { name: heading })).toBeTruthy();
-    const branches = within(map).getByRole('list', { name: 'Options for 1. Menu prompt' });
+    expect(within(map).getByText('Someone sends FEST')).toBeTruthy();
+    for (const heading of ['1. Show buttons', '2. Search Artists', '3. Send a message']) expect(within(map).getByRole('heading', { name: heading })).toBeTruthy();
+    const branches = within(map).getByRole('list', { name: 'Options for 1. Show buttons' });
     expect(within(branches).getAllByRole('listitem').map(item => item.textContent)).toEqual([
-      'Artists→goes to2. Artists — Lookup', 'Say goodbye→goes to3. Message', 'Broken→goes toNot connected yet',
+      'Artists→goes to2. Search Artists', 'Say goodbye→goes to3. Send a message', 'Broken→goes toNot connected yet',
     ]);
     // Lookup without next returns to the start step at runtime; a message with next null ends.
     expect(within(map).getByText('Back to start')).toBeTruthy();
@@ -114,13 +114,13 @@ describe('Step map', () => {
 
   it('starts at the start step when there is no entry keyword', async () => {
     await openFlow('Opening hours');
-    expect(within(screen.getByRole('region', { name: 'Step map' })).getByText('Starts at 1. Message')).toBeTruthy();
-    expect(screen.getAllByText('Draft').length).toBeGreaterThan(0);
+    expect(within(screen.getByRole('region', { name: 'Step map' })).getByText('Starts at 1. Send a message')).toBeTruthy();
+    expect(screen.getAllByText('Not live yet').length).toBeGreaterThan(0);
   });
 
   it('opens a step editor in place when the step is clicked, without any request', async () => {
     await openFlow('Lagos fest');
-    const edit = screen.getByRole('button', { name: 'Edit 3. Message' });
+    const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
     expect(edit.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByDisplayValue('Goodbye for now')).toBeNull();
     fireEvent.click(edit);
@@ -129,7 +129,7 @@ describe('Step map', () => {
     expect((within(editor).getByLabelText('Message') as HTMLTextAreaElement).value).toBe('Goodbye for now');
     fireEvent.change(within(editor).getByLabelText('Message'), { target: { value: 'See you soon' } });
     expect(within(screen.getByRole('region', { name: 'Step map' })).getByText('See you soon', { selector: 'p' })).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Publish flow' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Go live' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(edit);
     expect(screen.queryByLabelText('Message', { selector: 'textarea' })).toBeNull();
     expect(posts).toHaveLength(0);
@@ -137,23 +137,23 @@ describe('Step map', () => {
 
   it('keeps open step editors after save, check, publish and reset of the same flow, and resets them for another flow', async () => {
     await openFlow('Lagos fest');
-    const editButton = () => screen.getByRole('button', { name: 'Edit 3. Message' });
+    const editButton = () => screen.getByRole('button', { name: 'Edit 3. Send a message' });
     fireEvent.click(editButton());
-    expect(screen.getByRole('button', { name: 'Edit 1. Menu prompt' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
     fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Bye' } });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    for (const [button, notice] of [['Save draft', 'Draft saved.'], ['Check for problems', 'No validation errors.'], ['Publish flow', 'Flow published.'], ['Reset draft to published', 'Draft reset to published.']]) {
+    for (const [button, notice] of [['Save', 'Saved.'], ['Check for problems', 'No problems found.'], ['Go live', 'Your flow is live.'], ['Go back to live version', 'Back to the live version.']]) {
       fireEvent.click(screen.getByRole('button', { name: button }));
       await screen.findByText(notice);
       expect(editButton().getAttribute('aria-expanded')).toBe('true');
-      expect(screen.getByRole('button', { name: 'Edit 1. Menu prompt' }).getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
     }
     expect(posts.map(post => post.action)).toEqual(['save', 'validate', 'publish', 'restore']);
     fireEvent.click(screen.getByRole('option', { name: 'Opening hours' }));
-    expect(screen.getByRole('button', { name: 'Edit 1. Message' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Edit 1. Send a message' }).getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(screen.getByRole('option', { name: 'Lagos fest' }));
     expect(editButton().getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByRole('button', { name: 'Edit 1. Menu prompt' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
   });
 
   it('treats any empty message next as Ends and any empty lookup next as Back to start', async () => {
@@ -178,7 +178,7 @@ describe('Step map', () => {
     fireEvent.click(settings);
     expect(settings.getAttribute('aria-expanded')).toBe('true');
     expect((screen.getByRole('textbox', { name: 'Greeting' }) as HTMLInputElement).value).toBe('Welcome');
-    expect(screen.getByRole('combobox', { name: 'Start block' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'First step' })).toBeTruthy();
   });
 });
 

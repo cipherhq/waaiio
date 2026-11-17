@@ -26,18 +26,18 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.restoreAllMocks();});
 async function openRow(onDirty=vi.fn(),onSaved=vi.fn()){
   render(<TableEditor businessId="business" flowId="flow" onDirty={onDirty} onSaved={onSaved}/>);
   await screen.findByRole('option',{name:'items'});
-  fireEvent.change(screen.getByLabelText('Table name'),{target:{value:'table'}});
-  await waitFor(()=>expect((screen.getByRole('combobox',{name:'Row code'}) as HTMLSelectElement).disabled).toBe(false));
-  fireEvent.change(screen.getByRole('combobox',{name:'Row code'}),{target:{value:'row'}});
+  fireEvent.change(screen.getByLabelText('Choose a list'),{target:{value:'table'}});
+  await waitFor(()=>expect((screen.getByRole('combobox',{name:'Short code'}) as HTMLSelectElement).disabled).toBe(false));
+  fireEvent.change(screen.getByRole('combobox',{name:'Short code'}),{target:{value:'row'}});
   return {onDirty,onSaved};
 }
 describe('guided merchant interactions',()=>{
   it('retries template setup with the same request identity and keeps inputs on failure',async()=>{
     const created=vi.fn();render(<FlowSetup businessId="business" template="festival_info" onCreated={created} onCancel={vi.fn()}/>);
-    fireEvent.change(screen.getByLabelText('Entry keyword'),{target:{value:'MYINFO'}});
-    fail=true;fireEvent.click(screen.getByRole('button',{name:'Save draft'}));
-    await screen.findByRole('alert');expect((screen.getByLabelText('Entry keyword') as HTMLInputElement).value).toBe('MYINFO');
-    fail=false;fireEvent.click(screen.getByRole('button',{name:'Save draft'}));
+    fireEvent.change(screen.getByLabelText('Word people send to start'),{target:{value:'MYINFO'}});
+    fail=true;fireEvent.click(screen.getByRole('button',{name:'Create flow'}));
+    await screen.findByRole('alert');expect((screen.getByLabelText('Word people send to start') as HTMLInputElement).value).toBe('MYINFO');
+    fail=false;fireEvent.click(screen.getByRole('button',{name:'Create flow'}));
     await waitFor(()=>expect(created).toHaveBeenCalledOnce());
     expect(posts[0].id).toBe(posts[1].id);expect(posts[0].bindings).toEqual(['name']);expect(posts[0].template).toBe('festival_info');
   });
@@ -45,27 +45,27 @@ describe('guided merchant interactions',()=>{
     const {onDirty,onSaved}=await openRow();
     fireEvent.change(screen.getByLabelText('Name *'),{target:{value:'After'}});
     expect(onDirty).toHaveBeenLastCalledWith(true);
-    fireEvent.click(screen.getByRole('button',{name:'Save table changes'}));
+    fireEvent.click(screen.getByRole('button',{name:'Save list'}));
     await waitFor(()=>expect(onSaved).toHaveBeenCalledOnce());
     expect(posts[0]).toMatchObject({action:'save_row',updatedAt:'old',data:{name:'After'}});
     expect(posts.some(p=>p.action==='publish')).toBe(false);expect(onDirty).toHaveBeenLastCalledWith(false);
   });
   it('keeps row edits on conflict rather than overwriting them',async()=>{
     await openRow();fireEvent.change(screen.getByLabelText('Name *'),{target:{value:'Keep this'}});conflict=true;
-    fireEvent.click(screen.getByRole('button',{name:'Save table changes'}));
+    fireEvent.click(screen.getByRole('button',{name:'Save list'}));
     await screen.findByText('Another editor changed this information. Reload before saving.');
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Keep this');
-    expect((screen.getByLabelText('Table name') as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Choose a list') as HTMLSelectElement).disabled).toBe(true);
   });
   it('allows names on creation but keeps existing names fixed when adding columns',async()=>{
     await openRow();
     fireEvent.click(screen.getByRole('button',{name:'Add column'}));
-    const name=screen.getAllByLabelText('Table name').find(el=>el.tagName==='INPUT') as HTMLInputElement;
+    const name=screen.getAllByLabelText('List name').find(el=>el.tagName==='INPUT') as HTMLInputElement;
     expect(name.disabled).toBe(true);expect(name.value).toBe('items');
     fireEvent.click(screen.getByRole('button',{name:'Cancel'}));
-    await waitFor(()=>expect((screen.getByRole('button',{name:'Add table'}) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button',{name:'Add table'}));
-    const newName=screen.getAllByLabelText('Table name').find(el=>el.tagName==='INPUT') as HTMLInputElement;
+    await waitFor(()=>expect((screen.getByRole('button',{name:'Add a list'}) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button',{name:'Add a list'}));
+    const newName=screen.getAllByLabelText('List name').find(el=>el.tagName==='INPUT') as HTMLInputElement;
     expect(newName.disabled).toBe(false);
     fireEvent.change(newName,{target:{value:'new_information'}});expect(newName.value).toBe('new_information');
   });
@@ -80,7 +80,7 @@ describe('guided merchant interactions',()=>{
     expect((screen.getByLabelText('Name *') as HTMLInputElement).disabled).toBe(true);
     const price=screen.getAllByLabelText('Linked price').find(el=>el.tagName==='INPUT') as HTMLInputElement;
     expect(price.disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button',{name:'Save table changes'}));
+    fireEvent.click(screen.getByRole('button',{name:'Save list'}));
     await waitFor(()=>expect(posts).toHaveLength(1));expect(posts[0].data._source).toEqual({version:1,kind:'product',id:'11111111-1111-4111-8111-111111111111'});
   });
 });
