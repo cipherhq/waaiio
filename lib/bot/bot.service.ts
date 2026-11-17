@@ -1,3 +1,4 @@
+import { isMenuSelectionToken } from './flows/capability-selection.flow';
 import { isSharedConversation, repeatSessionData, persistDirectoryEntry } from './flows/shared/navigation';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
@@ -4779,7 +4780,8 @@ export class BotService {
     }
 
     // ── Default reply fallback (unified keywords already matched above) ──
-    if (session.business_id && (step === 'select_capability' || step === 'greeting')) {
+    if (session.business_id && (step === 'select_capability' || step === 'greeting')
+      && !isDeterministicPostback && !isMenuSelectionToken(text)) {
       try {
         const customConfig = await loadBotCustomConfig(this.supabase, session.business_id);
         if (customConfig.default_reply) {

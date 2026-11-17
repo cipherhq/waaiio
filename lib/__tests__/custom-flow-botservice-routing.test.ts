@@ -790,6 +790,105 @@ describe('first contact: published custom-flow menu entry', () => {
   });
 });
 
+describe('Default Reply yields to deterministic menu routing', () => {
+  const fallback = 'Fictional unknown-message fallback';
+  beforeEach(async () => {
+    suspendedBizIds = new Set(); mockDetectionResult = { businessId: null, suggestions: [] }; vi.clearAllMocks();
+    const keywords = await import('@/lib/bot/keyword-service');
+    vi.mocked(keywords.loadBotCustomConfig).mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: fallback });
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    const keywords = await import('@/lib/bot/keyword-service');
+    vi.mocked(keywords.loadBotCustomConfig).mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null });
+  });
+  function fixture() {
+    const f = createRoutingSupabase('select_capability');
+    f.db.custom_flow_sessions = []; f.db.custom_flows = []; f.db.waitlist_entries = [];
+    f.botSession.session_data = { capabilities: ['scheduling'], _force_capability_menu: true };
+    f.db.services = [{ id: 'service-1', business_id: 'biz-A', name: 'Fictional appointment', is_active: true, status: 'active', duration_minutes: 30, price: 0, available_days: [], metadata: {}, deleted_at: null }];
+    f.supabase.rpc.mockImplementation(async (name: string, args: any) => {
+      if (name === 'get_shared_conversation') return { data: { version: 0, business_id: 'biz-A', session: structuredClone(f.botSession) }, error: null };
+      if (name === 'update_session_cas') {
+        if (args.p_expected_version !== f.botSession.version) return { data: { success: false, reason: 'version_conflict' }, error: null };
+        Object.assign(f.botSession, { version: f.botSession.version + 1, current_step: args.p_current_step, session_data: structuredClone(args.p_session_data) });
+        return { data: { success: true, version: f.botSession.version }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const bot = new BotService(f.supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+    return { ...f, cloud, bot };
+  }
+  it.each([['cap_scheduling', 'button'], ['cap_scheduling', 'list'], ['cap_scheduling', 'text'], ['1', 'text']])('routes %s/%s through the real executor exactly once', async (input, type) => {
+    const f = fixture();
+    const execute = vi.spyOn((f.bot as any).flowExecutor, 'execute');
+    const { capabilitySelectionFlow } = await import('@/lib/bot/flows/capability-selection.flow');
+    const validate = vi.spyOn(capabilitySelectionFlow.steps.find(step => step.id === 'select_capability')!, 'validate');
+    await f.bot.handleMessage(PHONE, input, type, 'pnid-1');
+    expect(execute).toHaveBeenCalledTimes(1); expect(validate).toHaveBeenCalledTimes(1);
+    expect(sentTexts(f.cloud)).not.toContain(fallback);
+    expect(f.botSession.current_step).not.toBe('select_capability');
+    expect(f.botSession.session_data.active_capability).toBe('scheduling');
+  });
+  it.each(['99', 'cap_unavailable', 'cap_appointment'])('leaves invalid or unavailable %s to existing validation, not fallback', async input => {
+    const f = fixture();
+    const execute = vi.spyOn((f.bot as any).flowExecutor, 'execute');
+    const { capabilitySelectionFlow } = await import('@/lib/bot/flows/capability-selection.flow');
+    const validate = vi.spyOn(capabilitySelectionFlow.steps.find(step => step.id === 'select_capability')!, 'validate');
+    await f.bot.handleMessage(PHONE, input, 'text', 'pnid-1');
+    expect(execute).toHaveBeenCalledTimes(1); expect(validate).toHaveBeenCalledTimes(1);
+    expect(sentTexts(f.cloud)).not.toContain(fallback);
+    expect(f.botSession.current_step).toBe('select_capability');
+    expect(f.botSession.session_data.active_capability).toBeUndefined();
+  });
+  it.each(['button', 'list', 'text'])('routes the reported cap_appointment case with current entitlement (%s)', async type => {
+    const capabilities = await import('@/lib/capabilities/service');
+    const configured = vi.mocked(capabilities.getConfiguredCapabilities);
+    const original = configured.getMockImplementation()!;
+    configured.mockResolvedValue({ ok: true, rows: [{ capability: 'appointment', is_enabled: true, sort_order: 0 }] } as any);
+    try {
+      const f = fixture();
+      f.botSession.session_data.capabilities = ['appointment'];
+      f.db.business_capabilities = [{ business_id: 'biz-A', capability: 'appointment', is_enabled: true, sort_order: 0 }];
+      f.db.appointments = [{ id: 'appointment-1', business_id: 'biz-A', name: 'Fictional session', duration_minutes: 30, is_active: true, price: 0, available_days: [], metadata: {} }];
+      const execute = vi.spyOn((f.bot as any).flowExecutor, 'execute');
+      await f.bot.handleMessage(PHONE, 'cap_appointment', type, 'pnid-1');
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(sentTexts(f.cloud)).not.toContain(fallback);
+      expect(f.botSession.session_data.active_capability).toBe('appointment');
+      expect(f.botSession.current_step).not.toBe('select_capability');
+    } finally { configured.mockImplementation(original); }
+  });
+  it('does not bypass current capability denial when skipping fallback', async () => {
+    const capabilities = await import('@/lib/capabilities/service');
+    const configured = vi.mocked(capabilities.getConfiguredCapabilities);
+    const original = configured.getMockImplementation()!;
+    configured.mockResolvedValue({ ok: true, rows: [{ capability: 'scheduling', is_enabled: false, sort_order: 0 }] } as any);
+    try {
+      const f = fixture();
+      f.db.business_capabilities = [{ business_id: 'biz-A', capability: 'scheduling', is_enabled: false, sort_order: 0 }];
+      await f.bot.handleMessage(PHONE, 'cap_scheduling', 'button', 'pnid-1');
+      expect(sentTexts(f.cloud)).not.toContain(fallback);
+      expect(f.botSession.session_data.active_capability).toBeUndefined();
+      expect(f.botSession.current_step).toBe('select_capability');
+    } finally { configured.mockImplementation(original); }
+  });
+  it('preserves configured fallback for unknown free text without invoking the executor', async () => {
+    const f = fixture(); const execute = vi.spyOn((f.bot as any).flowExecutor, 'execute');
+    await f.bot.handleMessage(PHONE, 'unrecognised fictional phrase', 'text', 'pnid-1');
+    expect(sentTexts(f.cloud)).toContain(fallback); expect(execute).not.toHaveBeenCalled();
+  });
+  it('preserves executor routing when no fallback is configured', async () => {
+    const keywords = await import('@/lib/bot/keyword-service');
+    vi.mocked(keywords.loadBotCustomConfig).mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null });
+    const f = fixture(); const execute = vi.spyOn((f.bot as any).flowExecutor, 'execute');
+    await f.bot.handleMessage(PHONE, 'cap_scheduling', 'button', 'pnid-1');
+    expect(execute).toHaveBeenCalledTimes(1); expect(f.botSession.session_data.active_capability).toBe('scheduling');
+  });
+});
+
 // ── #1086: "Use what you already have" handoff through the real BotService ──
 
 describe('Custom Flow handoff — the existing flow takes over through BotService (#1086)', () => {
