@@ -276,7 +276,7 @@ describe('#1072 stable postbacks', () => {
     expect(allText(send3)).toMatch(/list has changed/i);
   });
 
-  it('a past business button opens it as a past pick after an eligibility check', async () => {
+  it('a past business button opens it as a past pick after a reachability check (#1083)', async () => {
     const { db } = directoryFakeDb([biz(uid(9), 'Old Spa', { bot_code: 'OLDSPA' })]);
     expect(await handleDirectorySelection(db, sender(), PHONE, `dir_biz_${uid(9)}`, session()))
       .toEqual({ businessId: uid(9), botCode: 'OLDSPA', source: 'past' });

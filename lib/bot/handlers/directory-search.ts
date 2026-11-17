@@ -587,12 +587,29 @@ async function sendFuzzySuggestions(
 // ── Result selection ──────────────────────────────────────
 
 /**
+ * A business a customer has used before may be re-entered when it is active, has a
+ * bot code and is not messaging-suspended. Directory visibility (merchant
+ * discovery_enabled, admin directory_hidden) does not apply (#1083). Fails closed.
+ */
+async function isBusinessReachable(supabase: SupabaseClient, businessId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('id', businessId)
+    .eq('status', 'active')
+    .not('bot_code', 'is', null)
+    .eq('messaging_suspended', false)
+    .maybeSingle();
+  return !error && !!data;
+}
+
+/**
  * Handle user tapping a search result, close match or past business.
  * Returns the business to enter, or null (any reply already sent).
  *
  * #1072: dir_biz_<uuid> must name a business in this session's stored results,
  * close matches or past businesses; results and close matches are re-checked for
- * directory eligibility. A legacy index postback (dir_result_N / dir_sug_N) is
+ * directory eligibility, past businesses for being reachable (#1083). A legacy index postback (dir_result_N / dir_sug_N) is
  * honoured only for a session written before id postbacks; otherwise, or when out
  * of range, the customer is asked to search again — never a different business.
  */
@@ -627,8 +644,9 @@ export async function handleDirectorySelection(
     if (hit) return pickIfEligible(hit);
     const past = (sessionData.suggestions || []).find((p) => p.id.toLowerCase() === id);
     if (past?.bot_code) {
-      // Past businesses are re-checked like results (#1072 review).
-      if (await isBusinessDirectoryEligible(supabase, past.id)) {
+      // Past businesses are re-checked (#1072 review), but only for being active:
+      // a business hidden from the directory stays open to its past customers (#1083).
+      if (await isBusinessReachable(supabase, past.id)) {
         return { businessId: past.id, botCode: past.bot_code, source: 'past' };
       }
       await send.sendPlatformText(from, getFlowCopy(lang, 'directory.business_unavailable'));

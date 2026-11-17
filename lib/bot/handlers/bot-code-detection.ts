@@ -427,6 +427,7 @@ export async function findReturningCustomerBusinesses(
     .select('id, name, bot_code')
     .in('id', uniqueBusinessIds)
     .eq('status', 'active')
+    .eq('messaging_suspended', false) // suspended businesses are unreachable (#1083)
     .not('bot_code', 'is', null);
 
   if (!businesses || businesses.length === 0) return [];
