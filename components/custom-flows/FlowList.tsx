@@ -48,7 +48,7 @@ export function FlowList({ flows, selectedId, disabled, lockedMessage, onChoose 
         className="min-h-11 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder:text-gray-400" />
     </label>
     {flows.length > 0 && visible.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">No flows match your search.</p>}
-    {flows.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">No flows yet. Start with a template or start blank.</p>}
+    {flows.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">No flows yet. Pick a starting point to make one.</p>}
     {disabled && lockedMessage && <p id="flow-list-locked" className="text-sm text-amber-800 dark:text-amber-200">{lockedMessage}</p>}
     {visible.length > 0 && <ul ref={list} role="listbox" aria-label="Custom flows" aria-describedby={disabled && lockedMessage ? 'flow-list-locked' : undefined} className="space-y-1">
       {visible.map((flow, index) => {
@@ -57,13 +57,13 @@ export function FlowList({ flows, selectedId, disabled, lockedMessage, onChoose 
           aria-describedby={`flow-status-${flow.id}`} tabIndex={flow.id === tabbable ? 0 : -1}
           onFocus={() => setFocusId(flow.id)} onKeyDown={event => onKeyDown(event, index, flow.id)}
           onClick={() => { if (!disabled && flow.id !== selectedId) onChoose(flow.id); }}
-          className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand ${selected
+          className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand dark:focus-visible:outline-brand-300 ${selected
             ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-100'
             : 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'} ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}>
           <span className="min-w-0 truncate">{flow.name}</span>
           <span id={`flow-status-${flow.id}`} aria-hidden="true" className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${flow.live
             ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200'
-            : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{flow.live ? 'Live' : 'Draft'}</span>
+            : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{flow.live ? 'Live' : 'Not live yet'}</span>
         </li>;
       })}
     </ul>}

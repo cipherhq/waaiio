@@ -31,31 +31,32 @@ export function WhatsAppPreview({
   onReplySubmit: () => void;
 }) {
   const initial = title.trim().charAt(0).toUpperCase() || 'W';
-  return <aside aria-busy={previewBusy} className="h-fit space-y-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 xl:sticky xl:top-6">
+  return <aside aria-busy={previewBusy} className="h-fit space-y-3 rounded-2xl border border-brand-100 bg-brand-50 p-4 shadow-sm dark:border-brand-900 dark:bg-brand-900/30">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100">
-        Preview draft
+        What people see on WhatsApp
         {previewBusy && <span aria-hidden="true" className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />}
       </h2>
       <button type="button" disabled={!canRestart} onClick={onRestart}
-        className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-40 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
+        className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 disabled:opacity-40 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
         Restart preview
       </button>
     </div>
-    <p className="text-sm text-gray-600 dark:text-gray-400">Preview only. No messages are sent.</p>
+    <p className="text-sm text-gray-600 dark:text-gray-400">Only you see this test chat. Nothing is sent to anyone.</p>
     {feedback}
-    <div className="overflow-hidden rounded-[1.75rem] border-4 border-gray-900 shadow-lg dark:border-gray-950">
+    <div className="mx-auto max-w-sm overflow-hidden rounded-[2rem] border-[6px] border-gray-900 bg-gray-900 shadow-xl ring-1 ring-brand-200 dark:border-gray-950 dark:ring-brand-800">
+      <div aria-hidden="true" className="flex justify-center bg-gray-900 pb-1"><span className="h-1.5 w-16 rounded-full bg-gray-700" /></div>
       <div className="flex items-center gap-3 bg-[#075E54] px-4 py-3">
         <div aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">{initial}</div>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-white">{title}</p>
-          <p className="text-xs text-green-100">{previewBusy ? 'typing…' : 'Draft preview'}</p>
+          <p className="text-xs text-green-100">{previewBusy ? 'typing…' : 'Test chat'}</p>
         </div>
       </div>
       {/* Only this transcript scrolls; FlowBuilder sets scrollTop without moving focus. */}
       <div ref={transcriptRef} aria-live="polite"
         className="h-96 space-y-2 overflow-y-auto overscroll-contain bg-[#ECE5DD] p-3 dark:bg-[#0B141A] xl:h-[28rem]">
-        {messages.length === 0 && <p className="mx-auto mt-6 max-w-[16rem] rounded-lg bg-[#FFF5C4] px-3 py-2 text-center text-xs text-gray-800 dark:bg-[#1F2C33] dark:text-gray-200">Select Restart preview to try this draft as a customer.</p>}
+        {messages.length === 0 && <p className="mx-auto mt-6 max-w-[16rem] rounded-lg bg-[#FFF5C4] px-3 py-2 text-center text-xs text-gray-800 dark:bg-[#1F2C33] dark:text-gray-200">Select Try it or Restart preview to chat with your flow like a customer.</p>}
         {messages.map((message, index) => {
           const history = index <= lastInputIndex;
           return <div key={index} className={`flex ${message.input ? 'justify-end' : 'justify-start'}`}>
@@ -89,7 +90,7 @@ export function WhatsAppPreview({
         </label>
         <button disabled={busy || !messages.length || !reply.trim()}
           className="flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-[#00796B] px-4 text-sm font-semibold text-white hover:bg-[#00695C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00796B] disabled:opacity-40">
-          Preview draft
+          Send
         </button>
       </form>
     </div>
