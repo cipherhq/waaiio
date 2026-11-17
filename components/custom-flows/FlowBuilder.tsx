@@ -12,14 +12,16 @@ import { TableEditor } from './TableEditor';
 import { FlowList } from './FlowList';
 import { FlowMap } from './FlowMap';
 import { WhatsAppPreview } from './WhatsAppPreview';
-import { StepPalette, WORKING_STEPS } from './StepPalette';
+import { StepPalette, WORKING_STEPS, type NewStep } from './StepPalette';
+import { HandoffSettings } from './HandoffSettings';
+import { HANDOFF_FEATURE_NAME } from '@/lib/bot/custom-flow/handoff-copy';
 import { LookupSettings } from './LookupSettings';
 import { TemplateGallery, type SetupChoice } from './TemplateGallery';
 import { Walkthrough } from './Walkthrough';
 import { Field, buttonClass, cardClass, inputClass, lavenderClass } from './ui';
 import { BUSINESS_FIELDS,businessValue,type BusinessField,type DataTable } from '@/lib/bot/custom-flow/data';
 import { toggleSection } from '@/lib/custom-flow-builder/templates';
-import { friendlyErrors } from '@/lib/custom-flow-builder/friendly-errors';
+import { friendlyErrors, stepName } from '@/lib/custom-flow-builder/friendly-errors';
 
 interface FlowRow { id: string; definition: EditableFlow; version: number; published_definition: EditableFlow | null; published_version: number | null }
 interface Props { businessId: string; language?: string; timezone?: string; currency?: string; businessDetails?:Partial<Record<BusinessField,unknown>> }
@@ -32,6 +34,7 @@ const STEP_TIPS: Record<CustomFlowNode['type'], string> = {
   message: 'A message sends text, and a picture if you like. Example: “The retreat starts Friday at 6pm. Bring a Bible and a warm jacket.”',
   menu: 'Buttons let people tap a choice instead of typing. Example: Program, Rooms and Questions, each going to its own step.',
   lookup: 'Search my list lets people type a word and get the matching row from your list. Example: someone types “Saturday” and gets Saturday’s program.',
+  handoff: 'This step passes people to something you already have, such as your event tickets or giving. Example: a “Buy a ticket” button that opens tickets for your retreat.',
 };
 const SETTING_HELP = {
   name: ['Flow name', 'Only you see this name. It helps you find the flow later.', 'Example: Youth retreat 2026'],
@@ -161,13 +164,14 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   }
   function updateNode(next: CustomFlowNode) { if (draft) edit({ ...draft, nodes: draft.nodes.map(node => node.id === next.id ? next : node) }); }
   /** Same new step as before; dropped on a "Show buttons" step it also gets a new button there. */
-  function add(type: CustomFlowNode['type'], branchOf?: string) {
+  function add(type: NewStep, branchOf?: string) {
     // A pending request would replace the draft when it returns, so nothing is added meanwhile.
     if (!draft || busy) return;
     const id = crypto.randomUUID();
     const node: CustomFlowNode = type === 'message' ? { id, type, text: '', next: null }
       : type === 'menu' ? { id, type, text: '', options: [] }
-      : { id, type, table: '', search_fields: [], prompt: '', reply: '', no_match: '' };
+      : type === 'lookup' ? { id, type, table: '', search_fields: [], prompt: '', reply: '', no_match: '' }
+      : { id, type: 'handoff', capability: type.slice('handoff:'.length) as Extract<CustomFlowNode, { type: 'handoff' }>['capability'] };
     let next = appendBlock(draft, node);
     if (branchOf) next = { ...next, nodes: next.nodes.map(item => item.id === branchOf && item.type === 'menu' && item.options.length < 10 ? { ...item, options: [...item.options, { label: '', next: id }] } : item) };
     edit(next);
@@ -215,8 +219,13 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           missing_business_settings: 'Missing business information. Update Settings first.',
           incomplete_sections: 'Add complete visible information to each selected section, or turn that section off.',
           invalid_definition: 'Some steps aren’t finished yet. Fix them, then try again.',
+          unavailable_handoff_record: 'A step uses an event or option that is no longer available. Open it and choose again.',
         };
-        setNotice(notices[body.error] ?? 'Unable to save changes. Try again.');
+        const unavailableStep = body.error === 'unavailable_handoff_record' && Array.isArray(body.nodes) && body.nodes.length
+          ? draft.nodes.findIndex(node => node.id === body.nodes[0]) : -1;
+        setNotice(unavailableStep >= 0
+          ? `${stepName(draft, draft.nodes[unavailableStep].id)} uses an event or option that is no longer available. Open it and choose again.`
+          : notices[body.error] ?? 'Unable to save changes. Try again.');
         return;
       }
       if (body.flow) {
@@ -285,6 +294,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       </>}
       {node.type === 'lookup' && <LookupSettings businessId={businessId} flowId={row?.id ?? null} node={node} lists={lists} business={businessDetails} busy={busy}
         onChange={updateNode} destination={props => destination(node.next, value => updateNode({ ...node, next: value }), false, props)} />}
+      {node.type === 'handoff' && <HandoffSettings businessId={businessId} node={node} onChange={updateNode} />}
       <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-gray-700">
         <button className={`${buttonClass} text-red-700 dark:text-red-300`} onClick={() => removeStep(node.id)}>Remove this step</button>
       </div>
@@ -387,7 +397,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
               onDropStep={(type, branchOf) => add(type, branchOf)} onMoveStep={moveStep} />
             <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
               <span aria-hidden="true" className="text-lg leading-none">💡</span>
-              <p aria-live="polite"><span className="font-semibold">{soon ? 'Coming soon' : selected ? WORKING_STEPS.find(step => step.type === selected.type)?.name : 'Tip'}: </span>{tip}</p>
+              <p aria-live="polite"><span className="font-semibold">{soon ? 'Coming soon' : selected ? (selected.type === 'handoff' ? HANDOFF_FEATURE_NAME[selected.capability] : WORKING_STEPS.find(step => step.type === selected.type)?.name) : 'Tip'}: </span>{tip}</p>
             </div>
           </fieldset>
           <section aria-labelledby="flow-data-heading" className={`${cardClass} order-5 min-w-0 space-y-6 lg:order-none`}>

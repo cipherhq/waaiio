@@ -4,7 +4,8 @@ import { useState, type DragEvent, type ReactNode } from 'react';
 import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import type { EditableFlow } from '@/lib/custom-flow-builder/order';
 import { blockLabel } from '@/lib/custom-flow-builder/block-label';
-import { STEP_ICON } from './StepPalette';
+import { isNewStep, stepIcon, type NewStep } from './StepPalette';
+import { HANDOFF_FEATURE_NAME } from '@/lib/bot/custom-flow/handoff-copy';
 import { Icons, MOVE_STEP_TYPE, NEW_STEP_TYPE, hasDragType } from './ui';
 
 /**
@@ -14,17 +15,18 @@ import { Icons, MOVE_STEP_TYPE, NEW_STEP_TYPE, hasDragType } from './ui';
  * operations (appendBlock / reorderFlow); nothing here changes the graph.
  */
 
-const TYPE_NAME: Record<CustomFlowNode['type'], string> = { message: 'Message', menu: 'Buttons', lookup: 'Search my list' };
+const TYPE_NAME: Record<CustomFlowNode['type'], string> = { message: 'Message', menu: 'Buttons', lookup: 'Search my list', handoff: 'Use what you already have' };
 
-type Exit = { kind: 'end' | 'start' | 'jump' | 'missing'; label: string } | null;
+type Exit = { kind: 'end' | 'start' | 'jump' | 'missing' | 'handoff'; label: string } | null;
 
-function Pill({ tone, children }: { tone: 'start' | 'end' | 'loop' | 'warn' | 'jump'; children: ReactNode }) {
+function Pill({ tone, children }: { tone: 'start' | 'end' | 'loop' | 'warn' | 'jump' | 'use'; children: ReactNode }) {
   const styles = {
     start: 'bg-whatsapp text-gray-900',
     end: 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900',
     loop: 'bg-brand-50 text-brand-700 ring-1 ring-brand-200 dark:bg-brand-900/50 dark:text-brand-100 dark:ring-brand-700',
     warn: 'bg-red-50 text-red-700 ring-1 ring-red-200 dark:bg-red-950/50 dark:text-red-200 dark:ring-red-800',
     jump: 'bg-white text-gray-700 ring-1 ring-gray-300 dark:bg-gray-900 dark:text-gray-200 dark:ring-gray-600',
+    use: 'bg-amber-100 text-amber-900 ring-1 ring-amber-300 dark:bg-amber-900/50 dark:text-amber-100 dark:ring-amber-700',
   }[tone];
   return <span className={`inline-flex max-w-full items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${styles}`}>{children}</span>;
 }
@@ -34,7 +36,7 @@ function Connector() {
 }
 
 /** Dashed lavender target for a step dragged from the palette. */
-function DropZone({ label, disabled, onDropStep }: { label: string; disabled?: boolean; onDropStep: (type: CustomFlowNode['type']) => void }) {
+function DropZone({ label, disabled, onDropStep }: { label: string; disabled?: boolean; onDropStep: (type: NewStep) => void }) {
   const [over, setOver] = useState(false);
   const accepts = (event: DragEvent) => !disabled && hasDragType(event.dataTransfer?.types, NEW_STEP_TYPE);
   return <div data-drop-zone="" aria-hidden={disabled || undefined}
@@ -46,7 +48,7 @@ function DropZone({ label, disabled, onDropStep }: { label: string; disabled?: b
       if (!accepts(event)) return;
       event.preventDefault();
       const type = event.dataTransfer.getData(NEW_STEP_TYPE);
-      if (type === 'message' || type === 'menu' || type === 'lookup') onDropStep(type);
+      if (isNewStep(type)) onDropStep(type);
     }}
     className={`rounded-xl border-2 border-dashed px-4 py-3 text-center text-sm font-medium transition-colors duration-150 motion-reduce:transition-none ${disabled ? 'border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400' : over ? 'border-brand bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-50' : 'border-brand-200 bg-brand-50/60 text-brand-700 dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-100'}`}>
     {label}
@@ -65,7 +67,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
   /** When false (wide screens), open editors are drawn beside the phone instead. */
   inlineEditors?: boolean;
   /** A palette step was dropped: at the end, or as a new button of a menu. */
-  onDropStep?: (type: CustomFlowNode['type'], branchOf?: string) => void;
+  onDropStep?: (type: NewStep, branchOf?: string) => void;
   /** A step was dragged onto another step's place. */
   onMoveStep?: (id: string, toIndex: number) => void;
 }) {
@@ -81,6 +83,8 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
 
   function exitFor(node: CustomFlowNode, index: number): Exit {
     if (node.type === 'menu') return null;
+    // The existing feature takes over and ends with its own menu (#1086).
+    if (node.type === 'handoff') return { kind: 'handoff', label: `Continues in ${HANDOFF_FEATURE_NAME[node.capability] ?? 'your feature'}` };
     // Same runtime rules as the engine: a message with no next (any falsy value)
     // ends; a lookup with no next returns to the start step.
     const next = node.type === 'lookup' ? node.next || startId : node.next;
@@ -119,9 +123,10 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
         const label = `${index + 1}. ${blockLabel(node, draft.guided)}`;
         const open = editable && openSteps.includes(node.id);
         const exit = exitFor(node, index);
-        const summary = node.type === 'lookup' ? node.prompt || (node.table ? `Searches ${node.table}` : '') : node.text;
+        const summary = node.type === 'lookup' ? node.prompt || (node.table ? `Searches ${node.table}` : '')
+          : node.type === 'handoff' ? handoffSummary(node) : node.text;
         const panelId = `flow-step-${node.id}`;
-        const Icon = STEP_ICON[node.type];
+        const Icon = stepIcon(node);
         return <li key={node.id}>
           <Connector />
           <div
@@ -134,7 +139,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
               const id = event.dataTransfer.getData(MOVE_STEP_TYPE);
               if (id && id !== node.id) onMoveStep?.(id, index);
             }}
-            className={`rounded-xl border border-l-4 border-l-brand bg-white shadow-sm transition-shadow duration-150 motion-reduce:transition-none dark:bg-gray-800 ${open && node.id === selectedId ? 'border-brand ring-2 ring-brand/30' : open ? 'border-brand-300' : 'border-gray-200 dark:border-gray-700'} ${target === index && moving !== node.id ? 'ring-2 ring-accent' : ''} ${moving === node.id ? 'opacity-60' : ''}`}>
+            className={`rounded-xl border border-l-4 ${node.type === 'handoff' ? 'border-l-accent' : 'border-l-brand'} bg-white shadow-sm transition-shadow duration-150 motion-reduce:transition-none dark:bg-gray-800 ${open && node.id === selectedId ? 'border-brand ring-2 ring-brand/30' : open ? 'border-brand-300' : 'border-gray-200 dark:border-gray-700'} ${target === index && moving !== node.id ? 'ring-2 ring-accent' : ''} ${moving === node.id ? 'opacity-60' : ''}`}>
             <div className="relative flex items-start gap-3 p-4">
               {editable && <span draggable={canDrag} title="Drag to move this step" aria-hidden="true"
                 onDragStart={event => { if (!canDrag) { event.preventDefault(); return; } event.dataTransfer.setData(MOVE_STEP_TYPE, node.id); event.dataTransfer.effectAllowed = 'move'; setMoving(node.id); }}
@@ -176,7 +181,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
           {exit && <>
             <Connector />
             <div className="flex justify-center">
-              <Pill tone={exit.kind === 'end' ? 'end' : exit.kind === 'start' ? 'loop' : exit.kind === 'missing' ? 'warn' : 'jump'}>
+              <Pill tone={exit.kind === 'end' ? 'end' : exit.kind === 'start' ? 'loop' : exit.kind === 'missing' ? 'warn' : exit.kind === 'handoff' ? 'use' : 'jump'}>
                 <span className="truncate">{exit.label}</span>
               </Pill>
             </div>
@@ -189,4 +194,11 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
       <DropZone label="Drop a step here" disabled={busy} onDropStep={type => onDropStep(type)} />
     </div>}
   </section>;
+}
+
+/** One line for a handoff step's card. The chosen record's name lives in its settings. */
+function handoffSummary(node: Extract<CustomFlowNode, { type: 'handoff' }>): string {
+  if (node.capability === 'chat') return 'Passes the chat to your team.';
+  if (node.capability === 'ticketing') return node.record_id ? 'Opens the ticket steps for one of your events.' : 'Shows your upcoming events.';
+  return node.record_id ? 'Opens your usual payment steps for one option.' : 'Shows your options to choose from.';
 }
