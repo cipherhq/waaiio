@@ -14,6 +14,9 @@ import { logger } from '@/lib/logger';
 import { formatDistance } from '@/lib/constants';
 import { detectCategoryIntent } from '@/lib/bot/fuzzy-match';
 import { resolveCompoundLocation, resolveLocation } from './location-resolver';
+import { normalizePlace, type ResolvedPlace } from './place-aliases';
+import { getLocalNow, timezoneFitsCountry } from '@/lib/bot/flows/shared/table-same-day';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 // ── Public types ───────────────────────────────────────
 
@@ -36,6 +39,11 @@ export interface MarketplaceSearchCriteria {
   excludeIds?: string[];
   /** Neighbourhood / street hint — AND-combined with locationText. */
   _addressHint?: string;
+  /**
+   * Directory place (#1072): matched against neighborhood, city, state and address,
+   * ranked area/city first, then the rest of its state. Use instead of locationText.
+   */
+  place?: ResolvedPlace;
 }
 
 export interface MarketplaceResult {
@@ -51,6 +59,10 @@ export interface MarketplaceResult {
   phone?: string;
   botCode?: string;
   city?: string;
+  /** State / region as stored on the business. */
+  state?: string;
+  /** Area / neighbourhood as stored on the business. */
+  neighborhood?: string;
   slug?: string;
   countryCode?: string;
   matchReasons: string[];
@@ -69,6 +81,8 @@ interface BusinessRow {
   bot_code: string | null;
   city: string | null;
   state: string | null;
+  neighborhood: string | null;
+  timezone: string | null;
   slug: string | null;
   country_code: string | null;
   latitude: number | null;
@@ -96,6 +110,13 @@ interface BusinessRow {
 
 /** Maximum results the directory will return in a single request. */
 const DIRECTORY_MAX_RESULTS = 50;
+
+/**
+ * Rows ranked before the page is cut (#1072). Rows are fetched in a fixed SQL
+ * order (name, id) and every fetched row is scored, so the page is never an
+ * unordered sample of the matches.
+ */
+const RANK_POOL = 200;
 
 /** UUID v4 format regex for excludeIds validation. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -257,6 +278,14 @@ export async function searchMarketplace(
     addressHint = validatedHint;
   }
 
+  // Directory place (#1072): every value is re-validated before it reaches a filter.
+  let placeClauses: string[] | null = null;
+  if (criteria.place !== undefined) {
+    placeClauses = buildPlaceClauses(criteria.place);
+    if (!placeClauses) return invalidLocation();
+    if (criteria.place.countryCode) locationCountry = criteria.place.countryCode;
+  }
+
   if (locationCountry && criteria.country && criteria.country !== locationCountry) {
     return invalidLocation();
   }
@@ -280,7 +309,8 @@ export async function searchMarketplace(
         .select(
           'id, name, category, description, address, phone, bot_code, city, slug, country_code, ' +
           'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
-          'supports_delivery, max_group_size, is_verified, metadata, operating_hours, state',
+          'supports_delivery, max_group_size, is_verified, metadata, operating_hours, state, ' +
+          'neighborhood, timezone',
         ),
     );
 
@@ -316,6 +346,10 @@ export async function searchMarketplace(
       );
     }
 
+    if (placeClauses) {
+      query = query.or(placeClauses.join(','));
+    }
+
     // Delivery filter
     if (criteria.supportsDelivery) {
       query = query.eq('supports_delivery', true);
@@ -340,8 +374,9 @@ export async function searchMarketplace(
       query = query.or(textClauses.join(','));
     }
 
-    // Fetch extra rows for scoring / filtering
-    query = query.limit(limit * 3);
+    // Fixed SQL order, then score every fetched row before the page is cut (#1072).
+    query = query.order('name', { ascending: true }).order('id', { ascending: true })
+      .limit(Math.max(limit * 3, RANK_POOL));
 
     const { data, error } = await query;
     const businesses = data as BusinessRow[] | null;
@@ -408,9 +443,18 @@ export async function searchMarketplace(
         reasons.push(`${formatDistance(distanceKm, countryCode)} away`);
       }
 
-      // Open now
-      const isOpen = checkIfOpen(biz.operating_hours);
-      if (criteria.openNow && !isOpen) return null;
+      // Place tier (#1072): 0 = the area/city named, 1 = elsewhere in its state.
+      // A row the SQL filter matched only by a substring (e.g. "Boyo" for "Oyo") is dropped.
+      let placeTier = 0;
+      if (criteria.place) {
+        const tier = placeTierFor(criteria.place, biz);
+        if (tier === null) return null;
+        placeTier = tier;
+      }
+
+      // Open now — only when hours are known, in the business's own timezone.
+      const isOpen = isOpenNow(biz.operating_hours, biz.timezone, biz.country_code);
+      if (criteria.openNow && isOpen !== true) return null;
       if (isOpen) {
         score += 10;
         reasons.push('Open now');
@@ -451,16 +495,19 @@ export async function searchMarketplace(
         phone: biz.phone as string | undefined,
         botCode: biz.bot_code as string | undefined,
         city: biz.city as string | undefined,
+        state: biz.state || undefined,
+        neighborhood: biz.neighborhood || undefined,
         slug: biz.slug as string | undefined,
         countryCode: biz.country_code as string | undefined,
         matchReasons: reasons,
         actions,
         _score: score,
+        _tier: placeTier,
       };
-    }).filter(Boolean) as (MarketplaceResult & { _score: number })[];
+    }).filter(Boolean) as (MarketplaceResult & { _score: number; _tier: number })[];
 
-    // Sort by score descending
-    scored.sort((a, b) => b._score - a._score);
+    // Deterministic: place tier, then score, then the SQL order (name, id) — sort is stable.
+    scored.sort((a, b) => a._tier - b._tier || b._score - a._score);
 
     const paged = scored.slice(0, limit);
     const hasMore = scored.length > limit;
@@ -475,7 +522,7 @@ export async function searchMarketplace(
 
     // Return top results without internal score
     return {
-      results: paged.map(({ _score: _, ...rest }) => rest),
+      results: paged.map(({ _score: _s, _tier: _t, ...rest }) => rest),
       ok: true,
       hasMore,
     };
@@ -575,28 +622,108 @@ function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
-function checkIfOpen(operatingHours: unknown): boolean {
-  if (!operatingHours || typeof operatingHours !== 'object') return true; // Default to open
-  const hours = operatingHours as Record<
-    string,
-    { open?: string; close?: string; closed?: boolean }
-  >;
-  const now = new Date();
-  const days = [
-    'sunday',
-    'monday',
-    'tuesday',
-    'wednesday',
-    'thursday',
-    'friday',
-    'saturday',
-  ];
-  const today = days[now.getDay()];
-  const todayHours = hours[today];
-  if (!todayHours || todayHours.closed) return false;
-  if (!todayHours.open || !todayHours.close) return true;
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const [oH, oM] = todayHours.open.split(':').map(Number);
-  const [cH, cM] = todayHours.close.split(':').map(Number);
-  return currentMinutes >= oH * 60 + oM && currentMinutes <= cH * 60 + cM;
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+function hhmm(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const m = value.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const minutes = Number(m[1]) * 60 + Number(m[2]);
+  return minutes >= 0 && minutes <= 24 * 60 ? minutes : null;
+}
+
+/**
+ * Open now (#1072), evaluated in the business's own timezone. Returns undefined
+ * when it cannot be known: no hours for today's weekday, unreadable times, or a
+ * timezone that is missing or does not fit the country (the same rule as
+ * same-day table bookings — never guess a timezone). A day marked closed is false.
+ */
+export function isOpenNow(
+  operatingHours: unknown,
+  timezone: string | null | undefined,
+  countryCode: string | null | undefined,
+  now: Date = new Date(),
+): boolean | undefined {
+  if (!operatingHours || typeof operatingHours !== 'object' || Array.isArray(operatingHours)) return undefined;
+  if (!timezoneFitsCountry(timezone, countryCode)) return undefined;
+  const local = getLocalNow(timezone, now);
+  if (!local) return undefined;
+  const [y, mo, d] = local.date.split('-').map(Number);
+  const weekday = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  const today = (operatingHours as Record<string, { open?: string; close?: string; closed?: boolean } | undefined>)[weekday];
+  if (!today || typeof today !== 'object') return undefined;
+  if (today.closed === true) return false;
+  const open = hhmm(today.open);
+  const close = hhmm(today.close);
+  if (open === null || close === null) return undefined;
+  if (close > open) return local.minutes >= open && local.minutes < close;
+  if (close < open) return local.minutes >= open || local.minutes < close; // past midnight
+  return undefined;
+}
+
+// ── Directory place matching (#1072) ───────────────────
+
+/** Short forms ("MD", "VI", "FCT") must equal the whole stored value. */
+function exactValue(column: string, term: string): string {
+  return `${column}.ilike.${sanitizeFilterValue(term)}`;
+}
+function containsValue(column: string, term: string): string {
+  return `${column}.ilike.%${sanitizeFilterValue(term)}%`;
+}
+
+/**
+ * PostgREST OR clauses for a place. Null when a term is not a safe token (the
+ * caller then reports a location problem, never runs an unfiltered search).
+ */
+export function buildPlaceClauses(place: ResolvedPlace): string[] | null {
+  const clauses: string[] = [];
+  const valid = (term: string) => validateLocationToken(term);
+  const each = (terms: string[], build: (t: string) => string[]): boolean => {
+    for (const raw of terms) {
+      const t = valid(raw);
+      if (!t) return false;
+      clauses.push(...build(t));
+    }
+    return true;
+  };
+  const ok = each(place.areaTerms, (t) => [containsValue('neighborhood', t), containsValue('city', t), containsValue('address', t)])
+    && each(place.areaExact, (t) => [exactValue('neighborhood', t), exactValue('city', t)])
+    && each(place.stateTerms, (t) => [containsValue('state', t), containsValue('city', t), containsValue('neighborhood', t), containsValue('address', t)])
+    && each(place.stateExact, (t) => [exactValue('state', t)])
+    && each(place.stateAreaTerms, (t) => [containsValue('neighborhood', t), containsValue('city', t)])
+    && each(place.stateAreaExact, (t) => [exactValue('neighborhood', t), exactValue('city', t)]);
+  if (!ok || clauses.length === 0) return null;
+  return Array.from(new Set(clauses));
+}
+
+/** Whole-word containment on normalised text ("Lekki Phase 1" contains "lekki"). */
+function hasWord(field: string | null | undefined, term: string): boolean {
+  const f = normalizePlace(field || '');
+  const t = normalizePlace(term);
+  return !!f && !!t && ` ${f} `.includes(` ${t} `);
+}
+function isExactly(field: string | null | undefined, term: string): boolean {
+  const f = normalizePlace(field || '');
+  return !!f && f === normalizePlace(term);
+}
+
+/**
+ * Rank tier of a business for a place: 0 = the area/city named (for a whole
+ * state, a business whose city or area is the state's own name), 1 = elsewhere
+ * in the same state, null = not in the place.
+ */
+export function placeTierFor(
+  place: ResolvedPlace,
+  biz: { neighborhood?: string | null; city?: string | null; state?: string | null; address?: string | null },
+): 0 | 1 | null {
+  const localFields = [biz.neighborhood, biz.city];
+  const inArea = place.areaTerms.some((t) => localFields.some((f) => hasWord(f, t)) || hasWord(biz.address, t))
+    || place.areaExact.some((t) => localFields.some((f) => isExactly(f, t)));
+  if (inArea) return 0;
+  if (place.level === 'state' && place.stateTerms.some((t) => localFields.some((f) => isExactly(f, t)))) return 0;
+  const inState = place.stateTerms.some((t) => [biz.state, ...localFields, biz.address].some((f) => hasWord(f, t)))
+    || place.stateExact.some((t) => isExactly(biz.state, t))
+    || place.stateAreaTerms.some((t) => localFields.some((f) => hasWord(f, t)))
+    || place.stateAreaExact.some((t) => localFields.some((f) => isExactly(f, t)));
+  return inState ? 1 : null;
 }

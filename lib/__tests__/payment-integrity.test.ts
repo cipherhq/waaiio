@@ -1654,14 +1654,14 @@ describe('webhook-handler processPaystackChargeSuccess — minor-unit rounding',
 });
 
 // ═══════════════════════════════════════════════════════════
-// 12. Paystack BYO: authorization_code stripped
+// 12. Paystack BYO: authorization allowlist (#1065 keeps the reusable card code)
 // ═══════════════════════════════════════════════════════════
 
-describe('BYO Webhook — Paystack authorization_code stripped (test 2)', () => {
+describe('BYO Webhook — Paystack authorization allowlist (test 2, #1065)', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('Paystack verify with AUTH_x → handler data has no authorization_code', async () => {
+  it('Paystack verify with AUTH_x → handler gets the reusable card code, never other provider fields', async () => {
     const secretKey = `${SK_TEST}authstrip`;
     const mockSb = createMockSupabase({
       credentials: { secret_key: secretKey, gateway: 'paystack', webhook_secret_hash: null },
@@ -1698,6 +1698,8 @@ describe('BYO Webhook — Paystack authorization_code stripped (test 2)', () => 
             exp_year: '2030',
             card_type: 'visa',
             bank: 'GTBank',
+            signature: 'SIG_x',
+            account_name: 'Card Holder',
           },
           customer: { email: 'strip@test.com', customer_code: 'CUS_x' },
         },
@@ -1715,10 +1717,14 @@ describe('BYO Webhook — Paystack authorization_code stripped (test 2)', () => 
       expect(res.status).toBe(200);
       expect(mockSuccess).toHaveBeenCalled();
 
-      // authorization_code must be stripped
+      // Own-account Save Card (#1065): the reusable card code reaches the handler, which
+      // persists it only through the allowlisted M544 RPC. Every other field stays stripped.
       const auth = capturedData!.authorization as Record<string, unknown>;
       expect(auth).toBeDefined();
-      expect(auth.authorization_code).toBeUndefined();
+      expect(auth.authorization_code).toBe('AUTH_x');
+      expect(auth.reusable).toBe(true);
+      expect(auth.signature).toBeUndefined();
+      expect(auth.account_name).toBeUndefined();
       // Other fields preserved
       expect(auth.last4).toBe('1234');
       expect(auth.brand).toBe('Visa');

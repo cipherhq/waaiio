@@ -8,6 +8,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { installCustomerReplyGuard } from '@/lib/messaging/customer-message-guard';
 import { recordInboundReceipt } from '@/lib/channels/inbound-receipts';
+import { advanceDeliveryWait } from '@/lib/channels/delivery-wait';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
@@ -231,6 +232,10 @@ export async function POST(request: NextRequest) {
             const wamid = status.id;
             const newStatus = status.status; // 'sent' | 'delivered' | 'read' | 'failed'
             if (!wamid || !(newStatus in statusOrder)) continue;
+
+            // #1070: wake a server waiting for this media message (existing rows only,
+            // forward only, failed wins). Never throws; first so the waiter sees it soon.
+            await advanceDeliveryWait(supabase, wamid, newStatus);
 
             // Check contracts and contract_signers in parallel
             const [{ data: contract }, { data: signer }] = await Promise.all([

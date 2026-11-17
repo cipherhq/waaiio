@@ -1,3 +1,4 @@
+import { bookingHistoryStatus, bookingHistoryPages, mergeBookingHistory } from '../booking-history-status';
 import { FLOW_START_PREFIX, publishedFlowChoices, rememberFlowMenu, resolveFlowMenuSelection, type PublishedFlowChoice } from '../custom-flow/menu';
 import { isSharedConversation, DIRECTORY_ACTION } from './shared/navigation';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
@@ -1200,9 +1201,9 @@ const myBookingsStep: FlowStepConfig = {
     const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
     const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
 
-    const [{ data: upcoming }, { data: tickets }, { data: reservations }] = await Promise.all([
+    const [{ data: activeBookings }, { data: tickets }, { data: activeReservations }, { data: cancelledBookings }, { data: cancelledReservations }] = await Promise.all([
       ctx.supabase.from('bookings')
-        .select('id, date, time, party_size, reference_code, businesses (name)')
+        .select('id, date, time, party_size, reference_code, status, businesses (name)')
         .eq('user_id', ctx.session.user_id!)
         .in('status', ['confirmed', 'pending'])
         .gte('date', new Date().toISOString().split('T')[0])
@@ -1218,14 +1219,29 @@ const myBookingsStep: FlowStepConfig = {
         .in('status', ['confirmed', 'pending', 'checked_in'])
         .gte('check_out', new Date().toISOString().split('T')[0])
         .order('check_in', { ascending: true }).limit(5),
+      ctx.supabase.from('bookings')
+        .select('id, date, time, party_size, reference_code, status, businesses (name)')
+        .eq('user_id', ctx.session.user_id!)
+        .eq('status', 'cancelled')
+        .gte('date', new Date().toISOString().split('T')[0])
+        .order('date', { ascending: true }).limit(5),
+      ctx.supabase.from('reservations')
+        .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name)')
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .eq('status', 'cancelled')
+        .gte('check_out', new Date().toISOString().split('T')[0])
+        .order('check_in', { ascending: true }).limit(5),
     ]);
+
+    const upcoming = mergeBookingHistory(activeBookings || [], cancelledBookings || []).sort((a, b) => a.date.localeCompare(b.date));
+    const reservations = mergeBookingHistory(activeReservations || [], cancelledReservations || []).sort((a, b) => a.check_in.localeCompare(b.check_in));
 
     const items: { title: string; description: string; postbackText: string }[] = [];
     if (upcoming) {
       for (const r of upcoming) {
         const biz = r.businesses as unknown as { name: string } | null;
         const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-        items.push({ title: biz?.name || 'Business', description: `${dateLabel} at ${r.time} • ${r.party_size} ${getCategoryLabels(ctx.business?.category || 'restaurant').quantityLabel}`, postbackText: `booking_${r.id}` });
+        items.push({ title: biz?.name || 'Business', description: `${bookingHistoryStatus(r.status)} • ${dateLabel} at ${r.time} • ${r.party_size} ${getCategoryLabels(ctx.business?.category || 'restaurant').quantityLabel}`, postbackText: `booking_${r.id}` });
       }
     }
     if (tickets) {
@@ -1240,20 +1256,20 @@ const myBookingsStep: FlowStepConfig = {
         const biz = r.businesses as unknown as { name: string } | null;
         const checkIn = new Date(r.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
         const checkOut = new Date(r.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-        items.push({ title: biz?.name || 'Stay', description: `${checkIn} → ${checkOut} • Ref: ${r.reference_code}`, postbackText: `reservation_${r.id}` });
+        items.push({ title: biz?.name || 'Stay', description: `${bookingHistoryStatus(r.status)} • ${checkIn} → ${checkOut} • Ref: ${r.reference_code}`, postbackText: `reservation_${r.id}` });
       }
     }
 
     if (items.length === 0) {
       return [{ type: 'text' as const, text: getFlowCopy(ctx.copyLang, 'account.no_bookings') }];
     }
-    return [{
+    return bookingHistoryPages(items).map(page => ({
       type: 'list' as const,
       title: getFlowCopy(ctx.copyLang, 'account.bookings_title'),
       body: getFlowCopy(ctx.copyLang, 'account.bookings_body'),
       buttonLabel: getFlowCopy(ctx.copyLang, 'account.view_all'),
-      items,
-    }];
+      items: page,
+    }));
   },
 
   // validate/next are never called — bot.service.ts intercepts at current_step === 'my_bookings'

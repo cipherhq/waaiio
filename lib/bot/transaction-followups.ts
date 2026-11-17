@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { canonicalSavedCardPhone, paystackPaymentCannotSaveCard, savedCardSessionPhone } from '@/lib/payments/saved-card-compat';
 import { isProvenPreEmission } from '@/lib/payments/saved-card-delivery';
+import { CARD_OFFER_STEP_COLUMNS, hasActiveCardPin, isAbandonedAcceptedCardStep } from '@/lib/payments/abandoned-card-step';
 import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
 import { prepareRecurringOffer } from '@/lib/payments/recurring-offer';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
@@ -65,11 +66,7 @@ async function transition(db: SupabaseClient, row: TransactionFollowupRow, state
 }
 
 async function hasActivePin(db: SupabaseClient, row: TransactionFollowupRow): Promise<boolean> {
-  const { data, error } = await db.from('bot_sessions').select('id')
-    .in('whatsapp_number', [row.phone, row.phone.slice(1)])
-    .eq('is_active', true).in('current_step', ['save_card_pin', 'verify_card_pin', 'replace_card_pin']).limit(1);
-  if (error) throw new Error(`transaction_followup_pin_lookup:${error.code}`);
-  return !!data?.length;
+  return hasActiveCardPin(db, row.phone);
 }
 
 /** Insert-only identity: replay cannot transfer an existing completion to another recipient/channel. */
@@ -340,16 +337,22 @@ export async function dismissTransactionFollowups(db: SupabaseClient, input: {
     }
     if (!row.payment_id) continue;
     const { data: offer, error: offerError } = await db.from('payment_saved_card_offers')
-      .select('state,offer_type').eq('payment_id', row.payment_id).eq('customer_phone', phone)
+      .select(CARD_OFFER_STEP_COLUMNS).eq('payment_id', row.payment_id).eq('customer_phone', phone)
       .eq('business_id', row.business_id).maybeSingle();
     if (offerError) throw new Error(`transaction_followup_dismiss_offer:${offerError.code}`);
     if (!offer) {
       // A claimed card step with no offer may still be about to send one, except
-      // for a payment that can never save a card (BYO/Connect): release that one.
+      // for a payment that can never save a card (Connect): release that one.
       const { data: paid, error: paidError } = await db.from('payments').select('gateway,metadata')
         .eq('id', row.payment_id).eq('business_id', row.business_id).maybeSingle();
       if (paidError) throw new Error(`transaction_followup_dismiss_payment:${paidError.code}`);
       if (paid && paystackPaymentCannotSaveCard(paid)) await transition(db, row, 'done');
+      continue;
+    }
+    // #1070: the customer left an accepted card step's PIN; navigation retires
+    // the follow-up without touching the offer (no decline, no card change).
+    if (await isAbandonedAcceptedCardStep(db, phone, offer)) {
+      await transition(db, row, 'done');
       continue;
     }
     if (!['sent', 'ambiguous', 'declined'].includes(offer.state)) continue;
@@ -358,6 +361,6 @@ export async function dismissTransactionFollowups(db: SupabaseClient, input: {
     });
     if (declineError) throw new Error(`transaction_followup_dismiss_decline:${declineError.code}`);
     if (['transitioned', 'already_declined'].includes(declined?.result)) await transition(db, row, 'done');
-    // Accepted/committed or concurrently claimed offers retain their owner.
+    // Accepted (PIN live or within grace)/committed or concurrently claimed offers retain their owner.
   }
 }

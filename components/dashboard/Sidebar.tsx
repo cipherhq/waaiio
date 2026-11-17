@@ -693,14 +693,16 @@ export function Sidebar() {
     }
   }
 
-  // Group essential items by section — for events category, promote Parties to 'main'
+  // Group capability operating pages under Your Business. These aggregate
+  // finance pages use capability gates but remain Money utilities.
+  const moneyUtilities = new Set([
+    '/dashboard/payments', '/dashboard/financials', '/dashboard/payouts',
+    '/dashboard/payments/pending',
+  ]);
   const sections = new Map<string, typeof navItems>();
   for (const item of essentialItems) {
-    let section = item.section || 'main';
-    // Events businesses see Parties in 'main' (after Overview and Ace AI Setup)
-    if (isEventsCategory && item.href === '/dashboard/parties') {
-      section = 'main';
-    }
+    const section = item.capabilities?.length && !moneyUtilities.has(item.href)
+      ? 'manage' : item.section || 'main';
     if (!sections.has(section)) sections.set(section, []);
     sections.get(section)!.push(item);
   }

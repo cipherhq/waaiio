@@ -54,6 +54,8 @@ function fakeSupabase(rows: Row[], error: { message: string } | null = null) {
     ilike(...args: unknown[]) { calls.push({ method: 'ilike', args }); return this; },
     gte(...args: unknown[]) { calls.push({ method: 'gte', args }); return this; },
     limit(...args: unknown[]) { calls.push({ method: 'limit', args }); return this; },
+    // #1072: fixed SQL order (name, id) before ranking; the fake keeps fixture order.
+    order(...args: unknown[]) { calls.push({ method: 'order', args }); return this; },
     then(onFulfilled: (result: { data: Row[]; error: { message: string } | null }) => unknown,
          onRejected?: (error: unknown) => unknown) {
       const pass = (row: Row, op: Operation): boolean => {
@@ -61,7 +63,7 @@ function fakeSupabase(rows: Row[], error: { message: string } | null = null) {
         // Resolve computed field names to their backing row columns
         const resolveCol = (name: string): string => name === 'category_text' ? 'category' : name;
         switch (op.method) {
-          case 'select': case 'limit': return true;
+          case 'select': case 'limit': case 'order': return true;
           case 'eq': return row[resolveCol(String(field))] === arg;
           case 'gte': return Number(row[resolveCol(String(field))]) >= Number(arg);
           case 'ilike': return matchesIlike(row[resolveCol(String(field))], String(arg));
@@ -352,7 +354,9 @@ describe('searchMarketplace — executable filters and containment', () => {
       'and(city.ilike.%Lekki%,state.ilike.%Lagos%),and(city.ilike.%Lekki%,address.ilike.%Lagos%))',
     );
     expect(params.get('id')).toBe('not.in.(' + ID[1] + ')');
-    expect(params.get('limit')).toBe('45'); // Oversampling before ranking, final top 15.
+    // #1072: a fixed SQL order and a 200-row ranking pool before the final top 15.
+    expect(params.get('limit')).toBe('200');
+    expect(params.get('order')).toBe('name.asc,id.asc');
     expect(params.getAll('or')).toContain('(discovery_enabled.is.null,discovery_enabled.eq.true)');
   });
 

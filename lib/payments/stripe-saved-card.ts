@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { mayFallbackFromLegacyPaymentMethodTypes, stripeCheckoutErrorEvidence, withEndiveCardAllowlist } from './stripe-checkout-failure';
 
 function getStripeKey(): string {
   return process.env.STRIPE_SECRET_KEY || '';
@@ -32,6 +33,26 @@ export interface StripeResponse {
   data: Record<string, unknown>;
   httpStatus: number;
   ok: boolean;
+}
+
+/**
+ * Create the saved-card PaymentIntent. Stripe API 2026-09-30.endive rejects the legacy
+ * `payment_method_types` with a 400 that creates nothing (#1068; on PaymentIntents the
+ * rejection carries no `param`, #1070); only then retry once with the Endive card
+ * allowlist under a derived key. Live dispatch and recovery both use this, so a replay converges on the same idempotent PaymentIntent.
+ * The first key stores no result on that rejection: never roll the account API version
+ * back below Endive while a saved-card payment is dispatched, or a replay could charge twice.
+ */
+export async function postSavedCardPaymentIntent(
+  params: Record<string, string>,
+  idempotencyKey: string,
+): Promise<StripeResponse> {
+  const first = await stripePost('/payment_intents', params, idempotencyKey);
+  const evidence = { ...first.data, __waaiio_http_status: first.httpStatus };
+  if (first.ok || !mayFallbackFromLegacyPaymentMethodTypes(evidence, Boolean(params['payment_method_types[0]']))) return first;
+  logger.warn('[STRIPE-SAVED-CARD] Legacy payment_method_types rejected; using Endive card allowlist',
+    stripeCheckoutErrorEvidence(evidence));
+  return stripePost('/payment_intents', withEndiveCardAllowlist(params), `${idempotencyKey}_endive_card`);
 }
 
 async function stripePost(
@@ -59,7 +80,7 @@ async function stripePost(
  * Classify a Stripe HTTP error response.
  * Distinguishes terminal card decline from retryable/config/ambiguous outcomes.
  */
-function classifyStripeError(httpStatus: number, error: Record<string, unknown>): 'terminal_decline' | 'config_error' | 'retryable' | 'idempotency_conflict' {
+function classifyStripeError(httpStatus: number, error: Record<string, unknown>): 'terminal_decline' | 'request_rejected' | 'config_error' | 'retryable' | 'idempotency_conflict' {
   const type = error.type as string;
   const code = error.code as string;
 
@@ -82,7 +103,9 @@ function classifyStripeError(httpStatus: number, error: Record<string, unknown>)
     return 'terminal_decline';
   }
 
-  // Other invalid_request_error — config/setup issue, not customer decline
+  // Other 400 invalid_request_error: Stripe validated and refused the request, so no
+  // PaymentIntent exists and nothing was charged. Fail cleanly, like a Paystack decline (#1068).
+  if (type === 'invalid_request_error' && httpStatus === 400) return 'request_rejected';
   if (type === 'invalid_request_error') return 'config_error';
 
   // Anything else — retryable/ambiguous
@@ -179,6 +202,7 @@ export async function downgradeAllowRedisplay(paymentMethodId: string): Promise<
 
 export type StripeFailureClassification =
   | 'terminal_decline'
+  | 'request_rejected'
   | 'config_error'
   | 'retryable'
   | 'idempotency_conflict'
@@ -189,6 +213,8 @@ export interface StripeFailureEvidence {
   httpStatus: number;
   type: string;
   code: string;
+  /** Stripe's rejected parameter name (bounded identifier), when given. */
+  param?: string;
   classification: StripeFailureClassification;
 }
 
@@ -241,20 +267,26 @@ export async function chargeStripeSavedCard(opts: {
       params['application_fee_amount'] = String(opts.applicationFeeAmount);
     }
 
-    const { data: result, httpStatus, ok } = await stripePost('/payment_intents', params, opts.idempotencyKey);
+    const { data: result, httpStatus, ok } = await postSavedCardPaymentIntent(params, opts.idempotencyKey);
 
     if (!ok || result.error) {
       const error = (result.error || {}) as Record<string, unknown>;
       const classification = classifyStripeError(httpStatus, error);
       const errorType = typeof error.type === 'string' && error.type ? error.type : 'unknown';
       const errorCode = typeof error.code === 'string' && error.code ? error.code : 'unknown';
+      const param = stripeCheckoutErrorEvidence(result).param;
       const errorEvidence: StripeFailureEvidence = {
         httpStatus,
         type: errorType,
         code: errorCode,
+        ...(param && { param }),
         classification,
       };
 
+      if (classification === 'request_rejected') {
+        // Nothing was created at Stripe; never show Stripe's free-form text to the customer.
+        return { status: 'declined', errorMessage: 'Saved card payment could not be completed', errorEvidence };
+      }
       if (classification === 'terminal_decline') {
         return {
           status: 'declined',

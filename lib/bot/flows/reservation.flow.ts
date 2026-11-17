@@ -6,7 +6,7 @@ import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { awaitTransferProof, bankTransferPaymentPrompt } from './shared/bank-transfer-proof';
-import { createWhatsAppUser, findUserByPhone } from './shared/user';
+import { createWhatsAppUser, findUserByPhone, isReservedEmailDomain } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { createNotification } from './shared/notifications';
@@ -791,7 +791,7 @@ export const reservationFlow: FlowDefinition = {
           return { valid: true };
         }
         const email = input.trim().toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || isReservedEmailDomain(email)) {
           return { valid: false, errorMessage: "That doesn't look like a valid email. Try again or type *skip*:" };
         }
         const businessId = ctx.business?.id || ctx.session.business_id;

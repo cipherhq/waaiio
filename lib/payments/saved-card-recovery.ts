@@ -132,21 +132,13 @@ export async function recoverDispatchedSavedCardPayment(
     }
   }
 
-  // 5. Stripe PI replay with canonical idempotency key
+  // 5. Stripe PI replay with canonical idempotency key (shared Endive fallback, #1068)
   try {
-    const res = await fetch('https://api.stripe.com/v1/payment_intents', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: new URLSearchParams(params).toString(),
-      signal: AbortSignal.timeout(15000),
-    });
+    const { postSavedCardPaymentIntent } = await import('./stripe-saved-card');
+    const res = await postSavedCardPaymentIntent(params, idempotencyKey);
 
     if (res.ok) {
-      const pi = await res.json() as Record<string, unknown>;
+      const pi = res.data;
       if (pi.id && typeof pi.id === 'string') {
         // 6. Map outcome
         if (pi.status === 'succeeded') {
@@ -194,8 +186,7 @@ export async function recoverDispatchedSavedCardPayment(
     }
 
     // Non-2xx response — classify error
-    const errorBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-    const error = (errorBody.error || {}) as Record<string, unknown>;
+    const error = (res.data.error || {}) as Record<string, unknown>;
     const errType = (error.type as string) || '';
     const errCode = (error.code as string) || '';
 
@@ -207,10 +198,10 @@ export async function recoverDispatchedSavedCardPayment(
       return { outcome: 'declined', message: `Card declined: ${errCode}` };
     }
 
-    if (res.status === 401 || res.status === 403 || res.status === 429
+    if (res.httpStatus === 401 || res.httpStatus === 403 || res.httpStatus === 429
       || errType === 'authentication_error' || errCode === 'idempotency_key_in_use') {
       // Retryable — remain dispatched
-      logger.warn(`${logPrefix} Retryable Stripe error`, { paymentId, status: res.status, errType, errCode });
+      logger.warn(`${logPrefix} Retryable Stripe error`, { paymentId, status: res.httpStatus, errType, errCode });
       return { outcome: 'indeterminate', message: `Retryable error: ${errCode || errType}` };
     }
 
@@ -222,8 +213,18 @@ export async function recoverDispatchedSavedCardPayment(
       return { outcome: 'declined', message: `Invalid: ${errCode}` };
     }
 
+    // Any other 400 invalid_request_error: Stripe validated and refused this exact
+    // request under this key, so no PaymentIntent exists and nothing was charged.
+    if (res.httpStatus === 400 && errType === 'invalid_request_error') {
+      const termOk = await checkedTerminal(supabase, paymentId, `stripe_rejected:${errCode || 'request'}`, payment);
+      if (!termOk) {
+        return convergeAfterCASLoss(supabase, paymentId);
+      }
+      return { outcome: 'declined', message: `Rejected: ${errCode || 'request'}` };
+    }
+
     // Other errors — quarantine for review
-    logger.warn(`${logPrefix} Unclassified Stripe error — quarantine`, { paymentId, status: res.status, errType, errCode });
+    logger.warn(`${logPrefix} Unclassified Stripe error — quarantine`, { paymentId, status: res.httpStatus, errType, errCode });
     return { outcome: 'indeterminate', message: `Unclassified error: ${errCode || errType}` };
   } catch (err) {
     // Network error / timeout — indeterminate, remain dispatched
@@ -388,7 +389,7 @@ async function checkedTerminal(
 ): Promise<boolean> {
   if(payment?.tax_allocation) return confirmTaxPaymentFailure(supabase,paymentId,payment.gateway,payment.gateway_reference,'failed');
   const { data: rows, error: err } = await supabase.from('payments')
-    .update({ status: 'failed', gateway_status: `provider_terminal_${reason}` })
+    .update({ status: 'failed', gateway_status: `provider_terminal_${reason}`.slice(0, 50) })
     .eq('id', paymentId).eq('provider_init_state', 'dispatched').eq('status', 'pending')
     .select('id');
   return !err && rows != null && rows.length === 1;

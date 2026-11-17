@@ -8,7 +8,7 @@ import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQ
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { createWhatsAppUser, findUserByPhone } from './shared/user';
+import { createWhatsAppUser, findUserByPhone, isReservedEmailDomain } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { buildListItem, truncTitle } from '../utils/truncate';
@@ -3111,7 +3111,7 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true };
         }
         const email = input.trim().toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || isReservedEmailDomain(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };
         }
         const businessId = ctx.business?.id || ctx.session.business_id;

@@ -175,19 +175,21 @@ function sanitizeStripeEvidenceToken(value: string | undefined, fallback = 'unkn
   return raw.replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 64) || fallback;
 }
 
+// payments.gateway_status is varchar(50); a longer value makes the whole write fail (#1068).
 function formatStripeDispatchEvidence(evidence: {
   httpStatus: number;
   type: string;
   code: string;
+  param?: string;
   classification: string;
 }): string {
+  const reason = evidence.code && evidence.code !== 'unknown' ? evidence.code : (evidence.param || evidence.type);
   return [
-    'dispatched_error',
-    `http=${Number.isFinite(evidence.httpStatus) ? evidence.httpStatus : 0}`,
-    `class=${sanitizeStripeEvidenceToken(evidence.classification)}`,
-    `type=${sanitizeStripeEvidenceToken(evidence.type)}`,
-    `code=${sanitizeStripeEvidenceToken(evidence.code)}`,
-  ].join(';').slice(0, 200);
+    'stripe',
+    Number.isFinite(evidence.httpStatus) ? evidence.httpStatus : 0,
+    sanitizeStripeEvidenceToken(reason),
+    sanitizeStripeEvidenceToken(evidence.classification),
+  ].join(':').slice(0, 50);
 }
 
 /**
@@ -217,6 +219,7 @@ async function lookupAuthorizedMethod(
   pin_hash: string | null;
   pin_attempts: number;
   pin_locked_until: string | null;
+  byo_business_id: string | null;
 } | null> {
   // Customer-scoped lookup: methodId + customer_phone + is_active.
   const { canonicalSavedCardPhone } = await import('./saved-card-compat');
@@ -225,7 +228,7 @@ async function lookupAuthorizedMethod(
   const phoneN = phoneP.slice(1);
   const { data } = await supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until')
+    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, byo_business_id')
     .eq('id', methodId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
@@ -250,15 +253,15 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
     opts: ChargeOptions,
   ): Promise<ChargeOutcome> {
     // B2: Re-resolve provider compatibility immediately before dispatch
-    const { isSharedPlatformPaystackCompatible } = await import('./saved-card-compat');
-    const compat = await isSharedPlatformPaystackCompatible(supabase, opts.businessId);
-    if (!compat.compatible) {
+    const { resolvePaystackSavedCardScope } = await import('./saved-card-scope');
+    const scope = await resolvePaystackSavedCardScope(supabase, opts.businessId);
+    if (!scope.eligible) {
       return { status: 'method_not_found' }; // Business no longer compatible
     }
 
-    // Customer-scoped lookup (global card)
+    // Customer-scoped lookup (global card); the card must be on this business's Paystack account (#1065)
     const method = await lookupAuthorizedMethod(supabase, opts.methodId, opts.businessId, opts.customerPhone);
-    if (!method) {
+    if (!method || (method.byo_business_id ?? null) !== scope.byoBusinessId) {
       return { status: 'method_not_found' };
     }
 
@@ -732,10 +735,20 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
           : {status:'indeterminate',paymentId:payRow.id,message:'Decline allocation needs reconciliation'};
       }
 
-      await supabase.from('payments')
-        .update({ status: 'failed', gateway_status: result.errorMessage || 'declined' })
+      // Only offer the customer another way to pay once this row is provably failed;
+      // otherwise a later recovery replay could still charge it (#1068).
+      const { data: failedRows, error: failErr } = await supabase.from('payments')
+        .update({
+          status: 'failed',
+          gateway_status: result.errorEvidence ? formatStripeDispatchEvidence(result.errorEvidence) : (result.errorMessage || 'declined').slice(0, 50),
+        })
         .eq('id', payRow.id)
-        .eq('provider_init_state', 'dispatched');
+        .eq('provider_init_state', 'dispatched')
+        .eq('status', 'pending')
+        .select('id');
+      if (failErr || !failedRows || failedRows.length !== 1) {
+        return { status: 'indeterminate', paymentId: payRow.id, message: 'Decline could not be recorded' };
+      }
       return { status: 'declined', message: result.errorMessage || 'Card declined', shouldDeactivate: false };
     }
 
@@ -749,6 +762,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         httpStatus: result.errorEvidence.httpStatus,
         errorType: result.errorEvidence.type,
         errorCode: result.errorEvidence.code,
+        errorParam: result.errorEvidence.param,
         classification: result.errorEvidence.classification,
       });
       await supabase.from('payments')

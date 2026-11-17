@@ -93,6 +93,8 @@ export interface ValidationResult {
 export interface FlowContext {
   supabase: SupabaseClient;
   sender: MessageSender;
+  /** Ephemeral next() confirmations, emitted only after destination CAS. */
+  deferredTransitionMessages?: PromptMessage[];
   standalone: StandaloneService;
   intelligence: BotIntelligenceService;
   from: string;

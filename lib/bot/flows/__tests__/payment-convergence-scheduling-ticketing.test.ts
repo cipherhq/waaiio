@@ -120,7 +120,7 @@ describe('Saved-card convergence through Payment Authority', () => {
     const insertSection = src.split('const paymentPayload = {')[1]?.split('let taxReservation')[0] || '';
     expect(src).toContain("from('payments').insert(paymentPayload)");
     expect(insertSection).toContain('payment_authority_version: 1');
-    expect(insertSection).toContain("payment_origin: 'platform'");
+    expect(insertSection).toContain("payment_origin: byoRouting ? 'byo' : 'platform'");
   });
 
   it('marks declined payments as failed in DB', () => {

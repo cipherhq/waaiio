@@ -5,7 +5,9 @@ import { logger } from '@/lib/logger';
 import { observeProvider } from '@/lib/observability';
 import { normalizeError, safeLogErrorContext } from '@/lib/errors';
 import { safeProviderError } from '@/lib/redact';
+import { paystackValidationDiagnostic } from './paystack-validation-diagnostic';
 import { paystackByoSplit, paystackMerchantSplit } from './paystack-split';
+import { isReservedEmailDomain } from '@/lib/bot/flows/shared/user';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -26,9 +28,12 @@ export class PaystackGateway implements PaymentGateway {
       logger.error('[PAYSTACK] Invalid phone for payment initialization — fail closed', { phone: opts.phone?.slice(0, 6) });
       return null;
     }
+    // A reserved test domain (e.g. @example.invalid) can never receive mail and Paystack
+    // rejects it (#1062), so treat it as no email and use the alias.
+    const customerEmail = opts.userEmail && !isReservedEmailDomain(opts.userEmail) ? opts.userEmail : undefined;
     const email = isSharedPlatform
       ? internalPaymentEmailAlias(canonicalPhone)
-      : (opts.userEmail || internalPaymentEmailAlias(canonicalPhone));
+      : (customerEmail || internalPaymentEmailAlias(canonicalPhone));
 
     // Connect mode: use platform key; BYO: business's own key; else: platform key
     const secretKey = opts.connectAccountId
@@ -88,6 +93,7 @@ export class PaystackGateway implements PaymentGateway {
         headers['X-Connect-Account'] = opts.connectAccountId;
       }
 
+      let httpStatus: unknown;
       const data = await observeProvider({
         gateway: 'paystack',
         amount: opts.amount, currency: opts.currency,
@@ -121,10 +127,11 @@ export class PaystackGateway implements PaymentGateway {
             },
           }),
         });
+        httpStatus = response.status;
         return response.json();
       });
       if (!data.status) {
-        logger.error('[PAYSTACK] Initialize failed:', safeProviderError(data));
+        logger.error('[PAYSTACK] Initialize failed:', safeProviderError(data), paystackValidationDiagnostic(data, httpStatus));
         throw new Error(data.message || 'Payment gateway rejected the request');
       }
 

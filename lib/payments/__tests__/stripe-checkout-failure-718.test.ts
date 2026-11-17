@@ -265,6 +265,23 @@ describe('#718 — Error shape edge cases: missing or absent param (CTO review)'
     expect(mayFallbackFromLegacyPaymentMethodTypes(noParam, true)).toBe(false);
   });
 
+  it('no-param Endive rejection (PaymentIntent shape, #1070) triggers only the legacy-types gate', () => {
+    const msg = { error: { type: 'invalid_request_error', message: 'The `payment_method_types` parameter is no longer supported. Payment methods are now managed from your Dashboard settings.' }, __waaiio_http_status: 400 };
+    expect(mayFallbackFromLegacyPaymentMethodTypes(msg, true)).toBe(true);
+    expect(mayFallbackFromLegacyPaymentMethodTypes(msg, false)).toBe(false);
+    expect(mayFallbackFromSaveCardOptions(msg, true)).toBe(false);
+    const code = { error: { type: 'invalid_request_error', code: 'payment_method_types_no_longer_supported' }, __waaiio_http_status: 400 };
+    expect(mayFallbackFromLegacyPaymentMethodTypes(code, true)).toBe(true);
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ ...msg, __waaiio_http_status: 402 }, true)).toBe(false);
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { ...msg.error, type: 'card_error' }, __waaiio_http_status: 400 }, true)).toBe(false);
+    // A param naming another field wins over the message.
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { ...msg.error, param: 'amount' }, __waaiio_http_status: 400 }, true)).toBe(false);
+    // An unsafe raw param (fails the safe-token check) is still a param: no retry.
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { ...msg.error, param: 'Amount' }, __waaiio_http_status: 400 }, true)).toBe(false);
+    // Only Stripe's exact prefix counts.
+    expect(mayFallbackFromLegacyPaymentMethodTypes({ error: { type: 'invalid_request_error', message: 'Note: The `payment_method_types` parameter is no longer supported.' }, __waaiio_http_status: 400 }, true)).toBe(false);
+  });
+
   it('null param does not trigger either fallback gate', () => {
     const nullParam = { error: { type: 'invalid_request_error', param: null }, __waaiio_http_status: 400 };
     expect(mayFallbackFromSaveCardOptions(nullParam, true)).toBe(false);

@@ -46,7 +46,7 @@ const CAPABILITY_GROUPS: CapabilityGroup[] = [
   {
     label: 'Operations',
     icon: '\u{2699}\u{FE0F}',
-    ids: ['staff', 'queue', 'waitlist', 'reminders', 'auto_reply', 'reports', 'multi_location'],
+    ids: ['staff', 'queue', 'waitlist', 'reminders', 'auto_reply', 'reports', 'multi_location', 'custom_flow'],
   },
   {
     label: 'Documents',

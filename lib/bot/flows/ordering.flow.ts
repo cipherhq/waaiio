@@ -4,7 +4,7 @@ import type { TaxSnapshot } from '@/lib/tax/calculation';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getFlowCopy, fillFlowCopy } from './flow-localization';
-import { createWhatsAppUser, findUserByPhone } from './shared/user';
+import { createWhatsAppUser, findUserByPhone, isReservedEmailDomain } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { validatePromoForCheckout } from '@/lib/promotions/checkout-eligibility';
 import { truncTitle } from '../utils/truncate';
@@ -1706,7 +1706,9 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.session.session_data._promo_action === 'applied' && ctx.session.session_data.promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data.discount_amount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
+          const text = await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`);
+          if (ctx.deferredTransitionMessages) ctx.deferredTransitionMessages.push({ type: 'text', text });
+          else await ctx.sender.sendText({ to: ctx.from, text });
         }
         // Logistics mode: skip delivery zones, collect pickup+dropoff addresses
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -1771,7 +1773,9 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.session.session_data.promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data.discount_amount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
+          const text = await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`);
+          if (ctx.deferredTransitionMessages) ctx.deferredTransitionMessages.push({ type: 'text', text });
+          else await ctx.sender.sendText({ to: ctx.from, text });
         }
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         if (meta.logistics_mode) return 'collect_pickup_address';
@@ -1828,6 +1832,8 @@ export const orderingFlow: FlowDefinition = {
           .from('delivery_zones')
           .select('id, name, price, is_pickup, is_negotiable')
           .eq('id', input)
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .single();
 
         if (!zone) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.valid_zone_hint') };
@@ -2115,7 +2121,7 @@ export const orderingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const email = input.trim().toLowerCase();
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        if (!emailRegex.test(email) || isReservedEmailDomain(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_email') };
         }
         const businessId = ctx.business?.id || ctx.session.business_id;

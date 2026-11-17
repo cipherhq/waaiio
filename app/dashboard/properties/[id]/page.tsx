@@ -391,30 +391,32 @@ export default function PropertyDetailPage() {
     // Build a map of date -> status
     const dateMap: Record<string, { status: 'booked' | 'blocked'; label: string }> = {};
 
+    // SQL DATE ranges are calendar days: iterate in UTC so viewer timezone/DST
+    // cannot shift the ISO date keys used by the calendar cells.
     // Add booked dates
     const active = reservations.filter(r => !['cancelled', 'no_show'].includes(r.status));
     for (const r of active) {
-      const start = new Date(r.check_in + 'T00:00');
-      const end = new Date(r.check_out + 'T00:00');
+      const start = new Date(r.check_in + 'T00:00:00Z');
+      const end = new Date(r.check_out + 'T00:00:00Z');
       const d = new Date(start);
       while (d < end) {
         const key = d.toISOString().split('T')[0];
         dateMap[key] = { status: 'booked', label: r.guest_name || 'Guest' };
-        d.setDate(d.getDate() + 1);
+        d.setUTCDate(d.getUTCDate() + 1);
       }
     }
 
     // Add blocked dates
     for (const bd of blockedDates) {
-      const start = new Date(bd.date_from + 'T00:00');
-      const end = new Date(bd.date_to + 'T00:00');
+      const start = new Date(bd.date_from + 'T00:00:00Z');
+      const end = new Date(bd.date_to + 'T00:00:00Z');
       const d = new Date(start);
       while (d <= end) {
         const key = d.toISOString().split('T')[0];
         if (!dateMap[key]) {
           dateMap[key] = { status: 'blocked', label: bd.reason || 'Blocked' };
         }
-        d.setDate(d.getDate() + 1);
+        d.setUTCDate(d.getUTCDate() + 1);
       }
     }
 

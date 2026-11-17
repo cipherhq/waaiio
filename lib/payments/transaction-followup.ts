@@ -20,7 +20,7 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     .select('id').eq('payment_id', paymentId)
     .in('delivery_status', ['accepted', 'sent', 'delivered', 'read']).limit(1);
   if (deliveryError || !delivered?.length) return;
-  // BYO/Connect Paystack payments never get a card offer, so they skip the card
+  // Connect Paystack payments never get a card offer, so they skip the card
   // step instead of holding the conversation while nothing can resolve it.
   const { paystackPaymentCannotSaveCard } = await import('./saved-card-compat');
   if (paystackPaymentCannotSaveCard(payment)) {
@@ -29,17 +29,21 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
   }
   if (!await claimTransactionCardStep(supabase, paymentId)) return;
 
+  const { CARD_OFFER_STEP_COLUMNS, isAbandonedAcceptedCardStep } = await import('./abandoned-card-step');
   const { data: offer, error: offerError } = await supabase.from('payment_saved_card_offers')
-    .select('state').eq('payment_id', paymentId).eq('business_id', followup.business_id)
+    .select(CARD_OFFER_STEP_COLUMNS).eq('payment_id', paymentId).eq('business_id', followup.business_id)
     .eq('customer_phone', followup.phone).maybeSingle();
   if (offerError) return;
   if (offer) {
-    if (offer.state === 'confirmed' || offer.state === 'declined') {
+    // #1070: an accepted offer whose customer left the PIN step must not lock
+    // this chat; release the follow-up only (offer and cards stay unchanged).
+    if (offer.state === 'confirmed' || offer.state === 'declined'
+      || await isAbandonedAcceptedCardStep(supabase, followup.phone, offer)) {
       await resumeTransactionFollowupForPayment(supabase, paymentId, { cardResolved: true });
     } else if (offer.state === 'pending') {
       await retryPendingSavedCardOffer(supabase, paymentId);
     }
-    // Sent/accepted/committed/ambiguous offers still own the conversation.
+    // Sent/accepted (PIN live or within grace)/committed/ambiguous offers still own the conversation.
     return;
   }
 
@@ -64,7 +68,8 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     }
     // Only proven ineligibility skips card saving; lookup failures remain retryable.
     if (!['payment_not_eligible', 'not_platform', 'auth_not_eligible', 'same_auth_already_saved',
-      'gateway_mismatch', 'byo_paystack', 'paystack_connect'].includes(eligibility.reason || '')) return;
+      'gateway_mismatch', 'byo_paystack', 'paystack_connect', 'payment_scope_mismatch',
+      'byo_paystack_credential_unavailable'].includes(eligibility.reason || '')) return;
   }
   await resumeTransactionFollowupForPayment(supabase, paymentId, { cardResolved: true });
 }

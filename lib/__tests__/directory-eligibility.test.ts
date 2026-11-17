@@ -152,17 +152,22 @@ describe('searchMarketplace', () => {
     expect(textFilter).toBeTruthy();
   });
 
-  it('7. caller limit up to DIRECTORY_MAX_RESULTS is respected', async () => {
-    const { supabase, limit } = createMockSupabase([]);
+  it('7. rows are fetched in a fixed order and a 200-row ranking pool (#1072)', async () => {
+    const { supabase, limit, filters } = createMockSupabase([]);
     await searchMarketplace(supabase, { limit: 30 });
-    // limit * 3 for scoring headroom
-    expect(limit()).toBe(90);
+    // Every fetched row is scored before the page is cut; the SQL order is deterministic.
+    expect(limit()).toBe(200);
+    const orders = filters().filter(f => f.method === 'order').map(f => f.args[0]);
+    expect(orders).toEqual(['name', 'id']);
   });
 
-  it('8. limit is capped at DIRECTORY_MAX_RESULTS (50)', async () => {
-    const { supabase, limit } = createMockSupabase([]);
-    await searchMarketplace(supabase, { limit: 200 });
-    expect(limit()).toBe(150); // 50 * 3
+  it('8. returned results are capped at DIRECTORY_MAX_RESULTS (50)', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => ({ ...ELIGIBLE_BIZ, id: `biz-${i}`, name: `Business ${i}` }));
+    const { supabase, limit } = createMockSupabase(rows);
+    const result = await searchMarketplace(supabase, { limit: 200 });
+    expect(limit()).toBe(200); // max(50 * 3, ranking pool)
+    expect(result.results).toHaveLength(50);
+    expect(result.hasMore).toBe(true);
   });
 
   it('9. more than 10 results returned when limit permits', async () => {
