@@ -59,7 +59,8 @@ async function sendWhatsAppMessage(
 
   // Fallback to plain text (within 24h window only)
   try {
-    const result = await resolved.sender.sendText({ to: cleanPhone, text: message, messageCategory: 'utility' });
+    // Plain text, not a template: WhatsApp does not charge it (#1075).
+    const result = await resolved.sender.sendText({ to: cleanPhone, text: message, messageCategory: 'service' });
     if (result.success !== false && result.messageId) return result.messageId;
   } catch (waErr) {
     logger.warn('[INVOICE] sendText failed:', waErr);
@@ -288,7 +289,8 @@ export async function POST(request: NextRequest) {
               documentUrl: signedUrl.signedUrl,
               filename: `${invoice.reference_code}.pdf`,
               caption: `Invoice ${invoice.reference_code} from ${biz.name}`,
-              messageCategory: 'utility',
+              // A document, not a template: WhatsApp does not charge it (#1075).
+              messageCategory: 'service',
             });
           }
         }

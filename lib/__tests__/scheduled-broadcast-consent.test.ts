@@ -173,11 +173,11 @@ describe('scheduled broadcast dispatch', () => {
     expect(m.text).not.toHaveBeenCalled(); expect(m.template).not.toHaveBeenCalled();
     expect(finalWrite()).toMatchObject({ status: 'failed', sent_at: null, sent_count: 0 });
   });
-  it('tags accepted text with service billing category and records its acceptance', async () => {
+  it('tags accepted campaign text with the paid marketing category (#1075) and records its acceptance', async () => {
     enqueue(); expect((await tick()).status).toBe(200);
     expect(capture.getCapturedSends()).toHaveLength(1);
-    expect(capture.getLastSend()).toMatchObject({ method: 'sendText', to: phone, content: { messageCategory: 'service' } });
-    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ to: phone, messageCategory: 'service' }));
+    expect(capture.getLastSend()).toMatchObject({ method: 'sendText', to: phone, content: { messageCategory: 'marketing' } });
+    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ to: phone, messageCategory: 'marketing' }));
     expect(finalWrite()).toMatchObject({ status: 'sent', sent_count: 1, failed_count: 0, error_message: null });
   });
   it('resolves the template category from the sending WABA', async () => {
@@ -195,7 +195,7 @@ describe('scheduled broadcast dispatch', () => {
     if (reason === 'template rejection') m.template.mockRejectedValue(new Error('provider rejected'));
     enqueue({ template_name: 'business_update' }); await tick();
     if (reason !== 'template rejection') expect(m.template).not.toHaveBeenCalled();
-    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'service' }));
+    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'marketing' }));
     expect(finalWrite()).toMatchObject({ status: 'sent', sent_count: 1 });
   });
   it('records provider rejection without claiming any message was sent', async () => {

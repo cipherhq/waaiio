@@ -91,7 +91,8 @@ async function sendWhatsAppMessage(
         email: emailOpt,
         businessName: templateParams?.businessName,
         alwaysEmail: true,
-        messageCategory: 'utility',
+        // Plain text, not a template: WhatsApp does not charge it (#1075).
+        messageCategory: 'service',
       });
       const whatsappAccepted = result.whatsapp === 'sent';
       const emailAccepted = result.email === 'sent';
