@@ -37,7 +37,7 @@
   - Stored privately at `<business>/<flow>/<run>/<question>-<random>.<ext>` before the answer is saved; removed again if the answer can't be saved. Re-sending replaces the answer and removes the old file.
 - **Privacy and safety details** (review fixes):
   - Answers typed at a question are logged in `custom_flow_logs` as `[answer]`, never verbatim, so deleting or expiring an answer removes the only copy.
-  - A file answer first claims the step (session version check), so of two files sent at once only one is stored. After any file is saved, every other upload for that question in that run is removed (replaced files and leftovers from an interrupted attempt), and a replaced file is removed even if the question changed type.
+  - A file answer claims the step (session version check) before downloading and checks the claim again right before saving: of photos sent close together only the latest claim saves, and a superseded one removes its own upload. After a save, the replaced file and leftovers of earlier attempts (uploaded over a minute before the claim) are removed; the saved file and any photo still in flight are never touched. A replaced file is removed even if the question changed type.
   - A file that arrives after the chat timed out gets the usual "continue or start again?" question. The shared sender is bound to the business only when that business will reply. Once a file is being handled, a later send failure no longer triggers the old "can't process" reply. File intake is skipped when under 30 seconds of the webhook time budget remain.
   - Plain reasons: "That date has already passed…" and "We couldn't get that file. Please send it again." With past dates allowed, a date typed without a year is the closest one.
   - Validation: question step ids must be plain characters; "Pick one" choices shown as buttons (3 or fewer) hold 20 characters.
@@ -59,6 +59,7 @@
   - The webhook now looks up an active custom-flow session for inbound images/documents before its existing reply (one extra read). Audio, text and every other path are unchanged.
   - Saving a file adds a download of up to 10 MB inside the webhook's time budget.
   - `custom_flow_logs` still has no scheduled purge (M541, unchanged); answers no longer appear in it.
+  - **Named residual:** an upload can still be left in the private bucket if the function stops between upload and save and the customer never answers that question again, or if a Storage delete fails (logged). Nothing links to it and it is private, but it outlives the 12-month rule. Follow-up: a daily sweep of `custom-flow-uploads` objects with no answer row (recorded on #1085).
   - The new cron runs daily; until M546 is applied it fails harmlessly with `read_failed`.
   - The page lists the newest 1,000 answers and points to the CSV (up to 20,000) for more. When a cap is hit, the oldest customer's possibly incomplete answers are left out, and the CSV ends with a note saying it was capped.
   - Deleting a flow directly in the database now fails while that flow has answers.

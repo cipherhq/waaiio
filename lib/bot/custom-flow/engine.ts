@@ -637,7 +637,7 @@ export class CustomFlowEngine {
     session: CustomFlowSessionRow,
     flow: LoadedFlow,
     node: CustomFlowAskNode,
-    value: { value_text: string | null; value_date: string | null; file_path?: string; file_mime?: string; file_size?: number },
+    value: { value_text: string | null; value_date: string | null; file_path?: string; file_mime?: string; file_size?: number; claimedAt?: Date },
   ): Promise<boolean> {
     const { supabase } = this.deps;
     // Any earlier answer to this question in this run, of any type: a republish
@@ -669,7 +669,7 @@ export class CustomFlowEngine {
       return false;
     }
     await this.log(session, node.id, 'in', node.answer_type === 'file' ? '[file]' : null, null);
-    if (node.answer_type === 'file' || previousFile) await this.removeStaleUploads(session, node, previousFile, value.file_path ?? null);
+    if (node.answer_type === 'file' || previousFile) await this.removeStaleUploads(session, node, previousFile, value.file_path ?? null, value.claimedAt);
 
     if (value.value_date) {
       await this.sendText(session, `✅ ${formatFullDate(value.value_date, await this.dateContext(session, flow))}`);
@@ -722,7 +722,8 @@ export class CustomFlowEngine {
     // of two files sent at once only one is stored, so no replaced file is left behind.
     const adopt = found.flow_version !== flow.publishedVersion ? { flow_version: flow.publishedVersion } : {};
     if (!(await updateSessionCas(supabase, found, adopt))) return true;
-    const session = { ...found, ...adopt, version: found.version + 1 };
+    const claimedAt = new Date();
+    let session = { ...found, ...adopt, version: found.version + 1 };
     // From here the message is ours: an error is logged, never answered with a second, contradictory reply.
     try {
       await this.log(session, node.id, 'in', '[file received]', null);
@@ -739,7 +740,16 @@ export class CustomFlowEngine {
         await this.sendText(session, SAVE_FAILED_TEXT);
         return true;
       }
-      const saved = await this.acceptAnswer(session, flow, node, { value_text: null, value_date: null, file_path: path, file_mime: mime, file_size: media.buffer.length });
+      // Save gate: a later photo for this step may have claimed it while this one
+      // downloaded. Only the current claim saves; a superseded one removes its own
+      // upload and stays quiet, so no saved answer can point at a deleted file.
+      if (!(await updateSessionCas(supabase, session, {}))) {
+        const { error: dropError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
+        if (dropError) logger.error('[CUSTOM-FLOW] Superseded upload could not be removed:', dropError.message);
+        return true;
+      }
+      session = { ...session, version: session.version + 1 };
+      const saved = await this.acceptAnswer(session, flow, node, { value_text: null, value_date: null, file_path: path, file_mime: mime, file_size: media.buffer.length, claimedAt });
       if (!saved) {
         const { error: removeError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
         if (removeError) logger.error('[CUSTOM-FLOW] Unsaved upload could not be removed:', removeError.message);
@@ -751,12 +761,13 @@ export class CustomFlowEngine {
   }
 
   /**
-   * After an answer is saved, remove every other upload for this question in
-   * this run (#1085): the replaced file, and any left by an earlier attempt
-   * that stopped between upload and save. Failures are logged; the next
-   * answer to this question tries again.
+   * After an answer is saved, remove the replaced file and leftovers of
+   * earlier attempts at this question in this run (#1085). Only objects
+   * uploaded well before this answer's claim are leftovers: a photo being
+   * handled at the same moment is never touched, and the saved file never is.
+   * Failures are logged; the next answer to this question tries again.
    */
-  private async removeStaleUploads(session: CustomFlowSessionRow, node: CustomFlowAskNode, previousFile: string | null, keep: string | null): Promise<void> {
+  private async removeStaleUploads(session: CustomFlowSessionRow, node: CustomFlowAskNode, previousFile: string | null, keep: string | null, claimedAt?: Date): Promise<void> {
     const bucket = this.deps.supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET);
     const folder = uploadFolder(session);
     const stale = new Set<string>();
@@ -765,7 +776,10 @@ export class CustomFlowEngine {
       const { data } = await bucket.list(folder, { search: `${node.id}-` });
       for (const object of data ?? []) {
         const path = `${folder}/${object.name}`;
-        if (object.name.startsWith(`${node.id}-`) && path !== keep) stale.add(path);
+        const created = Date.parse((object as { created_at?: string }).created_at ?? '');
+        // One minute of margin for clock differences between this server and Storage.
+        const leftover = !!claimedAt && Number.isFinite(created) && created < claimedAt.getTime() - 60_000;
+        if (object.name.startsWith(`${node.id}-`) && path !== keep && leftover) stale.add(path);
       }
     } catch (err) {
       logger.error('[CUSTOM-FLOW] Upload folder could not be listed:', err);

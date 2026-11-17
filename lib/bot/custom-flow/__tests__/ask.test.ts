@@ -55,7 +55,7 @@ class FakeQuery {
 
 function fakeSupabase(seed: Record<string, Row[]>, opts: { failAnswerWrites?: boolean; failUpload?: boolean; leftover?: string[] } = {}) {
   const db: Record<string, Row[]> = { custom_flow_sessions: [], custom_flow_logs: [], custom_flow_answers: [], ...seed };
-  const storage = { uploaded: [] as Array<{ bucket: string; path: string; size: number; contentType: string }>, removed: [] as string[], objects: new Set<string>(opts.leftover ?? []) };
+  const storage = { uploaded: [] as Array<{ bucket: string; path: string; size: number; contentType: string }>, removed: [] as string[], objects: new Map<string, string>((opts.leftover ?? []).map(p => [p, '2026-11-16T09:00:00Z'])) };
   let loseWrite = false;
   const supabase = {
     from: (table: string) => ({
@@ -73,11 +73,11 @@ function fakeSupabase(seed: Record<string, Row[]>, opts: { failAnswerWrites?: bo
     storage: { from: (bucket: string) => ({
       upload: async (path: string, body: Buffer, o: { contentType: string }) => {
         if (opts.failUpload) return { data: null, error: { message: 'down' } };
-        storage.uploaded.push({ bucket, path, size: body.length, contentType: o.contentType }); storage.objects.add(path); return { data: { path }, error: null };
+        storage.uploaded.push({ bucket, path, size: body.length, contentType: o.contentType }); storage.objects.set(path, new Date().toISOString()); return { data: { path }, error: null };
       },
       remove: async (paths: string[]) => { storage.removed.push(...paths); paths.forEach(p => storage.objects.delete(p)); return { data: [], error: null }; },
-      list: async (folder: string, o: { search: string }) => ({ data: [...storage.objects].filter(p => p.startsWith(`${folder}/`) && !p.slice(folder.length + 1).includes('/'))
-        .map(p => ({ name: p.slice(folder.length + 1) })).filter(f => f.name.includes(o.search)), error: null }),
+      list: async (folder: string, o: { search: string }) => ({ data: [...storage.objects].filter(([p]) => p.startsWith(`${folder}/`) && !p.slice(folder.length + 1).includes('/'))
+        .map(([p, created_at]) => ({ name: p.slice(folder.length + 1), created_at })).filter(f => f.name.includes(o.search)), error: null }),
     }) },
     rpc: async (_name: string, args: Row) => {
       // update_session_cas: apply the patch when the version matches.
@@ -404,11 +404,30 @@ describe('review fixes (#1085)', () => {
     const { supabase, sender, storage, db } = await start(fileFlow());
     const session = db.custom_flow_sessions.find(s => s.is_active)!;
     const folder = `${BIZ}/flow-1/${session.id}`;
-    storage.objects.add(`${folder}/q-leftover.jpg`);
-    storage.objects.add(`${folder}/other-keep.jpg`);
+    storage.objects.set(`${folder}/q-leftover.jpg`, '2026-11-16T09:00:00Z');
+    storage.objects.set(`${folder}/q-just-now.jpg`, '2026-11-16T09:59:30Z'); // within a minute: may be another photo in flight
+    storage.objects.set(`${folder}/other-keep.jpg`, '2026-11-16T09:00:00Z');
     await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() });
     expect(storage.removed).toEqual([`${folder}/q-leftover.jpg`]);
-    expect([...storage.objects].sort()).toEqual([`${folder}/other-keep.jpg`, db.custom_flow_answers[0].file_path].sort());
+    expect([...storage.objects.keys()].sort()).toEqual([`${folder}/other-keep.jpg`, `${folder}/q-just-now.jpg`, db.custom_flow_answers[0].file_path].sort());
+  });
+
+  it('a second photo that claims the step mid-download wins; the first saves nothing and the saved file exists', async () => {
+    const { supabase, sender, storage, db } = await start(fileFlow());
+    const second = vi.fn(async () => ({ ok: true as const, buffer: PDF }));
+    // Photo A is still downloading when photo B arrives and is handled in full.
+    const first = vi.fn(async () => {
+      expect(await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media: { id: 'm2', mimeType: 'application/pdf' }, download: second })).toBe(true);
+      return { ok: true as const, buffer: JPEG };
+    });
+    expect(await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: first })).toBe(true);
+    expect(db.custom_flow_answers).toHaveLength(1);
+    const saved = db.custom_flow_answers[0].file_path;
+    expect(saved).toMatch(/\.pdf$/);
+    expect(storage.objects.has(saved)).toBe(true);
+    // A's upload was removed by A itself; nothing else is left.
+    expect([...storage.objects.keys()]).toEqual([saved]);
+    expect(sender.texts.filter(t => t === 'Thank you!')).toHaveLength(1);
   });
 
   it('a file after the chat timed out gets the continue-or-start-again question', async () => {
