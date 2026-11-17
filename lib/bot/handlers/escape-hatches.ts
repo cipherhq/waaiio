@@ -315,7 +315,7 @@ export async function handleEscapeHatch(
         // No history — restart menu
         if (session.business_id) {
           await deactivateSession(session.id);
-          await handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+          await handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id, undefined, undefined, undefined, undefined, true);
           return { handled: true };
         }
       }
