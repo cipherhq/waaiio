@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { appendBlock, removeBlock, reorderFlow, selectStart, setMessageDestination, withOrderMetadata, type EditableFlow } from '@/lib/custom-flow-builder/order';
 import type { PreviewMessage } from '@/lib/custom-flow-builder/preview';
@@ -96,8 +96,9 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const lastPreviewInput = messages.reduce((last, message, index) => message.input ? index : last, -1);
   const previewBusy = busy && feedbackLocation === 'preview';
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Scroll the bounded transcript, never the merchant's editor or focus.
+    // Layout effect: the newest reply is in view in the same commit that shows it.
     const transcript = previewTranscript.current;
     if (transcript) transcript.scrollTop = transcript.scrollHeight;
   }, [messages]);
