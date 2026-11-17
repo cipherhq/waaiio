@@ -139,6 +139,7 @@ describe('Reordering', () => {
     expect(saved.start_node).toBe('menu');
   });
 
+  // ~5-6 s in jsdom under full-suite load (same pattern as the template-labels test). Assertions unchanged.
   it('reorders buttons by drag (keyboard) and by the move control, showing where each goes', async () => {
     await openFlow();
     expect(screen.getByRole('button', { name: 'Program → 2. Search Program' })).toBeTruthy();
@@ -186,7 +187,7 @@ describe('Plain English', () => {
     expect(text).not.toContain('{{');
     for (const word of ['Publish', 'Draft', 'fallback', 'Entry keyword', 'Start block']) expect(text).not.toContain(word);
     }
-  });
+  }, 15_000);
 
   it('builds the reply with Insert chips and keeps the exact stored template', async () => {
     await openFlow();

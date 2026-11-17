@@ -121,6 +121,7 @@ describe('Step map', () => {
     expect(screen.getAllByText('Not live yet').length).toBeGreaterThan(0);
   });
 
+  // ~5-6 s in jsdom under full-suite load (same pattern as the template-labels test). Assertions unchanged.
   it('opens a step editor in place when the step is clicked, without any request', async () => {
     await openFlow('Lagos fest');
     const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
@@ -160,7 +161,7 @@ describe('Step map', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Lagos fest' }));
     expect(editButton().getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
-  });
+  }, 15_000);
 
   it('treats any empty message next as Ends and any empty lookup next as Back to start', async () => {
     // Engine rule: a message continues only `if (node.next)`; a lookup falls back to the start step.

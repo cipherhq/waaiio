@@ -86,6 +86,9 @@ describe('Editing one step at a time', () => {
     expect((document.activeElement as HTMLTextAreaElement).value).toBe('Goodbye for now');
     // The step's "?" tip lives in the editing header.
     expect(within(editor).getByRole('button', { name: 'More about Send a message' })).toBeTruthy();
+    // The open editor is one named group.
+    expect(editor.getAttribute('role')).toBe('group');
+    expect(screen.getByRole('group', { name: 'Editing step 3 · Send a message' })).toBe(editor);
     fireEvent.click(within(editor).getByRole('button', { name: 'Done' }));
     expect(screen.queryByRole('heading', { level: 4, name: /^Editing step/ })).toBeNull();
     expect(edit.getAttribute('aria-expanded')).toBe('false');
@@ -175,6 +178,20 @@ describe('Live WhatsApp preview', () => {
 });
 
 describe('Nothing cut off', () => {
+  it('stacks each Show buttons row in the narrow editor instead of using page-width columns', async () => {
+    await openFlow();
+    const rows = screen.getAllByTestId('button-row');
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.className).not.toMatch(/\b(sm|md|lg|xl):grid-cols-/);
+  });
+
+  it('lets each Step order row wrap so Move up and Move down sit under the step name', async () => {
+    await openFlow();
+    const item = screen.getByRole('button', { name: '1. Show buttons' });
+    expect(item.className).toContain('basis-full');
+    expect(item.parentElement!.className).toContain('flex-wrap');
+  });
+
   it('uses no truncate, ellipsis or line-clamp classes on buttons, placeholders, chips or palette items', async () => {
     flows[0].definition = { ...festival, name: `${LONG} flow`, entry_keyword: 'AVERYLONGSTARTWORDTHATKEEPSGOING',
       nodes: [{ ...festival.nodes[0], options: [{ label: LONG, next: 'artists' }, { label: 'Say goodbye', next: 'bye' }] }, festival.nodes[1], festival.nodes[2]] } as Flow;

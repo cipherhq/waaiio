@@ -65,7 +65,7 @@ describe('FlowBuilder user journeys', () => {
     await screen.findByText('Back to the live version.');
     expect((screen.getByLabelText('Greeting') as HTMLInputElement).value).toBe('New greeting');
     expect(calls.map(call => call.action)).toEqual(['setup','save', 'validate', 'preview', 'publish', 'restore']);
-  });
+  }, 15_000);
 
   it('keeps reorder draft-only until save and explicit publish', async () => {
     await open();
@@ -315,4 +315,5 @@ describe('FlowBuilder user journeys', () => {
     expect((screen.getByLabelText('Greeting') as HTMLInputElement).value).toBe('Keep this edit');
     expect(row.definition.greeting).toBe('Welcome');
   });
+  // ~5-6 s in jsdom under full-suite load (same pattern as the template-labels test). Assertions unchanged.
 });

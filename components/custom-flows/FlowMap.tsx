@@ -191,7 +191,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
               </div>}
             </div>}
             {/* The one open editor sits under its own step (#1079 polish): one place on every screen size. */}
-            {open && <div id={panelId} className="space-y-4 border-t-2 border-brand p-3 sm:p-4 dark:border-brand-300">{renderEditor(node, index)}</div>}
+            {open && <div id={panelId} role="group" aria-labelledby={`editing-heading-${node.id}`} className="space-y-4 border-t-2 border-brand p-3 sm:p-4 dark:border-brand-300">{renderEditor(node, index)}</div>}
           </div>
           {exit && <>
             <Connector />

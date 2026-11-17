@@ -64,9 +64,9 @@ export function BlockOrder({ value, onValueChange, labels, instructionsId, upLab
   downLabel: string;
 }) {
   return <parts.Root value={value} onValueChange={onValueChange}>
-    {({ order }) => order.map((id) => <div key={id} className="mb-2 flex items-center gap-2">
+    {({ order }) => order.map((id) => <div key={id} className="mb-2 flex flex-wrap items-center gap-2">
       <parts.Item value={id} aria-describedby={instructionsId}
-        className="min-h-12 flex-1 rounded-lg border bg-white p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-600 dark:bg-gray-900"
+        className="min-h-12 w-full basis-full break-words rounded-lg border bg-white p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-600 dark:bg-gray-900"
         style={{ touchAction: 'none', userSelect: 'none', transform: 'translate(var(--drag-x, 0px), var(--drag-y, 0px))' }}>
         {labels[id] ?? id}
       </parts.Item>

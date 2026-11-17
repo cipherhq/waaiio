@@ -56,7 +56,7 @@ export function WhatsAppPreview({
         <div aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">{initial}</div>
         <div className="min-w-0">
           <p className="break-words text-sm font-semibold text-white">{title}</p>
-          <p className="text-xs text-green-100">{previewBusy ? 'typing…' : showLive ? 'Live preview' : 'Test chat'}</p>
+          <p className="text-xs text-green-100">{previewBusy ? 'typing…' : showLive ? 'Preview' : 'Test chat'}</p>
         </div>
       </div>
       {/* Only this transcript scrolls; FlowBuilder sets scrollTop without moving focus. */}

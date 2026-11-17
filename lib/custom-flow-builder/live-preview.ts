@@ -31,13 +31,22 @@ const LIST_ROW_MAX = 24;
 
 /**
  * Same token rule as the engine's substitute(); engine.ts itself imports
- * server-only modules, so it cannot be bundled into the dashboard.
+ * server-only modules, so it cannot be bundled into the dashboard. Values
+ * only known in a real chat (a found row, an answer) show as "[name]" so the
+ * merchant can see where they go, instead of the blank the engine would send
+ * with no value.
  */
 function substitute(template: string, vars: Record<string, unknown>): string {
   return template.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
     const value = vars[key];
-    return value === undefined || value === null ? '' : String(value);
+    return value === undefined || value === null ? `[${key}]` : String(value);
   });
+}
+
+/** Only a finished picture link is shown, so typing one doesn't fetch every partial address. */
+export function completeImageUrl(url: string | null | undefined): string | null {
+  const value = url?.trim() ?? '';
+  return /^https:\/\/[^\s/]+\.[^\s/]+\/\S+\.(jpe?g|png|webp|gif)(\?\S*)?$/i.test(value) ? value : null;
 }
 
 function choices(labels: string[]): Pick<LiveMessage, 'options' | 'listButton' | 'shortenedTo'> {
@@ -69,7 +78,10 @@ export function livePreview(draft: EditableFlow, options: {
   function renderNode(node: CustomFlowNode): LiveMessage[] {
     switch (node.type) {
       case 'message':
-        return [{ text: render(node.text), ...(node.image?.trim() ? { image: node.image.trim() } : {}) }];
+      {
+        const image = completeImageUrl(node.image);
+        return [{ text: render(node.text), ...(image ? { image } : {}) }];
+      }
       case 'menu':
         return [{ text: render(node.text), ...choices(node.options.map(option => option.label)) }];
       case 'lookup':
@@ -106,7 +118,8 @@ export function livePreview(draft: EditableFlow, options: {
   const startId = draft.start_node ?? draft.nodes[0]?.id;
   const focusIndex = options.focusId ? draft.nodes.findIndex(node => node.id === options.focusId) : -1;
   if (focusIndex >= 0 && draft.nodes[focusIndex].id !== startId) {
-    return { label: `Preview: step ${focusIndex + 1}`, messages: renderNode(draft.nodes[focusIndex]) };
+    // Like the engine, a message carries on through the messages after it (up to 10).
+    return { label: `Preview: step ${focusIndex + 1}`, messages: renderChain(draft.nodes[focusIndex]) };
   }
   const start = draft.nodes.find(node => node.id === startId);
   const label = focusIndex >= 0 ? `Preview: step ${focusIndex + 1}` : 'Preview: start';

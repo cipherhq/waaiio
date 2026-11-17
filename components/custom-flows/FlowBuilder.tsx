@@ -276,7 +276,7 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
     return <>
       <div className="-mx-3 -mt-3 flex flex-wrap items-center justify-between gap-2 bg-brand px-3 py-2 text-white sm:-mx-4 sm:-mt-4 sm:px-4">
         <div className="flex min-w-0 items-center gap-1">
-          <h4 className="break-words text-sm font-semibold">Editing step {index + 1} · {name}</h4>
+          <h4 id={`editing-heading-${node.id}`} className="break-words text-sm font-semibold">Editing step {index + 1} · {name}</h4>
           <HelpTip id={`step-tip-${node.id}`} label={name} text={STEP_TIPS[node.type]} />
         </div>
         <button type="button" onClick={() => closeStep(node.id)}
@@ -307,7 +307,7 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
               instructionsId={`button-order-help-${node.id}`} upLabel="Move button up" downLabel="Move button down" />
           </div>
         </div>}
-        {node.options.map((option, optionIndex) => <div key={optionIndex} className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        {node.options.map((option, optionIndex) => <div key={optionIndex} data-testid="button-row" className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50">
           <Field label="Button text" help="The words on the button. WhatsApp shows up to 20 letters.">
             {props => <input {...props} className={inputClass} placeholder="Example: Program" value={option.label} onChange={event => updateNode({ ...node, options: node.options.map((item, i) => i === optionIndex ? { ...item, label: event.target.value } : item) })} />}
           </Field>
