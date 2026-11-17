@@ -118,6 +118,7 @@ describe('FlowBuilder user journeys', () => {
     expect(calls[0].definition.nodes.at(-1).options[0].next).toBe('a');
   });
 
+  // Opens all six step editors at once (~3 s alone in jsdom); allow for full-suite load. Assertions unchanged.
   it('labels template destinations and headings without changing option values or saved connections', async () => {
     const template = createTemplate({ id: 'flow', businessId: 'business', template: 'festival_info', name: 'Saved flow', keyword: '', language: 'en', timezone: 'UTC', currency: 'USD', bindings: [] }).definition;
     row.definition = template as typeof definition;
@@ -142,7 +143,7 @@ describe('FlowBuilder user journeys', () => {
     expect(calls[0].definition.nodes).toEqual(template.nodes);
     expect(calls[0].definition.start_node).toBe(template.start_node);
     expect(calls[0].definition.guided).toEqual(template.guided);
-  });
+  }, 15_000);
 
   it('labels custom tables and keeps an unconfigured lookup generic', async () => {
     await open();
