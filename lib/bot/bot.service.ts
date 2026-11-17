@@ -1335,10 +1335,22 @@ export class BotService {
             .maybeSingle();
           return !!data;
         };
+        // "Use what you already have" steps (#1086): the existing capability
+        // flow takes over through the quick-rebook re-entry pattern.
+        const { startCapabilityHandoff } = await import('@/lib/bot/custom-flow/handoff');
+        const handOff = async (request: import('@/lib/bot/custom-flow/handoff').CapabilityHandoffRequest) => startCapabilityHandoff({
+          supabase: this.supabase, from, businessId: customBusinessId, destinationPhone,
+          botSession: session, userId: (await getProfile())?.id ?? null, request,
+          execute: async (prepared, input, business) => {
+            const overrides = await getOverrides(customBusinessId);
+            await runWithTranslationOverrides(overrides, () =>
+              this.flowExecutor.execute(from, input, prepared as unknown as BotSession, business as unknown as BusinessRecord));
+          },
+        });
         const { handleCustomFlowMenu } = await import('@/lib/bot/custom-flow/menu-entry');
         const menuEntry = await handleCustomFlowMenu({
           supabase: this.supabase, sender: this.messageSender, businessId: customBusinessId,
-          from, text, session, isPinStep, isBusinessCode,
+          from, text, session, isPinStep, isBusinessCode, handOff,
         });
         if (menuEntry.kind === 'started') return;
         if (menuEntry.kind === 'unavailable') {
@@ -1361,6 +1373,7 @@ export class BotService {
           messageType,
           isPinStep,
           isBusinessCode,
+          handOff,
         });
         if (customHandled) return;
       }

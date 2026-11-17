@@ -1,14 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────
 // Waaiio Custom Flow — data-driven flow definitions (Issue #1013)
-// Phase 1 node set: message, menu, lookup.
-// Later phases add: ask, list, image, booking, payment_link,
-// broadcast_opt_in, human_handoff, end. A node type is a platform change;
+// Phase 1 node set: message, menu, lookup. Phase 2 (#1086) adds handoff.
+// Later phases add: ask, list, image, broadcast_opt_in, end. A node type is a platform change;
 // a customer need is first tested against combinations of these nodes.
 // ─────────────────────────────────────────────────────────────────────
 
 import type { BusinessField, GuidedMetadata } from './data';
 
-export type CustomFlowNodeType = 'message' | 'menu' | 'lookup';
+export type CustomFlowNodeType = 'message' | 'menu' | 'lookup' | 'handoff';
 
 export interface CustomFlowMessageNode {
   id: string;
@@ -54,10 +53,30 @@ export interface CustomFlowLookupNode {
   next?: string | null;
 }
 
+/** Existing capabilities a flow can hand the customer over to (#1086). */
+export type CustomFlowHandoffCapability = 'ticketing' | 'giving' | 'payment' | 'chat';
+
+/**
+ * Hands the customer to an existing capability flow, which runs unchanged
+ * from its first step (its own payment, "I've Paid", confirmation and
+ * next-steps menu). Terminal for the custom flow: there is no `next`.
+ */
+export interface CustomFlowHandoffNode {
+  id: string;
+  type: 'handoff';
+  capability: CustomFlowHandoffCapability;
+  /**
+   * Optional record of this business to start with: an event (ticketing) or
+   * a giving/payment option (services row). Never set for chat.
+   */
+  record_id?: string | null;
+}
+
 export type CustomFlowNode =
   | CustomFlowMessageNode
   | CustomFlowMenuNode
-  | CustomFlowLookupNode;
+  | CustomFlowLookupNode
+  | CustomFlowHandoffNode;
 
 export interface CustomFlowDefinition {
   id: string;

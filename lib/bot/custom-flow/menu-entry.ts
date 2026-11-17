@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { parseUpdatesOptInPostback } from '../customer-updates-optin';
 import { CustomFlowEngine } from './engine';
+import type { CapabilityHandoff } from './handoff';
 import { FLOW_START_PREFIX, resolveFlowMenuSelection } from './menu';
 import { loadActiveSession } from './session';
 
@@ -9,6 +10,8 @@ import { loadActiveSession } from './session';
 export async function handleCustomFlowMenu(args: {
   supabase: SupabaseClient; sender: MessageSender; businessId: string; from: string; text: string;
   isPinStep: boolean; isBusinessCode: (text: string) => Promise<boolean>;
+  /** Starts an existing capability flow when the chosen flow begins with a handoff step (#1086). */
+  handOff?: CapabilityHandoff;
   session: { id: string; business_id: string | null; current_step: string; version?: number; session_data: Record<string, unknown> } | null;
 }): Promise<{ kind: 'pass' } | { kind: 'started' | 'unavailable' } | { kind: 'mapped'; text: string }> {
   if (args.isPinStep) return { kind: 'pass' };

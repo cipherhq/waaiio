@@ -223,8 +223,8 @@ export default function AppointmentsManagementPage() {
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Duration (min)</label>
-                <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })}
+                <label htmlFor="appointment-duration" className="mb-1 block text-sm font-medium text-gray-700">Duration (minutes)</label>
+                <input id="appointment-duration" type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })}
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
@@ -259,22 +259,22 @@ export default function AppointmentsManagementPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
-                  Buffer time (min)
+                <label htmlFor="appointment-buffer" className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                  Buffer time (minutes)
                   <Tooltip text={FIELD_TOOLTIPS['service.buffer']} />
                 </label>
-                <input type="number" min={0} step={5} value={form.buffer_minutes || ''}
+                <input id="appointment-buffer" aria-describedby="appointment-buffer-help" type="number" min={0} step={5} value={form.buffer_minutes || ''}
                   onChange={e => setForm({ ...form, buffer_minutes: e.target.value === '' ? 0 : Number(e.target.value) })}
-                  placeholder="Enter amount"
+                  placeholder="Enter minutes"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-                <p className="mt-1 text-xs text-gray-400">Minutes between appointments for cleanup or breaks</p>
+                <p id="appointment-buffer-help" className="mt-1 text-xs text-gray-400">Minutes between appointments for cleanup or breaks</p>
               </div>
               <div>
-                <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
-                  Max Capacity
+                <label htmlFor="appointment-capacity" className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                  Max bookings per time slot
                   <Tooltip text={FIELD_TOOLTIPS['service.max_capacity']} />
                 </label>
-                <input type="number" min={1} value={form.max_capacity || ''}
+                <input id="appointment-capacity" type="number" min={1} value={form.max_capacity || ''}
                   onChange={e => setForm({ ...form, max_capacity: Number(e.target.value) })}
                   placeholder="1"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />

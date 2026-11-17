@@ -102,7 +102,8 @@ describe('Add a step palette', () => {
   it('marks Soon steps, which add nothing when pressed or dropped', async () => {
     await openFlow();
     const before = headings();
-    for (const name of ['Event tickets', 'Giving', 'Take a payment', 'Talk to a person', 'Ask for a reply']) {
+    // #1086: the four "Use what you already have" steps now work; only "Ask a question" is Soon.
+    for (const name of ['Ask for a reply', 'Ask them to choose']) {
       const chip = screen.getByRole('button', { name: new RegExp(`^${name}`) });
       expect(chip.textContent).toContain('Soon');
       expect(chip.getAttribute('aria-disabled')).toBe('true');
@@ -112,7 +113,7 @@ describe('Add a step palette', () => {
     }
     // A drag that carries no step (e.g. from a Soon chip) is ignored by the drop target.
     const empty = dataTransfer();
-    fireEvent.dragStart(screen.getByRole('button', { name: /^Giving/ }), { dataTransfer: empty });
+    fireEvent.dragStart(screen.getByRole('button', { name: /^Ask for a reply/ }), { dataTransfer: empty });
     fireEvent.drop(within(map()).getByText('Drop a step here'), { dataTransfer: empty });
     expect(screen.getByText('Coming soon:')).toBeTruthy();
     expect(headings()).toEqual(before);

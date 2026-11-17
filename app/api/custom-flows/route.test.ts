@@ -228,4 +228,52 @@ describe('custom flow HTTP handlers with real ownership and capability policy', 
     expect(outputs).toContain('New');
     expect(outputs).not.toContain('Old');
   });
+
+  // #1086: "Use what you already have" steps may only start with this business's own record.
+  const ownEvent = '44444444-4444-4444-8444-444444444444';
+  const foreignEvent = '55555555-5555-4555-8555-555555555555';
+  const handoffDefinition = (recordId: string | null) => ({ ...definition('Retreat'), start_node: 'menu',
+    nodes: [{ id: 'menu', type: 'menu', text: 'Choose', options: [{ label: 'Tickets', next: 'tix' }] },
+      { id: 'tix', type: 'handoff', capability: 'ticketing', ...(recordId ? { record_id: recordId } : {}) }] });
+  function seedEvents() {
+    const date = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+    state.db.business_capabilities.push({ business_id: businessId, capability: 'ticketing', is_enabled: true, sort_order: 1 });
+    state.db.events = [
+      { id: ownEvent, business_id: businessId, name: 'Youth Retreat 2026', status: 'published', date, time: null, total_tickets: 10, tickets_sold: 0 },
+      { id: foreignEvent, business_id: otherId, name: 'Other Gala', status: 'published', date, time: null, total_tickets: 10, tickets_sold: 0 },
+    ];
+  }
+  it.each(['validate', 'publish', 'preview'])('rejects another business\'s event during %s', async action => {
+    seedEvents();
+    state.db.custom_flows[0].definition = handoffDefinition(foreignEvent);
+    const before = structuredClone(state.db.custom_flows);
+    const response = await POST(request(action, { definition: handoffDefinition(foreignEvent), inputs: [] }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: 'unavailable_handoff_record', nodes: ['tix'] });
+    expect(state.db.custom_flows).toEqual(before);
+  });
+  it('publishes a step that uses the business\'s own event', async () => {
+    seedEvents();
+    state.db.custom_flows[0].definition = handoffDefinition(ownEvent);
+    expect((await POST(request('publish'))).status).toBe(200);
+    expect(state.db.custom_flows[0].published_definition.nodes[1]).toEqual({ id: 'tix', type: 'handoff', capability: 'ticketing', record_id: ownEvent });
+  });
+  it('previews the handoff as a builder note through the real engine, without persistence', async () => {
+    seedEvents();
+    const before = structuredClone(state.db);
+    const response = await POST(request('preview', { definition: handoffDefinition(ownEvent), inputs: ['cf:menu:0'] }));
+    expect(response.status).toBe(200);
+    const { messages } = await response.json();
+    expect(messages.at(-1)).toEqual({ text: 'Next, people continue in Event tickets: Youth Retreat 2026. They see your usual steps and pay the usual way.', note: true });
+    expect(state.writes).toEqual([]);
+    expect(state.db).toEqual(before);
+  });
+  it('previews the plain "not available" message when the feature is off', async () => {
+    seedEvents();
+    state.db.business_capabilities = state.db.business_capabilities.filter(row => row.capability !== 'ticketing');
+    const response = await POST(request('preview', { definition: handoffDefinition(null), inputs: ['cf:menu:0'] }));
+    const { messages } = await response.json();
+    expect(messages.map((message: Row) => message.text)).toContain('Sorry, tickets for this aren’t available right now.');
+    expect(messages.some((message: Row) => message.note)).toBe(false);
+  });
 });

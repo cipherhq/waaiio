@@ -6,7 +6,10 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import type { CustomFlowDefinition, CustomFlowNode } from './types';
-import { readBusinessBindings, readGuided } from './data';
+import { isUuid, readBusinessBindings, readGuided } from './data';
+
+/** Capabilities a handoff node may name, and whether each takes a record (#1086). */
+export const HANDOFF_CAPABILITIES = ['ticketing', 'giving', 'payment', 'chat'] as const;
 
 /**
  * Words a flow may not claim as its entry keyword. They already mean
@@ -151,6 +154,18 @@ export function validateDefinition(definition: unknown): string[] {
         }
         if (node.next !== null && node.next !== undefined) {
           checkTarget(node.id, node.next, 'its next step');
+        }
+        break;
+      }
+      case 'handoff': {
+        if (!(HANDOFF_CAPABILITIES as readonly string[]).includes(node.capability)) {
+          errors.push(`Handoff node "${node.id}" has no feature. Choose which existing feature it opens.`);
+        } else if (node.record_id !== undefined && node.record_id !== null) {
+          if (node.capability === 'chat') {
+            errors.push(`Handoff node "${node.id}" opens a chat, which cannot start with a record.`);
+          } else if (!isUuid(node.record_id)) {
+            errors.push(`Handoff node "${node.id}" has a record that cannot be read. Choose it again.`);
+          }
         }
         break;
       }
