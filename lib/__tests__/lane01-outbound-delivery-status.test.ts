@@ -204,13 +204,13 @@ describe('Lane 1: contracts/send messageCategory and delivery', () => {
     expect(templateBlock![0]).toContain("messageCategory: 'utility'");
   });
 
-  it('contracts/send route sets messageCategory utility on sendOrEmail fallback', async () => {
+  it('contracts/send route sets messageCategory service on the plain-text sendOrEmail fallback (#1075)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.readFileSync(path.join(process.cwd(), 'app/api/contracts/send/route.ts'), 'utf-8');
     const sendOrEmailBlock = src.match(/sendOrEmail\(\{[\s\S]*?\}\)/);
     expect(sendOrEmailBlock).toBeTruthy();
-    expect(sendOrEmailBlock![0]).toContain("messageCategory: 'utility'");
+    expect(sendOrEmailBlock![0]).toContain("messageCategory: 'service'");
   });
 
   it('contracts/send checks email result for success:false (not fire-and-forget)', async () => {
@@ -276,13 +276,16 @@ describe('Lane 1: Invoice send route delivery truthfulness', () => {
     expect(src).toContain("emailResult.success ? 'accepted' : 'failed'");
   });
 
-  it('invoices/send sets messageCategory utility on template, text, and document sends', async () => {
+  it('invoices/send keeps utility on the template and uses service for plain text and document (#1075)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.readFileSync(path.join(process.cwd(), 'app/api/invoices/send/route.ts'), 'utf-8');
-    const matches = src.match(/messageCategory:\s*'utility'/g);
-    expect(matches).toBeTruthy();
-    expect(matches!.length).toBeGreaterThanOrEqual(3); // template, text fallback, document
+    const templateBlock = src.match(/sendTemplate\(\{[\s\S]*?\}\)/);
+    expect(templateBlock![0]).toContain("messageCategory: 'utility'");
+    expect(src.match(/messageCategory:\s*'utility'/g)).toHaveLength(1);
+    expect(src).toContain("sendText({ to: cleanPhone, text: message, messageCategory: 'service' })");
+    const documentBlock = src.match(/sendDocument\(\{[\s\S]*?\}\)/);
+    expect(documentBlock![0]).toContain("messageCategory: 'service'");
   });
 });
 
@@ -350,13 +353,13 @@ describe('Lane 1: Payment request send route', () => {
     expect(src).toContain('deliveryResult = await sendOrEmail');
   });
 
-  it('payment-request/send passes messageCategory utility', async () => {
+  it('payment-request/send passes messageCategory service for its plain text (#1075)', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.readFileSync(path.join(process.cwd(), 'app/api/payment-request/send/route.ts'), 'utf-8');
     const block = src.match(/sendOrEmail\(\{[\s\S]*?\}\)/);
     expect(block).toBeTruthy();
-    expect(block![0]).toContain("messageCategory: 'utility'");
+    expect(block![0]).toContain("messageCategory: 'service'");
   });
 
   it('payment-request/send checks sendEmail return value for email-only path', async () => {

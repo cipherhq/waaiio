@@ -68,6 +68,7 @@ vi.mock('@/lib/tooltips', () => ({ PAGE_TOOLTIPS: {} }));
 vi.mock('@/components/dashboard/ThemeToggle', () => ({ ThemeToggle: () => <div data-testid="theme-toggle" /> }));
 
 import { Sidebar } from '@/components/dashboard/Sidebar';
+import { CAPABILITIES } from '@/lib/capabilities/types';
 
 /* ─── helpers ─── */
 function setCaps(...caps: CapabilityId[]) { state.capabilities = caps; }
@@ -85,6 +86,53 @@ afterEach(cleanup);
 
 /* ─── tests ─── */
 describe('Sidebar capability gating (#762)', () => {
+  describe('Owner-approved capability grouping (#1044)', () => {
+    it('places capability operating pages in Your Business while retaining growth and money utilities', () => {
+      setCaps(...CAPABILITIES.map(cap => cap.id));
+      render(<Sidebar />);
+      const businessSection = within(screen.getByText('Your Business').parentElement!);
+      for (const label of ['Bookings', 'Calendar', 'Chat', 'Custom flows', 'Orders', 'Tickets',
+        'Subscriptions', 'Invoices', 'Payment Requests', 'Scan to Pay', 'Quotes', 'Packages',
+        'Audiences', 'Broadcasts', 'Keyword Campaigns', 'Reviews', 'Loyalty', 'Loyalty Tiers',
+        'Referrals', 'Instant Win', 'Parties', 'Surveys & Forms', 'Polls']) {
+        expect(businessSection.getByRole('link', { name: label })).toBeTruthy();
+      }
+      const grow = within(screen.getByText('Grow').parentElement!);
+      expect(grow.getAllByRole('link').map(link => link.textContent?.trim())).toEqual([
+        'Growth', 'Analytics', 'Flow Analytics', 'QR Code & Link',
+      ]);
+      const money = within(screen.getByText('Money').parentElement!);
+      expect(money.getAllByRole('link').map(link => link.textContent?.trim())).toEqual([
+        'Payments Received', 'Revenue', 'Payouts', 'Pending Transfers', 'Billing',
+      ]);
+    });
+
+    it('keeps Events-category Parties in the business section and preserves category exclusions', () => {
+      setCaps('ticketing', 'scheduling');
+      state.category = 'events';
+      const view = render(<Sidebar />);
+      expect(within(screen.getByText('Your Events').parentElement!).getByRole('link', { name: 'Parties' }).getAttribute('href'))
+        .toBe('/dashboard/parties');
+      view.unmount();
+      state.category = 'church';
+      render(<Sidebar />);
+      expect(screen.queryByRole('link', { name: 'Calendar' })).toBeNull();
+    });
+
+    it('retains accessible mobile navigation and closes the drawer after following a moved link', () => {
+      setCaps('poll', 'feedback');
+      render(<Sidebar />);
+      fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+      const drawer = screen.getByRole('dialog', { name: 'Navigation menu' });
+      const group = within(drawer).getByText('Your Business').parentElement!;
+      const poll = within(group).getByRole('link', { name: 'Polls' });
+      poll.focus();
+      expect(document.activeElement).toBe(poll);
+      expect(poll.getAttribute('href')).toBe('/dashboard/polls');
+      fireEvent.click(poll);
+      expect(screen.queryByRole('dialog', { name: 'Navigation menu' })).toBeNull();
+    });
+  });
   describe('Loyalty Tiers essential nav (requireAllCapabilities: true)', () => {
     it('NOT shown when neither loyalty nor membership is enabled', () => {
       setCaps('scheduling');

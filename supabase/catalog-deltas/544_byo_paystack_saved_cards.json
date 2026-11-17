@@ -1,0 +1,99 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.saved_payment_methods.byo_business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (byo_business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "85fd177b8bbea13995585c6c05736ab458196312d5702deb95b848ce09b78bfe",
+   "identity": "constraint:public.saved_payment_methods.saved_payment_methods_byo_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid, p_amount numeric, p_currency text, p_authorization jsonb",
+    "body_sha256": "309124ae9945be242152ac3e06f025335d6a74846ec2c6ead12dcf569848d49a",
+    "config": [
+     "search_path=pg_catalog, pg_temp"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "boolean",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "bdb18fcd101731e6c0c70c255fb69970a03f33127467061a0f10fb36d061e716",
+   "identity": "function:public.persist_verified_paystack_card_authorization(p_payment_id uuid, p_amount numeric, p_currency text, p_authorization jsonb)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX idx_saved_pm_byo_active ON public.saved_payment_methods USING btree (customer_phone, byo_business_id) WHERE ((is_active = true) AND (byo_business_id IS NOT NULL))",
+    "predicate": "((is_active = true) AND (byo_business_id IS NOT NULL))",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "18b3de97ce7d95d3683acefa25572c32dd834707de0298d0a78e48698d8e7f47",
+   "identity": "index:public.saved_payment_methods.idx_saved_pm_byo_active",
+   "operation": "add"
+  },
+  {
+   "identity": "index:public.saved_payment_methods.idx_saved_pm_customer_gateway_active",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX idx_saved_pm_platform_active ON public.saved_payment_methods USING btree (customer_phone, gateway) WHERE ((is_active = true) AND (byo_business_id IS NULL))",
+    "predicate": "((is_active = true) AND (byo_business_id IS NULL))",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "a8ca5c0c5fed068a3dbfb8bd083f568713d71c0eff7b1173458399a3374ff7b5",
+   "identity": "index:public.saved_payment_methods.idx_saved_pm_platform_active",
+   "operation": "add"
+  }
+ ],
+ "migration": "544_byo_paystack_saved_cards.sql",
+ "migration_sha256": "9a081df3b57a9fbeb95adc8f58e272ba8b102874144d1fa364f641ef8beafdb0",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

@@ -87,8 +87,9 @@ export async function POST(request: NextRequest) {
           : report.customer_phone;
 
         // Send secure link via WhatsApp (not the raw PDF URL)
+        // Plain text, not a template: WhatsApp does not charge it (#1075).
         const delivered = await resolved.sender.sendText({
-          messageCategory: 'utility',
+          messageCategory: 'service',
           to: phone,
           text: [
             `📄 *${report.title}*`,

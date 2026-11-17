@@ -1,0 +1,31 @@
+## 2026-11-16 — An abandoned save-card PIN step no longer blocks later follow-ups (#1070 Defect B)
+
+- **Why:**
+  - Owner staging test 2026-11-16: the next-steps menu never arrived after a Stripe ticket payment. Its follow-up stayed in `waiting_card` because only one follow-up may own a chat (unique index → 23505 "Blocked by another follow-up on this conversation").
+  - The blocker was an earlier payment's follow-up held in `card_active`. Its save-card offer was `accepted` (replace), but the customer had no active PIN session.
+  - `resumePaidTransactionFollowup` treated every `accepted` offer as owning the chat forever. `dismissTransactionFollowups` (hi/menu) only released sent/ambiguous/declined offers. So every later card offer, opt-in and menu on that chat was blocked.
+  - The Owner approved the fix ("yes fix it").
+- **What changed:**
+  - New `lib/payments/abandoned-card-step.ts`:
+    - `isAbandonedAcceptedCardStep` is true only when all of these hold: the offer is `accepted`; no active `save_card_pin` / `replace_card_pin` / `verify_card_pin` session exists; and the latest of `resolved_at` (set by both accept RPCs), `activation_send_started_at` and `activation_prompt_sent_at` is older than 5 minutes.
+    - The 5-minute grace covers the time between accepting and opening the PIN session. That happens in the same request (a few reads, or one Stripe redisplay call plus `establish_saved_card_session`).
+    - A Stripe Checkout consent whose activation prompt send has not started is still held, because the activation-retry worker still owes that prompt.
+    - A missing timestamp or a failed lookup also keeps the offer held.
+    - `hasActiveCardPin` is the shared PIN-session check, moved from `lib/bot/transaction-followups.ts`. Its behaviour and error message are unchanged.
+  - `lib/payments/transaction-followup.ts` (`resumePaidTransactionFollowup`, used by the webhook and recovery paths): an abandoned accepted step is released with `resumeTransactionFollowupForPayment(..., { cardResolved: true })`. Opt-in and the menu then continue, and the next payment's follow-up claims the chat on its next resume or recovery pass.
+  - `lib/bot/transaction-followups.ts` (`dismissTransactionFollowups`, hi/menu): an abandoned accepted step is retired to `done` without calling `decline_saved_card_offer`.
+  - Neither path changes the offer row, saved cards or any payment. The only writes are the existing follow-up transitions.
+  - Once released, the activation-retry cron skips the offer, because it already checks the follow-up state. A late tap on the old Save button resumes the follow-up instead of starting a PIN.
+  - `lib/payments/send-confirmation.ts`: the paid confirmation no longer says "Type *receipt* to get your receipt" when the amount is above zero.
+    - In that case post-completion now sends the receipt PDF right after (#1071), on the same sender that sent this text.
+    - Zero-amount confirmations keep the line.
+    - `flow-localization.ts` strings are unchanged; this text does not use them.
+- **Tests:**
+  - New `lib/__tests__/abandoned-card-step-1070.test.ts`: real follow-up modules against a fake database that emulates the conversation unique index. It covers release plus the next payment's card step (Stripe and Paystack), an active PIN still holding, the grace window, a Stripe prompt not yet started, a missing timestamp, unchanged sent/ambiguous/committed/confirmed behaviour, and hi/menu navigation.
+  - `lib/__tests__/post-payment-message-order-1070.test.ts`: receipt-line cases added, and the fake claim amount is now a parameter.
+  - `p0-payment-confirmation.test.ts` and `slice-5a-delivery-sequence.test.ts`: the old receipt-line assertions were updated to match the approved copy.
+- **Affects:** paid transaction follow-ups (card step → opt-in → menu) on all gateways, and the paid confirmation text.
+- **Could break:**
+  - A customer who accepted more than 5 minutes ago and whose PIN session ended without cancelling gets the old payment's opt-in/menu on the next recovery pass (cron every 15 minutes) or on hi/menu. No card is saved; they can save one next time.
+  - Stripe offers whose activation prompt never started are still held, as before.
+  - Customers no longer see the "Type receipt" hint after paid confirmations. The *receipt* keyword still works.

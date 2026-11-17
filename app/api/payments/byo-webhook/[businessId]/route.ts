@@ -6,6 +6,9 @@ import { processPaystackChargeSuccess, processPaystackChargeFailed, type Success
 import { decryptToken } from '@/lib/encryption';
 import { resolvePaymentOrigin } from '@/lib/payments/provider-adapters';
 
+// Same limit as the other payment webhooks: confirmation now uploads media and waits for delivery (#1070).
+export const maxDuration = 60;
+
 // Terminal Paystack failure statuses — only these justify marking a payment failed
 const PAYSTACK_TERMINAL_FAILURES = new Set(['failed', 'reversed', 'abandoned']);
 // Terminal Flutterwave failure statuses
@@ -401,10 +404,13 @@ async function verifyWithProviderServerSide(
       if (result.data.reference !== reference) return { success: false, reason: 'reference_mismatch' };
 
       const psAuth = result.data.authorization as Record<string, unknown> | undefined;
+      // authorization_code/reusable let a reusable card be saved on the merchant's own
+      // account (#1065); persistence goes through the allowlisted M544 RPC only.
       const sanitizedAuth = psAuth ? {
         last4: psAuth.last4, brand: psAuth.brand, country_code: psAuth.country_code,
         bin: psAuth.bin, exp_month: psAuth.exp_month, exp_year: psAuth.exp_year,
         card_type: psAuth.card_type, bank: psAuth.bank,
+        authorization_code: psAuth.authorization_code, reusable: psAuth.reusable,
       } : undefined;
 
       return {

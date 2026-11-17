@@ -14,6 +14,7 @@
 import { detectCategoryIntent, CATEGORY_KEYWORDS, levenshtein } from '@/lib/bot/fuzzy-match';
 import { resolveLocation, type LocationResolution } from './location-resolver';
 import { COUNTRIES } from '@/lib/constants';
+import { isKnownPlace } from './place-aliases';
 
 /** Exact curated city and area names (lower-case), for the no-preposition re-parse (#867). */
 const CURATED_PLACE_NAMES = new Set<string>(
@@ -39,6 +40,11 @@ export interface DirectoryQueryResult {
   candidates?: Array<{ name: string; countryCode: string }>;
   /** If the category was fuzzy-corrected (e.g., "resturant" → "restaurant"). */
   correctedFrom?: string;
+  /**
+   * What is being looked for (#1072): the text before the place ("shops" in
+   * "shops in Lagos"), or the whole text when no place was found.
+   */
+  subject?: string | null;
 }
 
 // ── Preposition patterns ───────────────────────────────
@@ -87,7 +93,7 @@ const NEAR_ME_RE = /^me$/i;
  * Generic nouns that mean "show everything" — no category filter, no nameQuery.
  * "business in DC" = all eligible businesses in DC.
  */
-const GENERIC_NOUNS = new Set([
+export const GENERIC_NOUNS: ReadonlySet<string> = new Set([
   'business', 'businesses', 'place', 'places', 'shop', 'shops',
   'store', 'stores', 'anything', 'everything', 'services',
 ]);
@@ -183,6 +189,7 @@ export function parseDirectoryQuery(
       needsLocation: true,
       nameQuery: nearMeCategories.length === 0 && !isGenericNearMe ? categoryPart : null,
       correctedFrom: nearMeCorrected,
+      subject: categoryPart,
     };
   }
 
@@ -224,6 +231,7 @@ export function parseDirectoryQuery(
       needsLocation: false,
       nameQuery: categories.length === 0 && !isGeneric ? categoryPart : null,
       correctedFrom,
+      subject: categoryPart,
     };
   }
 
@@ -242,7 +250,9 @@ export function parseDirectoryQuery(
     const isCategoryPart = (part: string) =>
       GENERIC_NOUNS.has(part.toLowerCase()) || detectCategoryIntent(part).length > 0;
     const isExactPlace = (part: string) =>
-      CURATED_PLACE_NAMES.has(part.toLowerCase()) && resolveLocation(part).tier < 3;
+      (CURATED_PLACE_NAMES.has(part.toLowerCase()) && resolveLocation(part).tier < 3)
+      // #1072: well-known areas and states ("Gbagada", "Maryland"), never a bare abbreviation
+      || isKnownPlace(part, phoneCountryCode, false);
     for (let i = 1; i < words.length; i++) {
       const head = words.slice(0, i).join(' ');
       const tail = words.slice(i).join(' ');
@@ -263,6 +273,7 @@ export function parseDirectoryQuery(
       resolvedLocation: null,
       needsLocation: true,
       nameQuery: null,
+      subject: trimmed,
     };
   }
 
@@ -275,6 +286,7 @@ export function parseDirectoryQuery(
       resolvedLocation: null,
       needsLocation: true,
       nameQuery: null,
+      subject: trimmed,
     };
   }
 
@@ -287,6 +299,20 @@ export function parseDirectoryQuery(
       resolvedLocation: locationAttempt,
       needsLocation: false,
       nameQuery: null,
+      subject: null,
+    };
+  }
+
+  // #1072: a well-known area or state, or "Laurel, Maryland" (place within a region).
+  // Bare abbreviations ("MD") are left to the name search so a short business name still matches.
+  if (isKnownPlace(trimmed, phoneCountryCode, false)) {
+    return {
+      categories: [],
+      locationText: trimmed,
+      resolvedLocation: null,
+      needsLocation: false,
+      nameQuery: null,
+      subject: null,
     };
   }
 
@@ -301,6 +327,7 @@ export function parseDirectoryQuery(
         needsLocation: true,
         nameQuery: null,
         correctedFrom: correction.original,
+        subject: trimmed,
       };
     }
   }
@@ -312,6 +339,7 @@ export function parseDirectoryQuery(
     resolvedLocation: null,
     needsLocation: false,
     nameQuery: trimmed,
+    subject: trimmed,
   };
 }
 

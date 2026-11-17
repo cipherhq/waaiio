@@ -102,6 +102,9 @@ export default function ServicesPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [statusPending, setStatusPending] = useState<Set<string>>(new Set());
+  const statusPendingRef = useRef(new Set<string>());
+  const [statusErrors, setStatusErrors] = useState<Record<string, string>>({});
   const [view, setView] = useState<ViewMode>('list');
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [filterTab, setFilterTab] = useState<'all' | 'services' | 'classes'>('all');
@@ -270,6 +273,7 @@ export default function ServicesPage() {
   }
 
   function openEdit(service: Service) {
+    if (statusPendingRef.current.has(service.id)) return;
     const meta = (service.metadata || {}) as Record<string, unknown>;
     setForm({
       ...emptyForm,
@@ -294,6 +298,32 @@ export default function ServicesPage() {
     if (service.id) fetchAddons(service.id);
     if (service.is_class && service.id) fetchClassRoster(service.id);
     setView('edit');
+  }
+
+  async function toggleServiceStatus(service: Service) {
+    if (service.status === 'archived' || statusPendingRef.current.has(service.id)) return;
+    statusPendingRef.current.add(service.id);
+    setStatusPending(new Set(statusPendingRef.current));
+    setStatusErrors(previous => ({ ...previous, [service.id]: '' }));
+    const status = service.status === 'active' ? 'inactive' : 'active';
+    try {
+      const { data, error: updateError } = await createClient().from('services')
+        .update({ status, is_active: status === 'active' })
+        .eq('id', service.id)
+        .eq('business_id', business.id)
+        .is('deleted_at', null)
+        .eq('status', service.status)
+        .select('id, status, is_active')
+        .maybeSingle();
+      if (updateError || !data) throw new Error('Service status update failed');
+      setServices(previous => previous.map(item => item.id === service.id
+        ? { ...item, status: data.status, is_active: data.is_active } : item));
+    } catch {
+      setStatusErrors(previous => ({ ...previous, [service.id]: 'This service could not be saved. Please try again.' }));
+    } finally {
+      statusPendingRef.current.delete(service.id);
+      setStatusPending(new Set(statusPendingRef.current));
+    }
   }
 
   async function handleImageUpload(file: File) {
@@ -1145,7 +1175,7 @@ export default function ServicesPage() {
                       {service.is_featured && (
                         <span className="text-amber-400" title="Featured">&#9733;</span>
                       )}
-                      <StatusBadge status={service.status} />
+                      {service.status === 'archived' && <StatusBadge status={service.status} />}
                     </div>
                     {service.description && (
                       <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{service.description}</p>
@@ -1176,10 +1206,24 @@ export default function ServicesPage() {
                   </div>
                 </div>
 
+                {service.status !== 'archived' && (
+                  <button
+                    type="button"
+                    aria-label={`${service.status === 'active' ? 'Active' : 'Inactive'}: ${service.name}`}
+                    aria-pressed={service.status === 'active'}
+                    aria-busy={statusPending.has(service.id)}
+                    disabled={statusPending.has(service.id)}
+                    onClick={event => { event.stopPropagation(); void toggleServiceStatus(service); }}
+                    className="mr-2 min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand disabled:cursor-wait dark:border-gray-600 dark:text-gray-200"
+                  >
+                    {service.status === 'active' ? 'Active' : 'Inactive'}
+                  </button>
+                )}
                 <svg aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>
+              {statusErrors[service.id] && <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">{statusErrors[service.id]}</p>}
             </div>
           ))}
         </div>

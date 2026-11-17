@@ -373,8 +373,8 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     // Spy on platform-scoped methods to distinguish from business-scoped cloud calls
-    const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
-    vi.spyOn(sender, 'sendPlatformButtons');
+    vi.spyOn(sender, 'sendPlatformText');
+    const spyPlatformButtons = vi.spyOn(sender, 'sendPlatformButtons');
     vi.spyOn(sender, 'sendPlatformList');
     mockDetectionResult = { businessId: null, suggestions: [] };
     const tenantlessSession = {
@@ -387,10 +387,11 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     await bot.handleMessage('+234800', 'random text', 'text', 'pnid-1');
     // Sender transitioned to platform discovery (tenantless)
     expect(sender.boundBusinessId).toBe('');
-    // Platform-scoped send reached Meta (directory search or no-result message)
-    expect(spyPlatformText).toHaveBeenCalled();
+    // Platform-scoped send reached Meta (directory no-results message; #1072: with
+    // Search again / Browse categories buttons)
+    expect(spyPlatformButtons).toHaveBeenCalled();
     // Directory reply text confirms the send was a deliberate directory no-results message
-    const sentTexts = spyPlatformText.mock.calls.map((c: any[]) => (c[0] as { text?: string }).text ?? '');
+    const sentTexts = spyPlatformButtons.mock.calls.map((c: any[]) => (c[0] as { body?: string }).body ?? '');
     expect(sentTexts.some(t => t.includes("No businesses found for 'random text'"))).toBe(true);
     // S-1 property: zero BUSINESS-scoped cloud calls (platform-scoped are legitimate)
     expect(totalBusinessScopedCalls(cloud, sender)).toBe(0);

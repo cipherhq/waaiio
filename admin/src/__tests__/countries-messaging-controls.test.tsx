@@ -133,6 +133,42 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     expect(h.writes).not.toHaveBeenCalled();
   });
 
+  it('#1075: loads the service replies rate and saves an edited service rate, 0 included', async () => {
+    const snapshot = {
+      ...SNAPSHOT,
+      messaging_pricing: {
+        ...SNAPSHOT.messaging_pricing,
+        NGN: { ...SNAPSHOT.messaging_pricing.NGN, rates: { NG: { '*': 2100, service: 0, utility: 5, marketing: 9 } } },
+      },
+    };
+    h.rpc.mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: snapshot }], error: null });
+    render(<Countries />); await loaded();
+    expect(screen.getByRole('columnheader', { name: 'Service Replies Rate' })).toBeTruthy();
+    expect(input('NG service replies rate').value).toBe('0');
+    expect(input('US service replies rate').value).toBe('');
+    fireEvent.change(input('US service replies rate'), { target: { value: '0' } });
+    fireEvent.change(input('US utility rate'), { target: { value: '5' } });
+    fireEvent.change(input('US marketing rate'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText('Confirm operation');
+    expect(body(requests('/prepare')[0]).params.messaging_pricing).toEqual({
+      NGN: { rates: { NG: { '*': 2100, service: 0, utility: 5, marketing: 9 } }, default_cost_minor: 2100, default_spend_cap_minor: 7500000 },
+      USD: { rates: { US: { '*': 1, service: 0, utility: 5, marketing: 9 } }, default_cost_minor: 1, default_spend_cap_minor: 5000 },
+    });
+  });
+
+  it('#1075: a non-whole service rate is refused before any MFA request', async () => {
+    render(<Countries />); await loaded();
+    for (const code of ['NG', 'US']) {
+      fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
+      fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
+    }
+    fireEvent.change(input('NG service replies rate'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText('NG service rate: must be a non-negative integer (no decimals)');
+    expect(requests('/prepare')).toHaveLength(0);
+  });
+
   it('an active market without utility and marketing rates is refused before any MFA request', async () => {
     render(<Countries />); await loaded();
     fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));

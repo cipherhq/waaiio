@@ -1440,7 +1440,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
               <th className="px-2 py-2 text-left font-medium text-gray-500">Currency</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500">Utility Rate</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500">Marketing Rate</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500" title="Used for any message without its own rate, such as bot replies to customers">All Other Messages Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500" title="Bot and other replies to a customer who messaged first. WhatsApp does not charge for these, so 0 means no charge (#1075)">Service Replies Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500" title="Used for any message without its own rate">All Other Messages Rate</th>
               {hasPaystack && (
                 <>
                   <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
@@ -1462,6 +1463,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
                   <td className="px-2 py-2 text-gray-500">{c.currency_code}</td>
                   <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} utility rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.utility || ''} onChange={e => updateRate('utility', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.utility || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
                   <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} marketing rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.marketing || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} service replies rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.service || ''} onChange={e => updateRate('service', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.service || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
                   <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} all other messages rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates['*'] || ''} onChange={e => updateRate('*', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates['*'] || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
                   {hasPaystack && (
                     <>
