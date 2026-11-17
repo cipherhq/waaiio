@@ -90,6 +90,9 @@ import {
   exactNameMayEnter,
   exactNamePickAllowed,
   CONNECT_PATTERN,
+  handleDirectoryNearby,
+  LOCATION_PIN_TEXT,
+  UNSUPPORTED_MEDIA_TEXT,
   type DirectorySessionData,
 } from './handlers/directory-search';
 
@@ -101,6 +104,11 @@ export class BotService {
   private directorySearchRedispatched = false;
   /** #1072: language of the business conversation a menu search was redirected from. */
   private redirectedDirectoryLang: string | undefined;
+  /**
+   * #1072 step 2: the location pin of this inbound message, set by the webhook.
+   * Request-scoped (one BotService per message) and never persisted or logged.
+   */
+  private inboundLocation: { latitude: number; longitude: number } | null = null;
   private readonly ctx: BotContext;
 
   constructor(
@@ -112,6 +120,11 @@ export class BotService {
   ) {
     this.flowExecutor = new FlowExecutor(supabase, messageSender, standaloneService, intelligence);
     this.ctx = { supabase, messageSender, standaloneService, intelligence, flowExecutor: this.flowExecutor };
+  }
+
+  /** #1072 step 2: the webhook hands over a location pin before handleMessage(LOCATION_PIN_TEXT). */
+  setInboundLocation(pin: { latitude: number; longitude: number }): void {
+    this.inboundLocation = pin;
   }
 
   async handleMessage(
@@ -1060,6 +1073,24 @@ export class BotService {
         }
       }
       _bmark('unresolved_get_bot_context');
+    }
+
+    // ── Location pin (#1072 step 2) ──
+    // On the shared directory number, outside any business, a pin lists the
+    // nearest businesses. Everywhere else it gets the reply it always had.
+    // The coordinates are used once and never stored.
+    if (this.inboundLocation && text === LOCATION_PIN_TEXT && !_internalProvenance) {
+      const pin = this.inboundLocation;
+      this.inboundLocation = null;
+      const inDirectory = session
+        ? !session.business_id && (session.current_step === 'directory_search' || session.current_step === 'directory_results')
+        : !sharedConversation?.businessId;
+      if (sharedConversation && !preResolvedBusinessId && inDirectory) {
+        await this.handleDirectoryPin(from, destinationPhone, session, sharedConversation.channelId, pin, getProfile);
+        return;
+      }
+      await this.messageSender.sendText({ to: from, text: UNSUPPORTED_MEDIA_TEXT });
+      return;
     }
 
     // ── Read-only pre-verification for ALL saved-card button payloads ──
@@ -3285,7 +3316,8 @@ export class BotService {
           ...(searchData?._directory_results || []).map(r => r.businessId),
           ...(searchData?._directory_suggestions || []).map(s => s.id),
         ]);
-        const pastBusinesses = searchData ? recentBusinesses.filter(b => !shownIds.has(b.id)).slice(0, 3) : [];
+        const pastBusinesses = searchData && !searchData._directory_near
+          ? recentBusinesses.filter(b => !shownIds.has(b.id)).slice(0, 3) : [];
         await sendPastBusinesses(dirSend, from, pastBusinesses, 'id', searchLang);
         // CAS-safe session persist: UPDATE existing active null-biz session or INSERT fresh.
         const dirSearchSess = await this.createDirectorySession(
@@ -4133,7 +4165,7 @@ export class BotService {
       if (searchData) {
         // No results: also offer the businesses the customer used before (#1072).
         let past: Array<{ id: string; name: string; bot_code: string }> = [];
-        if (!searchData._directory_results?.length && !searchData._directory_suggestions?.length) {
+        if (!searchData._directory_results?.length && !searchData._directory_suggestions?.length && !searchData._directory_near) {
           past = (await this.findReturningCustomerBusinesses(from, null, dirCountry)).slice(0, 3);
           await sendPastBusinesses(dirSend, from, past, 'id', dirLang);
         }
@@ -5148,6 +5180,41 @@ export class BotService {
   }
 
   /** Country of a shared inbound channel (directory scope), or null. */
+  /**
+   * #1072 step 2: a location pin in the directory — nearest businesses, saved as
+   * a directory result list (ids and names only; no coordinates, no distances).
+   */
+  private async handleDirectoryPin(
+    from: string,
+    destinationPhone: string | undefined,
+    session: BotSession | null,
+    channelId: string,
+    pin: { latitude: number; longitude: number },
+    getProfile: () => Promise<{ id: string } | null>,
+  ): Promise<void> {
+    if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+    const dirData = (session?.session_data || {}) as unknown as Partial<DirectorySessionData>;
+    const country = dirData._directory_country || await this.sharedChannelCountry(channelId);
+    const lang = directoryLanguage(session?.session_data);
+    const data = await handleDirectoryNearby(
+      this.supabase, this.buildDirectorySend(), from, pin, country, lang, dirData._directory_near,
+    );
+    if (!data) return; // rate-limited or unavailable — reply already sent, session kept
+    if (session) {
+      await this.supabase.from('bot_sessions').update({
+        current_step: 'directory_results',
+        session_data: { ...session.session_data, ...data },
+      }).eq('id', session.id);
+      return;
+    }
+    const profile = await getProfile();
+    const created = await this.createDirectorySession(
+      from, profile?.id || null, 'directory_results',
+      await this.navigationChannelData(from, destinationPhone, { ...data }),
+    );
+    if (!created) logger.warn('[BOT] createDirectorySession(location pin) failed — session not persisted after search');
+  }
+
   private async sharedChannelCountry(channelId: string): Promise<string | null> {
     const { data } = await this.supabase.from('whatsapp_channels').select('country_code').eq('id', channelId).maybeSingle();
     return (data as { country_code?: string | null } | null)?.country_code || null;

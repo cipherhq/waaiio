@@ -21,6 +21,7 @@ import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/facto
 import { getCurrencyForCountry } from '@/lib/channels/catalog';
 import { handleCatalogOrder } from '@/lib/channels/catalog-order-handler';
 import { handleCustomFlowFile, inboundMedia } from '@/lib/bot/custom-flow/file-intake';
+import { LOCATION_PIN_TEXT, UNSUPPORTED_MEDIA_TEXT, validLocationPin } from '@/lib/bot/handlers/directory-search';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import type { CountryCode, PaymentGatewayName } from '@/lib/constants';
@@ -680,6 +681,15 @@ export async function POST(request: NextRequest) {
                 msgType = 'button';
               }
 
+              // Location pin (#1072 step 2): on a shared number (no business bound to the
+              // channel) the bot decides — directory "nearest to me", or the usual reply.
+              // The coordinates go to this message's bot only; never logged or stored.
+              let locationPin: { latitude: number; longitude: number } | null = null;
+              if (msg.type === 'location' && !preResolvedBusinessId && !text) {
+                locationPin = validLocationPin((msg as Record<string, unknown>).location);
+                if (locationPin) text = LOCATION_PIN_TEXT;
+              }
+
               // Handle audio messages: download from Meta, upload to Supabase Storage
               let mediaUrl: string | undefined;
               if (msg.type === 'audio' && msg.audio?.id) {
@@ -772,10 +782,7 @@ export async function POST(request: NextRequest) {
               }
               if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
                 try {
-                  await guardedSender.sendText({
-                    to: source,
-                    text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
-                  });
+                  await guardedSender.sendText({ to: source, text: UNSUPPORTED_MEDIA_TEXT });
                 } catch { /* ignore send failure */ }
                 // Fenced completion — we handled it (sent guidance reply)
                 await supabase.rpc('complete_webhook_event', {
@@ -839,6 +846,7 @@ export async function POST(request: NextRequest) {
 
               const standalone = new StandaloneService(supabase);
               const bot = new BotService(supabase, guardedSender, standalone, intelligenceSvc, sender => createDeadlineGuardedSender(sender, t0));
+              if (locationPin) bot.setInboundLocation(locationPin);
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
