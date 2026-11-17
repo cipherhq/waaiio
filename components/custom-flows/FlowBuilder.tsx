@@ -19,6 +19,7 @@ import { Walkthrough } from './Walkthrough';
 import { Field, buttonClass, cardClass, inputClass, lavenderClass } from './ui';
 import { BUSINESS_FIELDS,businessValue,type BusinessField,type DataTable } from '@/lib/bot/custom-flow/data';
 import { toggleSection } from '@/lib/custom-flow-builder/templates';
+import { friendlyErrors } from '@/lib/custom-flow-builder/friendly-errors';
 
 interface FlowRow { id: string; definition: EditableFlow; version: number; published_definition: EditableFlow | null; published_version: number | null }
 interface Props { businessId: string; language?: string; timezone?: string; currency?: string; businessDetails?:Partial<Record<BusinessField,unknown>> }
@@ -37,8 +38,8 @@ const SETTING_HELP = {
   greeting: ['Greeting', 'The first message people get when the flow starts.', 'Example: Welcome to the Youth Retreat!'],
   fallback_message: ['When we don’t understand', 'What we send when someone types something the flow can’t use.', 'Example: Sorry, please tap one of the buttons.'],
   entry_keyword: ['Word people send to start', 'When someone sends this word to your WhatsApp number, this flow starts.', 'Example: RETREAT'],
-  language: ['Language', 'The language code for this flow’s messages.', 'Example: en'],
-  timezone: ['Time zone', 'Used for dates and times in this flow.', 'Example: Africa/Lagos'],
+  language: ['Language', 'The language customers see this flow in, as a short code: en means English.', 'Example: en for English'],
+  timezone: ['Time zone', 'Dates and times in this flow use this time zone, written as region and city.', 'Example: Africa/Lagos'],
   currency: ['Currency', 'Used when this flow shows amounts of money.', 'Example: NGN'],
 } as const;
 
@@ -93,6 +94,11 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const [listsVersion, setListsVersion] = useState(0);
   const wide = useWideLayout();
   const previewTranscript = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // Polite screen-reader note for changes made away from the focused control (#1079).
+  const [announcement, setAnnouncement] = useState('');
+  // Element to focus after the next render: a step's editor (field) or a control by id.
+  const focusNext = useRef<{ id: string; field?: boolean } | null>(null);
   const lastPreviewInput = messages.reduce((last, message, index) => message.input ? index : last, -1);
   const previewBusy = busy && feedbackLocation === 'preview';
 
@@ -102,6 +108,17 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     const transcript = previewTranscript.current;
     if (transcript) transcript.scrollTop = transcript.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    const target = focusNext.current;
+    const element = target && document.getElementById(target.id);
+    if (!target || !element) return;
+    focusNext.current = null;
+    if (!target.field) { element.focus(); return; }
+    // jsdom has no scrollIntoView.
+    if (typeof element.scrollIntoView === 'function') element.scrollIntoView({ block: 'center' });
+    (element.querySelector<HTMLElement>('textarea, input, select') ?? element).focus({ preventScroll: true });
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -145,7 +162,8 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   function updateNode(next: CustomFlowNode) { if (draft) edit({ ...draft, nodes: draft.nodes.map(node => node.id === next.id ? next : node) }); }
   /** Same new step as before; dropped on a "Show buttons" step it also gets a new button there. */
   function add(type: CustomFlowNode['type'], branchOf?: string) {
-    if (!draft) return;
+    // A pending request would replace the draft when it returns, so nothing is added meanwhile.
+    if (!draft || busy) return;
     const id = crypto.randomUUID();
     const node: CustomFlowNode = type === 'message' ? { id, type, text: '', next: null }
       : type === 'menu' ? { id, type, text: '', options: [] }
@@ -155,13 +173,25 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     edit(next);
     setOpenSteps(current => [...current, id]);
     setSoon(null);
+    // On a phone the new step can be far below the palette: show it and start typing.
+    focusNext.current = { id: `flow-step-${id}`, field: true };
+    setAnnouncement(`Step ${next.nodes.findIndex(item => item.id === id) + 1} added`);
   }
   function moveStep(id: string, toIndex: number) {
-    if (!draft) return;
+    if (!draft || busy) return;
     const order = draft.nodes.map(node => node.id).filter(item => item !== id);
     order.splice(toIndex, 0, id);
     if (order.every((item, index) => item === draft.nodes[index].id)) return;
     edit(reorderFlow(draft, order));
+  }
+  function removeStep(id: string) {
+    if (!draft) return;
+    const index = draft.nodes.findIndex(node => node.id === id);
+    const neighbour = draft.nodes[index - 1] ?? draft.nodes[index + 1];
+    edit(removeBlock(draft, id));
+    // Focus the step before it (or after it); with no steps left, the Add a step heading.
+    focusNext.current = { id: neighbour ? `flow-step-edit-${neighbour.id}` : 'palette-heading' };
+    setAnnouncement('Step removed');
   }
   function toggleStep(id: string) { setSoon(null); setOpenSteps(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]); }
   async function action(kind: string, previewInputs = inputs) {
@@ -174,7 +204,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       const response = await fetch('/api/custom-flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessId, id: row?.id, version: row?.version, action: kind === 'save' && !row ? 'create' : kind, definition: draft, inputs: previewInputs }) });
       const body = await response.json();
       if (!response.ok) {
-        if (body.errors?.length) setErrors(body.errors);
+        if (body.errors?.length) setErrors(friendlyErrors(body.errors, draft));
         const notices: Record<string, string> = {
           version_conflict: 'Someone else changed this flow. Reload the page before saving.',
           message_chain_limit: 'Too many messages in a row. Use at most 10 messages to end the flow, or 9 before buttons or a list search.',
@@ -184,6 +214,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           preview_unavailable: 'We couldn’t run the test chat. Check your steps and try again.',
           missing_business_settings: 'Missing business information. Update Settings first.',
           incomplete_sections: 'Add complete visible information to each selected section, or turn that section off.',
+          invalid_definition: 'Some steps aren’t finished yet. Fix them, then try again.',
         };
         setNotice(notices[body.error] ?? 'Unable to save changes. Try again.');
         return;
@@ -248,14 +279,14 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           <Field label="Goes to" help="The step people reach when they tap this button.">
             {props => destination(option.next, value => updateNode({ ...node, options: node.options.map((item, i) => i === optionIndex ? { ...item, next: value ?? '' } : item) }), false, props)}
           </Field>
-          <button className={buttonClass} onClick={() => updateNode({ ...node, options: node.options.filter((_, i) => i !== optionIndex) })}>Remove button</button>
+          <button className={buttonClass} onClick={() => { updateNode({ ...node, options: node.options.filter((_, i) => i !== optionIndex) }); focusNext.current = { id: `add-button-${node.id}` }; }}>Remove button</button>
         </div>)}
-        <button className={buttonClass} disabled={node.options.length >= 10} onClick={() => updateNode({ ...node, options: [...node.options, { label: '', next: '' }] })}>Add a button</button>
+        <button id={`add-button-${node.id}`} className={buttonClass} disabled={node.options.length >= 10} onClick={() => updateNode({ ...node, options: [...node.options, { label: '', next: '' }] })}>Add a button</button>
       </>}
       {node.type === 'lookup' && <LookupSettings businessId={businessId} flowId={row?.id ?? null} node={node} lists={lists} business={businessDetails} busy={busy}
         onChange={updateNode} destination={props => destination(node.next, value => updateNode({ ...node, next: value }), false, props)} />}
       <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-gray-700">
-        <button className={`${buttonClass} text-red-700 dark:text-red-300`} onClick={() => edit(removeBlock(draft, node.id))}>Remove this step</button>
+        <button className={`${buttonClass} text-red-700 dark:text-red-300`} onClick={() => removeStep(node.id)}>Remove this step</button>
       </div>
     </>;
   }
@@ -280,8 +311,9 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const openNodes = draft ? draft.nodes.filter(node => editable && openSteps.includes(node.id)) : [];
 
   return <div className="space-y-6" aria-busy={busy || loading}>
-    <header><h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Custom flows</h1><p className="mt-2 max-w-2xl text-sm text-gray-600 dark:text-gray-400">Build a WhatsApp chat step by step, try it, then make it live. People keep using the live version until you select Go live again.</p></header>
+    <header><h1 ref={heading} tabIndex={-1} className="text-2xl font-bold text-gray-900 outline-none dark:text-gray-100">Custom flows</h1><p className="mt-2 max-w-2xl text-sm text-gray-600 dark:text-gray-400">Build a WhatsApp chat step by step, try it, then make it live. People keep using the live version until you select Go live again.</p></header>
     {feedbackLocation === 'editor' && feedback}
+    <p aria-live="polite" className="sr-only">{announcement}</p>
     {editing && <section aria-label="Flow actions" className="min-w-0 space-y-3 rounded-2xl bg-brand p-4 text-white shadow-md dark:bg-brand-800 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
@@ -289,7 +321,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
             <h2 className="truncate text-lg font-semibold text-white">{draft.name.trim() || 'Untitled flow'}</h2>
             <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${statusClass}`}>{status}</span>
           </div>
-          <p className="mt-1 text-sm text-brand-50">{draft.entry_keyword?.trim() ? <>People start it by sending the word <span className="rounded bg-white/15 px-1.5 py-0.5 font-mono font-semibold text-white">{draft.entry_keyword.trim()}</span></> : 'No start word yet. Add one in Settings.'}</p>
+          <p className="mt-1 text-sm text-brand-50">{draft.entry_keyword?.trim() ? <>People start it by sending the word <span className="break-all rounded bg-white/15 px-1.5 py-0.5 font-mono font-semibold text-white">{draft.entry_keyword.trim()}</span></> : 'No start word yet. Add one in Settings.'}</p>
         </div>
         <fieldset disabled={busy} className="min-w-0">
           <div className="space-y-2">
@@ -319,7 +351,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
         </fieldset>
       </div>
     </section>}
-    {editing && <Walkthrough />}
+    {editing && <Walkthrough onDone={() => heading.current?.focus()} />}
     {/* Mobile stacks: actions (above), steps to add, the flow, the phone, then lists and flows. */}
     <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[17rem_minmax(0,1fr)_24rem]">
       <div className="contents lg:col-start-1 lg:row-span-3 lg:row-start-1 lg:block lg:min-w-0 lg:space-y-4 xl:row-span-1">
@@ -333,7 +365,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           </div>
         </section>
         {editing && <fieldset disabled={busy} aria-label="Add a step" className={`${lavenderClass} order-2 min-w-0 space-y-5 lg:order-none`}>
-          <StepPalette enabled={editable} onAdd={type => add(type)} onSoon={name => setSoon(name)} />
+          <StepPalette enabled={editable} busy={busy} onAdd={type => add(type)} onSoon={name => setSoon(name)} />
           {editable && <div className="space-y-2 border-t border-brand-100 pt-4 dark:border-brand-900">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Step order</h2>
             <p id="flow-reorder-help" className="text-xs text-gray-700 dark:text-gray-300">Drag a step, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>
@@ -351,7 +383,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
         {editing && <>
           <fieldset disabled={busy} className="order-3 min-w-0 space-y-4 lg:order-none">
             {!editable && <p className="text-sm text-gray-600 dark:text-gray-400">This guided flow is built from your sections. Open the advanced editor to change steps.</p>}
-            <FlowMap draft={draft} editable={editable} openSteps={openSteps} onToggleStep={toggleStep} renderEditor={stepEditor} inlineEditors={!wide}
+            <FlowMap draft={draft} editable={editable} busy={busy} openSteps={openSteps} onToggleStep={toggleStep} renderEditor={stepEditor} inlineEditors={!wide}
               onDropStep={(type, branchOf) => add(type, branchOf)} onMoveStep={moveStep} />
             <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
               <span aria-hidden="true" className="text-lg leading-none">💡</span>
@@ -370,7 +402,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
                 <div className="space-y-2">
                   <h3 className="font-semibold text-gray-900 dark:text-gray-100">Sections</h3>
                   <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200 dark:divide-gray-700 dark:border-gray-700">
-                    {draft.guided.sections.map(section=><li key={section.id} className="px-3 py-1"><label className="flex min-h-11 items-center justify-between gap-3 text-sm text-gray-900 dark:text-gray-100"><span className="flex items-center gap-2">{section.label}<span aria-hidden="true" className={`rounded-full px-2 py-0.5 text-xs font-medium ${section.enabled ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{section.enabled ? 'On' : 'Off'}</span></span><button className={buttonClass} onClick={()=>{try{edit(toggleSection(draft,section.id));}catch{setFeedbackLocation('editor');setNotice('This section has custom connections. Update them in the advanced editor before turning it off.');}}}>{section.enabled?'Turn section off':section.label}</button></label></li>)}
+                    {draft.guided.sections.map(section=><li key={section.id} className="px-3 py-1"><div className="flex min-h-11 items-center justify-between gap-3 text-sm text-gray-900 dark:text-gray-100"><span id={`section-state-${section.id}`} className="flex items-center gap-2">{section.label}<span className={`rounded-full px-2 py-0.5 text-xs font-medium ${section.enabled ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{section.enabled ? 'On' : 'Off'}</span></span>{/* The state is read with the button: "Program On" / "Program Off". */}<button className={buttonClass} aria-describedby={`section-state-${section.id}`} onClick={()=>{try{edit(toggleSection(draft,section.id));}catch{setFeedbackLocation('editor');setNotice('This section has custom connections. Update them in the advanced editor before turning it off.');}}}>{section.enabled?'Turn section off':`Turn on ${section.label}`}</button></div></li>)}
                   </ul>
                 </div>
                 <div className="flex flex-wrap items-center gap-3"><button className={buttonClass} onClick={()=>setAdvanced(v=>!v)} aria-expanded={advanced}>Advanced editor</button><p className="text-sm text-gray-600 dark:text-gray-400">Changes here update the same flow.</p></div>

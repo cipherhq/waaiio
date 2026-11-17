@@ -4,7 +4,7 @@ import { useId, useState, type ReactNode, type SVGProps } from 'react';
 
 /** Shared look for the Custom Flow builder (#1079). Brand tokens come from tailwind.config.ts. */
 export const inputClass = 'mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-500 transition-shadow duration-150 focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 read-only:bg-gray-50 motion-reduce:transition-none dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder:text-gray-400 dark:read-only:bg-gray-800';
-export const buttonClass = 'min-h-11 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 transition-colors duration-150 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-40 motion-reduce:transition-none dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700';
+export const buttonClass = 'min-h-11 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 transition-colors duration-150 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 disabled:opacity-40 motion-reduce:transition-none dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700';
 export const cardClass = 'rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-5';
 /** Soft lavender panel used by the palette and the preview column. */
 export const lavenderClass = 'rounded-2xl border border-brand-100 bg-brand-50 p-4 dark:border-brand-900 dark:bg-brand-900/30 sm:p-5';
@@ -45,7 +45,7 @@ export function HelpTip({ id, label, text }: { id: string; label: string; text: 
   return <span className="group relative inline-flex" onMouseEnter={() => setDismissed(false)}
     onKeyDown={event => { if (event.key === 'Escape') { setDismissed(true); setOpen(false); } }}>
     <button type="button" aria-label={`More about ${label}`} aria-describedby={id} onClick={() => { setDismissed(false); setOpen(value => !value); }} onBlur={() => { setOpen(false); setDismissed(false); }}
-      className="-my-3 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-brand">
+      className="-my-3 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-brand dark:focus-visible:outline-brand-300">
       <span aria-hidden="true" className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900 dark:text-brand-100">?</span>
     </button>
     <span role="tooltip" id={id} className={`absolute bottom-full left-1/2 z-30 mb-1 w-64 max-w-[80vw] -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-xs font-normal leading-relaxed text-white shadow-lg transition-opacity duration-150 motion-reduce:transition-none dark:bg-gray-700 ${visible}`}>{text}</span>

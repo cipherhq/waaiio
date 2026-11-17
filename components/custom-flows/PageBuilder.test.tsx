@@ -246,7 +246,7 @@ describe('Template gallery', () => {
     expect(saved).toMatchObject({ id: posts[0].body.id, version: 1 });
     expect(saved.definition.guided).toEqual({ version: 1, template: 'blank', template_version: 1, menu_id: 'main_menu', sections: [] });
     expect(saved.definition.nodes.map((node: { id: string }) => node.id)).toEqual(['main_menu', 'lookup_program', 'lookup_faqs']);
-    expect(saved.definition.nodes[1]).toMatchObject({ type: 'lookup', table: 'program', reply: '{{session}} — {{day}} {{time}} — {{place}}', next: 'main_menu' });
+    expect(saved.definition.nodes[1]).toMatchObject({ type: 'lookup', table: 'Program', reply: '{{session}} — {{day}} {{time}} — {{place}}', next: 'main_menu' });
     expect(screen.getByRole('heading', { name: 'Church retreat', level: 2 })).toBeTruthy();
     // A starter has no guided sections, so it opens ready to edit without the advanced editor.
     expect(screen.queryByText(/Open the advanced editor to change steps/)).toBeNull();

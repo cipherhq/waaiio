@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import type { CustomFlowLookupNode } from '@/lib/bot/custom-flow/types';
-import type { DataTable } from '@/lib/bot/custom-flow/data';
+import { BUSINESS_FIELDS, businessValue, type BusinessField, type DataTable } from '@/lib/bot/custom-flow/data';
 import { Field, inputClass } from './ui';
 import { ReplyBuilder } from './ReplyBuilder';
 
@@ -43,13 +43,16 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
   }, [businessId, flowId, list]);
 
   const columns = list?.columns ?? [];
-  const exampleValues = example ? { ...Object.fromEntries(Object.entries(business).map(([key, value]) => [`business.${key}`, value])), ...example } : null;
-  const extraFields = node.search_fields.filter(field => !columns.some(column => column.name === field));
+  // Business details are shown the way the engine sends them (businessValue), e.g. opening hours as lines.
+  const exampleValues = example ? { ...Object.fromEntries(Object.entries(business).map(([key, value]) => [`business.${key}`,
+    BUSINESS_FIELDS.includes(key as BusinessField) ? businessValue(key as BusinessField, value) : typeof value === 'string' ? value : ''])), ...example } : null;
+  // An empty entry (e.g. a trailing comma) has no column to show.
+  const extraFields = node.search_fields.filter(field => field.trim() && !columns.some(column => column.name === field));
 
   return <>
     <Field label="Which list" help="The list we search when someone types. Make lists under Your lists.">
       {props => <>
-        <input {...props} list={listId} className={inputClass} placeholder="Example: program" value={node.table} onChange={event => onChange({ ...node, table: event.target.value })} />
+        <input {...props} list={listId} className={inputClass} placeholder="Example: Program" value={node.table} onChange={event => onChange({ ...node, table: event.target.value })} />
         <datalist id={listId}>{lists.map(item => <option key={item.id} value={item.name} />)}</datalist>
       </>}
     </Field>

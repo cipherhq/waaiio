@@ -42,6 +42,7 @@ export function fieldLabel(key: string, columns: DataColumn[] = []): string {
 export function fillExample(template: string, values: Record<string, unknown>): string {
   return template.replace(TOKEN, (_match, key: string) => {
     const value = values[key];
-    return value === undefined || value === null ? '' : String(value);
+    // Objects (such as a linked record) are never shown as "[object Object]".
+    return value === undefined || value === null || typeof value === 'object' ? '' : String(value);
   });
 }

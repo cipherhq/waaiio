@@ -20,12 +20,12 @@ export function TemplateGallery({ disabled, onPick, onClose }: { disabled: boole
         <h2 id="gallery-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Start a new flow</h2>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Pick a starting point. Your lists start empty, so you add your own details.</p>
       </div>
-      {onClose && <button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">Close</button>}
+      {onClose && <button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">Close</button>}
     </div>
     <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {GALLERY.map(card => <li key={card.id}>
         <button type="button" disabled={disabled} aria-labelledby={`gallery-${card.id}`} aria-describedby={`gallery-${card.id}-text`} onClick={() => onPick(card.id)}
-          className="group flex h-full w-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-50 disabled:hover:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:border-gray-700 dark:bg-gray-800">
+          className="group flex h-full w-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 disabled:opacity-50 disabled:hover:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:border-gray-700 dark:bg-gray-800">
           <span aria-hidden="true" className={`flex h-28 items-center justify-center bg-gradient-to-br text-5xl ${card.tint}`}>{card.picture}</span>
           <span className="block p-4">
             <span id={`gallery-${card.id}`} className="block font-semibold text-gray-900 dark:text-gray-100">{card.title}</span>

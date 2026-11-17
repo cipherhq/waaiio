@@ -17,13 +17,14 @@ function remember() {
   try { window.localStorage.setItem(WALKTHROUGH_KEY, 'done'); } catch { /* private mode: show again next time */ }
 }
 
-export function Walkthrough() {
+/** onDone moves focus somewhere sensible once the tour leaves the page. */
+export function Walkthrough({ onDone }: { onDone?: () => void } = {}) {
   // Read storage after mount so server and first client render match.
   const [show, setShow] = useState(false);
   const [step, setStep] = useState(0);
   useEffect(() => { setShow(!seen()); }, []);
   if (!show) return null;
-  const close = () => { remember(); setShow(false); };
+  const close = () => { remember(); setShow(false); onDone?.(); };
   const current = STEPS[step];
   return <section aria-label="Quick tour" className="motion-safe:animate-fade-in-up rounded-2xl border border-brand-200 bg-white p-4 shadow-sm dark:border-brand-800 dark:bg-gray-800">
     <div className="flex flex-wrap items-start gap-4">
@@ -34,11 +35,11 @@ export function Walkthrough() {
         <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">{current.text}</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        {step > 0 && <button type="button" onClick={() => setStep(step - 1)} className="min-h-11 rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">Back</button>}
+        {step > 0 && <button type="button" onClick={() => setStep(step - 1)} className="min-h-11 rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">Back</button>}
         {step < STEPS.length - 1
-          ? <button type="button" onClick={() => setStep(step + 1)} className="min-h-11 rounded-lg bg-brand px-4 text-sm font-semibold text-white hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand">Next tip</button>
-          : <button type="button" onClick={close} className="min-h-11 rounded-lg bg-brand px-4 text-sm font-semibold text-white hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand">Got it</button>}
-        <button type="button" onClick={close} className="min-h-11 rounded-lg px-3 text-sm font-medium text-gray-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:text-gray-300">Skip tour</button>
+          ? <button type="button" onClick={() => setStep(step + 1)} className="min-h-11 rounded-lg bg-brand px-4 text-sm font-semibold text-white hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300">Next tip</button>
+          : <button type="button" onClick={close} className="min-h-11 rounded-lg bg-brand px-4 text-sm font-semibold text-white hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300">Got it</button>}
+        <button type="button" onClick={close} className="min-h-11 rounded-lg px-3 text-sm font-medium text-gray-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 dark:text-gray-300">Skip tour</button>
       </div>
     </div>
   </section>;

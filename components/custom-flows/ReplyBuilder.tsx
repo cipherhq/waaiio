@@ -120,7 +120,7 @@ export function ReplyBuilder({ id, labelId, describedBy, value, columns, example
       {keys.length === 0 && <span className="text-xs text-gray-600 dark:text-gray-400">Choose a list above to insert its details.</span>}
       {keys.map(key => <button key={key} type="button" aria-label={`Insert ${fieldLabel(key, columns)}`}
         onMouseDown={event => event.preventDefault()} onClick={() => insert(chip(key, fieldToken(key), columns))}
-        className="min-h-11 rounded-full border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 transition-colors duration-150 hover:bg-brand-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand motion-reduce:transition-none dark:border-brand-700 dark:bg-gray-900 dark:text-brand-100 dark:hover:bg-brand-900/50">
+        className="min-h-11 rounded-full border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 transition-colors duration-150 hover:bg-brand-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 motion-reduce:transition-none dark:border-brand-700 dark:bg-gray-900 dark:text-brand-100 dark:hover:bg-brand-900/50">
         + {fieldLabel(key, columns)}
       </button>)}
     </div>

@@ -6,6 +6,13 @@ import { STARTERS, applyStarter, isStarter } from '@/lib/custom-flow-builder/sta
 import { GALLERY, type SetupChoice } from './TemplateGallery';
 import { Field, buttonClass, cardClass, inputClass } from './ui';
 
+// Key-order-independent JSON, since stored definitions come back from jsonb.
+function stable(value:unknown):string{
+  if(Array.isArray(value))return `[${value.map(stable).join(',')}]`;
+  if(value&&typeof value==='object')return `{${Object.keys(value).filter(key=>(value as Record<string,unknown>)[key]!==undefined).sort().map(key=>`${JSON.stringify(key)}:${stable((value as Record<string,unknown>)[key])}`).join(',')}}`;
+  return JSON.stringify(value)??'null';
+}
+
 export interface BuilderFlowRow {id:string;definition:EditableFlow;version:number;published_definition:EditableFlow|null;published_version:number|null}
 
 /**
@@ -29,7 +36,14 @@ export function FlowSetup({businessId,template,onCreated,onCancel}:{businessId:s
   const madeTables=useRef(new Set<string>());
   async function post(url:string,payload:Record<string,unknown>){
     const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    return {ok:response.ok,body:await response.json()};
+    return {ok:response.ok,status:response.status,body:await response.json()};
+  }
+  // The created flow as stored now (existing list GET), for when a reply was lost.
+  async function reread(flowId:string):Promise<BuilderFlowRow|null>{
+    const response=await fetch(`/api/custom-flows?businessId=${encodeURIComponent(businessId)}`,{cache:'no-store'});
+    if(!response.ok)return null;
+    const body=await response.json();
+    return (Array.isArray(body.flows)?body.flows as BuilderFlowRow[]:[]).find(item=>item.id===flowId)??null;
   }
   async function create(){
     if(busy)return;setBusy(true);setError('');
@@ -43,15 +57,37 @@ export function FlowSetup({businessId,template,onCreated,onCancel}:{businessId:s
       const flow=created.current!;
       for(const list of STARTERS[starter!].lists){
         if(madeTables.current.has(list.name))continue;
+        const sentBefore=list.name in tableIds.current;
         tableIds.current[list.name]??=crypto.randomUUID();
-        const {ok}=await post('/api/custom-flows/data',{businessId,flowId:flow.id,action:'create_table',id:tableIds.current[list.name],name:list.name,columns:list.columns});
-        if(!ok){setError('Your flow was made, but we couldn’t add all its lists. Try again.');return;}
+        const {ok,status}=await post('/api/custom-flows/data',{businessId,flowId:flow.id,action:'create_table',id:tableIds.current[list.name],name:list.name,columns:list.columns});
+        // 409 for an id this starter already sent: that earlier try made the list and only its reply was lost.
+        if(!ok&&!(sentBefore&&status===409)){setError('Your flow was made, but we couldn’t add all its lists. Try again.');return;}
         madeTables.current.add(list.name);
       }
-      const {ok,body}=await post('/api/custom-flows',{businessId,id:flow.id,version:flow.version,action:'save',definition:applyStarter(flow.definition,starter!)});
+      const steps=applyStarter(flow.definition,starter!);
+      let {ok,body}=await post('/api/custom-flows',{businessId,id:flow.id,version:flow.version,action:'save',definition:steps});
+      if(!ok&&body?.error==='version_conflict'){
+        // An earlier save may have landed with its reply lost. Re-read once:
+        // steps already there are done; a still-untouched blank flow is retried once.
+        const fresh=await reread(flow.id);
+        if(fresh&&stable(fresh.definition.nodes)===stable(steps.nodes)&&fresh.definition.start_node===steps.start_node){onCreated(fresh);return;}
+        if(fresh&&stable(fresh.definition)===stable(flow.definition)){
+          created.current=fresh;
+          ({ok,body}=await post('/api/custom-flows',{businessId,id:fresh.id,version:fresh.version,action:'save',definition:applyStarter(fresh.definition,starter!)}));
+        }
+      }
       if(!ok){setError('Your flow was made, but we couldn’t add its steps. Try again.');return;}
       onCreated(body.flow);
     }catch{setError('Unable to save changes. Try again.');}finally{setBusy(false);}
+  }
+  async function cancel(){
+    // Once the blank flow exists it is kept: open it so it shows in Your flows.
+    if(created.current){
+      setBusy(true);
+      try{onCreated(await reread(created.current.id)??created.current);}catch{onCreated(created.current);}finally{setBusy(false);}
+      return;
+    }
+    if(window.confirm('Discard unsaved changes?'))onCancel();
   }
   return <form className={`${cardClass} space-y-5`} aria-busy={busy} onSubmit={event=>{event.preventDefault();void create();}}>
     <div className="flex items-center gap-4">
@@ -68,8 +104,8 @@ export function FlowSetup({businessId,template,onCreated,onCancel}:{businessId:s
       <Field label="Word people send to start" help="When someone sends this word to your WhatsApp number, this flow starts.">
         {props=><input {...props} className={inputClass} maxLength={40} placeholder="Example: RETREAT" value={keyword} onChange={e=>setKeyword(e.target.value.toUpperCase())}/>}
       </Field>
-      <Field label="Language" help="The language code for this flow's messages.">
-        {props=><input {...props} className={inputClass} required maxLength={10} placeholder="Example: en" value={language} onChange={e=>setLanguage(e.target.value)}/>}
+      <Field label="Language" help="The language your customers see this flow in. Type its short code, like en for English.">
+        {props=><input {...props} className={inputClass} required maxLength={10} placeholder="Example: en for English" value={language} onChange={e=>setLanguage(e.target.value)}/>}
       </Field>
       <div className="sm:col-span-2"><h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Business details</h3><p className="text-sm text-gray-600 dark:text-gray-400">Choose the business details to use in this flow.</p>
         <div className="grid sm:grid-cols-2">
@@ -78,6 +114,6 @@ export function FlowSetup({businessId,template,onCreated,onCancel}:{businessId:s
       </div>
     </fieldset>
     {error&&<p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
-    <div className="flex flex-wrap gap-3"><button disabled={busy||!name.trim()} className="min-h-11 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-40">Create flow</button><button type="button" disabled={busy} className={buttonClass} onClick={()=>{if(window.confirm('Discard unsaved changes?'))onCancel();}}>Cancel</button></div>
+    <div className="flex flex-wrap gap-3"><button disabled={busy||!name.trim()} className="min-h-11 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 disabled:opacity-40">Create flow</button><button type="button" disabled={busy} className={buttonClass} onClick={()=>void cancel()}>Cancel</button></div>
   </form>;
 }

@@ -53,10 +53,12 @@ function DropZone({ label, disabled, onDropStep }: { label: string; disabled?: b
   </div>;
 }
 
-export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor, inlineEditors = true, onDropStep, onMoveStep }: {
+export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep, renderEditor, inlineEditors = true, onDropStep, onMoveStep }: {
   draft: EditableFlow;
   /** False for guided flows outside the advanced editor: the map stays read-only. */
   editable: boolean;
+  /** A request is pending: its reply replaces the draft, so no drag or drop may change it meanwhile. */
+  busy?: boolean;
   openSteps: string[];
   onToggleStep: (id: string) => void;
   renderEditor: (node: CustomFlowNode, index: number) => ReactNode;
@@ -94,7 +96,8 @@ export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor
     const label = labelOf(next);
     return label ? <Pill tone="jump"><span className="truncate">{label}</span></Pill> : <Pill tone="warn">Not connected yet</Pill>;
   }
-  const movingDrag = (event: DragEvent) => editable && hasDragType(event.dataTransfer?.types, MOVE_STEP_TYPE);
+  const canDrag = editable && !busy;
+  const movingDrag = (event: DragEvent) => canDrag && hasDragType(event.dataTransfer?.types, MOVE_STEP_TYPE);
 
   return <section aria-label="Step map" className="rounded-2xl border border-gray-200 bg-white bg-[radial-gradient(theme(colors.brand.100)_1px,transparent_1px)] p-4 [background-size:18px_18px] dark:border-gray-700 dark:bg-gray-900 dark:bg-[radial-gradient(theme(colors.gray.800)_1px,transparent_1px)] sm:p-6">
     <div className="flex justify-center">
@@ -133,8 +136,8 @@ export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor
             }}
             className={`rounded-xl border border-l-4 border-l-brand bg-white shadow-sm transition-shadow duration-150 motion-reduce:transition-none dark:bg-gray-800 ${open && node.id === selectedId ? 'border-brand ring-2 ring-brand/30' : open ? 'border-brand-300' : 'border-gray-200 dark:border-gray-700'} ${target === index && moving !== node.id ? 'ring-2 ring-accent' : ''} ${moving === node.id ? 'opacity-60' : ''}`}>
             <div className="relative flex items-start gap-3 p-4">
-              {editable && <span draggable title="Drag to move this step" aria-hidden="true"
-                onDragStart={event => { event.dataTransfer.setData(MOVE_STEP_TYPE, node.id); event.dataTransfer.effectAllowed = 'move'; setMoving(node.id); }}
+              {editable && <span draggable={canDrag} title="Drag to move this step" aria-hidden="true"
+                onDragStart={event => { if (!canDrag) { event.preventDefault(); return; } event.dataTransfer.setData(MOVE_STEP_TYPE, node.id); event.dataTransfer.effectAllowed = 'move'; setMoving(node.id); }}
                 onDragEnd={() => { setMoving(null); setTarget(null); }}
                 className="relative z-10 -ml-1 mt-1 flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-gray-400 active:cursor-grabbing dark:text-gray-500">
                 <Icons.grip />
@@ -148,8 +151,8 @@ export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor
                   ? <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400">{summary}</p>
                   : <p className="mt-1 text-sm italic text-gray-500 dark:text-gray-400">No text yet</p>}
               </div>
-              {editable && <button type="button" aria-expanded={open} aria-controls={open ? panelId : undefined} aria-label={`Edit ${label}`} onClick={() => onToggleStep(node.id)}
-                className="min-h-11 shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 after:absolute after:inset-0 after:rounded-t-xl after:content-[''] hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
+              {editable && <button type="button" id={`flow-step-edit-${node.id}`} aria-expanded={open} aria-controls={open ? panelId : undefined} aria-label={`Edit ${label}`} onClick={() => onToggleStep(node.id)}
+                className="min-h-11 shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 after:absolute after:inset-0 after:rounded-t-xl after:content-[''] hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
                 Edit <span aria-hidden="true" className={`inline-block transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}>▾</span>
               </button>}
             </div>
@@ -165,7 +168,7 @@ export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor
               </ul>
               {editable && onDropStep && <div className="mt-3 pl-3">
                 <DropZone label={node.options.length >= 10 ? 'This step has 10 buttons, the most allowed' : 'Drop a step here to add it as a new button'}
-                  disabled={node.options.length >= 10} onDropStep={type => onDropStep(type, node.id)} />
+                  disabled={busy || node.options.length >= 10} onDropStep={type => onDropStep(type, node.id)} />
               </div>}
             </div>}
             {open && inlineEditors && <div id={panelId} className="space-y-4 border-t border-gray-100 p-4 dark:border-gray-700">{renderEditor(node, index)}</div>}
@@ -183,7 +186,7 @@ export function FlowMap({ draft, editable, openSteps, onToggleStep, renderEditor
     </ol>
     {editable && onDropStep && <div className="mx-auto max-w-2xl">
       <Connector />
-      <DropZone label="Drop a step here" onDropStep={type => onDropStep(type)} />
+      <DropZone label="Drop a step here" disabled={busy} onDropStep={type => onDropStep(type)} />
     </div>}
   </section>;
 }

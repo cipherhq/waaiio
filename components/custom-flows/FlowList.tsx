@@ -57,7 +57,7 @@ export function FlowList({ flows, selectedId, disabled, lockedMessage, onChoose 
           aria-describedby={`flow-status-${flow.id}`} tabIndex={flow.id === tabbable ? 0 : -1}
           onFocus={() => setFocusId(flow.id)} onKeyDown={event => onKeyDown(event, index, flow.id)}
           onClick={() => { if (!disabled && flow.id !== selectedId) onChoose(flow.id); }}
-          className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand ${selected
+          className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand dark:focus-visible:outline-brand-300 ${selected
             ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-100'
             : 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'} ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}>
           <span className="min-w-0 truncate">{flow.name}</span>

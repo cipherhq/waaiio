@@ -38,7 +38,7 @@ export function WhatsAppPreview({
         {previewBusy && <span aria-hidden="true" className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />}
       </h2>
       <button type="button" disabled={!canRestart} onClick={onRestart}
-        className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-40 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
+        className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 disabled:opacity-40 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
         Restart preview
       </button>
     </div>
