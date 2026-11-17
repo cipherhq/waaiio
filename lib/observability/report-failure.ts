@@ -65,7 +65,15 @@ export const FAILURE_REPORT_TAG = 'failure_report';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_FIELDS = ['businessId', 'paymentId', 'sessionId', 'flowId'] as const;
-const LABEL_FIELDS = ['flowType', 'stepId', 'capability', 'gateway', 'job', 'requestId', 'runId'] as const;
+const LABEL_FIELDS = ['flowType', 'stepId', 'capability', 'gateway', 'job'] as const;
+// Request/run ids reach us from headers too: accept only the formats the app generates
+// (lib/logger generateRequestId, lib/observability generateRunId) or a UUID.
+const TRACE_ID_RE = /^(run-)?[0-9a-f]{8}$/;
+// Error codes are short machine codes (23505, PGRST116, card_declined). Paystack card
+// tokens (AUTH_...), key-like prefixes and long hex runs (unprefixed secrets) are dropped.
+const CODE_RE = /^[A-Za-z0-9_.:-]{1,40}$/;
+const SECRET_PREFIX_RE = /^(auth_|whsec_|rk_|sk_|pk_)/i;
+const LONG_HEX_RE = /[0-9a-f]{16,}/i;
 
 const THROTTLE_WINDOW_MS = 60_000;
 const THROTTLE_MAX_PER_WINDOW = 20;
@@ -83,7 +91,12 @@ function safeLabel(value: unknown): string | undefined {
 
 function safeCode(value: unknown): string | undefined {
   if (typeof value === 'number') return Number.isInteger(value) && Math.abs(value) < 1e7 ? String(value) : undefined;
-  return safeLabel(value);
+  return typeof value === 'string' && CODE_RE.test(value) && !SECRET_PREFIX_RE.test(value) && !LONG_HEX_RE.test(value) && isSafeIdentifier(value)
+    ? value : undefined;
+}
+
+function safeTraceId(value: unknown): string | undefined {
+  return typeof value === 'string' && (TRACE_ID_RE.test(value) || UUID_RE.test(value)) ? value : undefined;
 }
 
 function safeHttpStatus(value: unknown): number | undefined {
@@ -109,13 +122,16 @@ export function buildFailureFields(error: unknown, ctx: FailureContext): Record<
     const value = safeLabel(ctx[key]);
     if (value) fields[key] = value;
   }
+  for (const key of ['requestId', 'runId'] as const) {
+    const value = safeTraceId(ctx[key]);
+    if (value) fields[key] = value;
+  }
 
   const errCtx = safeLogErrorContext(error);
   fields.errorName = typeof errCtx.errorName === 'string' ? errCtx.errorName : 'Error';
   const errObj = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
   // Meta send errors carry a numeric code and HTTP status (lib/channels/meta-api-error.ts).
-  const code = safeCode(ctx.errorCode) ?? (typeof errCtx.errorCode === 'string' ? errCtx.errorCode : undefined)
-    ?? safeCode(errObj.metaErrorCode);
+  const code = safeCode(ctx.errorCode) ?? safeCode(errCtx.errorCode) ?? safeCode(errObj.metaErrorCode);
   if (code) fields.errorCode = code;
   const status = safeHttpStatus(ctx.httpStatus) ?? safeHttpStatus(errObj.httpStatus);
   if (status !== undefined) fields.httpStatus = String(status);
@@ -127,15 +143,21 @@ export function buildFailureFields(error: unknown, ctx: FailureContext): Record<
 
 /**
  * An Error with the original class name and stack frames, and a fixed message.
- * The original message (and any message lines that look like frames) is dropped.
+ * Everything before the first frame line after the message (however many lines
+ * the message had) is dropped; only frame-shaped lines are kept after it.
  */
 function scrubbedError(error: unknown, fields: Record<string, string>): Error {
   const message = `${fields.area}.${fields.op} failed`;
   const out = new Error(message);
   out.name = fields.errorName;
   if (error instanceof Error && typeof error.stack === 'string') {
+    const lines = error.stack.split('\n');
     const messageLines = `${error.name}: ${error.message}`.split('\n').length;
-    const frames = error.stack.split('\n').slice(messageLines)
+    // The stack header can be longer than the current message (message changed after
+    // capture), so skip at least the message lines and then up to the first real frame.
+    let first = messageLines;
+    while (first < lines.length && !FRAME_RE.test(lines[first])) first++;
+    const frames = lines.slice(first)
       .filter(line => line.length <= MAX_FRAME_LENGTH && FRAME_RE.test(line))
       .slice(0, MAX_FRAMES);
     out.stack = [`${out.name}: ${message}`, ...frames].join('\n');
@@ -146,7 +168,8 @@ function scrubbedError(error: unknown, fields: Record<string, string>): Error {
 function allowSentry(key: string, now: number): boolean {
   const entry = throttle.get(key);
   if (!entry || now - entry.start >= THROTTLE_WINDOW_MS) {
-    if (!entry && throttle.size >= THROTTLE_MAX_KEYS) throttle.clear();
+    // Evict the oldest key only, so keys already over the limit stay throttled.
+    if (!entry && throttle.size >= THROTTLE_MAX_KEYS) throttle.delete(throttle.keys().next().value as string);
     throttle.set(key, { start: now, count: 1 });
     return true;
   }
@@ -170,7 +193,7 @@ export function reportFailure(error: unknown, ctx: FailureContext): void {
 
     // Logging and Sentry are independent: a logging failure must not stop the event.
     try {
-      const log = logger.withContext({ op: 'failure.reported', ...fields } as LogContext);
+      const log = logger.withContext({ ...fields, failureOp: fields.op, op: 'failure.reported' } as LogContext);
       if (level === 'warning') log.warn('failure.reported');
       else log.error('failure.reported');
     } catch {

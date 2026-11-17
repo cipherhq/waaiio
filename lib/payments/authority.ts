@@ -487,7 +487,7 @@ async function executeStage2Through3(
     logger.error(`${logPrefix} Critical business effects failed: ${finalizationResult.errors?.join(', ')}`);
     reportFailure(new Error('critical business effects failed'), {
       area: 'payment_success', op: 'critical_effects', paymentId: payment.id, gateway: payment.gateway,
-      errorCode: finalizationResult.errors?.[0]?.split(':')[0],
+      errorCode: typeof finalizationResult.errors?.[0] === 'string' ? finalizationResult.errors[0].split(':')[0] : undefined,
     });
     try { await supabase.rpc('release_payment_finalization', { p_payment_id: payment.id, p_claim_token: claimToken }); } catch { /* release is best-effort */ }
     return retryable('critical_effects_failed', stagesPaid);

@@ -271,3 +271,60 @@ describe('reportFailure — logging and Sentry are independent', () => {
     spy.mockRestore();
   });
 });
+
+describe('reportFailure — review hardening (#1094 Reviewer A N1–N4)', () => {
+  beforeEach(() => {
+    captureException.mockReset();
+    resetFailureThrottle();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('accepts only app-generated or UUID request/run ids (header values are caller-controlled)', () => {
+    const ok = buildFailureFields(new Error('x'), { area: 'whatsapp_webhook', op: 'post', requestId: 'a1b2c3d4', runId: 'run-0f1e2d3c' });
+    expect(ok.requestId).toBe('a1b2c3d4');
+    expect(ok.runId).toBe('run-0f1e2d3c');
+    const bad = buildFailureFields(new Error('x'), { area: 'whatsapp_webhook', op: 'post', requestId: '234-801-234-5678', runId: 'anything_goes' });
+    expect(bad.requestId).toBeUndefined();
+    expect(bad.runId).toBeUndefined();
+  });
+
+  it('drops card-token, key-like and long-hex error codes but keeps normal codes', () => {
+    const code = (c: unknown) => buildFailureFields({ code: c }, { area: 'saved_card', op: 'x' }).errorCode;
+    expect(code('AUTH_8dfhjjdt')).toBeUndefined();
+    expect(code(['whsec', 'abc'].join('_'))).toBeUndefined();
+    expect(code(['rk', 'live', 'abc'].join('_'))).toBeUndefined();
+    expect(code('9f86d081884c7d659a2feaa0c55ad015')).toBeUndefined();
+    expect(code('23505')).toBe('23505');
+    expect(code('PGRST116')).toBe('PGRST116');
+    expect(code('card_declined')).toBe('card_declined');
+  });
+
+  it('drops the original stack header even when the message was shortened after capture', () => {
+    const err = new Error('line one +2348012345678\n   at fake (x:1:2) jane.doe@example.com\nline three');
+    err.message = 'short';
+    reportFailure(err, { area: 'bot', op: 'handle_message' });
+    const stack = (captureException.mock.calls[0][0] as Error).stack ?? '';
+    expect(stack).not.toContain('2348012345678');
+    expect(stack).not.toContain('jane.doe');
+    expect(stack).not.toContain('line three');
+    expect(stack).toMatch(/^Error: bot\.handle_message failed\n\s+at /);
+  });
+
+  it('evicting old throttle keys keeps an over-limit key throttled', () => {
+    for (let i = 0; i < 499; i++) reportFailure(new Error('x'), { area: 'cron', op: `op${i}` });
+    for (let i = 0; i < 25; i++) reportFailure(new Error('x'), { area: 'bot', op: 'hot' }); // 500th key, over limit
+    captureException.mockClear();
+    reportFailure(new Error('x'), { area: 'cron', op: 'new_key' }); // evicts only the oldest key (op0)
+    expect(captureException).toHaveBeenCalledTimes(1);
+    reportFailure(new Error('x'), { area: 'bot', op: 'hot' }); // a full clear() would have let this through
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the log line op as failure.reported and the caller op in failureOp', async () => {
+    const { logger } = await import('@/lib/logger');
+    const spy = vi.spyOn(logger, 'withContext');
+    reportFailure(new Error('x'), { area: 'cron', op: 'run', job: 'backup' });
+    expect(spy.mock.calls[0][0]).toMatchObject({ op: 'failure.reported', failureOp: 'run', area: 'cron' });
+    spy.mockRestore();
+  });
+});
