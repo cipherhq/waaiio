@@ -439,11 +439,13 @@ jobs:
             echo "❌ #1075 messaging charge tests exited with code $TEST_EXIT."
             exit 1
           fi
-          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+          # Strip ANSI colour codes before matching vitest's summary line.
+          PLAIN=$(printf '%s\n' "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')
+          if echo "$PLAIN" | grep -qE '[1-9][0-9]* skipped'; then
             echo "❌ #1075 messaging charge tests had skipped tests. All must execute."
             exit 1
           fi
-          if ! echo "$OUTPUT" | grep -qE 'Tests +6 passed'; then
+          if ! echo "$PLAIN" | grep -qE 'Tests +6 passed \(6\)'; then
             echo "❌ Expected 6 passed #1075 messaging charge tests."
             exit 1
           fi

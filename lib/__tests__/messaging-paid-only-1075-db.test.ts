@@ -40,8 +40,10 @@ suite('#1075 paid-only messaging charges (real PostgreSQL)', () => {
             VALUES ('${id}', '${slug}', '${slug}', '${OWNER}', '${country}', '1 Test', 'T', 'T', '+1')
             ON CONFLICT (id) DO UPDATE SET country_code = '${country}';`);
     }
+    // Copy the current latest snapshot and override only the messaging keys, so later
+    // suites sharing this database still see every other config key.
     psql(`INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
-          VALUES ('${JSON.stringify({
+          VALUES (COALESCE((SELECT config_snapshot FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1), '{}'::JSONB) || '${JSON.stringify({
             messaging_financial_gate: true,
             messaging_pricing: {
               NGN: { default_cost_minor: 500, default_spend_cap_minor: 5000000,
