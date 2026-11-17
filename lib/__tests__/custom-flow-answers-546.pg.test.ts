@@ -157,6 +157,23 @@ describe('M546 custom flow answers (real PostgreSQL)', () => {
     await expect(insertAnswer({ business_id: otherBiz, flow_id: otherFlow, session_id: session })).rejects.toMatchObject({ code: '23503' });
   });
 
+  it('a flow with answers cannot be deleted directly (its files would be orphaned)', async () => {
+    // Even the owner, through PostgREST, is stopped by the FK.
+    await expect(roleQuery('authenticated', owner, 'DELETE FROM custom_flows WHERE id=$1', [flow])).rejects.toMatchObject({ code: '23503' });
+    await expect(db.query('DELETE FROM custom_flows WHERE id=$1', [flow])).rejects.toMatchObject({ code: '23503' });
+    // Once its answers are deleted (the API path: files, then rows), the flow can go.
+    await db.query('DELETE FROM custom_flow_answers WHERE flow_id=$1', [flow]);
+    await db.query('DELETE FROM custom_flows WHERE id=$1', [flow]);
+    expect((await db.query('SELECT id FROM custom_flows WHERE id=$1', [flow])).rows).toEqual([]);
+  });
+
+  it('deleting a whole business still removes its flows and answers in one statement', async () => {
+    await db.query('DELETE FROM businesses WHERE id=$1', [biz]);
+    expect((await db.query('SELECT count(*)::int n FROM custom_flow_answers WHERE business_id=$1', [biz])).rows[0].n).toBe(0);
+    expect((await db.query('SELECT count(*)::int n FROM custom_flows WHERE business_id=$1', [biz])).rows[0].n).toBe(0);
+    expect((await db.query('SELECT count(*)::int n FROM custom_flow_answers WHERE business_id=$1', [otherBiz])).rows[0].n).toBe(1);
+  });
+
   it('re-answering in one run is a single row; a deleted session keeps the answer', async () => {
     await expect(insertAnswer({ response_id: response, node_id: 'q1' })).rejects.toMatchObject({ code: '23505' });
     await db.query('DELETE FROM custom_flow_sessions WHERE id=$1', [session]);

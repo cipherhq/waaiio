@@ -63,10 +63,16 @@ export function FlowAnswers({ businessId, timezone, country }: Props) {
     if (!window.confirm(question)) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessId, flowId, action, responseId }) });
-      const body = await res.json();
-      if (!res.ok) setError(friendly(body.error));
-      else setNotice(body.deleted === 1 ? '1 answer deleted.' : `${body.deleted} answers deleted.`);
+      // A very large flow can take more than one call; keep going while answers remain.
+      let total = 0;
+      for (let call = 0; call < 20; call++) {
+        const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessId, flowId, action, responseId }) });
+        const body = await res.json();
+        if (!res.ok) { setError(friendly(body.error)); break; }
+        total += body.deleted;
+        if (!body.remaining) { setNotice(total === 1 ? '1 answer deleted.' : `${total} answers deleted.`); break; }
+        if (call === 19) setError('Some answers are still there. Please select Delete again.');
+      }
       await load(flowId);
     } catch { setError(friendly(null)); }
     finally { setBusy(false); }

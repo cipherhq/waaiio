@@ -25,6 +25,9 @@ async function readAnswers(auth: AnswersAccess, flowId: string, limit: number) {
   return rows;
 }
 
+/** A row cap can split the oldest customer's run; leave it out rather than show part of it. */
+const withoutOldestRun = (rows: AnswerRow[]) => rows.filter(r => r.response_id !== rows[rows.length - 1].response_id);
+
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams;
   const auth = await authorizeAnswers(query.get('businessId'));
@@ -57,15 +60,18 @@ export async function GET(request: NextRequest) {
   if (query.get('format') === 'csv') {
     const rows = await readAnswers(auth, flowId, EXPORT_ROWS);
     if (!rows) return fail('read_failed', 500);
+    const capped = rows.length >= EXPORT_ROWS;
+    const note = capped ? `Only the newest ${EXPORT_ROWS.toLocaleString('en-GB')} answers are included.` : undefined;
     const safeName = String(flow.name).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 60) || 'flow';
-    return new NextResponse('﻿' + answersCsv(rows), {
+    return new NextResponse('\uFEFF' + answersCsv(capped ? withoutOldestRun(rows) : rows, note), {
       headers: { ...noStore, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${safeName}-answers.csv"` },
     });
   }
 
   const rows = await readAnswers(auth, flowId, PAGE_ROWS);
   if (!rows) return fail('read_failed', 500);
-  return NextResponse.json({ flows: flows ?? [], canDelete: auth.isOwner, responses: groupResponses(rows), truncated: rows.length >= PAGE_ROWS }, { headers: noStore });
+  const truncated = rows.length >= PAGE_ROWS;
+  return NextResponse.json({ flows: flows ?? [], canDelete: auth.isOwner, responses: groupResponses(truncated ? withoutOldestRun(rows) : rows), truncated }, { headers: noStore });
 }
 
 export async function POST(request: NextRequest) {
@@ -94,5 +100,10 @@ export async function POST(request: NextRequest) {
     if (count === 0 || data.length < DELETE_BATCH) break;
   }
   if (body.action === 'delete_response' && deleted === 0) return fail('not_found', 404);
-  return NextResponse.json({ deleted });
+  // Very large flows can need more than one call; say so instead of claiming success.
+  let left = auth.db.from('custom_flow_answers').select('id').eq('business_id', auth.businessId).eq('flow_id', body.flowId);
+  if (body.action === 'delete_response') left = left.eq('response_id', body.responseId as string);
+  const { data: rest, error: restError } = await left.limit(1);
+  if (restError) return fail('read_failed', 500);
+  return NextResponse.json({ deleted, remaining: !!rest?.length });
 }

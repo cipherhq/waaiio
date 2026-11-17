@@ -45,7 +45,13 @@ CREATE TABLE public.custom_flow_answers (
   -- Re-answering a question in the same run replaces the earlier answer.
   UNIQUE (response_id, node_id),
   -- Composite FKs: answers only attach to the same business's flow/session.
-  FOREIGN KEY (flow_id, business_id) REFERENCES public.custom_flows(id, business_id) ON DELETE CASCADE,
+  -- NO ACTION (not CASCADE) on the flow: a flow with answers cannot be
+  -- deleted directly, because that would drop rows while leaving their
+  -- uploaded files unreachable by the retention job. Answers are deleted
+  -- first through the API (files, then rows). Deleting a whole business
+  -- still works: its answers cascade from businesses in the same statement,
+  -- and NO ACTION is checked at the end of that statement.
+  FOREIGN KEY (flow_id, business_id) REFERENCES public.custom_flows(id, business_id) ON DELETE NO ACTION,
   FOREIGN KEY (session_id, business_id) REFERENCES public.custom_flow_sessions(id, business_id) ON DELETE SET NULL (session_id)
 );
 CREATE INDEX custom_flow_answers_flow_idx ON public.custom_flow_answers(business_id, flow_id, created_at DESC);
@@ -90,16 +96,20 @@ DO $$ BEGIN
     RAISE EXCEPTION 'M546: custom-flow-uploads bucket unexpectedly public';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects'
-      AND qual LIKE '%custom-flow-uploads%' AND NOT roles <@ ARRAY['service_role']::name[]) THEN
+      AND (coalesce(qual, '') LIKE '%custom-flow-uploads%' OR coalesce(with_check, '') LIKE '%custom-flow-uploads%')
+      AND NOT roles <@ ARRAY['service_role']::name[]) THEN
     RAISE EXCEPTION 'M546: a non-service storage policy reaches custom-flow-uploads';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'storage.objects'::regclass) THEN
+    RAISE EXCEPTION 'M546: storage RLS disabled';
   END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.custom_flow_answers'::regclass) THEN
     RAISE EXCEPTION 'M546: RLS disabled on custom_flow_answers';
   END IF;
-  IF has_table_privilege('anon', 'public.custom_flow_answers', 'SELECT')
-     OR has_table_privilege('authenticated', 'public.custom_flow_answers', 'INSERT')
-     OR has_table_privilege('authenticated', 'public.custom_flow_answers', 'UPDATE')
-     OR has_table_privilege('authenticated', 'public.custom_flow_answers', 'TRUNCATE') THEN
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+             WHERE has_table_privilege('anon', 'public.custom_flow_answers', p))
+     OR EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','TRUNCATE','REFERENCES','TRIGGER']) p
+             WHERE has_table_privilege('authenticated', 'public.custom_flow_answers', p)) THEN
     RAISE EXCEPTION 'M546: custom_flow_answers grants wider than SELECT/DELETE for clients';
   END IF;
 END $$;

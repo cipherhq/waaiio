@@ -9,11 +9,11 @@ import { GET, POST } from '@/app/api/custom-flows/responses/route';
 import { GET as retention } from '@/app/api/cron/custom-flow-answers-retention/route';
 
 type Row = Record<string, any>;
-const state = vi.hoisted(() => ({ user: 'owner' as string, rows: {} as Record<string, Row[]>, removed: [] as string[], storageError: false, signed: [] as Row[] }));
+const state = vi.hoisted(() => ({ user: 'owner' as string, rows: {} as Record<string, Row[]>, removed: [] as string[], storageError: false, signed: [] as Row[], calls: [] as string[], failPrefix: '' }));
 class Query {
   filters: Array<(row: Row) => boolean> = [];
   max = Infinity; from = 0;
-  constructor(private table: string, private operation = 'read') {}
+  constructor(private table: string, private operation = 'read', client = '') { state.calls.push(`${client}:${operation}:${table}`); }
   select() { return this; }
   eq(k: string, v: unknown) { this.filters.push(r => r[k] === v); return this; }
   in(k: string, v: unknown[]) { this.filters.push(r => v.includes(r[k])); return this; }
@@ -30,14 +30,17 @@ class Query {
   maybeSingle() { return Promise.resolve(this.execute(true)); }
   then(resolve: (v: ReturnType<Query['execute']>) => unknown, reject?: (e: unknown) => unknown) { return Promise.resolve(this.execute()).then(resolve, reject); }
 }
-const storage = { from: (bucket: string) => ({
-  remove: async (paths: string[]) => { expect(bucket).toBe('custom-flow-uploads'); if (state.storageError) return { data: null, error: { message: 'down' } }; state.removed.push(...paths); return { data: [], error: null }; },
-  createSignedUrl: async (path: string, seconds: number) => { state.signed.push({ bucket, path, seconds }); return { data: { signedUrl: `https://signed/${path}` }, error: null }; },
-}) };
-const db = { auth: { getUser: async () => ({ data: { user: state.user ? { id: state.user } : null } }) },
-  from: (table: string) => ({ select: () => new Query(table), delete: () => new Query(table, 'delete') }), storage };
-vi.mock('@/lib/supabase/server', () => ({ createClient: async () => db }));
-vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => db }));
+// Two separate clients, so tests prove which one each query uses: the
+// signed-in (RLS) client for answers, the service client for Storage.
+const storage = (client: string) => ({ from: (bucket: string) => ({
+  remove: async (paths: string[]) => { state.calls.push(`${client}:storage.remove`); expect(bucket).toBe('custom-flow-uploads'); if (state.storageError || (state.failPrefix && paths.some(p => p.startsWith(state.failPrefix)))) return { data: null, error: { message: 'down' } }; state.removed.push(...paths); return { data: [], error: null }; },
+  createSignedUrl: async (path: string, seconds: number) => { state.calls.push(`${client}:storage.sign`); state.signed.push({ bucket, path, seconds }); return { data: { signedUrl: `https://signed/${path}` }, error: null }; },
+}) });
+const client = (name: string) => ({ auth: { getUser: async () => ({ data: { user: state.user ? { id: state.user } : null } }) },
+  from: (table: string) => ({ select: () => new Query(table, 'read', name), delete: () => new Query(table, 'delete', name) }), storage: storage(name) });
+const rls = client('rls'), service = client('service');
+vi.mock('@/lib/supabase/server', () => ({ createClient: async () => rls }));
+vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => service }));
 
 const biz = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
 const flow = '33333333-3333-4333-8333-333333333333', otherFlow = '44444444-4444-4444-8444-444444444444';
@@ -50,7 +53,7 @@ const get = (q: string) => GET(new NextRequest(`http://localhost/api/custom-flow
 const post = (body: Row) => POST(new NextRequest('http://localhost/api/custom-flows/responses', { method: 'POST', body: JSON.stringify({ businessId: biz, flowId: flow, ...body }) }));
 
 beforeEach(() => {
-  state.user = 'owner'; state.removed = []; state.storageError = false; state.signed = [];
+  state.user = 'owner'; state.removed = []; state.storageError = false; state.signed = []; state.calls = []; state.failPrefix = '';
   state.rows = {
     businesses: [{ id: biz, owner_id: 'owner' }, { id: other, owner_id: 'other-owner' }],
     business_members: [
@@ -130,18 +133,44 @@ describe('Flow answers API', () => {
   it('owner deletes one response: its file goes first, then its rows', async () => {
     const res = await post({ action: 'delete_response', responseId: r1 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ deleted: 3 });
+    expect(await res.json()).toEqual({ deleted: 3, remaining: false });
     expect(state.removed).toEqual([`${biz}/a.jpg`]);
+    // Answers are read and deleted through RLS; files go first, through the service client.
+    const answerCalls = state.calls.filter(c => c.endsWith('custom_flow_answers') || c.includes('storage'));
+    expect(answerCalls.slice(0, 3)).toEqual(['rls:read:custom_flow_answers', 'service:storage.remove', 'rls:delete:custom_flow_answers']);
+    expect(state.calls.some(c => c.startsWith('service:') && c.endsWith('custom_flow_answers'))).toBe(false);
     expect(state.rows.custom_flow_answers.map(r => r.response_id)).not.toContain(r1);
     expect((await post({ action: 'delete_response', responseId: r1 })).status).toBe(404);
   });
 
   it("owner deletes all answers for a flow; another business's answers stay", async () => {
-    expect(await (await post({ action: 'delete_flow_answers' })).json()).toEqual({ deleted: 4 });
+    expect(await (await post({ action: 'delete_flow_answers' })).json()).toEqual({ deleted: 4, remaining: false });
     expect(state.rows.custom_flow_answers.map(r => r.business_id)).toEqual([other]);
     // A foreign flow id deletes nothing.
-    expect(await (await post({ action: 'delete_flow_answers', flowId: otherFlow })).json()).toEqual({ deleted: 0 });
+    expect(await (await post({ action: 'delete_flow_answers', flowId: otherFlow })).json()).toEqual({ deleted: 0, remaining: false });
     expect(state.rows.custom_flow_answers).toHaveLength(1);
+  });
+
+  it("deleting another business's response by id is not found and changes nothing", async () => {
+    const foreign = state.rows.custom_flow_answers.find(r => r.business_id === other)!.response_id;
+    expect((await post({ action: 'delete_response', responseId: foreign })).status).toBe(404);
+    expect((await post({ action: 'delete_response', flowId: otherFlow, responseId: foreign })).status).toBe(404);
+    expect(state.rows.custom_flow_answers).toHaveLength(5);
+    expect(state.removed).toEqual([]);
+  });
+
+  it('the signed link and the reads use the RLS client; only signing uses the service client', async () => {
+    await get(`&file=${fileAnswer}`);
+    // Role resolution reads businesses/business_members via the service client by design.
+    expect(state.calls.filter(c => !/:(businesses|business_members)$/.test(c))).toEqual(['rls:read:custom_flow_answers', 'service:storage.sign']);
+  });
+
+  it('when the page cap is hit, the oldest (possibly partial) customer run is left out and the CSV says it was capped', async () => {
+    const many = Array.from({ length: 1000 }, (_, i) => answer({ response_id: `run-${i}`, created_at: `2026-11-1${i % 2 ? 4 : 3}T00:00:${String(i % 60).padStart(2, '0')}.000Z` }));
+    state.rows.custom_flow_answers = many;
+    const body = await (await get(`&flowId=${flow}`)).json();
+    expect(body.truncated).toBe(true);
+    expect(body.responses).toHaveLength(999);
   });
 
   it('if file removal fails, the rows are kept', async () => {
@@ -176,6 +205,18 @@ describe('answers retention cron', () => {
       expect(await res.json()).toMatchObject({ ok: true, deleted: 4, cutoff: '2026-11-11T00:00:00.000Z' });
       expect(state.removed.sort()).toEqual([`${biz}/a.jpg`, `${other}/b.pdf`]);
       expect(state.rows.custom_flow_answers.map(r => r.response_id)).toEqual([r2]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("one business's Storage failure does not stop the others; its rows are kept", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2027-11-11T00:00:00.000Z'));
+    try {
+      state.failPrefix = `${other}/`;
+      const res = await cron();
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ ok: false, error: 'delete_failed', deleted: 3, kept: 1 });
+      expect(state.removed).toEqual([`${biz}/a.jpg`]);
+      expect(state.rows.custom_flow_answers.map(r => r.business_id).sort()).toEqual([biz, other].sort());
     } finally { vi.useRealTimers(); }
   });
 

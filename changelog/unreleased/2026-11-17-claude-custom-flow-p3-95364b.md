@@ -6,25 +6,25 @@
   - Photos and PDFs only, up to 10 MB, private, short-lived links.
   - Friendly dates.
 - **M546** (`supabase/migrations/546_custom_flow_answers.sql`): new table `custom_flow_answers`, one row per answered question.
-  - Composite FKs to the same business's flow and session.
+  - Composite FKs to the same business's flow and session. The flow link is `ON DELETE NO ACTION`: a flow that still has answers cannot be deleted directly, so its uploaded files can never be stranded. Deleting a whole business still removes everything.
   - CHECKs: the value must match the answer type; files must be photo/PDF types only, ≤ 10 MB, and under the business's own folder.
   - RLS is default deny:
     - **Read:** the owner, or an active `business_members` row.
     - **Delete:** the owner only.
     - **Write:** service_role only.
   - Private bucket `custom-flow-uploads`, service_role only, with a 10 MB limit and the four allowed MIME types where Storage supports them.
-  - A fail-closed self-check runs at the end. No SECURITY DEFINER function.
+  - A fail-closed self-check runs at the end. It covers bucket privacy, storage RLS, any client policy reaching the bucket (USING or WITH CHECK), and every client write privilege. No SECURITY DEFINER function.
   - **Not applied** to staging or production.
 - **API** `app/api/custom-flows/responses/route.ts`, with helpers in `lib/custom-flow-responses/`:
   - **Access:** the owner or an active team member (`resolveBusinessRole`). Reads also go through RLS, scoped by business.
   - **GET:** answers grouped by customer, a CSV (formula-safe through `escapeCell`), and a 300-second signed link for one file.
-  - **POST:** `delete_response` and `delete_flow_answers`, owner only. Files are removed first; rows are kept if Storage fails.
+  - **POST:** `delete_response` and `delete_flow_answers`, owner only. Files are removed first; rows are kept if Storage fails. The reply says if answers `remaining` need another call, and the page repeats until none are left.
   - Reading does not require the add-on to be on, following the existing read_history rule.
 - **Page** `/dashboard/custom-flows/responses` (`components/custom-flows/FlowAnswers.tsx`):
   - Flow picker, answers grouped by customer, full dates, View photo/PDF, Download CSV.
   - Owner-only delete, behind a confirm. PageHelp and EmptyState.
   - New Sidebar item "Flow answers", gated on `custom_flow`.
-- **Retention** `app/api/cron/custom-flow-answers-retention` runs daily at 01:30 UTC (`vercel.json`). It deletes answers older than 12 months in bounded batches, files before rows.
+- **Retention** `app/api/cron/custom-flow-answers-retention` runs daily at 01:30 UTC (`vercel.json`). It deletes answers older than 12 months in bounded batches, files before rows. If one business's files fail, its rows are kept for the next run and the job carries on with everyone else.
 - **Dates** `lib/bot/custom-flow/dates.ts`: upcoming-day list rows ("Sat 21 Nov") plus "Another date", the full confirmation ("Saturday, 21 November 2026") via the existing `formatDisplayDate` seam, and typed-date parsing. Not used by the engine yet.
 - **Tests:**
   - `lib/__tests__/custom-flow-answers-546.pg.test.ts` (real PostgreSQL; added to the CI pg step and the unit-job excludes)
@@ -34,4 +34,5 @@
 - **Could break:**
   - Nothing existing. The bot engine, webhook and builder are unchanged in this part.
   - The new cron runs daily; until M546 is applied it fails harmlessly with `read_failed`.
-  - The page lists the newest 1,000 answers and points to the CSV (up to 20,000) for more.
+  - The page lists the newest 1,000 answers and points to the CSV (up to 20,000) for more. When a cap is hit, the oldest customer's possibly incomplete answers are left out, and the CSV ends with a note saying it was capped.
+  - Deleting a flow directly in the database now fails while that flow has answers.

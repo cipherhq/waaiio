@@ -57,9 +57,10 @@ export function csvValue(answer: Pick<AnswerRow, 'answer_type' | 'value_text' | 
 
 /**
  * One row per customer run, one column per question (in first-asked order).
- * Every cell goes through the formula-injection guard (#713).
+ * Every cell goes through the formula-injection guard (#713). An optional
+ * note (e.g. that the export was capped) is added as a last line.
  */
-export function answersCsv(rows: AnswerRow[]): string {
+export function answersCsv(rows: AnswerRow[], note?: string): string {
   const responses = groupResponses(rows);
   const questions: { node_id: string; question: string }[] = [];
   for (const row of [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
@@ -76,5 +77,5 @@ export function answersCsv(rows: AnswerRow[]): string {
       return answer ? csvValue(answer) : '';
     }),
   ]);
-  return [header, ...lines].map(cells => cells.map(c => escapeCell(c)).join(',')).join('\r\n');
+  return [header, ...lines, ...(note ? [[note]] : [])].map(cells => cells.map(c => escapeCell(c)).join(',')).join('\r\n');
 }

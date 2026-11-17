@@ -14,7 +14,7 @@ const responses = [
     { id: 'a2', node_id: 'day', question: 'Which day?', answer_type: 'date', value_text: null, value_date: '2026-11-21', file_mime: null, file_size: null, created_at: '2026-11-10T09:01:00.000Z' },
     { id: 'a3', node_id: 'id', question: 'Send your ID', answer_type: 'file', value_text: null, value_date: null, file_mime: 'application/pdf', file_size: 10, created_at: '2026-11-10T09:02:00.000Z' }] },
 ];
-let state: { flows: typeof flows; responses: typeof responses; canDelete: boolean; truncated?: boolean };
+let state: { flows: typeof flows; responses: typeof responses; canDelete: boolean; truncated?: boolean; remainingCalls?: number };
 let posts: Array<Record<string, unknown>>;
 
 beforeEach(() => {
@@ -23,6 +23,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === 'POST') {
       const body = JSON.parse(String(options.body)); posts.push(body);
+      if (state.remainingCalls) { state.remainingCalls--; return { ok: true, json: async () => ({ deleted: 500, remaining: true }) }; }
       const before = state.responses.length;
       state.responses = body.action === 'delete_flow_answers' ? [] : state.responses.filter(r => r.response_id !== body.responseId);
       return { ok: true, json: async () => ({ deleted: before === state.responses.length ? 0 : body.action === 'delete_flow_answers' ? 4 : 3 }) };
@@ -91,6 +92,15 @@ describe('Flow answers page', () => {
     expect(window.confirm).toHaveBeenCalledWith('Delete every answer for this flow? This cannot be undone.');
     expect(await screen.findByRole('heading', { name: 'No answers yet' })).toBeTruthy();
     expect(posts[0]).toMatchObject({ action: 'delete_flow_answers', flowId: 'f1' });
+  });
+
+  it('keeps deleting while the server says answers remain, then reports the total', async () => {
+    state.remainingCalls = 2;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete all answers for this flow' }));
+    expect(await screen.findByRole('status')).toHaveProperty('textContent', '1004 answers deleted.');
+    expect(posts).toHaveLength(3);
+    expect(window.confirm).toHaveBeenCalledTimes(1);
   });
 
   it('team members can read and download but see no delete buttons', async () => {
