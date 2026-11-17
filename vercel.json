@@ -98,6 +98,10 @@
       "schedule": "0 1 * * 0"
     },
     {
+      "path": "/api/cron/custom-flow-answers-retention",
+      "schedule": "30 1 * * *"
+    },
+    {
       "path": "/api/cron/payment-reconciliation",
       "schedule": "0 */4 * * *"
     },

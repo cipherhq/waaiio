@@ -99,25 +99,21 @@ describe('Add a step palette', () => {
     ]);
   });
 
-  it('marks Soon steps, which add nothing when pressed or dropped', async () => {
+  it('Ask a question steps work (#1085): each adds a question; an empty drag adds nothing', async () => {
     await openFlow();
     const before = headings();
-    // #1086: the four "Use what you already have" steps now work; only "Ask a question" is Soon.
-    for (const name of ['Ask for a reply', 'Ask them to choose']) {
-      const chip = screen.getByRole('button', { name: new RegExp(`^${name}`) });
-      expect(chip.textContent).toContain('Soon');
-      expect(chip.getAttribute('aria-disabled')).toBe('true');
-      expect(chip.getAttribute('draggable')).toBe('false');
-      fireEvent.click(chip);
-      expect(screen.getByText(`${name} is coming soon. You can’t add it yet.`)).toBeTruthy();
-    }
-    // A drag that carries no step (e.g. from a Soon chip) is ignored by the drop target.
-    const empty = dataTransfer();
-    fireEvent.dragStart(screen.getByRole('button', { name: /^Ask for a reply/ }), { dataTransfer: empty });
-    fireEvent.drop(within(map()).getByText('Drop a step here'), { dataTransfer: empty });
-    expect(screen.getByText('Coming soon:')).toBeTruthy();
+    // A drag that carries no step is still ignored by the drop target.
+    fireEvent.drop(within(map()).getByText('Drop a step here'), { dataTransfer: dataTransfer() });
     expect(headings()).toEqual(before);
     expect(screen.queryByText('Unsaved changes')).toBeNull();
+    for (const name of ['Yes or no', 'Pick one', 'Pick a date', 'Short answer', 'Photo or PDF']) {
+      const chip = screen.getByRole('button', { name: new RegExp(`^${name}`) });
+      expect(chip.textContent).not.toContain('Soon');
+      expect(chip.getAttribute('aria-disabled')).toBeNull();
+      fireEvent.click(chip);
+    }
+    expect(headings().slice(before.length)).toEqual(['Yes or no', 'Pick one', 'Pick a date', 'Short answer', 'Photo or PDF'].map((name, i) => `${before.length + i + 1}. ${name}`));
+    expect(screen.queryByText('Coming soon:')).toBeNull();
     expect(posts).toHaveLength(0);
   });
 });

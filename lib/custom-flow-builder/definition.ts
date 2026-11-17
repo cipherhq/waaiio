@@ -1,4 +1,4 @@
-import type { CustomFlowHandoffNode, CustomFlowNode } from '@/lib/bot/custom-flow/types';
+import type { CustomFlowAskNode, CustomFlowHandoffNode, CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { withOrderMetadata, type EditableFlow, type FlowOrderMetadata } from './order';
 import { readBusinessBindings, readGuided } from '@/lib/bot/custom-flow/data';
 
@@ -42,6 +42,17 @@ export function readDraft(value: unknown, id: string, businessId: string): Edita
         // errors) and, for record ownership, by the route before publish.
         const capability = text(raw.capability, 20) as CustomFlowHandoffNode['capability'];
         return { id: nodeId, type: 'handoff', capability, ...(raw.record_id == null || raw.record_id === '' ? {} : { record_id: text(raw.record_id, 80) }) };
+      }
+      case 'ask': {
+        // Answer type, choices and lengths are checked by validateDefinition
+        // (plain-English errors); this only keeps the stored shape exact.
+        if (raw.options !== undefined && (!Array.isArray(raw.options) || raw.options.length > 100)) throw new Error('invalid_definition');
+        if (raw.allow_past !== undefined && typeof raw.allow_past !== 'boolean') throw new Error('invalid_definition');
+        return { id: nodeId, type: 'ask', answer_type: text(raw.answer_type, 20) as CustomFlowAskNode['answer_type'], question: text(raw.question),
+          ...(raw.options === undefined ? {} : { options: (raw.options as unknown[]).map(option => text(option, 200)) }),
+          ...(raw.allow_past === undefined ? {} : { allow_past: raw.allow_past as boolean }),
+          ...(raw.retry_message === undefined ? {} : { retry_message: text(raw.retry_message) }),
+          next: target(raw.next ?? null) };
       }
       default: throw new Error('invalid_definition');
     }

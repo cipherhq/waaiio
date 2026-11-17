@@ -19,12 +19,17 @@ type Row = Record<string, unknown>;
 class MemoryQuery {
   private filters: Array<[string, unknown]> = [];
   private returning = false;
-  constructor(private rows: Row[], private operation: 'read' | 'insert' | 'update', private payload: Row = {}) {}
+  constructor(private rows: Row[], private operation: 'read' | 'insert' | 'update' | 'upsert', private payload: Row = {}) {}
   select() { this.returning = true; return this; }
   eq(key: string, value: unknown) { this.filters.push([key, value]); return this; }
   private execute(single = false) {
     let matches = this.rows.filter(row => this.filters.every(([key, value]) => row[key] === value));
-    if (this.operation === 'insert') {
+    if (this.operation === 'upsert') {
+      // Test-chat answers (#1085): replace the same question's answer in this run.
+      const at = this.rows.findIndex(row => row.response_id === this.payload.response_id && row.node_id === this.payload.node_id);
+      if (at >= 0) this.rows.splice(at, 1);
+    }
+    if (this.operation === 'insert' || this.operation === 'upsert') {
       const inserted = { ...structuredClone(this.payload), id: crypto.randomUUID() };
       this.rows.push(inserted); matches = [inserted];
     }
@@ -46,7 +51,7 @@ export async function previewDraft(readonlyDb: SupabaseClient, businessId: strin
     custom_flows: [{ id: draft.id, business_id: businessId, status: 'published', name: draft.name,
       greeting: draft.greeting, fallback_message: draft.fallback_message, entry_keyword: keyword,
       published_version: 1, published_definition: { ...draft, entry_keyword: keyword, status: 'published' } }],
-    custom_flow_sessions: [], custom_flow_logs: [],
+    custom_flow_sessions: [], custom_flow_logs: [], custom_flow_answers: [],
   };
   // The facade exposes SELECT only for actual tables and always adds tenant scope.
   // No caller-provided phone, sender, session ID or write-capable query escapes it.
@@ -56,6 +61,7 @@ export async function previewDraft(readonlyDb: SupabaseClient, businessId: strin
         select: () => new MemoryQuery(memory[table], 'read'),
         insert: (row: Row) => new MemoryQuery(memory[table], 'insert', row),
         update: (row: Row) => new MemoryQuery(memory[table], 'update', row),
+        upsert: (row: Row) => new MemoryQuery(memory[table], 'upsert', row),
       };
       if (!['businesses', 'business_capabilities', 'capability_overrides', 'custom_flow_tables', 'custom_flow_table_rows', 'countries', 'products', 'services', 'events', 'event_ticket_types'].includes(table)) throw new Error('preview_table_not_allowed');
       return { select(columns: string) {

@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────
 // Waaiio Custom Flow — data-driven flow definitions (Issue #1013)
 // Phase 1 node set: message, menu, lookup. Phase 2 (#1086) adds handoff.
-// Later phases add: ask, list, image, broadcast_opt_in, end. A node type is a platform change;
+// Phase 3 (#1085) adds ask. Later phases add: list, image, broadcast_opt_in, end. A node type is a platform change;
 // a customer need is first tested against combinations of these nodes.
 // ─────────────────────────────────────────────────────────────────────
 
 import type { BusinessField, GuidedMetadata } from './data';
 
-export type CustomFlowNodeType = 'message' | 'menu' | 'lookup' | 'handoff';
+export type CustomFlowNodeType = 'message' | 'menu' | 'lookup' | 'handoff' | 'ask';
 
 export interface CustomFlowMessageNode {
   id: string;
@@ -72,11 +72,36 @@ export interface CustomFlowHandoffNode {
   record_id?: string | null;
 }
 
+/** Kinds of answer an ask step accepts (#1085). Mirrored by the M546 CHECK. */
+export type CustomFlowAnswerType = 'yes_no' | 'choice' | 'date' | 'text' | 'file';
+
+/**
+ * Asks the customer one question and saves the answer privately for the
+ * business (custom_flow_answers, M546), then moves on. A wrong answer is
+ * re-asked and never saved.
+ */
+export interface CustomFlowAskNode {
+  id: string;
+  type: 'ask';
+  answer_type: CustomFlowAnswerType;
+  /** The question as the customer sees it. */
+  question: string;
+  /** Pick one: 2–10 choices (3 or fewer show as buttons, more as a list). */
+  options?: string[];
+  /** Date: also accept dates before today (default: today or later). */
+  allow_past?: boolean;
+  /** Sent when an answer can't be used; a plain default is used when empty. */
+  retry_message?: string;
+  /** Next node id, or null to end the flow. */
+  next: string | null;
+}
+
 export type CustomFlowNode =
   | CustomFlowMessageNode
   | CustomFlowMenuNode
   | CustomFlowLookupNode
-  | CustomFlowHandoffNode;
+  | CustomFlowHandoffNode
+  | CustomFlowAskNode;
 
 export interface CustomFlowDefinition {
   id: string;
