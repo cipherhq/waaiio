@@ -1,6 +1,0 @@
-## 2026-11-16 — Reject reserved test email domains in bot email capture (#1062)
-
-- Root cause of the staging TestBiz booking payment-link failures (WA-BK-6154, WA-BK-6924, WA-BK-5796): the customer's saved business email was a QA address at `example.invalid`. On a merchant own-account (BYO) Paystack route the typed/saved customer email is sent to Paystack, which rejects reserved domains (`invalid_params`). Bookings with real emails succeeded on the same route.
-- New `isReservedEmailDomain` (lib/bot/flows/shared/user.ts) flags the reserved top-level domains `.invalid`, `.test`, `.example`, `.localhost` (RFC 2606/6761). `isReusableCustomerEmail` now returns false for them, so saved profiles/history with such addresses are neither reused nor persisted, and the bot asks for an email again (customers can still type *skip*).
-- Typed reserved emails are rejected with the existing invalid-email reply in the scheduling, ordering and reservation `collect_email` steps. No wording, payment routing, fee or provider request changes. `example.com` and real domains are unaffected.
-- Could break: a customer who deliberately types an address on one of those four reserved domains is now asked again; existing saved reserved addresses stop being reused.
