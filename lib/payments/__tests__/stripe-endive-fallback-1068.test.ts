@@ -64,6 +64,35 @@ describe('saved-card PaymentIntent (#1068)', () => {
     expect(calls[1].body).not.toHaveProperty('payment_method_types[0]');
   });
 
+  it('PaymentIntent rejection without `param` (staging req_BJ8Z3NDbhXJ5yy, #1070) is retried once with the allowlist', async () => {
+    const piRejection = {
+      error: {
+        type: 'invalid_request_error',
+        message: 'The `payment_method_types` parameter is no longer supported. Payment methods are now managed from your Dashboard settings (https://dashboard.stripe.com/settings/payment_methods). For migration guidance, see https://docs.stripe.com/payments/payment-methods/dynamic-payment-methods.',
+        request_log_url: 'https://dashboard.stripe.com/test/workbench/logs?object=req_BJ8Z3NDbhXJ5yy',
+      },
+    };
+    const calls = stubStripe(body => body['payment_method_types[0]']
+      ? { status: 400, json: piRejection } : { status: 200, json: { id: 'pi_np', status: 'succeeded' } });
+    const { chargeStripeSavedCard } = await import('../stripe-saved-card');
+    const result = await chargeStripeSavedCard({
+      customerId: 'cus_1', paymentMethodId: 'pm_1', amountCents: 5000, currency: 'USD', idempotencyKey: 'sc_charge_pay-np',
+    });
+    expect(result).toEqual({ status: 'succeeded', paymentIntentId: 'pi_np' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].headers['Idempotency-Key']).toBe('sc_charge_pay-np_endive_card');
+    expect(calls[1].body).toMatchObject({ 'allowed_payment_method_types[0]': 'card' });
+    expect(calls[1].body).not.toHaveProperty('payment_method_types[0]');
+  });
+
+  it('a no-param 400 with any other message is not retried', async () => {
+    const calls = stubStripe(() => ({ status: 400, json: { error: { type: 'invalid_request_error', message: 'No such PaymentMethod: pm_1' } } }));
+    const { postSavedCardPaymentIntent } = await import('../stripe-saved-card');
+    const res = await postSavedCardPaymentIntent(legacy, 'sc_charge_pay-np2');
+    expect(res.httpStatus).toBe(400);
+    expect(calls).toHaveLength(1);
+  });
+
   it('older API version: the legacy request is used as before, no retry', async () => {
     const calls = stubStripe(() => ({ status: 200, json: { id: 'pi_2', status: 'succeeded' } }));
     const { postSavedCardPaymentIntent } = await import('../stripe-saved-card');
