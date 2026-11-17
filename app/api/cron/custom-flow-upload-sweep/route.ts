@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { sweepOrphanedUploads } from '@/lib/custom-flow-responses/upload-sweep';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,7 +19,15 @@ export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
 
-  const { root_failed, ...result } = await sweepOrphanedUploads(createServiceClient());
+  let swept;
+  try {
+    swept = await sweepOrphanedUploads(createServiceClient());
+  } catch (err) {
+    // A throw stops the run before any further delete; report it, never its message.
+    reportFailure(err, { area: 'cron', op: 'run', job: 'custom-flow-upload-sweep' });
+    return NextResponse.json({ ok: false, error: 'sweep_crashed' }, { status: 500 });
+  }
+  const { root_failed, ...result } = swept;
   if (root_failed) return NextResponse.json({ ok: false, error: 'list_failed', ...result }, { status: 500 });
   if (result.failed) return NextResponse.json({ ok: false, error: 'sweep_failed', ...result }, { status: 500 });
   return NextResponse.json({ ok: true, ...result });

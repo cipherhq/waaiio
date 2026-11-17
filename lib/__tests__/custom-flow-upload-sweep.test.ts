@@ -81,7 +81,15 @@ const OLD = new Date(Date.now() - 3 * 24 * 3600_000).toISOString();
 const JUST_OVER = new Date(Date.now() - 24 * 3600_000 - 60_000).toISOString();
 const RECENT = new Date(Date.now() - 2 * 3600_000).toISOString();
 const biz = uuid(), other = uuid(), flow = uuid(), session = uuid(), session2 = uuid();
-const path = (b: string, name: string, f = flow, s = session) => `${b}/${f}/${s}/${name}`;
+// The engine names files <node id>-<uuid>.<ext>; a short label like 'q1-a.jpg'
+// becomes node 'q1' plus a stable uuid per label, so tests stay readable.
+const labels = new Map<string, string>();
+const fileName = (label: string) => {
+  const [stem, ext] = label.split('.');
+  if (!labels.has(stem)) labels.set(stem, uuid());
+  return `${stem.split('-')[0]}-${labels.get(stem)}.${ext}`;
+};
+const path = (b: string, label: string, f = flow, s = session) => `${b}/${f}/${s}/${fileName(label)}`;
 const reference = (p: string, business = p.split('/')[0]) => state.answers.push({ business_id: business, file_path: p });
 
 beforeEach(() => {
@@ -131,6 +139,10 @@ describe('custom flow upload sweep', () => {
       `not-a-uuid/${flow}/${session}/x.jpg`,
       `${biz}/not-a-uuid/${session}/x.jpg`,
       `${biz}/${flow}/not-a-uuid/x.jpg`,
+      `${biz}/${flow}/${session}/notes.txt`,
+      `${biz}/${flow}/${session}/q1-${uuid()}.exe`,
+      `${biz}/${flow}/${session}/q1-not-a-uuid.jpg`,
+      `${biz}/${flow}/${session}/bad id-${uuid()}.jpg`,
     ];
     for (const p of keep) state.objects.set(p, OLD);
     state.objects.set(path(biz, 'q1-orphan.jpg'), OLD);
@@ -141,7 +153,7 @@ describe('custom flow upload sweep', () => {
     for (const call of state.removeCalls) for (const p of call) expect(p).toMatch(/^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/[^/]+$/);
   });
 
-  it('pages through more than one page of businesses, sessions and files', async () => {
+  it('pages through more than one page of business folders and of files in a session', async () => {
     // 1,000 entries per page: 1,001 business folders, and 1,001 files in one session.
     SWEEP_LIMITS.maxDeletes = 10_000; // this test is about paging, not the cap
     const businesses = Array.from({ length: 1001 }, uuid);
@@ -198,6 +210,32 @@ describe('custom flow upload sweep', () => {
     expect(state.reports).toEqual([expect.objectContaining({ op: 'list_business', businessId: biz })]);
   });
 
+  it('a listing failure at flow or session level is reported, skips only that folder, and returns 500', async () => {
+    const flow2 = uuid();
+    for (const [failing, op] of [[`${biz}/${flow2}`, 'list_flow'], [`${biz}/${flow}/${session2}`, 'list_session']] as const) {
+      const inFailing = op === 'list_flow' ? path(biz, 'q1-a.jpg', flow2, session) : path(biz, 'q1-b.jpg', flow, session2);
+      const gone = path(biz, 'q1-c.jpg');
+      state.objects = new Map([[inFailing, OLD], [gone, OLD]]);
+      state.failListPrefix = failing; state.reports = [];
+      const res = await run();
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ ok: false, failed: 1, deleted: 1 });
+      expect(state.reports).toEqual([expect.objectContaining({ op, businessId: biz })]);
+      expect([...state.objects.keys()]).toEqual([inFailing]);
+    }
+  });
+
+  it('an unexpected throw is reported without its message and returns 500', async () => {
+    state.objects.set(path(biz, 'q1-a.jpg'), OLD);
+    const spy = vi.spyOn(service.storage, 'from').mockImplementation(() => { throw new Error(`boom ${biz}`); });
+    const res = await run();
+    spy.mockRestore();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, error: 'sweep_crashed' });
+    expect(state.reports).toEqual([{ area: 'cron', op: 'run', job: 'custom-flow-upload-sweep' }]);
+    expect(state.objects.size).toBe(1);
+  });
+
   it('a root listing failure deletes nothing and returns 500', async () => {
     state.objects.set(path(biz, 'q1-a.jpg'), OLD);
     state.failListPrefix = '';
@@ -223,7 +261,7 @@ describe('custom flow upload sweep', () => {
     state.objects.set(path(biz, 'q1-a.jpg'), OLD).set(path(biz, 'q1-b.jpg'), RECENT);
     const res = await run();
     const text = JSON.stringify(await res.json()) + JSON.stringify(state.logs);
-    for (const secret of [biz, flow, session, 'q1-a', 'q1-b']) expect(text).not.toContain(secret);
+    for (const secret of [biz, flow, session, fileName('q1-a.jpg'), fileName('q1-b.jpg')]) expect(text).not.toContain(secret);
   });
 
   it('stops at the per-run delete cap, says so, and the next run finishes the job', async () => {

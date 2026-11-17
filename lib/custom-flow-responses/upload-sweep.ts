@@ -3,7 +3,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { reportFailure } from '@/lib/observability/report-failure';
-import { CUSTOM_FLOW_UPLOADS_BUCKET } from '@/lib/bot/custom-flow/answers';
+import { CUSTOM_FLOW_UPLOADS_BUCKET, UPLOAD_EXTENSION } from '@/lib/bot/custom-flow/answers';
 import { isUuid } from '@/lib/bot/custom-flow/data';
 
 const JOB = 'custom-flow-upload-sweep';
@@ -13,6 +13,8 @@ const PAGE = 1000;
 // One session's answers are a handful; a full page means the lookup may be cut short, so nothing is deleted.
 const LOOKUP_LIMIT = 1000;
 const REMOVE_CHUNK = 100;
+/** The engine's file name: <node id>-<random uuid>.<ext> (node ids per definition.ts). */
+const UPLOAD_NAME = new RegExp(`^[A-Za-z0-9_-]{1,80}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(${Object.values(UPLOAD_EXTENSION).join('|')})$`);
 /** Per-run caps; the time budget keeps the run inside the route's 60 s limit. Tests lower them. */
 export const SWEEP_LIMITS = { maxDeletes: 2000, maxListCalls: 5000, timeBudgetMs: 45_000 };
 
@@ -31,7 +33,7 @@ class Budget {
  * pointing at it (the server stopped between upload and save, an overtaken
  * photo's own delete failed, or a Storage delete failed). This deletes such
  * files: only objects shaped exactly like the engine's uploads
- * (<business>/<flow>/<session>/<file>), only when no answer row of that
+ * (<business>/<flow>/<session>/<node>-<uuid>.<ext>), only when no answer row of that
  * business references the exact path, and only when Storage says they are
  * over 24 hours old. Only the engine writes file_path, always with a path it
  * uploaded seconds earlier, so a file this old cannot become referenced
@@ -78,7 +80,8 @@ async function sweepBusiness(service: SupabaseClient, businessId: string, now: n
       if (!listed) { failed(counts, businessId, 'list_session'); continue; }
       const old: string[] = [];
       for (const entry of listed.entries) {
-        if (entry.id === null) { counts.skipped++; continue; } // deeper folders are not the engine's shape
+        // Deeper folders and names the engine never writes are not its uploads.
+        if (entry.id === null || !UPLOAD_NAME.test(entry.name)) { counts.skipped++; continue; }
         counts.checked++;
         const created = Date.parse(entry.created_at ?? '');
         if (!Number.isFinite(created) || now - created < GRACE_MS) { counts.kept_recent++; continue; }
