@@ -102,6 +102,10 @@
       "schedule": "30 1 * * *"
     },
     {
+      "path": "/api/cron/custom-flow-upload-sweep",
+      "schedule": "0 2 * * *"
+    },
+    {
       "path": "/api/cron/payment-reconciliation",
       "schedule": "0 */4 * * *"
     },
