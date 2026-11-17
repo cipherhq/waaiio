@@ -54,6 +54,8 @@ export interface FencedDeliveryParams {
   businessId: string;
   channelId: string;
   messageText: string;
+  /** Optional reply buttons; sent with messageText as the body when the channel supports buttons. */
+  buttons?: Array<{ id: string; title: string }>;
   /** Typed callback: mark send started (before provider call) */
   markStarted: (offerId: string, claimToken: string) => RpcResult;
   /** Typed callback: complete delivery (after proven send with WAMID) */
@@ -76,7 +78,7 @@ export interface FencedDeliveryParams {
 export async function sendWithFencedDelivery(params: FencedDeliveryParams): Promise<DeliveryOutcome> {
   const {
     supabase, offerId, claimToken, customerPhone, businessId,
-    channelId, messageText, markStarted, complete, releasePreEmission,
+    channelId, messageText, buttons, markStarted, complete, releasePreEmission,
   } = params;
 
   const logPrefix = '[FENCED-DELIVERY]';
@@ -112,7 +114,9 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
   let messageId: string | undefined;
   try {
     const to = customerPhone.replace(/^\+/, '');
-    const result = await resolved.sender.sendText({ to, text: messageText, messageCategory: 'service' });
+    const result = buttons?.length && resolved.sender.sendButtons
+      ? await resolved.sender.sendButtons({ to, body: messageText, buttons, messageCategory: 'service' })
+      : await resolved.sender.sendText({ to, text: messageText, messageCategory: 'service' });
     messageId = (result as { messageId?: string })?.messageId;
   } catch (sendErr: unknown) {
     if (isProvenPreEmission(sendErr)) {

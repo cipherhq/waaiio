@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { canonicalSavedCardPhone } from './saved-card-compat';
+import { STRIPE_PIN_NOT_NOW_PREFIX } from './stripe-pin-not-now';
 import { paystackPaymentMatchesSavedCardScope, resolvePaystackSavedCardScope, withSavedCardScope } from './saved-card-scope';
 
 // ─── Payment-customer resolver (K4) ───
@@ -643,6 +644,37 @@ export async function startSavedCardFromPaymentId(
 // No redundant WhatsApp "Save card?" question for Stripe.
 // ═══════════════════════════════════════════════════════
 
+/**
+ * Build the Stripe PIN-activation prompt with its single "Not now" button,
+ * localized the same way as the Paystack Save card offer (body with the card
+ * label protected, Waaiio-owned button title translated, id kept exact).
+ * Falls back to English on any localization failure.
+ */
+export async function buildStripeActivationPrompt(
+  supabase: SupabaseClient,
+  offerType: string,
+  cardLabel: string,
+  paymentId: string,
+  customerPhone: string,
+  businessId: string,
+): Promise<{ text: string; buttons: Array<{ id: string; title: string }> }> {
+  let text = offerType === 'save'
+    ? `🔒 You chose to save ${cardLabel} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
+    : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
+  const buttons = [{ id: `${STRIPE_PIN_NOT_NOW_PREFIX}${paymentId}`, title: 'Not now' }];
+  try {
+    const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+    const l10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+    if (l10n.language !== 'en') {
+      const localizedText = await l10n.translate(text, [cardLabel]);
+      const localizedTitle = await l10n.translate(buttons[0].title);
+      text = localizedText;
+      buttons[0] = { ...buttons[0], title: localizedTitle };
+    }
+  } catch { /* fail closed to English */ }
+  return { text, buttons };
+}
+
 export async function checkStripeConsentAndOffer(
   supabase: SupabaseClient,
   paymentId: string,
@@ -773,6 +805,10 @@ export async function checkStripeConsentAndOffer(
     return 'retryable';
   }
 
+  // Localize before Step 6: establishing the PIN session replaces session_data,
+  // which would drop the customer's detected language.
+  const activationPrompt = await buildStripeActivationPrompt(supabase, offerType, cardLabel, paymentId, canonPhone, businessId);
+
   // Step 6: Establish bot session for PIN entry using normalized digits-only phone
   const pinSessionData = {
     _inbound_channel_id: channelId,
@@ -828,9 +864,6 @@ export async function checkStripeConsentAndOffer(
     }
 
     const activationClaimToken = (claimed as Record<string, unknown>).claim_token as string;
-    const activationMsg = offerType === 'save'
-      ? `🔒 You chose to save ${cardLabel} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
-      : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
 
     const { sendWithFencedDelivery } = await import('./saved-card-delivery');
     const outcome = await sendWithFencedDelivery({
@@ -840,7 +873,8 @@ export async function checkStripeConsentAndOffer(
       customerPhone: canonPhone,
       businessId,
       channelId,
-      messageText: activationMsg,
+      messageText: activationPrompt.text,
+      buttons: activationPrompt.buttons,
       markStarted: (id, token) => supabase.rpc('mark_activation_send_started', { p_offer_id: id, p_claim_token: token }),
       // complete_activation_delivery (M395) takes exactly 2 args — no p_customer_phone
       complete: (id, token) => supabase.rpc('complete_activation_delivery', { p_offer_id: id, p_claim_token: token }),

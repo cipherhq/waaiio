@@ -123,6 +123,22 @@ describe('paid completion gates', () => {
     const client = db(); await resumePaidTransactionFollowup(client as any, 'pay');
     expect(m.claim).toHaveBeenCalledWith(client, 'pay'); expect(m.offer).toHaveBeenCalled();
   });
+  // #1065 Option A: Stripe provider-checkout card step order. "Not now" (or typed
+  // cancel) declines the accepted offer via M534; the follow-up then resumes once,
+  // and a live accepted offer keeps holding the conversation without re-asking Stripe.
+  it('Stripe offer declined by Not now resumes the follow-up without re-running the Stripe consent check', async () => {
+    const client = db({ gateway: 'stripe', offer: 'declined' }); await resumePaidTransactionFollowup(client as any, 'pay');
+    expect(m.stripe).not.toHaveBeenCalled(); expect(m.offer).not.toHaveBeenCalled();
+    expect(m.resume).toHaveBeenCalledTimes(1); expect(m.resume).toHaveBeenCalledWith(client, 'pay', { cardResolved: true });
+  });
+  it('Stripe offer still accepted (PIN prompt live) holds the follow-up and does not re-ask', async () => {
+    await resumePaidTransactionFollowup(db({ gateway: 'stripe', offer: 'accepted' }) as any, 'pay');
+    expect(m.stripe).not.toHaveBeenCalled(); expect(m.resume).not.toHaveBeenCalled();
+  });
+  it('Stripe card step waits for the delivered confirmation before the consent check', async () => {
+    await resumePaidTransactionFollowup(db({ gateway: 'stripe', delivered: false }) as any, 'pay');
+    expect(m.claim).not.toHaveBeenCalled(); expect(m.stripe).not.toHaveBeenCalled(); expect(m.resume).not.toHaveBeenCalled();
+  });
   it('a Stripe payment is not routed through the Paystack BYO skip', async () => {
     m.stripe.mockResolvedValue('pending');
     await resumePaidTransactionFollowup(db({ gateway: 'stripe', metadata: { payment_origin: 'connect' } }) as any, 'pay');

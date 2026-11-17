@@ -1,0 +1,16 @@
+## 2026-11-17 — Stripe saved-card PIN prompt gets a "Not now" button (#1065, Owner Option A)
+
+- **Owner decision** (#1065, 2026-11-17): Option A. Keep Stripe Checkout's own "Save card" tick box as the consent. Add one translated "Not now" reply button to the WhatsApp PIN-activation message, doing exactly what typing `cancel` does.
+- **Before:** after a customer ticked "Save card" on Stripe Checkout, WhatsApp sent a plain-text "Create your 4-digit Waaiio PIN" message. The only way out was to type `cancel`.
+- **Changes:**
+  - `lib/payments/stripe-pin-not-now.ts` (new): the postback id prefix `stripe_pin_not_now:`, shared by the senders, the PIN handler and the bot-service guard.
+  - `lib/payments/saved-card-offer.ts`: new `buildStripeActivationPrompt` builds the existing English text plus one button `stripe_pin_not_now:<paymentId>` / "Not now". Body (card label protected) and title are localized with `resolveProactiveLocalization`, like the Paystack offer, falling back to English. `checkStripeConsentAndOffer` builds it before the PIN session is established (that RPC replaces `session_data`, which would drop the detected language).
+  - `app/api/cron/saved-card-activation-retry/route.ts`: the activation re-send uses the same prompt and button.
+  - `lib/payments/saved-card-delivery.ts`: `sendWithFencedDelivery` takes optional `buttons`. When given, it sends with `sendButtons`. Same claim, start, complete, release and ambiguity rules. Callers without buttons (confirmations) still send text.
+  - `lib/bot/handlers/saved-cards.ts` `handleCardPinStep`: a `stripe_pin_not_now:<id>` tap becomes the existing typed `cancel` only when the session is `save_card_pin`, gateway `stripe`, the same payment id, and `_save_card_business_id` equals the session business. Any other tap does nothing. On a Stripe PIN step, the "enter exactly 4 digits" re-prompt keeps the button. Paystack re-prompts are unchanged.
+  - `lib/bot/bot.service.ts`: passes a button sender to the PIN handler. A `stripe_pin_not_now:` tap arriving after the PIN step has ended (duplicate, stale, expired, no session) is a silent no-op.
+- **Unchanged:** Stripe consent capture (Checkout tick box, `provider_checkout`), charging, custody and fees, offer RPCs and states, `cancel_transaction_card_setup` (M534), the follow-up order, the Paystack Save card offer and its postbacks, and BYO/Connect Stripe (still skipped). No migration.
+- **Tests:** `lib/payments/__tests__/stripe-pin-not-now-1065.test.ts` (real offer, fenced delivery and PIN handler) and `lib/payments/__tests__/stripe-pin-not-now-botservice-1065.test.ts` (real `handleMessage`). New Stripe follow-up-order cases in `lib/payments/__tests__/transaction-followup.test.ts`. `lib/__tests__/shared-conversation-routing.test.ts` now expects the extra button-sender argument for save/verify PIN steps.
+- **Could break:**
+  - If a channel's sender has no `sendButtons`, the activation falls back to plain text (no button; typing `cancel` still works).
+  - The PIN session established for Stripe has no detected language, so the PIN-step replies (including "Card save cancelled." and the re-prompt with its button) stay in English. This is the same as before, for both the typed and tapped paths. Only the activation message itself is localized.

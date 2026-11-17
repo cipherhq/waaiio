@@ -57,6 +57,7 @@ import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detec
 import { executeKeywordAction as _executeKeywordAction } from './handlers/keyword-actions';
 import { handleChatHandoff as _handleChatHandoff, handleChatStart as _handleChatStart } from './handlers/chat-handoff';
 import { handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards';
+import { STRIPE_PIN_NOT_NOW_PREFIX } from '@/lib/payments/stripe-pin-not-now';
 import { handleRefundRequest as _handleRefundRequest } from './handlers/refund-request';
 import { deriveReentryProvenance } from './reentry-context';
 
@@ -1656,7 +1657,8 @@ export class BotService {
     // BEFORE evaluating global save/remove commands to prevent hijacking.
     const _pinStep = session?.current_step;
     if (_pinStep === 'save_card_pin' || _pinStep === 'verify_card_pin') {
-      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session!, text);
+      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session!, text,
+        async (msg) => { await this.messageSender.sendButtons(msg); });
       return;
     }
     if (_pinStep === 'replace_card_pin') {
@@ -1664,6 +1666,9 @@ export class BotService {
       await handleReplacementPinStep(this.supabase, this.sendText.bind(this), from, session!, text);
       return;
     }
+    // #1065: a Stripe activation "Not now" tap that arrives after its PIN step has
+    // ended (already cancelled, saved, expired, or another step) is a no-op.
+    if (text.trim().startsWith(STRIPE_PIN_NOT_NOW_PREFIX)) return;
 
     // ── Button-based saved-card offer actions ──
     // Intercept save_card_accept/decline and replace_card_accept/decline button taps.
@@ -3998,7 +4003,8 @@ export class BotService {
 
     // Handle save card PIN creation and replacement PIN verification
     if (step === 'save_card_pin' || step === 'verify_card_pin') {
-      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session, text);
+      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session, text,
+        async (msg) => { await this.messageSender.sendButtons(msg); });
       return;
     }
     if (step === 'replace_card_pin') {
