@@ -57,6 +57,7 @@ function passes(row: Row, op: Op): boolean {
     case 'select': case 'limit': case 'order': return true;
     case 'eq': return row[col(String(field))] === arg;
     case 'gte': return Number(row[col(String(field))]) >= Number(arg);
+    case 'in': return (arg as unknown[]).includes(row[col(String(field))]);
     case 'ilike': return ilikeMatches(row[col(String(field))], String(arg));
     case 'not':
       if (arg === 'is' && extra === null) return row[col(String(field))] !== null && row[col(String(field))] !== undefined;
@@ -99,7 +100,7 @@ export function directoryFakeDb(rows: Row[], opts: FakeDbOptions = {}) {
     const ops: Op[] = [];
     queries.push(ops);
     const chain: Record<string, unknown> = {};
-    for (const m of ['select', 'eq', 'not', 'or', 'ilike', 'gte', 'order', 'limit']) {
+    for (const m of ['select', 'eq', 'not', 'or', 'ilike', 'gte', 'in', 'order', 'limit']) {
       chain[m] = (...args: unknown[]) => { ops.push({ method: m, args }); return chain; };
     }
     const result = () => opts.businessesError

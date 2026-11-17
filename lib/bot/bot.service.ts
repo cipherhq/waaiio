@@ -2017,7 +2017,7 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status, messaging_suspended')
           .eq('id', businessId)
           .single();
         // Reject suspended/deactivated businesses
@@ -2043,6 +2043,16 @@ export class BotService {
           if (legacyBlocked.includes(from) || legacyBlocked.includes('+' + from)) {
             return; // Silently drop — blocked users get no response
           }
+        }
+        // #1083: a messaging-suspended business gets the same plain reply (blocked
+        // phones above stay silent), but only from a tenantless shared Waaiio sender.
+        // On the business's own number (bound sender or dedicated-number lookup) the
+        // S-1 hard stop stays silent.
+        if (biz && (biz as Record<string, unknown>).messaging_suspended === true) {
+          if (!this.messageSender.boundBusinessId && bizResolution !== 'dedicated_number') {
+            await this.sendPlatformText(from, 'This business is currently unavailable. Please try again later.');
+          }
+          return;
         }
         business = biz as BusinessRecord | null;
       }
