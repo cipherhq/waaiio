@@ -129,7 +129,8 @@ export async function GET(request: NextRequest) {
           }
 
           if (!messageSent) {
-            await sender.sendText({ to: phone, text: formattedText, messageCategory: 'service' });
+            // Campaign text stays a paid (marketing) message (#1075).
+            await sender.sendText({ to: phone, text: formattedText, messageCategory: 'marketing' });
           }
 
           await supabase.from('notifications').insert({

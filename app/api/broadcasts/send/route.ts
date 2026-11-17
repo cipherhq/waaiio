@@ -241,7 +241,8 @@ export async function POST(request: NextRequest) {
             email: emailOpt,
             businessName: business.name,
             alwaysEmail: true,
-            messageCategory: 'service',
+            // Campaign text stays a paid (marketing) message (#1075).
+            messageCategory: 'marketing',
           });
           sent = delivery.whatsapp === 'sent';
           emailAccepted = delivery.email === 'sent';

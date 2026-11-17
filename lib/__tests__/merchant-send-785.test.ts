@@ -76,7 +76,8 @@ describe('broadcast acceptance reporting', () => {
     m.template.mockResolvedValue({ success: false }); m.fallback.mockResolvedValue({ whatsapp: 'failed', email: 'no_address' });
     const result = await (await broadcast(req(body))).json();
     expect(result).toMatchObject({ success: false, sent: 0, not_sent: 1, email_only: 0 });
-    expect(m.fallback).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'service' }));
+    // #1075: campaign text fallback stays a paid marketing message.
+    expect(m.fallback).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'marketing' }));
     expect(m.writes.filter(w => w.table === 'notifications').map(w => w.row.status)).toEqual(['failed']);
   });
   it('reports email-only acceptance separately', async () => {
@@ -104,6 +105,8 @@ describe('payment request checkout URL', () => {
     const response = await payment(req({ businessId: 'biz', customerPhone: '+12025550123', amount: 500 }));
     expect(response.status).toBe(200); expect((await response.json()).paymentUrl).toBe(url);
     expect(m.fallback.mock.calls[0][0].text).toContain(url);
+    // #1075: plain-text payment request is a free service message.
+    expect(m.fallback.mock.calls[0][0].messageCategory).toBe('service');
     expect(m.from).not.toHaveBeenCalledWith('payments');
   });
 });
@@ -139,7 +142,8 @@ describe('document sending consent and acceptance', () => {
     m.text.mockResolvedValue({ success });
     const response = await reportSend(req({ businessId: 'biz', reportIds: ['report'] }));
     expect((await response.json()).results[0].status).toBe(success ? 'sent' : 'failed');
-    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'utility' }));
+    // #1075: plain-text document link is a free service message, not a utility template.
+    expect(m.text).toHaveBeenCalledWith(expect.objectContaining({ messageCategory: 'service' }));
     if (!success) expect(m.writes.some(write => write.row.status === 'sent')).toBe(false);
   });
 });

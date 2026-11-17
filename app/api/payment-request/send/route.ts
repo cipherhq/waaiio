@@ -185,7 +185,8 @@ export async function POST(request: NextRequest) {
           text: messageText,
           businessName: biz.name,
           alwaysEmail: true,
-          messageCategory: 'utility',
+          // Plain text, not a template: WhatsApp does not charge it (#1075).
+          messageCategory: 'service',
           email: emailAllowed ? {
             address: fallbackEmail,
             subject: emailSubject,
