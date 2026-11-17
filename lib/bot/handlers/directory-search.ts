@@ -9,6 +9,8 @@
  *   5. Result selection → enters business bot (postbacks carry the business id, #1072)
  *   6. "connect <name>" command
  *   7. Place search with aliases (#1072): place-aliases.ts
+ *   8. Nearest to me (#1072 step 2): "near me" asks for a location pin; a pin
+ *      lists pinned businesses within 25 km, nearest first. The pin is never stored.
  *
  * Uses existing marketplace infrastructure:
  *   - parseDirectoryQuery (query-parser.ts)
@@ -36,6 +38,7 @@ import {
 } from '@/lib/marketplace/search';
 import { resolvePlace, placeCountryName, isKnownPlace } from '@/lib/marketplace/place-aliases';
 import { checkRateLimitAsync } from '@/lib/rate-limit';
+import { formatDistance, getDistanceUnit, kmToMiles } from '@/lib/constants';
 
 // ── Constants ─────────────────────────────────────────────
 
@@ -70,6 +73,17 @@ export interface DirectorySessionData {
   _directory_enter?: { businessId: string; botCode: string };
   /** Returning-customer quick-pick businesses (past businesses: biz_N or dir_biz_<uuid>). */
   suggestions?: Array<{ id: string; name: string; bot_code: string }>;
+  /**
+   * #1072 step 2: "salons near me" waiting for a location pin. What was searched
+   * for and when (ms) — never the customer's location.
+   */
+  _directory_near?: NearPending;
+}
+
+export interface NearPending {
+  category?: string;
+  query?: string;
+  at: number;
 }
 
 // ── Types ─────────────────────────────────────────────────
@@ -257,7 +271,102 @@ const base = (text: string, country: string | null) => ({
   _directory_query: text,
   _directory_country: country,
   _directory_postbacks: 'id' as const,
+  // Any new search ends a "near me" wait (#1072 step 2); undefined is dropped when saved.
+  _directory_near: undefined,
 });
+
+// ── Nearest to me (#1072 step 2) ──────────────────────────
+
+/** Owner decision 2026-11-17: within 25 km, nearest 10. */
+export const NEAR_RADIUS_KM = 25;
+/** How long "salons near me" waits for the pin before a pin searches all categories. */
+export const NEAR_PENDING_MS = 10 * 60_000;
+/** Text the webhook passes for a location pin; the coordinates travel separately. */
+export const LOCATION_PIN_TEXT = '[Location]';
+
+/** Reply to media the bot cannot read (images, files and, outside the directory, location pins). */
+export const UNSUPPORTED_MEDIA_TEXT = "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.";
+
+const NEAR_ME_PATTERNS: RegExp[] = [
+  /^(?:near\s*me|nearby|near\s*by|around\s+me|close\s+to\s+me|close\s+by)$/i,
+  /^(.+?)\s+(?:near|around|close\s+to)\s+me$/i,
+  /^(.+?)\s+(?:nearby|near\s*by|close\s+by)$/i,
+  /^(?:nearest|closest)\s+(.+)$/i,
+];
+
+/**
+ * "near me" searches: returns what is searched for ('' for any business), or
+ * null when the text is not a near-me search. "find"/"search"/"show me" is dropped.
+ */
+export function nearMeSubject(text: string): string | null {
+  const t = text.replace(/\s+/g, ' ').trim().replace(/[.!]+$/, '');
+  if (!t || t.length > 120) return null;
+  for (const re of NEAR_ME_PATTERNS) {
+    const m = t.match(re);
+    if (!m) continue;
+    return (m[1] || '').replace(/^(?:find|search(?:\s+for)?|show(?:\s+me)?|any)\s+/i, '').trim();
+  }
+  return null;
+}
+
+/** "25 km", or "16 miles" where distances are shown in miles. */
+export function nearRadiusLabel(country: string | null): string {
+  return country && getDistanceUnit(country) === 'mi'
+    ? `${Math.round(kmToMiles(NEAR_RADIUS_KM))} miles`
+    : `${NEAR_RADIUS_KM} km`;
+}
+
+/** A WhatsApp location pin's coordinates, when they are usable. */
+export function validLocationPin(pin: unknown): { latitude: number; longitude: number } | null {
+  const p = pin as { latitude?: unknown; longitude?: unknown } | null | undefined;
+  const latitude = typeof p?.latitude === 'number' ? p.latitude : NaN;
+  const longitude = typeof p?.longitude === 'number' ? p.longitude : NaN;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+    || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  return { latitude, longitude };
+}
+
+/**
+ * Businesses near a customer's location pin (#1072 step 2): eligible, pinned,
+ * within NEAR_RADIUS_KM, nearest first, at most 10. A "near me" search made in
+ * the last 10 minutes narrows it. The pin is used for this search only: the
+ * session data returned holds no coordinates and no distances.
+ */
+export async function handleDirectoryNearby(
+  supabase: SupabaseClient,
+  send: PlatformSend,
+  from: string,
+  pin: { latitude: number; longitude: number },
+  country: string | null,
+  lang: string | undefined,
+  pending: NearPending | undefined,
+  now: number = Date.now(),
+): Promise<DirectorySessionData | null> {
+  const rl = await checkRateLimitAsync(`dir-search:${from}`, SEARCH_RATE_LIMIT, SEARCH_RATE_WINDOW_MS);
+  if (!rl.allowed) {
+    await send.sendPlatformText(from, getFlowCopy(lang, 'directory.rate_limited'));
+    return null;
+  }
+  const label = 'near me';
+  const out = new DirectoryReply(send, from, label, country, lang);
+  const hiddenIds = await loadDirectoryHiddenIds(supabase);
+  if (hiddenIds === null) return out.unavailable();
+
+  const fresh = pending && typeof pending.at === 'number' && now - pending.at >= 0 && now - pending.at <= NEAR_PENDING_MS;
+  const filter = fresh ? {
+    ...(typeof pending.category === 'string' && pending.category ? { category: pending.category } : {}),
+    ...(typeof pending.query === 'string' && pending.query ? { query: pending.query } : {}),
+  } : {};
+  const result = await searchMarketplace(supabase, {
+    ...filter,
+    country: country || undefined,
+    excludeIds: hiddenIds,
+    limit: WHATSAPP_LIST_MAX,
+    nearest: { latitude: pin.latitude, longitude: pin.longitude, radiusKm: NEAR_RADIUS_KM },
+  });
+  if (!result.ok) return out.unavailable();
+  return out.nearby(result.results, nearRadiusLabel(country));
+}
 
 /**
  * Run a directory search from user text. Returns session data to persist, or
@@ -286,6 +395,17 @@ export async function handleDirectorySearch(
   if (!rl.allowed) {
     await send.sendPlatformText(from, getFlowCopy(lang, 'directory.rate_limited'));
     return null;
+  }
+
+  // "salons near me" (#1072 step 2): ask for a location pin; the subject waits 10 minutes.
+  const nearSubject = nearMeSubject(text);
+  if (nearSubject !== null) {
+    const filter = nearSubject ? subjectFilter(parseDirectoryQuery(nearSubject, sharedCountry)) : {};
+    await send.sendPlatformText(from, getFlowCopy(lang, 'directory.near_ask'));
+    return {
+      ...base(text, sharedCountry), _directory_results: [], _directory_suggestions: [], _directory_total: 0,
+      _directory_near: { ...filter, at: Date.now() },
+    };
   }
 
   // Parse the query
@@ -519,6 +639,28 @@ class DirectoryReply {
     return {
       ...base(this.query, this.country),
       _directory_results: items,
+      _directory_suggestions: [],
+      _directory_total: items.length,
+    };
+  }
+
+  /**
+   * Nearest results (#1072 step 2), or "none within the radius" with
+   * [Search by area] [Browse categories]. Distances are shown, never stored.
+   */
+  async nearby(results: MarketplaceResult[], radius: string): Promise<DirectorySessionData> {
+    const items = results.slice(0, WHATSAPP_LIST_MAX);
+    if (items.length === 0) {
+      await this.send.sendPlatformButtons(this.from, fillFlowCopy(this.lang, 'directory.near_none', { radius }), [
+        { id: 'dir_find', title: truncTitle(getFlowCopy(this.lang, 'directory.search_area_button')) },
+        { id: 'dir_categories', title: truncTitle(getFlowCopy(this.lang, 'directory.browse_categories_button')) },
+      ]);
+    } else {
+      await sendResultsList(this.send, this.from, items, fillFlowCopy(this.lang, 'directory.near_results', { radius }), this.lang);
+    }
+    return {
+      ...base(this.query, this.country),
+      _directory_results: items.map(({ distanceKm: _d, ...rest }) => rest),
       _directory_suggestions: [],
       _directory_total: items.length,
     };
@@ -773,11 +915,13 @@ export function placeLine(area: string | null | undefined, state: string | null 
 }
 
 /**
- * List row description (max 72 chars for WhatsApp): "Category · Area, State",
+ * List row description (max 72 chars for WhatsApp): ["1.2 km · "] "Category · Area, State",
  * plus "Open now" only when it is known (hours and timezone, #1072).
  */
 export function buildResultDescription(r: MarketplaceResult, lang?: string): string {
   const parts: string[] = [];
+  // Nearest results (#1072 step 2) lead with the distance from the customer's pin.
+  if (typeof r.distanceKm === 'number') parts.push(formatDistance(r.distanceKm, r.countryCode || ''));
   if (r.category) parts.push(categoryLabel(r.category));
   const where = placeLine(r.neighborhood || r.city, r.state);
   if (where) parts.push(where);

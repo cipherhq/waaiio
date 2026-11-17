@@ -44,6 +44,11 @@ export interface MarketplaceSearchCriteria {
    * ranked area/city first, then the rest of its state. Use instead of locationText.
    */
   place?: ResolvedPlace;
+  /**
+   * Nearest to a customer's location pin (#1072 step 2): only businesses with
+   * coordinates within radiusKm, nearest first. Never stored or logged.
+   */
+  nearest?: { latitude: number; longitude: number; radiusKm: number };
 }
 
 export interface MarketplaceResult {
@@ -117,6 +122,13 @@ const DIRECTORY_MAX_RESULTS = 50;
  * unordered sample of the matches.
  */
 const RANK_POOL = 200;
+
+/**
+ * Rows fetched for a nearest search (#1072 step 2). The SQL filter is a box
+ * around the pin, so every pinned business in the radius is ranked by distance
+ * unless the box holds more than this many (logged).
+ */
+const NEAREST_POOL = 1000;
 
 /** UUID v4 format regex for excludeIds validation. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -286,6 +298,24 @@ export async function searchMarketplace(
     if (criteria.place.countryCode) locationCountry = criteria.place.countryCode;
   }
 
+  // Nearest (#1072 step 2): a bounding box around the pin, re-checked by exact distance below.
+  let nearestBox: { minLat: number; maxLat: number; minLng: number | null; maxLng: number | null } | null = null;
+  if (criteria.nearest !== undefined) {
+    const { latitude, longitude, radiusKm } = criteria.nearest;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(radiusKm)
+      || Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || radiusKm <= 0 || radiusKm > 100) {
+      return invalidLocation();
+    }
+    const dLat = radiusKm / 111.32;
+    const dLng = radiusKm / (111.32 * Math.max(Math.cos((latitude * Math.PI) / 180), 0.01));
+    // A box crossing the 180° meridian keeps only the latitude bounds.
+    const wraps = longitude - dLng < -180 || longitude + dLng > 180;
+    nearestBox = {
+      minLat: latitude - dLat, maxLat: latitude + dLat,
+      minLng: wraps ? null : longitude - dLng, maxLng: wraps ? null : longitude + dLng,
+    };
+  }
+
   if (locationCountry && criteria.country && criteria.country !== locationCountry) {
     return invalidLocation();
   }
@@ -374,9 +404,18 @@ export async function searchMarketplace(
       query = query.or(textClauses.join(','));
     }
 
+    if (nearestBox) {
+      query = query.not('latitude', 'is', null).not('longitude', 'is', null)
+        .gte('latitude', nearestBox.minLat).lte('latitude', nearestBox.maxLat);
+      if (nearestBox.minLng !== null && nearestBox.maxLng !== null) {
+        query = query.gte('longitude', nearestBox.minLng).lte('longitude', nearestBox.maxLng);
+      }
+    }
+
     // Fixed SQL order, then score every fetched row before the page is cut (#1072).
+    const pool = nearestBox ? NEAREST_POOL : Math.max(limit * 3, RANK_POOL);
     query = query.order('name', { ascending: true }).order('id', { ascending: true })
-      .limit(Math.max(limit * 3, RANK_POOL));
+      .limit(pool);
 
     const { data, error } = await query;
     const businesses = data as BusinessRow[] | null;
@@ -386,9 +425,14 @@ export async function searchMarketplace(
       return { results: [], ok: false, error: error.message };
     }
 
+    if (nearestBox && businesses && businesses.length >= pool) {
+      logger.warn('[MARKETPLACE] Nearest search box reached the row pool; farther rows may be missing');
+    }
+
     if (!businesses || businesses.length === 0) {
       // Zero DB rows — try fuzzy "did you mean?" before returning empty
-      if (safeQuery) {
+      // (never for a nearest search: suggestions would come from anywhere in the country).
+      if (safeQuery && !nearestBox) {
         const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || [], resolvedCity, null);
         if (suggestions.length > 0) {
           return { results: [], ok: true, suggestions, hasMore: false };
@@ -441,6 +485,15 @@ export async function searchMarketplace(
         else if (distanceKm < 10) score += 10;
         const countryCode = (biz.country_code as string) || 'NG';
         reasons.push(`${formatDistance(distanceKm, countryCode)} away`);
+      }
+
+      // Nearest (#1072 step 2): exact distance from the pin; outside the radius is dropped.
+      if (criteria.nearest) {
+        const lat = biz.latitude === null ? NaN : Number(biz.latitude);
+        const lng = biz.longitude === null ? NaN : Number(biz.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+        distanceKm = haversineDistance(criteria.nearest.latitude, criteria.nearest.longitude, lat, lng);
+        if (distanceKm > criteria.nearest.radiusKm) return null;
       }
 
       // Place tier (#1072): 0 = the area/city named, 1 = elsewhere in its state.
@@ -507,13 +560,18 @@ export async function searchMarketplace(
     }).filter(Boolean) as (MarketplaceResult & { _score: number; _tier: number })[];
 
     // Deterministic: place tier, then score, then the SQL order (name, id) — sort is stable.
-    scored.sort((a, b) => a._tier - b._tier || b._score - a._score);
+    // A nearest search sorts by distance first.
+    if (criteria.nearest) {
+      scored.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity) || b._score - a._score);
+    } else {
+      scored.sort((a, b) => a._tier - b._tier || b._score - a._score);
+    }
 
     const paged = scored.slice(0, limit);
     const hasMore = scored.length > limit;
 
     // If zero results and a free-text query was provided, try fuzzy suggestions
-    if (paged.length === 0 && safeQuery) {
+    if (paged.length === 0 && safeQuery && !nearestBox) {
       const suggestions = await searchFuzzy(supabase, safeQuery, effectiveCountry || null, criteria.excludeIds || [], resolvedCity, null);
       if (suggestions.length > 0) {
         return { results: [], ok: true, suggestions, hasMore: false };

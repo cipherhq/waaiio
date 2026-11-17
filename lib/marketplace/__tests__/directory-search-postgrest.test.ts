@@ -398,4 +398,44 @@ describe('directory search — real PostgREST (#762)', () => {
   });
 });
 
+describe('nearest to a location pin — real PostgREST (#1072 step 2)', () => {
+  const PIN = { latitude: 9.0579, longitude: 7.4951 };
+  const PINNED: Array<[string, string, number, Record<string, unknown>]> = [
+    ['Near Pin', 'NEARP1', 0.01, {}],      // ~1.1 km
+    ['Far Pin', 'NEARP2', 0.1, {}],        // ~11 km
+    ['Outside Pin', 'NEARP3', 0.3, {}],    // ~33 km
+    ['Suspended Pin', 'NEARP4', 0.001, { messaging_suspended: true }],
+  ];
+  const ids: string[] = [];
+
+  beforeAll(async () => {
+    for (const [name, code, dLat, extra] of PINNED) {
+      const { data, error } = await supabase.from('businesses').insert({
+        name: `${TEST_PREFIX}${name}`, category: 'salon', city: 'Abuja', country_code: 'NG',
+        description: 'Pinned', bot_code: code, status: 'active', discovery_enabled: true,
+        messaging_suspended: false, address: 'Pinned St', phone: '+2340000000099',
+        slug: `${TEST_PREFIX}${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'), owner_id: OWNER_ID,
+        latitude: PIN.latitude + dLat, longitude: PIN.longitude, ...extra,
+      }).select('id').single();
+      if (error) throw new Error(`Fixture insert failed for ${name}: ${error.message}`);
+      ids.push(data.id);
+    }
+  }, 30_000);
+
+  afterAll(async () => {
+    if (ids.length > 0) await supabase.from('businesses').delete().in('id', ids);
+  });
+
+  it('numeric box filters run on PostgREST: eligible pinned businesses within 25 km, nearest first', async () => {
+    const result = await searchMarketplace(supabase, {
+      country: 'NG', limit: 10, nearest: { ...PIN, radiusKm: 25 },
+    });
+    expect(result.ok).toBe(true);
+    expect(ours(result.results.map(r => r.name))).toEqual([`${TEST_PREFIX}Near Pin`, `${TEST_PREFIX}Far Pin`]);
+    expect(result.results[0].distanceKm).toBeCloseTo(1.11, 1);
+    // Businesses without coordinates (every other fixture) never appear.
+    expect(ours(result.results.map(r => r.name))).not.toContain(`${TEST_PREFIX}Zenith Cuts`);
+  });
+});
+
 } // end of POSTGREST_URL guard

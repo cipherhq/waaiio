@@ -1027,3 +1027,103 @@ describe('WhatsApp Directory Flow', () => {
     expect(list?.items?.map(i => i.title)).toEqual(['Salon', 'Spa']);
   });
 });
+
+describe('#1072 step 2 — a location pin through handleMessage', () => {
+  const PIN = { latitude: 6.4474, longitude: 3.472 };
+  const pinned = (n: number, name: string, dLat: number, more: Record<string, unknown> = {}) => ({
+    id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, name, category: 'salon', description: '',
+    address: '', phone: '', bot_code: `PIN-${n}`, city: 'Lekki', state: 'Lagos', slug: `p-${n}`,
+    country_code: 'NG', latitude: PIN.latitude + dLat, longitude: PIN.longitude, discovery_enabled: true,
+    discovery_description: null, price_band: null, supports_delivery: false, max_group_size: null,
+    is_verified: false, metadata: null, operating_hours: null, status: 'active', messaging_suspended: false,
+    neighborhood: null, timezone: 'Africa/Lagos', ...more,
+  });
+  const noCoords = (saved: unknown) => {
+    const json = JSON.stringify(saved);
+    expect(json).not.toContain(String(PIN.latitude));
+    expect(json).not.toContain(String(PIN.longitude));
+    expect(json).not.toMatch(/latitude|longitude|distanceKm/);
+  };
+
+  beforeEach(() => { vi.clearAllMocks(); rateLimitBlocked = false; });
+
+  it('in the directory: nearest first, saved as a result list with no coordinates', async () => {
+    const db = buildMock({ existingSession: dirSession(), searchResults: [pinned(2, 'Far Salon', 0.1), pinned(1, 'Near Salon', 0.01)] });
+    const { bot, sender } = createBot(db);
+    bot.setInboundLocation(PIN);
+    await bot.handleMessage(PHONE, '[Location]', 'location', SHARED_PNID);
+    const list = msgs(sender).find(m => m.type === 'list');
+    expect(list?.items?.map(i => i.title)).toEqual(['Near Salon', 'Far Salon']);
+    expect(textOf(list!)).toContain('Showing businesses that have set their location');
+    expect(msgs(sender).some(m => textOf(m).includes("can't process"))).toBe(false);
+    const saved = db._updated.find((u: any) => u.id === 'ses-dir');
+    expect(saved.current_step).toBe('directory_results');
+    expect(saved.session_data._directory_results.map((r: any) => r.name)).toEqual(['Near Salon', 'Far Salon']);
+    noCoords(saved);
+  });
+
+  it('first message on the shared number: a pin searches and starts a directory session', async () => {
+    const db = buildMock({ searchResults: [pinned(1, 'Near Salon', 0.01)] });
+    const { bot, sender } = createBot(db);
+    bot.setInboundLocation(PIN);
+    await bot.handleMessage(PHONE, '[Location]', 'location', SHARED_PNID);
+    expect(msgs(sender).find(m => m.type === 'list')?.items?.[0].title).toBe('Near Salon');
+    const created = db._inserted.find((s: any) => s.current_step === 'directory_results');
+    expect(created?.session_data?._directory_country).toBe('NG');
+    noCoords([...db._inserted, ...db._updated]);
+  });
+
+  it('nothing within 25 km: no list, Search by area and Browse categories', async () => {
+    const db = buildMock({ existingSession: dirSession(), searchResults: [pinned(1, 'Ikorodu Salon', 0.3)] });
+    const { bot, sender } = createBot(db);
+    bot.setInboundLocation(PIN);
+    await bot.handleMessage(PHONE, '[Location]', 'location', SHARED_PNID);
+    expect(msgs(sender).some(m => m.type === 'list')).toBe(false);
+    const buttons = msgs(sender).find(m => m.type === 'buttons');
+    expect(textOf(buttons!)).toContain('within 25 km of you');
+    expect(buttons?.buttons?.map(b => b.id)).toEqual(['dir_find', 'dir_categories']);
+  });
+
+  it('inside a business conversation the pin keeps the usual reply', async () => {
+    const db = buildMock({ existingSession: bizSession(), searchResults: [pinned(1, 'Near Salon', 0.01)] });
+    const { bot, sender } = createBot(db);
+    bot.setInboundLocation(PIN);
+    await bot.handleMessage(PHONE, '[Location]', 'location', SHARED_PNID);
+    expect(msgs(sender)).toHaveLength(1);
+    expect(textOf(msgs(sender)[0])).toContain("I can't process images or files yet");
+    expect(db._updated).toHaveLength(0);
+  });
+
+  it('a business number (pre-resolved) keeps the usual reply', async () => {
+    const db = buildMock({ existingSession: bizSession(), searchResults: [pinned(1, 'Near Salon', 0.01)] });
+    const { bot, sender } = createBot(db);
+    bot.setInboundLocation(PIN);
+    await bot.handleMessage(PHONE, '[Location]', 'location', SHARED_PNID, 'biz-001');
+    expect(msgs(sender).map(textOf)).toEqual([expect.stringContaining("I can't process images or files yet")]);
+  });
+
+  it('typing "[Location]" without a pin is never a nearest search', async () => {
+    const db = buildMock({ existingSession: dirSession(), searchResults: [pinned(1, 'Near Salon', 0.01)] });
+    const { bot, sender } = createBot(db);
+    await bot.handleMessage(PHONE, '[Location]', 'text', SHARED_PNID);
+    expect(msgs(sender).some(m => /within 25 km|set their location/.test(textOf(m)))).toBe(false);
+  });
+
+  it('"salons near me" asks for a pin, offers no past businesses, and the pin then clears the wait', async () => {
+    const db = buildMock({ existingSession: dirSession() });
+    const { bot, sender } = createBot(db);
+    await bot.handleMessage(PHONE, 'salons near me', 'text', SHARED_PNID);
+    expect(msgs(sender)).toHaveLength(1);
+    expect(textOf(msgs(sender)[0])).toContain('Send your current location');
+    const waiting = db._updated.find((u: any) => u.id === 'ses-dir');
+    expect(waiting.session_data._directory_near).toMatchObject({ category: 'salon' });
+
+    const db2 = buildMock({ existingSession: dirSession({ _directory_near: waiting.session_data._directory_near }), searchResults: [pinned(1, 'Near Salon', 0.01)] });
+    const second = createBot(db2);
+    second.bot.setInboundLocation(PIN);
+    await second.bot.handleMessage(PHONE, '[Location]', 'location', SHARED_PNID);
+    const after = JSON.parse(JSON.stringify(db2._updated.find((u: any) => u.id === 'ses-dir')));
+    expect(after.session_data._directory_near).toBeUndefined();
+    expect(after.session_data._directory_results).toHaveLength(1);
+  });
+});
