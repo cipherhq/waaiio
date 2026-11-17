@@ -762,6 +762,42 @@ export class MetaCloudService {
     }
   }
 
+  /**
+   * Download a customer's photo/document only when it is no bigger than
+   * `maxBytes` (#1085). Meta's own file_size is checked before downloading,
+   * then the declared length and the bytes actually read, so an oversized
+   * file is never held in memory. Never throws.
+   */
+  async downloadMediaWithin(mediaId: string, maxBytes: number): Promise<
+    { ok: true; buffer: Buffer; mimeType: string } | { ok: false; reason: 'too_large' | 'unavailable' }
+  > {
+    try {
+      const infoRes = await fetch(`${this.baseUrl}/${encodeURIComponent(mediaId)}`, {
+        headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(8000),
+      });
+      if (!infoRes.ok) return { ok: false, reason: 'unavailable' };
+      const info = await infoRes.json() as { url?: string; file_size?: number; mime_type?: string };
+      if (!info.url) return { ok: false, reason: 'unavailable' };
+      if (typeof info.file_size === 'number' && info.file_size > maxBytes) return { ok: false, reason: 'too_large' };
+      const mediaRes = await fetch(info.url, { headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(20000) });
+      if (!mediaRes.ok || !mediaRes.body) return { ok: false, reason: 'unavailable' };
+      if (Number(mediaRes.headers.get('content-length') ?? 0) > maxBytes) { await mediaRes.body.cancel(); return { ok: false, reason: 'too_large' }; }
+      const reader = mediaRes.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) { await reader.cancel(); return { ok: false, reason: 'too_large' }; }
+        chunks.push(value);
+      }
+      return { ok: true, buffer: Buffer.concat(chunks), mimeType: info.mime_type || mediaRes.headers.get('content-type') || 'application/octet-stream' };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
   // ── Private: API Call Helper ──
 
   private async callApi(endpoint: string, body: Record<string, unknown>): Promise<CloudApiResponse> {

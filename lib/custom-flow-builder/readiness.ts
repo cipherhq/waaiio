@@ -7,7 +7,7 @@ import { hasValue, variablesIn } from '@/lib/bot/custom-flow/data';
 export async function guidedReadiness(db: SupabaseClient, businessId: string, draft: CustomFlowDefinition) {
   if (!draft.guided && !draft.business_bindings) return { missingBusiness: false, sections: [] as string[] };
   const settings = await businessData(db,businessId,draft.business_bindings ?? []);
-  const texts = [draft.greeting,draft.fallback_message,...draft.nodes.flatMap(n=>n.type==='message' ? [n.text] : n.type==='menu' ? [n.text] : n.type==='handoff' ? [] : [n.prompt ?? '',n.reply,n.no_match])];
+  const texts = [draft.greeting,draft.fallback_message,...draft.nodes.flatMap(n=>n.type==='message' ? [n.text] : n.type==='menu' ? [n.text] : n.type==='handoff' ? [] : n.type==='ask' ? [n.question,n.retry_message ?? ''] : [n.prompt ?? '',n.reply,n.no_match])];
   const missingBusiness = !settings.timezone || !settings.currency
     || Object.values(settings.vars).some(v=>!hasValue(v))
     || texts.flatMap(variablesIn).some(key=>key.startsWith('business.') && !hasValue(settings.vars[key]));

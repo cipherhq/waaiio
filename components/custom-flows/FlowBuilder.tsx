@@ -5,7 +5,7 @@ import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { appendBlock, removeBlock, reorderFlow, selectStart, setMessageDestination, withOrderMetadata, type EditableFlow } from '@/lib/custom-flow-builder/order';
 import type { PreviewMessage } from '@/lib/custom-flow-builder/preview';
 import { BlockOrder } from './BlockOrder';
-import { blockLabel } from '@/lib/custom-flow-builder/block-label';
+import { ASK_STEP_NAME, blockLabel } from '@/lib/custom-flow-builder/block-label';
 import { useDirtyNavigation } from '@/components/dashboard/dirty-navigation';
 import { FlowSetup } from './FlowSetup';
 import { TableEditor } from './TableEditor';
@@ -14,6 +14,7 @@ import { FlowMap } from './FlowMap';
 import { WhatsAppPreview } from './WhatsAppPreview';
 import { StepPalette, WORKING_STEPS, type NewStep } from './StepPalette';
 import { HandoffSettings } from './HandoffSettings';
+import { AskSettings } from './AskSettings';
 import { HANDOFF_FEATURE_NAME } from '@/lib/bot/custom-flow/handoff-copy';
 import { LookupSettings } from './LookupSettings';
 import { TemplateGallery, type SetupChoice } from './TemplateGallery';
@@ -24,7 +25,9 @@ import { toggleSection } from '@/lib/custom-flow-builder/templates';
 import { friendlyErrors, stepName } from '@/lib/custom-flow-builder/friendly-errors';
 
 interface FlowRow { id: string; definition: EditableFlow; version: number; published_definition: EditableFlow | null; published_version: number | null }
-interface Props { businessId: string; language?: string; timezone?: string; currency?: string; businessDetails?:Partial<Record<BusinessField,unknown>> }
+interface Props { businessId: string; language?: string; timezone?: string; currency?: string; businessDetails?:Partial<Record<BusinessField,unknown>>;
+  /** Business country: formats the date question's preview like the bot does (#1085). */
+  country?: string | null }
 const headerButton = 'min-h-11 rounded-lg border border-white/40 bg-white/10 px-3 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50 motion-reduce:transition-none';
 const goLiveClass = 'min-h-11 rounded-lg bg-whatsapp px-4 py-2 text-sm font-bold text-gray-900 shadow-sm transition-colors duration-150 hover:bg-[#1FBF5B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50 motion-reduce:transition-none';
 const saveClass = 'min-h-11 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-colors duration-150 hover:bg-brand-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50 motion-reduce:transition-none';
@@ -35,6 +38,7 @@ const STEP_TIPS: Record<CustomFlowNode['type'], string> = {
   menu: 'Buttons let people tap a choice instead of typing. Example: Program, Rooms and Questions, each going to its own step.',
   lookup: 'Search my list lets people type a word and get the matching row from your list. Example: someone types “Saturday” and gets Saturday’s program.',
   handoff: 'This step passes people to something you already have, such as your event tickets or giving. Example: a “Buy a ticket” button that opens tickets for your retreat.',
+  ask: 'A question asks people for one answer and saves it on your Flow answers page. If an answer can’t be used, we ask again. Example: “Which day will you arrive?”',
 };
 const SETTING_HELP = {
   name: ['Flow name', 'Only you see this name. It helps you find the flow later.', 'Example: Youth retreat 2026'],
@@ -56,6 +60,11 @@ function optionKey(option: object) {
   return key;
 }
 
+/** A new, empty question step; "Pick one" starts with two blank choices to fill in. */
+function askStep(id: string, answerType: Extract<CustomFlowNode, { type: 'ask' }>['answer_type']): CustomFlowNode {
+  return { id, type: 'ask', answer_type: answerType, question: '', next: null, ...(answerType === 'choice' ? { options: ['', ''] } : {}) };
+}
+
 /** Wide screens show step settings beside the phone; narrower ones keep them inside the step. */
 function useWideLayout() {
   const [wide, setWide] = useState(false);
@@ -70,7 +79,7 @@ function useWideLayout() {
   return wide;
 }
 
-export function FlowBuilder({ businessId,businessDetails={} }: Props) {
+export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
   const [rows, setRows] = useState<FlowRow[]>([]);
   const [row, setRow] = useState<FlowRow | null>(null);
   const [draft, setDraft] = useState<EditableFlow | null>(null);
@@ -92,7 +101,6 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   // View-only state: which step editors are open and whether settings are shown.
   const [openSteps, setOpenSteps] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [soon, setSoon] = useState<string | null>(null);
   const [lists, setLists] = useState<DataTable[]>([]);
   const [listsVersion, setListsVersion] = useState(0);
   const wide = useWideLayout();
@@ -160,7 +168,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     // at its start step so the map shows where customers begin.
     const start = selected.definition.start_node ?? selected.definition.nodes[0]?.id;
     if (selected.id === row?.id) setOpenSteps(current => current.filter(id => selected.definition.nodes.some(node => node.id === id)));
-    else { setOpenSteps(start ? [start] : []); setSoon(null); }
+    else setOpenSteps(start ? [start] : []);
   }
   function updateNode(next: CustomFlowNode) { if (draft) edit({ ...draft, nodes: draft.nodes.map(node => node.id === next.id ? next : node) }); }
   /** Same new step as before; dropped on a "Show buttons" step it also gets a new button there. */
@@ -171,12 +179,12 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     const node: CustomFlowNode = type === 'message' ? { id, type, text: '', next: null }
       : type === 'menu' ? { id, type, text: '', options: [] }
       : type === 'lookup' ? { id, type, table: '', search_fields: [], prompt: '', reply: '', no_match: '' }
+      : type.startsWith('ask:') ? askStep(id, type.slice('ask:'.length) as Extract<CustomFlowNode, { type: 'ask' }>['answer_type'])
       : { id, type: 'handoff', capability: type.slice('handoff:'.length) as Extract<CustomFlowNode, { type: 'handoff' }>['capability'] };
     let next = appendBlock(draft, node);
     if (branchOf) next = { ...next, nodes: next.nodes.map(item => item.id === branchOf && item.type === 'menu' && item.options.length < 10 ? { ...item, options: [...item.options, { label: '', next: id }] } : item) };
     edit(next);
     setOpenSteps(current => [...current, id]);
-    setSoon(null);
     // On a phone the new step can be far below the palette: show it and start typing.
     focusNext.current = { id: `flow-step-${id}`, field: true };
     setAnnouncement(`Step ${next.nodes.findIndex(item => item.id === id) + 1} added`);
@@ -197,7 +205,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
     focusNext.current = { id: neighbour ? `flow-step-edit-${neighbour.id}` : 'palette-heading' };
     setAnnouncement('Step removed');
   }
-  function toggleStep(id: string) { setSoon(null); setOpenSteps(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]); }
+  function toggleStep(id: string) { setOpenSteps(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]); }
   async function action(kind: string, previewInputs = inputs) {
     if (!draft || busy) return;
     if (kind === 'publish' && !window.confirm('Go live? People who start this flow will get these changes.')) return;
@@ -295,6 +303,8 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
       {node.type === 'lookup' && <LookupSettings businessId={businessId} flowId={row?.id ?? null} node={node} lists={lists} business={businessDetails} busy={busy}
         onChange={updateNode} destination={props => destination(node.next, value => updateNode({ ...node, next: value }), false, props)} />}
       {node.type === 'handoff' && <HandoffSettings businessId={businessId} node={node} onChange={updateNode} />}
+      {node.type === 'ask' && <AskSettings node={node} timezone={draft.timezone || 'UTC'} country={country} onChange={updateNode}
+        destination={props => destination(node.next, value => updateNode({ ...node, next: value }), true, props)} />}
       <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-gray-700">
         <button className={`${buttonClass} text-red-700 dark:text-red-300`} onClick={() => removeStep(node.id)}>Remove this step</button>
       </div>
@@ -312,8 +322,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   const statusClass = { 'Unsaved changes': 'bg-amber-100 text-amber-900', Live: 'bg-whatsapp text-gray-900', 'Not live yet': 'bg-accent text-gray-900' }[status];
   const previewTitle = typeof businessDetails.name === 'string' && businessDetails.name.trim() ? businessDetails.name : draft?.name || 'Your business';
   const selected = draft?.nodes.find(node => node.id === openSteps.at(-1));
-  const tip = soon ? `${soon} is coming soon. You can’t add it yet.`
-    : selected ? STEP_TIPS[selected.type]
+  const tip = selected ? STEP_TIPS[selected.type]
     : editable ? 'Drag a step from Add a step onto your flow, or tap it to add it at the end. Select Edit on a step to change it.'
     : 'Select Edit on a step to see what it does.';
   const canTry = !!row && !busy && !tableDirty;
@@ -375,7 +384,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
           </div>
         </section>
         {editing && <fieldset disabled={busy} aria-label="Add a step" className={`${lavenderClass} order-2 min-w-0 space-y-5 lg:order-none`}>
-          <StepPalette enabled={editable} busy={busy} onAdd={type => add(type)} onSoon={name => setSoon(name)} />
+          <StepPalette enabled={editable} busy={busy} onAdd={type => add(type)} />
           {editable && <div className="space-y-2 border-t border-brand-100 pt-4 dark:border-brand-900">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Step order</h2>
             <p id="flow-reorder-help" className="text-xs text-gray-700 dark:text-gray-300">Drag a step, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>
@@ -397,7 +406,7 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
               onDropStep={(type, branchOf) => add(type, branchOf)} onMoveStep={moveStep} />
             <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
               <span aria-hidden="true" className="text-lg leading-none">💡</span>
-              <p aria-live="polite"><span className="font-semibold">{soon ? 'Coming soon' : selected ? (selected.type === 'handoff' ? HANDOFF_FEATURE_NAME[selected.capability] : WORKING_STEPS.find(step => step.type === selected.type)?.name) : 'Tip'}: </span>{tip}</p>
+              <p aria-live="polite"><span className="font-semibold">{selected ? (selected.type === 'handoff' ? HANDOFF_FEATURE_NAME[selected.capability] : selected.type === 'ask' ? ASK_STEP_NAME[selected.answer_type] : WORKING_STEPS.find(step => step.type === selected.type)?.name) : 'Tip'}: </span>{tip}</p>
             </div>
           </fieldset>
           <section aria-labelledby="flow-data-heading" className={`${cardClass} order-5 min-w-0 space-y-6 lg:order-none`}>

@@ -1,8 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────
 // Waaiio Custom Flow — data-driven runtime (Issue #1013, Phase 1)
 //
-// Runs Message / Menu / Lookup nodes from a published definition, and
-// Handoff nodes (#1086) that pass the customer to an existing capability flow.
+// Runs Message / Menu / Lookup nodes from a published definition, Handoff
+// nodes (#1086) that pass the customer to an existing capability flow, and
+// Ask nodes (#1085) that save the customer's answer privately for the business.
 // No customer logic lives in this file: every word the customer sees
 // comes from the definition or its data tables. When the tables do not
 // have an answer, the engine says so (no_match / fallback) — it never
@@ -30,6 +31,12 @@ import { hasValue, variablesIn } from './data';
 import { checkHandoffRecord, type CapabilityHandoff } from './handoff';
 import { HANDOFF_UNAVAILABLE_TEXT } from './handoff-copy';
 import {
+  CUSTOM_FLOW_UPLOADS_BUCKET, DEFAULT_RETRY, ESCAPE_HINT, MAX_UPLOAD_BYTES, REASON_TEXT, SAVE_FAILED_TEXT, TYPE_A_DATE_TEXT,
+  type RetryReason,
+  UPLOAD_EXTENSION, YES_NO_LABELS, askPostback, isAllowedUploadMime, readAnswer, sniffUploadMime,
+} from './answers';
+import { formatFullDate, upcomingDateOptions } from './dates';
+import {
   loadActiveSession,
   createSession,
   updateSessionCas,
@@ -38,6 +45,7 @@ import {
   CUSTOM_FLOW_SESSION_TTL_HOURS,
 } from './session';
 import type {
+  CustomFlowAskNode,
   CustomFlowDefinition,
   CustomFlowHandleResult,
   CustomFlowNode,
@@ -211,7 +219,11 @@ export class CustomFlowEngine {
       return { handled: false };
     }
 
-    await this.log(session, null, 'in', text, null);
+    // Answers to a question live only in custom_flow_answers, which the owner
+    // can delete and retention removes after 12 months (#1085); the step log
+    // keeps a marker, never the answer itself.
+    const atQuestion = flow.definition.nodes.find((n) => n.id === session.current_node_id)?.type === 'ask';
+    await this.log(session, null, 'in', atQuestion ? '[answer]' : text, null);
 
     // Resume prompt answers are consumed here, before node input.
     if (this.isResumePending(session)) {
@@ -398,6 +410,8 @@ export class CustomFlowEngine {
         return this.handleMenuInput(session, flow, node, text);
       case 'lookup':
         return this.handleLookupInput(session, flow, node, text);
+      case 'ask':
+        return this.handleAskInput(session, flow, node, text);
       case 'message':
       case 'handoff':
         // Message and handoff nodes never wait for input; reaching one with
@@ -548,6 +562,233 @@ export class CustomFlowEngine {
     return first === undefined ? row.row_code : `${row.row_code} — ${String(first)}`;
   }
 
+  // ── Questions (#1085) ─────────────────────────────────────────────
+
+  /** Language, country and timezone for friendly dates; country read once per engine. */
+  private businessCountry: Promise<string> | null = null;
+  private async dateContext(session: CustomFlowSessionRow, flow: LoadedFlow) {
+    this.businessCountry ??= Promise.resolve(this.deps.supabase.from('businesses').select('country_code').eq('id', session.business_id).maybeSingle())
+      .then(({ data }) => (typeof data?.country_code === 'string' && data.country_code) || 'GB', () => 'GB');
+    return { timezone: flow.definition.timezone || 'UTC', language: flow.definition.language || 'en', country: await this.businessCountry };
+  }
+
+  private async renderAsk(session: CustomFlowSessionRow, flow: LoadedFlow, node: CustomFlowAskNode): Promise<void> {
+    const to = session.whatsapp_number;
+    const body = this.renderText(node.question, flow, session.fields);
+    if (node.answer_type === 'yes_no') {
+      await this.deps.sender.sendButtons({ to, body, buttons: YES_NO_LABELS.map((title, index) => ({ id: askPostback(node.id, index), title })) });
+    } else if (node.answer_type === 'choice') {
+      const options = node.options ?? [];
+      if (options.length <= 3) {
+        await this.deps.sender.sendButtons({ to, body, buttons: options.map((option, index) => ({ id: askPostback(node.id, index), title: option.slice(0, 20) })) });
+      } else {
+        await this.deps.sender.sendList({ to, title: flow.name, body, buttonLabel: 'Choose',
+          items: options.map((option, index) => ({ title: option.slice(0, 24), postbackText: askPostback(node.id, index) })) });
+      }
+    } else if (node.answer_type === 'date') {
+      const rows = upcomingDateOptions(await this.dateContext(session, flow));
+      await this.deps.sender.sendList({ to, title: flow.name, body, buttonLabel: 'Choose a date',
+        items: rows.map(row => ({ title: row.title, postbackText: askPostback(node.id, row.id) })) });
+    } else {
+      await this.deps.sender.sendText({ to, text: body });
+    }
+    await this.log(session, node.id, 'out', null, body);
+  }
+
+  private async handleAskInput(
+    session: CustomFlowSessionRow,
+    flow: LoadedFlow,
+    node: CustomFlowAskNode,
+    text: string,
+  ): Promise<CustomFlowHandleResult> {
+    const result = readAnswer(node, text, await this.dateContext(session, flow));
+    if (result.kind === 'another_date') {
+      await this.sendText(session, TYPE_A_DATE_TEXT);
+      return { handled: true };
+    }
+    if (result.kind === 'invalid') {
+      await this.askAgain(session, flow, node, result.reason);
+      return { handled: true };
+    }
+    await this.acceptAnswer(session, flow, node, { value_text: result.value_text, value_date: result.value_date });
+    return { handled: true };
+  }
+
+  /** A wrong answer: say so (with the way out after two misses) and ask again. Nothing is saved. */
+  private async askAgain(session: CustomFlowSessionRow, flow: LoadedFlow, node: CustomFlowAskNode, reason?: RetryReason): Promise<void> {
+    const failures = (session.fields._ask_node === node.id && typeof session.fields._ask_failures === 'number' ? session.fields._ask_failures : 0) + 1;
+    const saved = await updateSessionCas(this.deps.supabase, session, { fields: { ...session.fields, _ask_node: node.id, _ask_failures: failures } });
+    if (!saved) return; // stale writer won; stay quiet
+    const fresh = { ...session, version: session.version + 1, fields: { ...session.fields, _ask_node: node.id, _ask_failures: failures } };
+    // A known reason (date passed, file not received) is said plainly; otherwise the merchant's retry message.
+    const retry = reason ? REASON_TEXT[reason] : this.renderText(node.retry_message?.trim() || DEFAULT_RETRY[node.answer_type], flow, session.fields);
+    await this.sendText(fresh, failures >= 2 ? `${retry}\n\n${ESCAPE_HINT}` : retry);
+    // Tap-to-answer questions are shown again so the customer can tap.
+    if (node.answer_type === 'yes_no' || node.answer_type === 'choice' || node.answer_type === 'date') await this.renderAsk(fresh, flow, node);
+  }
+
+  /**
+   * Save a valid answer for this business, then move on. Returns false when
+   * it could not be saved (the customer is told and stays on the question).
+   * Re-answering in the same run replaces the earlier answer; a replaced
+   * upload is removed so no file outlives its answer.
+   */
+  private async acceptAnswer(
+    session: CustomFlowSessionRow,
+    flow: LoadedFlow,
+    node: CustomFlowAskNode,
+    value: { value_text: string | null; value_date: string | null; file_path?: string; file_mime?: string; file_size?: number; claimedAt?: Date },
+  ): Promise<boolean> {
+    const { supabase } = this.deps;
+    // Any earlier answer to this question in this run, of any type: a republish
+    // may have turned a Photo or PDF question into another kind.
+    const { data: previous } = await supabase.from('custom_flow_answers').select('file_path')
+      .eq('business_id', session.business_id).eq('response_id', session.id).eq('node_id', node.id).maybeSingle();
+    const previousFile = (previous?.file_path as string | null | undefined) ?? null;
+    const { error } = await supabase.from('custom_flow_answers').upsert({
+      business_id: session.business_id,
+      flow_id: session.flow_id,
+      flow_version: session.flow_version,
+      response_id: session.id,
+      session_id: session.id,
+      customer_number: session.whatsapp_number,
+      node_id: node.id,
+      // A question made only of an empty {{value}} falls back to its own words.
+      question: (this.renderText(node.question, flow, session.fields).trim() || node.question.trim()).slice(0, 1000),
+      answer_type: node.answer_type,
+      value_text: value.value_text,
+      value_date: value.value_date,
+      file_path: value.file_path ?? null,
+      file_mime: value.file_mime ?? null,
+      file_size: value.file_size ?? null,
+      created_at: new Date().toISOString(),
+    }, { onConflict: 'response_id,node_id' });
+    if (error) {
+      logger.error('[CUSTOM-FLOW] Answer save failed:', error.message);
+      await this.sendText(session, SAVE_FAILED_TEXT);
+      return false;
+    }
+    await this.log(session, node.id, 'in', node.answer_type === 'file' ? '[file]' : null, null);
+    if (node.answer_type === 'file' || previousFile) await this.removeStaleUploads(session, node, previousFile, value.file_path ?? null, value.claimedAt);
+
+    if (value.value_date) {
+      await this.sendText(session, `✅ ${formatFullDate(value.value_date, await this.dateContext(session, flow))}`);
+    }
+    let current = session;
+    if (session.fields._ask_node !== undefined || session.fields._ask_failures !== undefined) {
+      const fields = { ...session.fields };
+      delete fields._ask_node;
+      delete fields._ask_failures;
+      if (!(await updateSessionCas(supabase, session, { fields }))) return true; // stale writer won
+      current = { ...session, fields, version: session.version + 1 };
+    }
+    if (node.next) {
+      await this.goToNode(current, flow, node.next);
+    } else {
+      await this.sendText(current, DEFAULT_CLOSE_TEXT);
+      await closeSession(supabase, current.id, current.business_id);
+    }
+    return true;
+  }
+
+  /**
+   * A photo or document arrived (#1085). Handled only when this customer's
+   * active custom-flow step is a Photo or PDF question; otherwise false, and
+   * the caller keeps its existing reply. Type and size are checked before the
+   * file is downloaded, then the real type is read from its bytes. The file is
+   * stored privately under the business's own folder before the answer is saved.
+   */
+  async handleFileMessage(args: {
+    businessId: string;
+    from: string;
+    media: { id: string; mimeType?: string };
+    download: (mediaId: string, maxBytes: number) => Promise<{ ok: true; buffer: Buffer } | { ok: false; reason: string }>;
+  }): Promise<boolean> {
+    const { supabase } = this.deps;
+    const found = await loadActiveSession(supabase, args.businessId, args.from);
+    if (!found || this.isResumePending(found)) return false;
+    if (!(await this.isEntitled(args.businessId))) return false;
+    // Bind the shared sender only once this business will reply (S-1 guard).
+    if (isSessionExpired(found)) {
+      // A file after the chat timed out gets the usual "continue or start again?" question.
+      this.deps.sender.bindBusiness?.(args.businessId);
+      return (await this.handleExpiredSession(found, '')).handled;
+    }
+    const flow = await this.loadPublishedFlowById(found.business_id, found.flow_id);
+    const node = flow?.definition.nodes.find(n => n.id === found.current_node_id);
+    if (!flow || node?.type !== 'ask' || node.answer_type !== 'file') return false;
+    this.deps.sender.bindBusiness?.(args.businessId);
+    // Claim the step first (adopting a republished version, as text input does):
+    // of two files sent at once only one is stored, so no replaced file is left behind.
+    const adopt = found.flow_version !== flow.publishedVersion ? { flow_version: flow.publishedVersion } : {};
+    if (!(await updateSessionCas(supabase, found, adopt))) return true;
+    const claimedAt = new Date();
+    let session = { ...found, ...adopt, version: found.version + 1 };
+    // From here the message is ours: an error is logged, never answered with a second, contradictory reply.
+    try {
+      await this.log(session, node.id, 'in', '[file received]', null);
+      if (!isAllowedUploadMime(args.media.mimeType)) { await this.askAgain(session, flow, node); return true; }
+      const media = await args.download(args.media.id, MAX_UPLOAD_BYTES);
+      if (!media.ok) { await this.askAgain(session, flow, node, media.reason === 'too_large' ? undefined : 'file_unavailable'); return true; }
+      const mime = sniffUploadMime(media.buffer);
+      if (!mime || media.buffer.length > MAX_UPLOAD_BYTES) { await this.askAgain(session, flow, node); return true; }
+
+      const path = `${uploadFolder(session)}/${node.id}-${crypto.randomUUID()}.${UPLOAD_EXTENSION[mime]}`;
+      const { error } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).upload(path, media.buffer, { contentType: mime, upsert: false });
+      if (error) {
+        logger.error('[CUSTOM-FLOW] Upload failed:', error.message);
+        await this.sendText(session, SAVE_FAILED_TEXT);
+        return true;
+      }
+      // Save gate: a later photo for this step may have claimed it while this one
+      // downloaded. Only the current claim saves; a superseded one removes its own
+      // upload and stays quiet, so no saved answer can point at a deleted file.
+      if (!(await updateSessionCas(supabase, session, {}))) {
+        const { error: dropError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
+        if (dropError) logger.error('[CUSTOM-FLOW] Superseded upload could not be removed:', dropError.message);
+        return true;
+      }
+      session = { ...session, version: session.version + 1 };
+      const saved = await this.acceptAnswer(session, flow, node, { value_text: null, value_date: null, file_path: path, file_mime: mime, file_size: media.buffer.length, claimedAt });
+      if (!saved) {
+        const { error: removeError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
+        if (removeError) logger.error('[CUSTOM-FLOW] Unsaved upload could not be removed:', removeError.message);
+      }
+    } catch (err) {
+      logger.error('[CUSTOM-FLOW] File answer failed after it was accepted for handling:', err);
+    }
+    return true;
+  }
+
+  /**
+   * After an answer is saved, remove the replaced file and leftovers of
+   * earlier attempts at this question in this run (#1085). Only objects
+   * uploaded well before this answer's claim are leftovers: a photo being
+   * handled at the same moment is never touched, and the saved file never is.
+   * Failures are logged; the next answer to this question tries again.
+   */
+  private async removeStaleUploads(session: CustomFlowSessionRow, node: CustomFlowAskNode, previousFile: string | null, keep: string | null, claimedAt?: Date): Promise<void> {
+    const bucket = this.deps.supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET);
+    const folder = uploadFolder(session);
+    const stale = new Set<string>();
+    if (previousFile && previousFile !== keep) stale.add(previousFile);
+    if (node.answer_type === 'file') try {
+      const { data } = await bucket.list(folder, { search: `${node.id}-` });
+      for (const object of data ?? []) {
+        const path = `${folder}/${object.name}`;
+        const created = Date.parse((object as { created_at?: string }).created_at ?? '');
+        // One minute of margin for clock differences between this server and Storage.
+        const leftover = !!claimedAt && Number.isFinite(created) && created < claimedAt.getTime() - 60_000;
+        if (object.name.startsWith(`${node.id}-`) && path !== keep && leftover) stale.add(path);
+      }
+    } catch (err) {
+      logger.error('[CUSTOM-FLOW] Upload folder could not be listed:', err);
+    }
+    if (!stale.size) return;
+    const { error } = await bucket.remove([...stale]);
+    if (error) logger.error('[CUSTOM-FLOW] Replaced upload could not be removed:', error.message);
+  }
+
   // ── Rendering ─────────────────────────────────────────────────────
 
   /** Render a node and advance the session to wherever it leads. `depth` counts message -> message hops in this chain (menu/lookup input starts a fresh chain at 0). */
@@ -587,6 +828,10 @@ export class CustomFlowEngine {
       }
       case 'handoff': {
         await this.renderHandoff(session, flow, node, depth);
+        return;
+      }
+      case 'ask': {
+        await this.renderAsk(session, flow, node);
         return;
       }
       default:
@@ -858,6 +1103,11 @@ export class CustomFlowEngine {
       // Logging must never break the conversation.
     }
   }
+}
+
+/** Private folder for one run's uploads: <business>/<flow>/<run>. */
+function uploadFolder(session: CustomFlowSessionRow): string {
+  return `${session.business_id}/${session.flow_id}/${session.id}`;
 }
 
 /** Replace {{variable}} tokens from vars; unknown variables render empty. */

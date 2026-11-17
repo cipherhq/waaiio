@@ -19,6 +19,7 @@ import { createWhatsAppUser } from '@/lib/bot/flows/shared/user';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 import { getCurrencyForCountry } from '@/lib/channels/catalog';
 import { handleCatalogOrder } from '@/lib/channels/catalog-order-handler';
+import { handleCustomFlowFile, inboundMedia } from '@/lib/bot/custom-flow/file-intake';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import type { CountryCode, PaymentGatewayName } from '@/lib/constants';
@@ -744,6 +745,29 @@ export async function POST(request: NextRequest) {
               // If the message is an unsupported media type (image/video/sticker/document/location)
               // with no text, reply with guidance instead of silently skipping
               const msgAny = msg as Record<string, unknown>;
+              // Custom Flow Photo/PDF question (#1085): answered only when this
+              // customer's active custom-flow step is waiting for a file; every
+              // other image or document keeps the existing reply below.
+              // Skipped when under 30s of the time budget is left: a download and
+              // upload of up to 10 MB must not run past the deadline.
+              const flowMedia = !text && !mediaUrl && source && resolved.cloud && Date.now() - t0 < SIDE_EFFECT_DEADLINE_MS - 30_000
+                ? inboundMedia(msgAny as Parameters<typeof inboundMedia>[0]) : null;
+              if (flowMedia && resolved.cloud) {
+                const cloud = resolved.cloud;
+                let fileHandled = false;
+                try {
+                  fileHandled = await handleCustomFlowFile({
+                    supabase, sender: guardedSender, from: source, businessId: preResolvedBusinessId ?? null, media: flowMedia,
+                    download: (mediaId, maxBytes) => cloud.downloadMediaWithin(mediaId, maxBytes),
+                  });
+                } catch (err) {
+                  msgLog.error('[META-WEBHOOK] Custom flow file answer failed:', err);
+                }
+                if (fileHandled) {
+                  await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
+                  continue;
+                }
+              }
               if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
                 try {
                   await guardedSender.sendText({

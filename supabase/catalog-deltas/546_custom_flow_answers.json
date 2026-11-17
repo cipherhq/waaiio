@@ -1,0 +1,613 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_answers.answer_type",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_answers.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.custom_flow_answers.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_answers.customer_number",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flow_answers.file_mime",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flow_answers.file_path",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "integer"
+   },
+   "after_sha256": "a09b5329cddcbfcdc9114baaafe3af969fe9dd2a5c6c95037a26837a0d29795a",
+   "identity": "column:public.custom_flow_answers.file_size",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_answers.flow_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "f6282d5dfbab4063a71d5ce7f9ac1632a87d79417d7dcacaced8e4a2e9509127",
+   "identity": "column:public.custom_flow_answers.flow_version",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.custom_flow_answers.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_answers.node_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.custom_flow_answers.question",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.custom_flow_answers.response_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.custom_flow_answers.session_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "date"
+   },
+   "after_sha256": "ab83b5c2a104f307305d30f64e5eb7257fbb7d06eb9ccac9b2a79aa9824532df",
+   "identity": "column:public.custom_flow_answers.value_date",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.custom_flow_answers.value_text",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (answer_type = ANY (ARRAY['yes_no'::text, 'choice'::text, 'date'::text, 'text'::text, 'file'::text]))",
+    "validated": true
+   },
+   "after_sha256": "2641701eace1fd1597d05e5092cc045b1aced48bb0c716f3ca7e6319ca1e7eaf",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_answer_type_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (\nCASE answer_type\n    WHEN 'date'::text THEN value_date IS NOT NULL AND value_text IS NULL AND file_path IS NULL AND file_mime IS NULL AND file_size IS NULL\n    WHEN 'file'::text THEN file_path IS NOT NULL AND file_mime IS NOT NULL AND file_size IS NOT NULL AND value_date IS NULL\n    ELSE value_text IS NOT NULL AND length(btrim(value_text)) > 0 AND value_date IS NULL AND file_path IS NULL AND file_mime IS NULL AND file_size IS NULL\nEND)",
+    "validated": true
+   },
+   "after_sha256": "a3413d45028e39f353bfc44f73fc4f10af19aab0531451afeee96309f8cf5dbd",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (file_path IS NULL OR file_path ~~ (business_id::text || '/%'::text))",
+    "validated": true
+   },
+   "after_sha256": "7a2e9a4c65f847db56a55cf774563bcf7cfa43081616391a65547742c4f0fab9",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_check1",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(customer_number)) > 0 AND length(customer_number) <= 20)",
+    "validated": true
+   },
+   "after_sha256": "1c39b17f87f8fc1c6ef9767795870954e5f1df757c08b74c1cee8df84adbc740",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_customer_number_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (file_mime IS NULL OR (file_mime = ANY (ARRAY['image/jpeg'::text, 'image/png'::text, 'image/webp'::text, 'application/pdf'::text])))",
+    "validated": true
+   },
+   "after_sha256": "b08064c5391b0a92a1e3545853e08564435c6d04524d19dcd99f5edff59ad57f",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_file_mime_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (file_path IS NULL OR length(file_path) <= 300 AND POSITION(('..'::text) IN (file_path)) = 0 AND POSITION(('\\'::text) IN (file_path)) = 0)",
+    "validated": true
+   },
+   "after_sha256": "e91200830c5722bc3eaf66d5c48eee651ede0f2a4c8b526bbae537e0ab425c3b",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_file_path_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (file_size IS NULL OR file_size > 0 AND file_size <= 10485760)",
+    "validated": true
+   },
+   "after_sha256": "df913f6e33cd4d5a2eb1afa1637fb78bd3bafcd9728a59bdc0ec77de0b0a8186",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_file_size_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (flow_id, business_id) REFERENCES custom_flows(id, business_id)",
+    "validated": true
+   },
+   "after_sha256": "aeec114b3ff0f630513e819f864ccd06aefa437b999e4d34522217cbe3b55811",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_flow_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (flow_version >= 1)",
+    "validated": true
+   },
+   "after_sha256": "fcbf7511c2a2ba9e65d05cc065d5ca8775ddfe84441969c19ca26473911333d1",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_flow_version_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(node_id)) > 0 AND length(node_id) <= 80)",
+    "validated": true
+   },
+   "after_sha256": "6961f7a9dfcaa936c8ba216126bb3582b9b6f96f0ff0e4bfde206b195be497bd",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_node_id_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (length(btrim(question)) > 0 AND length(question) <= 1000)",
+    "validated": true
+   },
+   "after_sha256": "5a1a58ddec76ce219efb540d5f6e03d71a3d155a8bef5826a6655589a39ea121",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_question_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (response_id, node_id)",
+    "validated": true
+   },
+   "after_sha256": "af4607e1f42405a1a99f2bc72073b12c442a173cb20127ea7a96686494198473",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_response_id_node_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (session_id, business_id) REFERENCES custom_flow_sessions(id, business_id) ON DELETE SET NULL (session_id)",
+    "validated": true
+   },
+   "after_sha256": "01261dec52fe83195e1e2db01f56c2ca33be755b6b169aad71535f6f4816c4e2",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_session_id_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (value_text IS NULL OR length(value_text) <= 1000)",
+    "validated": true
+   },
+   "after_sha256": "a50f708a4321f55d13d79a894e1a296de514d7e44772a1231c0d5709f6df38a6",
+   "identity": "constraint:public.custom_flow_answers.custom_flow_answers_value_text_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_answers_created_idx ON public.custom_flow_answers USING btree (created_at)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "8a179ea15d96a618239c2b999a51c03c232f4a6769be397db9528a489eb2fb83",
+   "identity": "index:public.custom_flow_answers.custom_flow_answers_created_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_answers_flow_idx ON public.custom_flow_answers USING btree (business_id, flow_id, created_at DESC)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "11ba02e4ee8ba238dd1853b0a27e932ab6934f6eb8be172ec773df9133b0bc6a",
+   "identity": "index:public.custom_flow_answers.custom_flow_answers_flow_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_answers_pkey ON public.custom_flow_answers USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "dd85f6a379ba38e8671f542ff41b698a676baba92a5489616c4b999b14c9321f",
+   "identity": "index:public.custom_flow_answers.custom_flow_answers_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX custom_flow_answers_response_id_node_id_key ON public.custom_flow_answers USING btree (response_id, node_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "6eae52ca8b645102d57cd4b6247a978e12a54453dcce782c4f821fe4f842d6ba",
+   "identity": "index:public.custom_flow_answers.custom_flow_answers_response_id_node_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX custom_flow_answers_response_idx ON public.custom_flow_answers USING btree (response_id)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "b5b2475078994ef660e43d60948010d64be1c5587e3046b6be99dcbbe6c5ae1e",
+   "identity": "index:public.custom_flow_answers.custom_flow_answers_response_idx",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "DELETE",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "(business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid())))",
+    "with_check": null
+   },
+   "after_sha256": "785ebbc57b13e1c489bd646c21b0d88356f88982b26a38c6634344e2b1470edb",
+   "identity": "policy:public.custom_flow_answers.custom_flow_answers_owner_delete",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "true",
+    "with_check": "true"
+   },
+   "after_sha256": "055bcb8d257a34f71aded149aa123e83e59cbda2765c58318f5ee5f1df28eebf",
+   "identity": "policy:public.custom_flow_answers.custom_flow_answers_service",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "SELECT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "((business_id IN ( SELECT businesses.id\n   FROM businesses\n  WHERE (businesses.owner_id = auth.uid()))) OR (business_id IN ( SELECT business_members.business_id\n   FROM business_members\n  WHERE ((business_members.user_id = auth.uid()) AND (business_members.status = 'active'::text)))))",
+    "with_check": null
+   },
+   "after_sha256": "dca4d6fbf310283ed0c0650db1b4a48bb2bc87630f185fbf9f4a97f98ece0d96",
+   "identity": "policy:public.custom_flow_answers.custom_flow_answers_team_read",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "service_role"
+    ],
+    "using": "(bucket_id = 'custom-flow-uploads'::text)",
+    "with_check": "(bucket_id = 'custom-flow-uploads'::text)"
+   },
+   "after_sha256": "2b88af3d90a7eb18a99ec0cc18b4fbe6d244ed38b8364bb1ad872122dfc84ac1",
+   "identity": "policy:storage.objects.Service manages custom flow uploads",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "cd4747dea7854a6b55dc9d1099cb543f909145ff0f69aec6f71042d5f89ced7e",
+   "identity": "table:public.custom_flow_answers",
+   "operation": "add"
+  }
+ ],
+ "migration": "546_custom_flow_answers.sql",
+ "migration_sha256": "2ae4d61b0ef123c6f5ed0345c6bd218b29c5d9c582d76501be33802c78207b81",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
