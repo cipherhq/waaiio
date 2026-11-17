@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
             '',
             `📎 Ref: WAI-${signed.id.slice(0, 6).toUpperCase()}`,
           ].join('\n');
-          const waResult = await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg, messageCategory: 'utility' });
+          const waResult = await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg, messageCategory: 'service' });
           customerWaStatus = (waResult && waResult.success === false) ? 'failed' : 'accepted';
         } else {
           customerWaStatus = 'failed';
@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
 
         if (resolved) {
           const ownerMsg = `📋 New waiver signed: *${customerName}* signed "${template.title}".`;
-          const ownerResult = await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg, messageCategory: 'utility' });
+          const ownerResult = await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg, messageCategory: 'service' });
           merchantWaStatus = (ownerResult && ownerResult.success === false) ? 'failed' : 'accepted';
         } else {
           merchantWaStatus = 'failed';

@@ -419,6 +419,36 @@ jobs:
           fi
           echo "✅ M409 platform_campaigns constraint + ACL tests complete — zero skips, zero failures."
 
+      - name: "#1075 paid-only messaging charge tests (real PostgreSQL)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+          REQUIRE_PG_TESTS: 'true'
+        run: |
+          test -f lib/__tests__/messaging-paid-only-1075-db.test.ts
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/messaging-paid-only-1075-db.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ #1075 messaging charge tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* skipped'; then
+            echo "❌ #1075 messaging charge tests had skipped tests. All must execute."
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -qE 'Tests +6 passed'; then
+            echo "❌ Expected 6 passed #1075 messaging charge tests."
+            exit 1
+          fi
+          echo "✅ #1075 messaging charge tests complete — 6 passed, zero skips."
+
       - name: P0 table exposure authorization tests
         env:
           PGHOST: localhost
