@@ -159,9 +159,16 @@ describe('Plain English', () => {
   it('gives every field a ? tip and an example, and shows no code words', async () => {
     await openFlow();
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    for (const label of ['Edit 2. Search Program', 'Edit 3. Send a message']) fireEvent.click(screen.getByRole('button', { name: label }));
-    const labels = ['Flow name', 'Greeting', 'When we don’t understand', 'Word people send to start', 'Language', 'Time zone', 'Currency', 'First step',
-      'Message above the buttons', 'Button text', 'Goes to', 'Which list', 'Question we ask', 'Reply', 'When nothing matches', 'Then go to', 'Message', 'Picture link (optional)'];
+    // #1079 polish: one step is edited at a time, so each editor's fields are checked while it is open.
+    const byEditor: Array<[string | null, string[]]> = [
+      [null, ['Flow name', 'Greeting', 'When we don’t understand', 'Word people send to start', 'Language', 'Time zone', 'Currency', 'First step',
+        'Message above the buttons', 'Button text', 'Goes to']],
+      ['Edit 2. Search Program', ['Which list', 'Question we ask', 'Reply', 'When nothing matches', 'Then go to']],
+      ['Edit 3. Send a message', ['Message', 'Picture link (optional)', 'Then go to']],
+    ];
+    for (const [editButton, labels] of byEditor) {
+    if (editButton) fireEvent.click(screen.getByRole('button', { name: editButton }));
+    if (editButton === 'Edit 2. Search Program') await screen.findByRole('button', { name: 'Insert Place' });
     for (const label of labels) {
       const help = screen.getAllByRole('button', { name: `More about ${label}` })[0];
       const tip = document.getElementById(help.getAttribute('aria-describedby')!)!;
@@ -171,13 +178,14 @@ describe('Plain English', () => {
       expect(control.getAttribute('aria-describedby')).toBe(tip.id);
       if (control.tagName !== 'SELECT') expect(control.getAttribute('placeholder') ?? control.getAttribute('data-placeholder')).toMatch(/^Example: /);
     }
-    await screen.findByRole('button', { name: 'Insert Place' });
+    // Checked with each editor open, as all were open together before.
     const text = document.body.textContent!;
     expect(text).not.toMatch(/\blookups?\b/i);
     expect(text).not.toMatch(/\bnodes?\b/i);
     expect(text).not.toMatch(/JSON/);
     expect(text).not.toContain('{{');
     for (const word of ['Publish', 'Draft', 'fallback', 'Entry keyword', 'Start block']) expect(text).not.toContain(word);
+    }
   });
 
   it('builds the reply with Insert chips and keeps the exact stored template', async () => {

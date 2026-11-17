@@ -60,7 +60,7 @@ export function FlowList({ flows, selectedId, disabled, lockedMessage, onChoose 
           className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand dark:focus-visible:outline-brand-300 ${selected
             ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-100'
             : 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'} ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}>
-          <span className="min-w-0 truncate">{flow.name}</span>
+          <span className="min-w-0 break-words">{flow.name}</span>
           <span id={`flow-status-${flow.id}`} aria-hidden="true" className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${flow.live
             ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200'
             : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{flow.live ? 'Live' : 'Not live yet'}</span>

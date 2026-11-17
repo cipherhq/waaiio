@@ -126,17 +126,25 @@ describe('FlowBuilder user journeys', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Advanced editor' }));
     const labels = ['1. Show buttons', '2. Search Artists', '3. Search Vendors', '4. Search Ticket Types', '5. Search News', '6. Search FAQs'];
     // Layout change (#1074): step editors open from the step map; the start step opens by default.
-    for (const label of labels.slice(1)) fireEvent.click(screen.getByRole('button', { name: `Edit ${label}` }));
-    expect(screen.getAllByLabelText('Then go to')).toHaveLength(5);
+    // #1079 polish: one step is edited at a time, so each editor's destinations are checked in turn.
+    const optionsOf = (select: HTMLSelectElement) => Array.from(select.options).filter(option => option.value).map(option => [option.value, option.textContent]);
+    const expected = template.nodes.map((node, index) => [node.id, labels[index]]);
     for (const label of labels) {
       expect(screen.getByRole('heading', { name: label })).toBeTruthy();
       expect(screen.getByRole('button', { name: label })).toBeTruthy();
     }
     const destinations = screen.getAllByLabelText('Goes to') as HTMLSelectElement[];
     expect(destinations.map(select => select.value)).toEqual(template.nodes[0].type === 'menu' ? template.nodes[0].options.map(option => option.next) : []);
-    for (const select of [...destinations, screen.getByLabelText('First step'), ...screen.getAllByLabelText('Then go to')] as HTMLSelectElement[]) {
-      expect(Array.from(select.options).filter(option => option.value).map(option => [option.value, option.textContent])).toEqual(template.nodes.map((node, index) => [node.id, labels[index]]));
+    for (const select of [...destinations, screen.getByLabelText('First step')] as HTMLSelectElement[]) expect(optionsOf(select)).toEqual(expected);
+    let thenGoTo = 0;
+    for (const label of labels.slice(1)) {
+      fireEvent.click(screen.getByRole('button', { name: `Edit ${label}` }));
+      const selects = screen.getAllByLabelText('Then go to') as HTMLSelectElement[];
+      expect(selects).toHaveLength(1);
+      expect(optionsOf(selects[0])).toEqual(expected);
+      thenGoTo += selects.length;
     }
+    expect(thenGoTo).toBe(5);
     expect(calls).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Saved.');
