@@ -104,6 +104,14 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
+      // Localize before any PIN-session re-establishment replaces session_data
+      // (which would drop the detected language). Adds the "Not now" button (#1065).
+      const { buildStripeActivationPrompt } = await import('@/lib/payments/saved-card-offer');
+      const activationPrompt = await buildStripeActivationPrompt(
+        supabase, offer.offer_type as string, (offer.card_display as string) || 'your card',
+        paymentId, canonPhone, businessId,
+      );
+
       // Check for existing normalized session
       const { savedCardSessionPhone } = await import('@/lib/payments/saved-card-compat');
       const sessionPhone = savedCardSessionPhone(canonPhone);
@@ -161,10 +169,6 @@ export async function GET(request: NextRequest) {
       }
 
       // Send activation prompt using shared fenced delivery helper
-      const cardDisplay = (offer.card_display as string) || 'your card';
-      const activationMsg = (offer.offer_type as string) === 'save'
-        ? `🔒 You chose to save ${cardDisplay} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
-        : `🔒 You chose to save ${cardDisplay}. Enter your existing *Waaiio PIN* to update your saved card.`;
 
       const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
       const activationOutcome = await sendWithFencedDelivery({
@@ -174,7 +178,8 @@ export async function GET(request: NextRequest) {
         customerPhone: canonPhone,
         businessId,
         channelId,
-        messageText: activationMsg,
+        messageText: activationPrompt.text,
+        buttons: activationPrompt.buttons,
         markStarted: (id, token) => supabase.rpc('mark_activation_send_started', { p_offer_id: id, p_claim_token: token }),
         // complete_activation_delivery (M395) takes exactly 2 args — no p_customer_phone
         complete: (id, token) => supabase.rpc('complete_activation_delivery', { p_offer_id: id, p_claim_token: token }),

@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BotSession } from '../bot-types';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/logger';
+import { STRIPE_PIN_NOT_NOW_PREFIX } from '@/lib/payments/stripe-pin-not-now';
 
 /**
  * Slice 5A: Build a localized sendText wrapper for saved-card messages.
@@ -13,21 +14,41 @@ async function buildLocalizedSend(
   sendText: (to: string, text: string) => Promise<void>,
   session: BotSession,
 ): Promise<(to: string, text: string, protectedValues?: string[]) => Promise<void>> {
+  const translate = await buildLocalizedTranslate(supabase, session);
+  return async (to, text, protectedValues?) => sendText(to, await translate(text, protectedValues));
+}
+
+/** Same language resolution as buildLocalizedSend, for button bodies and titles. */
+async function buildLocalizedTranslate(
+  supabase: SupabaseClient,
+  session: BotSession,
+): Promise<(text: string, protectedValues?: string[]) => Promise<string>> {
+  const identity = async (text: string) => text;
   const lang = (session.session_data?._detected_language as string) || '';
-  if (!lang || lang === 'en' || !session.business_id) {
-    return async (to, text) => sendText(to, text);
-  }
+  if (!lang || lang === 'en' || !session.business_id) return identity;
   try {
     const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
     const l10n = await resolveProactiveLocalization(supabase, session.whatsapp_number || '', session.business_id);
-    if (l10n.language === 'en') return async (to, text) => sendText(to, text);
-    return async (to, text, protectedValues?) => {
-      const translated = await l10n.translate(text, protectedValues);
-      return sendText(to, translated);
-    };
+    if (l10n.language === 'en') return identity;
+    return (text, protectedValues?) => l10n.translate(text, protectedValues);
   } catch {
-    return async (to, text) => sendText(to, text);
+    return identity;
   }
+}
+
+/**
+ * #1065 Option A: true only when this session is the live Stripe
+ * provider-checkout PIN step for exactly this payment and business.
+ * Customer scope is inherent: the session was loaded for the sender's number.
+ */
+function isOwnStripePinActivation(session: BotSession, paymentId: string | null): boolean {
+  const d = session.session_data || {};
+  return session.current_step === 'save_card_pin'
+    && d._save_card_gateway === 'stripe'
+    && typeof d._save_card_payment_id === 'string'
+    && (paymentId === null || d._save_card_payment_id === paymentId)
+    && !!session.business_id
+    && d._save_card_business_id === session.business_id;
 }
 
 /**
@@ -237,8 +258,19 @@ export async function handleCardPinStep(
   from: string,
   session: BotSession,
   text: string,
+  sendButtons?: (msg: { to: string; body: string; buttons: Array<{ id: string; title: string }> }) => Promise<unknown>,
 ): Promise<void> {
-  const pin = text.trim();
+  let pin = text.trim();
+  // #1065 Option A: the Stripe activation "Not now" button is exactly the typed
+  // cancel below, but only for this session's own Stripe payment and business.
+  // A stale, duplicate, cross-payment or cross-business tap changes nothing.
+  if (pin.startsWith(STRIPE_PIN_NOT_NOW_PREFIX)) {
+    if (!isOwnStripePinActivation(session, pin.slice(STRIPE_PIN_NOT_NOW_PREFIX.length))) {
+      logger.warn('[SAVED-CARD-PIN] Ignored out-of-scope Not now tap', { sessionId: session.id });
+      return;
+    }
+    pin = 'cancel';
+  }
   // Slice 5A: localized send wrapper for PIN messages
   const localSend = await buildLocalizedSend(supabase, sendText, session);
 
@@ -265,6 +297,16 @@ export async function handleCardPinStep(
   }
 
   if (!/^\d{4}$/.test(pin)) {
+    if (sendButtons && isOwnStripePinActivation(session, null)) {
+      // Keep the Stripe activation "Not now" button on the re-prompt (#1065).
+      const translate = await buildLocalizedTranslate(supabase, session);
+      await sendButtons({
+        to: from.replace(/^\+/, ''),
+        body: await translate('Please enter exactly *4 digits* for your Waaiio PIN:', ['4', 'Waaiio']),
+        buttons: [{ id: `${STRIPE_PIN_NOT_NOW_PREFIX}${session.session_data._save_card_payment_id}`, title: await translate('Not now') }],
+      });
+      return;
+    }
     await localSend(from, 'Please enter exactly *4 digits* for your Waaiio PIN:', ['4', 'Waaiio']);
     return;
   }

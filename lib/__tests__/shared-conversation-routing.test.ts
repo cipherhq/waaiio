@@ -196,7 +196,10 @@ describe('shared-channel dispatch continuity', () => {
     const { detectBotCodeWithSuggestions } = await import('@/lib/bot/handlers/bot-code-detection');
     await bot.handleMessage('+234800', '2468', 'text', 'provider-id');
     const handler = step === 'replace_card_pin' ? handlers.handleReplacementPinStep : handlers.handleCardPinStep;
-    expect(handler).toHaveBeenCalledWith(supabase, expect.any(Function), '+234800', expect.objectContaining({ id: 'card-session', current_step: step }), '2468');
+    // save/verify PIN steps also receive a button sender for the Stripe "Not now" re-prompt (#1065).
+    const pinArgs: unknown[] = [supabase, expect.any(Function), '+234800', expect.objectContaining({ id: 'card-session', current_step: step }), '2468'];
+    if (step !== 'replace_card_pin') pinArgs.push(expect.any(Function));
+    expect(handler).toHaveBeenCalledWith(...pinArgs);
     expect(detectBotCodeWithSuggestions).not.toHaveBeenCalled();
     expect(supabase.rpc.mock.calls.some(([name]) => name === 'get_bot_context')).toBe(false);
   });
