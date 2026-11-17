@@ -75,8 +75,9 @@ export function AskSettings({ node, timezone, country, onChange, destination }: 
       People can send a photo (JPG, PNG or WebP) or a PDF, up to 10 MB. Files are stored privately and open from your Flow answers page. Try it can’t send files; test this step on WhatsApp.
     </p>}
 
+    {/* A box that wraps, so the example message is never cut off (#1079 polish). */}
     <Field label="If the answer can’t be used (optional)" help="What we send when the answer isn’t one we can save, before asking again. Leave it empty to use our message.">
-      {props => <input {...props} className={inputClass} placeholder={`Example: ${DEFAULT_RETRY[node.answer_type]}`} value={node.retry_message ?? ''}
+      {props => <textarea {...props} className={inputClass} rows={2} placeholder={`Example: ${DEFAULT_RETRY[node.answer_type]}`} value={node.retry_message ?? ''}
         onChange={event => onChange({ ...node, retry_message: event.target.value || undefined })} />}
     </Field>
     <Field label="Then go to" help="Where people go after answering. End the chat stops the flow here.">

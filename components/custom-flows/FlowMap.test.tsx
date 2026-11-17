@@ -59,8 +59,11 @@ describe('Your flows list', () => {
     fireEvent.keyDown(first, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Opening hours' }));
     fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
-    expect(screen.getByRole('option', { name: 'Opening hours' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { name: 'Opening hours' })).toBeTruthy();
+    // #1079 polish: the list hides while a flow is open; "All flows" brings it back with that flow selected.
+    expect(screen.queryByRole('listbox', { name: 'Custom flows' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'All flows' }));
+    expect(screen.getByRole('option', { name: 'Opening hours' }).getAttribute('aria-selected')).toBe('false');
     expect(posts).toHaveLength(0);
   });
 
@@ -68,13 +71,14 @@ describe('Your flows list', () => {
     await openFlow('Opening hours');
     fireEvent.change(screen.getByLabelText('Greeting'), { target: { value: 'Changed' } });
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
-    const other = screen.getByRole('option', { name: 'Lagos fest' });
-    expect(other.getAttribute('aria-disabled')).toBe('true');
-    fireEvent.click(other);
-    expect(screen.getByRole('option', { name: 'Opening hours' }).getAttribute('aria-selected')).toBe('true');
+    // #1079 polish: the list is hidden while a flow is open; its "All flows" way back is locked instead.
+    const back = screen.getByRole('button', { name: 'All flows' }) as HTMLButtonElement;
+    expect(back.disabled).toBe(true);
+    fireEvent.click(back);
+    expect(screen.queryByRole('listbox', { name: 'Custom flows' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Opening hours' })).toBeTruthy();
     expect((screen.getByLabelText('Greeting') as HTMLInputElement).value).toBe('Changed');
-    const listbox = screen.getByRole('listbox', { name: 'Custom flows' });
-    const hint = document.getElementById(listbox.getAttribute('aria-describedby')!)!;
+    const hint = document.getElementById(back.getAttribute('aria-describedby')!)!;
     expect(hint.textContent).toBe('Save or discard changes to switch flows.');
     expect(screen.getByText('Save or discard changes to switch flows.')).toBe(hint);
   });
@@ -86,9 +90,8 @@ describe('Your flows list', () => {
     fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Changed' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Saved.');
-    const selected = screen.getByRole('option', { name: 'Lagos fest' });
-    fireEvent.click(selected);
-    fireEvent.keyDown(selected, { key: 'Enter' });
+    // #1079 polish: the list is hidden while the flow is open, so the selected flow cannot be chosen again.
+    expect(screen.queryByRole('option', { name: 'Lagos fest' })).toBeNull();
     // choose() would have closed the open editor and cleared the notice.
     expect(edit.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Saved.')).toBeTruthy();
@@ -118,6 +121,7 @@ describe('Step map', () => {
     expect(screen.getAllByText('Not live yet').length).toBeGreaterThan(0);
   });
 
+  // ~5-6 s in jsdom under full-suite load (same pattern as the template-labels test). Assertions unchanged.
   it('opens a step editor in place when the step is clicked, without any request', async () => {
     await openFlow('Lagos fest');
     const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
@@ -139,22 +143,25 @@ describe('Step map', () => {
     await openFlow('Lagos fest');
     const editButton = () => screen.getByRole('button', { name: 'Edit 3. Send a message' });
     fireEvent.click(editButton());
-    expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
+    // #1079 polish: one step is edited at a time, so opening step 3 closes the start step.
+    expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('false');
     fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Bye' } });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     for (const [button, notice] of [['Save', 'Saved.'], ['Check for problems', 'No problems found.'], ['Go live', 'Your flow is live.'], ['Go back to live version', 'Back to the live version.']]) {
       fireEvent.click(screen.getByRole('button', { name: button }));
       await screen.findByText(notice);
       expect(editButton().getAttribute('aria-expanded')).toBe('true');
-      expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('false');
     }
     expect(posts.map(post => post.action)).toEqual(['save', 'validate', 'publish', 'restore']);
+    fireEvent.click(screen.getByRole('button', { name: 'All flows' }));
     fireEvent.click(screen.getByRole('option', { name: 'Opening hours' }));
     expect(screen.getByRole('button', { name: 'Edit 1. Send a message' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'All flows' }));
     fireEvent.click(screen.getByRole('option', { name: 'Lagos fest' }));
     expect(editButton().getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('true');
-  });
+  }, 15_000);
 
   it('treats any empty message next as Ends and any empty lookup next as Back to start', async () => {
     // Engine rule: a message continues only `if (node.next)`; a lookup falls back to the start step.

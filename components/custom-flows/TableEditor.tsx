@@ -94,7 +94,7 @@ export function TableEditor({businessId,flowId,onDirty,onSaved}:{businessId:stri
         <ul className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-200 dark:divide-gray-700 dark:border-gray-700">
           {rows.map(r=><li key={r.id}><button type="button" aria-pressed={row?.id===r.id} disabled={busy||dirty} onClick={()=>setRow(structuredClone(r))}
             className={`flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 disabled:cursor-not-allowed ${row?.id===r.id?'bg-brand-50 dark:bg-brand-900/50':'bg-white hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-700'}`}>
-            <span className="min-w-0"><span className="block font-mono text-xs text-gray-600 dark:text-gray-400">{r.row_code}</span><span className="block truncate font-medium text-gray-900 dark:text-gray-100">{preview(r)||'No details yet'}</span></span>
+            <span className="min-w-0"><span className="block font-mono text-xs text-gray-600 dark:text-gray-400">{r.row_code}</span><span className="block break-words font-medium text-gray-900 dark:text-gray-100">{preview(r)||'No details yet'}</span></span>
             {r.hidden&&<span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">Hidden</span>}
           </button></li>)}
         </ul>
