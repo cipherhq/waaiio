@@ -248,6 +248,9 @@ describe('Template gallery', () => {
     expect(saved.definition.nodes.map((node: { id: string }) => node.id)).toEqual(['main_menu', 'lookup_program', 'lookup_faqs']);
     expect(saved.definition.nodes[1]).toMatchObject({ type: 'lookup', table: 'program', reply: '{{session}} — {{day}} {{time}} — {{place}}', next: 'main_menu' });
     expect(screen.getByRole('heading', { name: 'Church retreat', level: 2 })).toBeTruthy();
+    // A starter has no guided sections, so it opens ready to edit without the advanced editor.
+    expect(screen.queryByText(/Open the advanced editor to change steps/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove this step' })).toBeTruthy();
   });
 
   it('uses the existing festival setup unchanged', async () => {

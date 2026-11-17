@@ -265,7 +265,8 @@ export function FlowBuilder({ businessId,businessDetails={} }: Props) {
   </>;
   const pickerLocked = dirty || tableDirty || setupForm || busy || loading;
   const editing = !!draft && !setup;
-  const editable = !!draft && (!draft.guided || advanced);
+  // A flow with no guided sections (scratch and starters) has nothing to protect: open it ready to edit.
+  const editable = !!draft && (!draft.guided || draft.guided.sections.length === 0 || advanced);
   const status = dirty || tableDirty ? 'Unsaved changes' : row?.published_definition ? 'Live' : 'Not live yet';
   const statusClass = { 'Unsaved changes': 'bg-amber-100 text-amber-900', Live: 'bg-whatsapp text-gray-900', 'Not live yet': 'bg-accent text-gray-900' }[status];
   const previewTitle = typeof businessDetails.name === 'string' && businessDetails.name.trim() ? businessDetails.name : draft?.name || 'Your business';
