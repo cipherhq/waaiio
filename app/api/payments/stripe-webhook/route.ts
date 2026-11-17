@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { safeLogErrorContext } from '@/lib/errors';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { createAlert } from '@/lib/alerts/create-alert';
@@ -619,6 +620,7 @@ export async function POST(request: NextRequest) {
           });
 
           if (!renewalResult.finalized) {
+            reportFailure(new Error('renewal finalization failed'), { area: 'payment_webhook', op: 'stripe.renewal_finalization', gateway: 'stripe', errorCode: renewalResult.reason });
             logger.error('[STRIPE-WEBHOOK] Renewal finalization failed:', { reason: renewalResult.reason, invoiceId: data.id });
             return NextResponse.json({ error: renewalResult.reason || 'Renewal finalization failed' }, { status: 500 });
           }
@@ -651,6 +653,7 @@ export async function POST(request: NextRequest) {
               }
             }
           } catch (emailErr) {
+            reportFailure(emailErr, { area: 'payment_webhook', op: 'stripe.renewal_email', gateway: 'stripe', level: 'warning' });
             logger.error('[STRIPE WEBHOOK] Subscription renewal email error:', emailErr);
           }
 
@@ -704,18 +707,21 @@ export async function POST(request: NextRequest) {
 
           // Transport/DB error → retryable 5xx
           if (finErr) {
+            reportFailure(finErr, { area: 'payment_webhook', op: 'stripe.recurring_finalizer_rpc', gateway: 'stripe' });
             logger.error('[STRIPE RECURRING] Finalization RPC transport error:', finErr);
             return NextResponse.json({ error: 'Finalization transport error' }, { status: 500 });
           }
 
           // Missing/malformed result → retryable 5xx
           if (!finResult || typeof finResult !== 'object') {
+            reportFailure(new Error('finalizer malformed result'), { area: 'payment_webhook', op: 'stripe.recurring_finalizer_malformed', gateway: 'stripe' });
             logger.error('[STRIPE RECURRING] Finalization returned malformed result:', finResult);
             return NextResponse.json({ error: 'Finalization malformed result' }, { status: 500 });
           }
 
           // Accept only explicit success === true with boolean already_finalized
           if (finResult.success !== true || typeof finResult.already_finalized !== 'boolean') {
+            reportFailure(new Error('finalizer rejected'), { area: 'payment_webhook', op: 'stripe.recurring_finalizer_rejected', gateway: 'stripe', errorCode: finResult.reason });
             logger.error('[STRIPE RECURRING] Finalization rejected or malformed:', finResult.reason ?? finResult);
             return NextResponse.json(
               { error: `Finalization rejected: ${finResult.reason ?? 'malformed_success'}` },
@@ -729,6 +735,7 @@ export async function POST(request: NextRequest) {
               typeof finResult.booking_ref !== 'string' ||
               typeof finResult.amount !== 'number' ||
               typeof finResult.currency !== 'string') {
+            reportFailure(new Error('finalizer missing fields'), { area: 'payment_webhook', op: 'stripe.recurring_finalizer_fields', gateway: 'stripe' });
             logger.error('[STRIPE RECURRING] Finalization missing canonical fields:', finResult);
             return NextResponse.json({ error: 'Finalization incomplete canonical result' }, { status: 500 });
           }
@@ -759,6 +766,7 @@ export async function POST(request: NextRequest) {
               );
             }
           } catch (confirmErr) {
+            reportFailure(confirmErr, { area: 'payment_webhook', op: 'stripe.recurring_stage3', gateway: 'stripe' });
             logger.error('[STRIPE RECURRING] Stage 3 error:', confirmErr);
             return NextResponse.json(
               { error: 'Confirmation error' },
@@ -958,6 +966,7 @@ export async function POST(request: NextRequest) {
                 gateway: 'stripe',
               });
             } catch (notifyErr) {
+              reportFailure(notifyErr, { area: 'payment_webhook', op: 'stripe.recurring_failure_notify', gateway: 'stripe', level: 'warning' });
               logger.error('[STRIPE RECURRING] Customer failure notification error:', notifyErr);
             }
           }
@@ -1007,6 +1016,7 @@ export async function POST(request: NextRequest) {
           );
 
           if (refundErr) {
+            reportFailure(refundErr, { area: 'payment_webhook', op: 'stripe.topup_refund_rpc', gateway: 'stripe' });
             logger.error('[STRIPE-WEBHOOK] messaging_topup refund RPC error', { purchaseId: topupPurchase.id, error: refundErr });
             return NextResponse.json({ error: 'Top-up refund RPC failed' }, { status: 500 });
           }
@@ -1044,6 +1054,7 @@ export async function POST(request: NextRequest) {
           );
 
           if (refundErr) {
+            reportFailure(refundErr, { area: 'payment_webhook', op: 'stripe.topup_dispute_rpc', gateway: 'stripe' });
             logger.error('[STRIPE-WEBHOOK] messaging_topup dispute RPC error', { purchaseId: topupPurchase.id, error: refundErr });
             return NextResponse.json({ error: 'Top-up dispute RPC failed' }, { status: 500 });
           }

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ status: 'ok', snapshot });
   } catch (error) {
+    reportFailure(error, { area: 'cron', op: 'run', job: 'backup' });
     return NextResponse.json({ status: 'error', message: (error as Error).message }, { status: 500 });
   }
 }

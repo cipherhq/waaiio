@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
 
     if (resErr) {
       logger.error('Reseller invoice generation: failed to fetch resellers', resErr);
+      reportFailure(resErr, { area: 'cron', op: 'reseller_query', job: 'reseller-invoice-generation' });
       return NextResponse.json({ error: 'Database error' }, { status: 500 });
     }
 
@@ -104,6 +106,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ generated });
   } catch (err) {
     logger.error('Reseller invoice generation failed', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'reseller-invoice-generation' });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

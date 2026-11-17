@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 /**
  * GET /api/cron/business-health
@@ -200,6 +201,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Health check complete', businesses: businesses.length, alerts: alertsCreated });
   } catch (error) {
     logger.error('[BUSINESS-HEALTH] Error:', error);
+    reportFailure(error, { area: 'cron', op: 'run', job: 'business-health' });
     return NextResponse.json({ error: 'Health check failed' }, { status: 500 });
   }
 }

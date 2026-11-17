@@ -16,6 +16,10 @@ import { DEFAULT_RETRY, ESCAPE_HINT, REASON_TEXT, SAVE_FAILED_TEXT, TYPE_A_DATE_
 import { handleCustomFlowFile, inboundMedia } from '../file-intake';
 import type { CustomFlowAskNode, CustomFlowDefinition } from '../types';
 
+// #1092: failures are reported for diagnosis; what the customer sees is unchanged.
+const reportFailure = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/observability/report-failure', () => ({ reportFailure }));
+
 type Row = Record<string, any>;
 
 class FakeQuery {
@@ -269,9 +273,11 @@ describe('ask step — answers saved for this business only', () => {
 
   it('if the answer cannot be saved, the customer is told and stays on the question', async () => {
     const { db, sender, say } = await start(flow({ answer_type: 'text', question: 'Your name?' }), { failAnswerWrites: true });
+    reportFailure.mockClear();
     await say('Ada');
     expect(sender.texts.at(-1)).toBe(SAVE_FAILED_TEXT);
     expect(db.custom_flow_sessions.find(s => s.is_active)!.current_node_id).toBe('q');
+    expect(reportFailure).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ area: 'custom_flow', op: 'answer_save', stepId: 'q' }));
   });
 
   it('a file question answered with text asks for a photo or PDF', async () => {
@@ -373,9 +379,11 @@ describe('ask step — photo or PDF', () => {
 
   it('if the upload fails, nothing is saved and the customer is told', async () => {
     const { supabase, sender, db } = await start(fileFlow(), { failUpload: true });
+    reportFailure.mockClear();
     await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media: { id: 'm1', mimeType: 'image/jpeg' }, download: download(JPEG) });
     expect(db.custom_flow_answers).toEqual([]);
     expect(sender.texts.at(-1)).toBe(SAVE_FAILED_TEXT);
+    expect(reportFailure).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ area: 'custom_flow', op: 'answer_upload' }));
   });
 });
 

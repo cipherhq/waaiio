@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -260,6 +261,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, sent });
   } catch (error) {
     logger.error('[BALANCE-REMINDER] Cron error:', error);
+    reportFailure(error, { area: 'cron', op: 'run', job: 'balance-reminder' });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { reserveTaxPayment, confirmTaxPaymentFailure } from '@/lib/payments/tax-authority';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { safeLogErrorContext } from '@/lib/errors';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
@@ -594,6 +595,7 @@ async function chargePaystackAuthorization(
     : await supabase.from('payments').insert(paymentPayload).select('id').single();
 
   if (insertErr || !payRow) {
+    reportFailure(insertErr ?? new Error('payment row missing'), { area: 'saved_card', op: 'payment_row_create', businessId: opts.businessId, gateway: 'paystack' });
     logger.error('[SAVED-CARD] Payment row creation failed — NOT calling provider', insertErr);
     return { outcome: 'declined', reference: opts.reference, message: 'Payment record creation failed' };
   }
@@ -676,6 +678,7 @@ async function chargePaystackAuthorization(
         if (confirmErr || !confirmRows || confirmRows.length !== 1) {
           // Provider has charged but authority row didn't reach provider_confirmed.
           // Return indeterminate — do not hide the provider-paid ambiguity.
+          reportFailure(confirmErr ?? new Error('provider_confirmed CAS missed'), { area: 'saved_card', op: 'charged_confirm_cas', businessId: opts.businessId, paymentId, gateway: 'paystack' });
           logger.error('[SAVED-CARD] V1 provider_confirmed CAS failed after successful charge', { confirmErr, rowCount: confirmRows?.length });
           return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Provider charged but authority write failed' };
         }
@@ -717,6 +720,7 @@ async function chargePaystackAuthorization(
       .maybeSingle();
 
     if (termErr || !termRow) {
+      reportFailure(termErr ?? new Error('decline terminalization missed'), { area: 'saved_card', op: 'decline_terminalize', businessId: opts.businessId, paymentId, gateway: 'paystack' });
       logger.error('[SAVED-CARD] Decline terminalization failed or no row affected:', termErr?.message);
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Card declined but could not record — verifying' };
     }
@@ -729,6 +733,7 @@ async function chargePaystackAuthorization(
     };
   } catch (error) {
     // Network/timeout/ambiguous — leave payment pending for reconciliation
+    reportFailure(error, { area: 'saved_card', op: 'charge_indeterminate', businessId: opts.businessId, paymentId, gateway: 'paystack' });
     logger.error('[SAVED-CARD] Charge indeterminate:', normalizeError(error).message);
     return {
       outcome: 'indeterminate',

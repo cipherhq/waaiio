@@ -14,6 +14,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 import { checkSpendCapPeriod, type SpendPeriod } from '@/lib/messaging/spend-cap-alerts';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,7 @@ export async function GET(request: NextRequest) {
 
     if (periodsErr) {
       logger.error('[SPEND-WARNINGS] Failed to query spend periods:', periodsErr.message);
+      reportFailure(periodsErr, { area: 'cron', op: 'periods_query', job: 'messaging-spend-warnings' });
       return NextResponse.json({ error: 'Failed to query periods' }, { status: 500 });
     }
 
@@ -52,6 +54,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ status: 'ok', periodsScanned, alertsCreated });
   } catch (err) {
     logger.error('[SPEND-WARNINGS] Unexpected error:', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'messaging-spend-warnings' });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

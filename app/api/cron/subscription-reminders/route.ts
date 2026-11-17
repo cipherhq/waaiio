@@ -5,6 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -40,6 +41,7 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       logger.error('[CRON:SUB-REMINDERS] Query failed:', error.message);
+      reportFailure(error, { area: 'cron', op: 'query', job: 'subscription-reminders' });
       return NextResponse.json({ error: 'Internal error' }, { status: 500 });
     }
 

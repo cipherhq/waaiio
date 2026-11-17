@@ -10,6 +10,7 @@ import { createAlert } from '@/lib/alerts/create-alert';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { getRequestId } from '@/lib/observability';
 import { createWebhookLogger } from '@/lib/observability/webhooks';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -405,6 +406,7 @@ export async function POST(request: NextRequest) {
             );
 
             if (rpcErr) {
+              reportFailure(rpcErr, { area: 'payment_webhook', op: 'paystack.invoice_failed_rpc', gateway: 'paystack' });
               logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: atomic RPC failed', {
                 error: rpcErr.message, subscriptionId: cs.id,
               });
@@ -458,6 +460,7 @@ export async function POST(request: NextRequest) {
                       gateway: 'paystack',
                     });
                   } catch (notifyErr) {
+                    reportFailure(notifyErr, { area: 'payment_webhook', op: 'paystack.invoice_failed_notify', gateway: 'paystack', level: 'warning' });
                     logger.error('[PAYSTACK-WEBHOOK] invoice.payment_failed: customer notification failed (non-critical)', notifyErr);
                   }
                 }
@@ -511,6 +514,7 @@ export async function POST(request: NextRequest) {
 
       } catch (subErr) {
         const msg = subErr instanceof Error ? subErr.message : 'Unknown error';
+        reportFailure(subErr, { area: 'payment_webhook', op: 'paystack.subscription_event', gateway: 'paystack' });
         logger.error(`[PAYSTACK-WEBHOOK] ${event} handler failed`, { subEventId, error: msg });
         try {
           await supabase.rpc('fail_webhook_event', {
@@ -821,10 +825,12 @@ export async function POST(request: NextRequest) {
             'activate_paid_subscription', { p_payment_id: renewalEvidenceId },
           );
           if (activateErr) {
+            reportFailure(activateErr, { area: 'payment_webhook', op: 'paystack.renewal_activation_rpc', gateway: 'paystack' });
             logger.error('[PAYSTACK-WEBHOOK] Paid activation RPC error:', activateErr);
             return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
           }
           if (!activationResult || activationResult.activated !== true) {
+            reportFailure(new Error('renewal activation not confirmed'), { area: 'payment_webhook', op: 'paystack.renewal_activation_unconfirmed', gateway: 'paystack' });
             logger.error('[PAYSTACK-WEBHOOK] Paid renewal activation not confirmed:', activationResult);
             return NextResponse.json({ error: 'Paid renewal activation not confirmed' }, { status: 500 });
           }
@@ -973,6 +979,7 @@ export async function POST(request: NextRequest) {
             });
 
             if (finErr) {
+              reportFailure(finErr, { area: 'payment_webhook', op: 'paystack.recurring_finalizer_rpc', gateway: 'paystack' });
               logger.error('[PAYSTACK RECURRING] Finalizer RPC error:', finErr);
             } else if (finResult?.success && !finResult.already_finalized) {
               // Stage 3 confirmation (non-blocking, after commit)
@@ -1006,6 +1013,7 @@ export async function POST(request: NextRequest) {
             const invoice = await fetchSubscriptionInvoice(webhookSubscriptionCode, webhookTransactionId);
             if (invoice) invoiceCode = invoice.invoiceCode;
           } catch (invoiceErr) {
+            reportFailure(invoiceErr, { area: 'payment_webhook', op: 'paystack.recurring_invoice_fetch', gateway: 'paystack', level: 'warning' });
             logger.error('[PAYSTACK RECURRING] Invoice fetch error:', invoiceErr);
           }
 
@@ -1120,6 +1128,7 @@ export async function POST(request: NextRequest) {
                 });
 
                 if (finErr) {
+                  reportFailure(finErr, { area: 'payment_webhook', op: 'paystack.provider_managed_finalizer_rpc', gateway: 'paystack' });
                   logger.error('[PAYSTACK RECURRING] Provider-managed finalizer error:', finErr);
                 } else if (finResult?.success && !finResult.already_finalized) {
                   try {
@@ -1258,6 +1267,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (grantErr) {
+        reportFailure(grantErr, { area: 'payment_webhook', op: 'paystack.topup_grant_rpc', gateway: 'paystack' });
         logger.error('[PAYSTACK-WEBHOOK] messaging_topup grant RPC error', { purchaseId, error: grantErr });
         await supabase.from('processed_webhook_events').update({
           status: 'failed',
@@ -1276,6 +1286,7 @@ export async function POST(request: NextRequest) {
           idempotent: grantResult.idempotent ?? false,
         });
       } else {
+        reportFailure(new Error('topup grant not confirmed'), { area: 'payment_webhook', op: 'paystack.topup_grant_unconfirmed', gateway: 'paystack' });
         logger.error('[PAYSTACK-WEBHOOK] messaging_topup grant not confirmed', { purchaseId, result: grantResult });
         await supabase.from('processed_webhook_events').update({
           status: 'failed',
@@ -1350,6 +1361,7 @@ export async function POST(request: NextRequest) {
                 gateway: 'paystack',
               });
             } catch (notifyErr) {
+              reportFailure(notifyErr, { area: 'payment_webhook', op: 'paystack.recurring_failure_notify', gateway: 'paystack', level: 'warning' });
               logger.error('[PAYSTACK RECURRING] Customer failure notification error:', notifyErr);
             }
           }
@@ -1400,6 +1412,7 @@ export async function POST(request: NextRequest) {
           );
 
           if (refundErr) {
+            reportFailure(refundErr, { area: 'payment_webhook', op: 'paystack.topup_refund_rpc', gateway: 'paystack' });
             logger.error('[PAYSTACK-WEBHOOK] messaging_topup refund RPC error', { purchaseId: topupPurchase.id, error: refundErr });
             return NextResponse.json({ error: 'Top-up refund RPC failed' }, { status: 500 });
           }

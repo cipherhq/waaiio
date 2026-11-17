@@ -52,12 +52,33 @@ export function scrubPrivateLinks<T>(item: T): T {
 }
 
 /**
+ * Events built by reportFailure() (lib/observability/report-failure.ts) carry
+ * only its validated tags. Strip everything else Sentry would attach: console
+ * breadcrumbs (they hold whatever the app logged), request body, query string
+ * and cookies, user and extra. Other events pass through unchanged.
+ */
+export function scrubFailureReport<T>(event: T): T {
+  const ev = event as unknown as {
+    tags?: Record<string, unknown>;
+    request?: { url?: unknown; method?: unknown };
+  } & Record<string, unknown>;
+  if (!ev || typeof ev !== 'object' || ev.tags?.failure_report !== '1') return event;
+  const { breadcrumbs: _b, extra: _e, user: _u, request, ...rest } = ev;
+  const out: Record<string, unknown> = { ...rest, breadcrumbs: [] };
+  if (request && typeof request === 'object') {
+    const url = typeof request.url === 'string' ? request.url.split('?')[0].split('#')[0] : undefined;
+    out.request = { ...(url ? { url } : {}), ...(typeof request.method === 'string' ? { method: request.method } : {}) };
+  }
+  return out as T;
+}
+
+/**
  * Spread into every Sentry.init (client, server, edge). Sentry 11 streams spans
  * by default, so spans go through beforeSendSpan; beforeSendTransaction is not
  * set because it is ignored there and makes Sentry log a warning on each start.
  */
 export const privateLinkScrubbers = {
-  beforeSend: scrubPrivateLinks,
+  beforeSend: <T>(event: T): T => scrubFailureReport(scrubPrivateLinks(event)),
   beforeSendSpan: scrubPrivateLinks,
   beforeBreadcrumb: scrubPrivateLinks,
 };

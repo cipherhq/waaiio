@@ -13,6 +13,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
 
     if (queryErr) {
       logger.error('[RESERVATION-EXPIRY] Failed to query expired attempts:', queryErr.message);
+      reportFailure(queryErr, { area: 'cron', op: 'expired_query', job: 'reservation-expiry' });
       return NextResponse.json({ error: 'Query failed' }, { status: 500 });
     }
 
@@ -52,6 +54,7 @@ export async function GET(request: NextRequest) {
 
     if (nullQueryErr) {
       logger.error('[RESERVATION-EXPIRY] Failed to query null-deadline attempts:', nullQueryErr.message);
+      reportFailure(nullQueryErr, { area: 'cron', op: 'null_deadline_query', job: 'reservation-expiry' });
       return NextResponse.json({ error: 'Query failed' }, { status: 500 });
     }
 
@@ -104,6 +107,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ status: 'ok', scanned, released, flagged, errors });
   } catch (err) {
     logger.error('[RESERVATION-EXPIRY] Unexpected error:', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'reservation-expiry' });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

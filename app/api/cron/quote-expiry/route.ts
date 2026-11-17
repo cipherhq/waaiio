@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     logger.error('[QUOTE-EXPIRY-CRON] Query error:', error.message);
+    reportFailure(error, { area: 'cron', op: 'query', job: 'quote-expiry' });
     return NextResponse.json({ ok: false, error: 'Query failed' }, { status: 500 });
   }
 
@@ -56,6 +58,7 @@ export async function GET(request: NextRequest) {
 
   if (updateError) {
     logger.error('[QUOTE-EXPIRY-CRON] Update error:', updateError.message);
+    reportFailure(updateError, { area: 'cron', op: 'update', job: 'quote-expiry' });
     return NextResponse.json({ ok: false, error: 'Update failed' }, { status: 500 });
   }
 

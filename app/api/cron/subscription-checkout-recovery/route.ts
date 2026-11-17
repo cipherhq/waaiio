@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
   const { data: batch, error: claimErr } = await supabase.rpc('claim_stale_checkout_batch', { p_batch_size: 20 });
   if (claimErr || !batch) {
     logger.error('[CRON:CHECKOUT-RECOVERY] Claim failed', { error: claimErr?.message });
+    reportFailure(claimErr ?? new Error('claim returned no rows'), { area: 'cron', op: 'claim', job: 'subscription-checkout-recovery' });
     return NextResponse.json({ error: 'Claim failed' }, { status: 500 });
   }
 

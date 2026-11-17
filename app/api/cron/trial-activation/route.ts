@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,6 +50,7 @@ export async function GET(request: NextRequest) {
 
     if (queryError) {
       console.error('[TRIAL-ACTIVATION-CRON] Query failed:', queryError);
+      reportFailure(queryError, { area: 'cron', op: 'query', job: 'trial-activation' });
       return NextResponse.json({ error: 'Query failed' }, { status: 500 });
     }
 
@@ -166,6 +168,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     console.error('[TRIAL-ACTIVATION-CRON] Unexpected error:', err);
+    reportFailure(err, { area: 'cron', op: 'run', job: 'trial-activation' });
     return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
   }
 }

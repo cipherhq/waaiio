@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export async function GET(request: NextRequest) {
 
   if (claimErr || !subs) {
     logger.error('[CRON:CANCEL-RECON] Claim RPC failed', { error: claimErr?.message });
+    reportFailure(claimErr ?? new Error('claim returned no rows'), { area: 'cron', op: 'claim', job: 'subscription-cancellation-reconciliation' });
     return NextResponse.json({ error: 'Claim failed' }, { status: 500 });
   }
 

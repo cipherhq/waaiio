@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email/client';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 import { shouldNotify } from '@/lib/bot/flows/shared/notifications';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     logger.error('[LOW-STOCK-CRON] Query error:', error.message);
+    reportFailure(error, { area: 'cron', op: 'query', job: 'low-stock-alerts' });
     return NextResponse.json({ ok: false, error: 'Query failed' }, { status: 500 });
   }
 

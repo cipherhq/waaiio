@@ -23,6 +23,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import { requireCurrentCapability } from '@/lib/bot/flows/shared/capability-guard';
 import { parseDefinition, validateDefinition } from './definition';
 import { businessData } from './sources';
@@ -195,6 +196,7 @@ export class CustomFlowEngine {
       return result.allowed;
     } catch (err) {
       logger.error('[CUSTOM-FLOW] Entitlement check failed:', err);
+      reportFailure(err, { area: 'custom_flow', op: 'entitlement_check', businessId, capability: 'custom_flow' });
       return false;
     }
   }
@@ -665,6 +667,7 @@ export class CustomFlowEngine {
     }, { onConflict: 'response_id,node_id' });
     if (error) {
       logger.error('[CUSTOM-FLOW] Answer save failed:', error.message);
+      reportFailure(error, { area: 'custom_flow', op: 'answer_save', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id });
       await this.sendText(session, SAVE_FAILED_TEXT);
       return false;
     }
@@ -737,6 +740,7 @@ export class CustomFlowEngine {
       const { error } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).upload(path, media.buffer, { contentType: mime, upsert: false });
       if (error) {
         logger.error('[CUSTOM-FLOW] Upload failed:', error.message);
+        reportFailure(error, { area: 'custom_flow', op: 'answer_upload', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id });
         await this.sendText(session, SAVE_FAILED_TEXT);
         return true;
       }
@@ -745,17 +749,24 @@ export class CustomFlowEngine {
       // upload and stays quiet, so no saved answer can point at a deleted file.
       if (!(await updateSessionCas(supabase, session, {}))) {
         const { error: dropError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
-        if (dropError) logger.error('[CUSTOM-FLOW] Superseded upload could not be removed:', dropError.message);
+        if (dropError) {
+          logger.error('[CUSTOM-FLOW] Superseded upload could not be removed:', dropError.message);
+          reportFailure(dropError, { area: 'custom_flow', op: 'answer_upload_drop', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id, level: 'warning' });
+        }
         return true;
       }
       session = { ...session, version: session.version + 1 };
       const saved = await this.acceptAnswer(session, flow, node, { value_text: null, value_date: null, file_path: path, file_mime: mime, file_size: media.buffer.length, claimedAt });
       if (!saved) {
         const { error: removeError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
-        if (removeError) logger.error('[CUSTOM-FLOW] Unsaved upload could not be removed:', removeError.message);
+        if (removeError) {
+          logger.error('[CUSTOM-FLOW] Unsaved upload could not be removed:', removeError.message);
+          reportFailure(removeError, { area: 'custom_flow', op: 'answer_upload_cleanup', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id, level: 'warning' });
+        }
       }
     } catch (err) {
       logger.error('[CUSTOM-FLOW] File answer failed after it was accepted for handling:', err);
+      reportFailure(err, { area: 'custom_flow', op: 'answer_file', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id });
     }
     return true;
   }
@@ -783,10 +794,14 @@ export class CustomFlowEngine {
       }
     } catch (err) {
       logger.error('[CUSTOM-FLOW] Upload folder could not be listed:', err);
+      reportFailure(err, { area: 'custom_flow', op: 'answer_upload_list', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id, level: 'warning' });
     }
     if (!stale.size) return;
     const { error } = await bucket.remove([...stale]);
-    if (error) logger.error('[CUSTOM-FLOW] Replaced upload could not be removed:', error.message);
+    if (error) {
+      logger.error('[CUSTOM-FLOW] Replaced upload could not be removed:', error.message);
+      reportFailure(error, { area: 'custom_flow', op: 'answer_upload_stale_remove', businessId: session.business_id, flowId: session.flow_id, sessionId: session.id, stepId: node.id, level: 'warning' });
+    }
   }
 
   // ── Rendering ─────────────────────────────────────────────────────
@@ -864,6 +879,10 @@ export class CustomFlowEngine {
       else logger.warn(`[CUSTOM-FLOW] handoff ${node.capability} not entitled (${guard.reason}) business=${session.business_id}`);
     } catch (err) {
       logger.error('[CUSTOM-FLOW] Handoff check failed:', err);
+      reportFailure(err, {
+        area: 'custom_flow', op: 'handoff_check', businessId: session.business_id,
+        flowId: session.flow_id, sessionId: session.id, capability: node.capability,
+      });
     }
 
     if (record && this.deps.handOff) {
@@ -1090,7 +1109,7 @@ export class CustomFlowEngine {
     output: string | null,
   ): Promise<void> {
     try {
-      await this.deps.supabase.from('custom_flow_logs').insert({
+      const { error } = await this.deps.supabase.from('custom_flow_logs').insert({
         business_id: session.business_id,
         flow_id: session.flow_id,
         session_id: session.id,
@@ -1099,6 +1118,12 @@ export class CustomFlowEngine {
         input: input ? input.slice(0, LOG_INPUT_MAX) : null,
         output: output ? output.slice(0, LOG_OUTPUT_MAX) : null,
       });
+      if (error) {
+        reportFailure(error, {
+          area: 'custom_flow', op: 'log_insert', businessId: session.business_id,
+          flowId: session.flow_id, sessionId: session.id, level: 'warning',
+        });
+      }
     } catch {
       // Logging must never break the conversation.
     }

@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { encryptToken, decryptToken } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
 
   if (!appId || !appSecret) {
     logger.error('[refresh-meta-tokens] META_APP_ID or META_APP_SECRET not configured');
+    reportFailure(new Error('meta app credentials missing'), { area: 'cron', op: 'config', job: 'refresh-meta-tokens' });
     return NextResponse.json(
       { ok: false, error: 'Meta app credentials not configured' },
       { status: 500 }
@@ -50,6 +52,7 @@ export async function GET(request: NextRequest) {
 
   if (queryError) {
     logger.error('[refresh-meta-tokens] Failed to query channels', { error: queryError.message });
+    reportFailure(queryError, { area: 'cron', op: 'channel_query', job: 'refresh-meta-tokens' });
     return NextResponse.json(
       { ok: false, error: 'Failed to query channels' },
       { status: 500 }

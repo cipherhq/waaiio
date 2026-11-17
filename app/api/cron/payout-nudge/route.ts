@@ -8,6 +8,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { loadCountries } from '@/lib/countries';
 import { computePlatformHeldTotals, getEligibleCurrencies } from '@/lib/payments/payable-fees';
 import { assertMessagingAllowed, MessagingSuspendedError } from '@/lib/channels/send-guard';
+import { reportFailure } from '@/lib/observability/report-failure';
 
 /**
  * GET /api/cron/payout-nudge
@@ -189,6 +190,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Payout nudges sent', sent: nudgesSent });
   } catch (error) {
     logger.error('[PAYOUT-NUDGE] Error:', error);
+    reportFailure(error, { area: 'cron', op: 'run', job: 'payout-nudge' });
     return NextResponse.json({ error: 'Nudge failed' }, { status: 500 });
   }
 }

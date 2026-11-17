@@ -25,6 +25,7 @@ import {
 import { resolveRecipientCountry } from '@/lib/channels/phone-country';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { reportFailure } from '@/lib/observability/report-failure';
 import type { CustomerReplyGuard } from '@/lib/messaging/customer-message-guard';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -459,6 +460,7 @@ export class MetaCloudSender implements MessageSender {
       }
       return result;
     } catch (err) {
+      reportFailure(err, { area: 'whatsapp_send', op: 'provider_send', businessId: this._businessId });
       if (attemptId && this._supabase) {
         if (err instanceof WamidPersistenceError) {
           // Message sent, WAMID persistence failed — already marked needs_reconciliation
