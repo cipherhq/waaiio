@@ -6,6 +6,7 @@ import { excessiveMessageChains, readDraft, record } from '@/lib/custom-flow-bui
 import { previewDraft } from '@/lib/custom-flow-builder/preview';
 import { guidedReadiness } from '@/lib/custom-flow-builder/readiness';
 import { businessData } from '@/lib/bot/custom-flow/sources';
+import { checkHandoffRecord } from '@/lib/bot/custom-flow/handoff';
 
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
@@ -65,6 +66,15 @@ export async function POST(request: NextRequest) {
     });
     if (invalidFields.length) return NextResponse.json({ error: 'invalid_lookup_fields', nodes: invalidFields.map(node => node.id), errors }, { status: 422 });
     if (errors.length) return NextResponse.json({ error: 'invalid_definition', errors }, { status: 422 });
+    // #1086: a handoff step may only start with this business's own, still
+    // available record (same check the engine repeats when a customer arrives).
+    const unavailable: string[] = [];
+    for (const node of draft.nodes) {
+      if (node.type !== 'handoff' || !node.record_id) continue;
+      try { if (!(await checkHandoffRecord(db, businessId, node))) unavailable.push(node.id); }
+      catch { return fail('read_failed', 500); }
+    }
+    if (unavailable.length) return NextResponse.json({ error: 'unavailable_handoff_record', nodes: unavailable, errors }, { status: 422 });
     // Preview may exercise incomplete content/fallbacks. Publishing cannot
     // silently remove sections or publish an empty selected lookup.
     if (action !== 'preview') {

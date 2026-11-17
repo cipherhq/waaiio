@@ -40,6 +40,9 @@ const RULES: Rule[] = [
   [/^Lookup node "(.*)" has no search fields\./, (step, m) => `${step(m[1])} needs at least one column in Search by.`],
   [/^Lookup node "(.*)" has no reply template\.$/, (step, m) => `${step(m[1])} needs a Reply.`],
   [/^Lookup node "(.*)" has no message for when nothing matches\.$/, (step, m) => `${step(m[1])} needs a “When nothing matches” message.`],
+  [/^Handoff node "(.*)" has no feature\./, (step, m) => `${step(m[1])} needs a feature. Choose one in Which feature.`],
+  [/^Handoff node "(.*)" opens a chat, which cannot start with a record\.$/, (step, m) => `${step(m[1])} opens a chat, so it can’t start with an event or option. Remove it and add it again.`],
+  [/^Handoff node "(.*)" has a record that cannot be read\./, (step, m) => `${step(m[1])} uses an event or option that can’t be found. Choose it again.`],
   [/^Node "(.*)" has an unknown type/, (step, m) => `${step(m[1])} is a kind of step this page can’t edit. Remove it and add it again.`],
 ];
 
