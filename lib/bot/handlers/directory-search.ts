@@ -296,10 +296,12 @@ const NEAR_ME_PATTERNS: RegExp[] = [
 
 /**
  * "near me" searches: returns what is searched for ('' for any business), or
- * null when the text is not a near-me search. "find"/"search"/"show me" is dropped.
+ * null when the text is not a near-me search. "find"/"search"/"show me", a leading
+ * "where is the" and a trailing "?" are dropped.
  */
 export function nearMeSubject(text: string): string | null {
-  const t = text.replace(/\s+/g, ' ').trim().replace(/[.!]+$/, '');
+  const t = text.replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '')
+    .replace(/^(?:where\s+is|where's|which\s+is)\s+(?:the\s+)?/i, '');
   if (!t || t.length > 120) return null;
   for (const re of NEAR_ME_PATTERNS) {
     const m = t.match(re);
@@ -397,17 +399,6 @@ export async function handleDirectorySearch(
     return null;
   }
 
-  // "salons near me" (#1072 step 2): ask for a location pin; the subject waits 10 minutes.
-  const nearSubject = nearMeSubject(text);
-  if (nearSubject !== null) {
-    const filter = nearSubject ? subjectFilter(parseDirectoryQuery(nearSubject, sharedCountry)) : {};
-    await send.sendPlatformText(from, getFlowCopy(lang, 'directory.near_ask'));
-    return {
-      ...base(text, sharedCountry), _directory_results: [], _directory_suggestions: [], _directory_total: 0,
-      _directory_near: { ...filter, at: Date.now() },
-    };
-  }
-
   // Parse the query
   const parsed = parseDirectoryQuery(text, sharedCountry);
 
@@ -435,6 +426,19 @@ export async function handleDirectorySearch(
     };
   }
   if (exact.length > 1) return out.suggestions(exact, searchResultsText(text, exact.length, lang));
+
+  // "salons near me" (#1072 step 2), after exact names ("Nearest Laundry" still opens):
+  // ask for a location pin. Only a recognised category waits 10 minutes; any other
+  // subject searches every category, so a pin never misses on free text.
+  const nearSubject = nearMeSubject(text);
+  if (nearSubject !== null) {
+    const nearCategory = nearSubject ? parseDirectoryQuery(nearSubject, sharedCountry).categories[0] : undefined;
+    await send.sendPlatformText(from, getFlowCopy(lang, 'directory.near_ask'));
+    return {
+      ...base(text, sharedCountry), _directory_results: [], _directory_suggestions: [], _directory_total: 0,
+      _directory_near: { ...(nearCategory ? { category: nearCategory } : {}), at: Date.now() },
+    };
+  }
 
   // Correction notice
   const correctionPrefix = parsed.correctedFrom

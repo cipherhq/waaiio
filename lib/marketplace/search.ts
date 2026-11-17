@@ -306,13 +306,21 @@ export async function searchMarketplace(
       || Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || radiusKm <= 0 || radiusKm > 100) {
       return invalidLocation();
     }
-    const dLat = radiusKm / 111.32;
-    const dLng = radiusKm / (111.32 * Math.max(Math.cos((latitude * Math.PI) / 180), 0.01));
+    // Padded (1° ≈ 111.2 km at the haversine radius), then snapped OUTWARD to a
+    // 0.1° grid: the bounds travel in request URLs (traces, provider logs), and
+    // unsnapped bounds would give back the customer's exact pin as their midpoint.
+    // The exact distance re-check below keeps the results the same.
+    const dLat = (radiusKm * 1.02) / 111.195;
+    const dLng = (radiusKm * 1.02) / (111.195 * Math.max(Math.cos((latitude * Math.PI) / 180), 0.01));
+    const down = (v: number) => Number((Math.floor(v * 10) / 10).toFixed(1));
+    const up = (v: number) => Number((Math.ceil(v * 10) / 10).toFixed(1));
+    const minLng = down(longitude - dLng);
+    const maxLng = up(longitude + dLng);
     // A box crossing the 180° meridian keeps only the latitude bounds.
-    const wraps = longitude - dLng < -180 || longitude + dLng > 180;
+    const wraps = minLng < -180 || maxLng > 180;
     nearestBox = {
-      minLat: latitude - dLat, maxLat: latitude + dLat,
-      minLng: wraps ? null : longitude - dLng, maxLng: wraps ? null : longitude + dLng,
+      minLat: Math.max(down(latitude - dLat), -90), maxLat: Math.min(up(latitude + dLat), 90),
+      minLng: wraps ? null : minLng, maxLng: wraps ? null : maxLng,
     };
   }
 

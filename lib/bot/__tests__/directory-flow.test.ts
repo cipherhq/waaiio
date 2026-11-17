@@ -1109,6 +1109,16 @@ describe('#1072 step 2 — a location pin through handleMessage', () => {
     expect(msgs(sender).some(m => /within 25 km|set their location/.test(textOf(m)))).toBe(false);
   });
 
+  it('first contact "any salon near me?" sends only the location prompt and starts a waiting session', async () => {
+    const db = buildMock();
+    const { bot, sender } = createBot(db);
+    await bot.handleMessage(PHONE, 'any salon near me?', 'text', SHARED_PNID);
+    expect(msgs(sender)).toHaveLength(1);
+    expect(textOf(msgs(sender)[0])).toContain('Send your current location');
+    const created = db._inserted.find((s: any) => s.current_step === 'directory_results');
+    expect(created?.session_data?._directory_near).toMatchObject({ category: 'salon' });
+  });
+
   it('"salons near me" asks for a pin, offers no past businesses, and the pin then clears the wait', async () => {
     const db = buildMock({ existingSession: dirSession() });
     const { bot, sender } = createBot(db);

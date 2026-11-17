@@ -66,6 +66,9 @@ describe('#1072 step 2 — "near me" text', () => {
     expect(nearMeSubject('pharmacy nearby')).toBe('pharmacy');
     expect(nearMeSubject('restaurants around me.')).toBe('restaurants');
     expect(nearMeSubject('nearest barber')).toBe('barber');
+    expect(nearMeSubject('salons near me?')).toBe('salons');
+    expect(nearMeSubject('anything nearby?')).toBe('anything');
+    expect(nearMeSubject('where is the nearest hospital?')).toBe('hospital');
     expect(nearMeSubject('salons in Lekki')).toBeNull();
     expect(nearMeSubject('Near Me Cafe Lekki')).toBeNull();
     expect(nearMeSubject('JaneLux')).toBeNull();
@@ -83,6 +86,23 @@ describe('#1072 step 2 — "near me" text', () => {
     expect(data?._directory_near).toMatchObject({ category: 'salon' });
     expect(data!._directory_near!.at).toBeGreaterThanOrEqual(before);
     expect(data?._directory_results).toEqual([]);
+  });
+
+  it('a business named like a near-me search still opens by its exact name', async () => {
+    const laundry = biz(uid(70), 'Nearest Laundry', { category: 'other', city: 'Lekki', state: 'Lagos' });
+    const { db } = directoryFakeDb([laundry], {
+      fuzzy: () => [{ ...laundry, match_score: 1 }],
+    });
+    const send = sender();
+    const data = await handleDirectorySearch(db, send, PHONE, 'Nearest Laundry', 'NG');
+    expect(data?._directory_enter).toEqual({ businessId: uid(70), botCode: laundry.bot_code });
+    expect(send.sendPlatformText).not.toHaveBeenCalled();
+  });
+
+  it('a subject that is not a category waits with no filter, so a pin searches every category', async () => {
+    const { db } = directoryFakeDb([NEAR]);
+    const data = await handleDirectorySearch(db, sender(), PHONE, 'wetin dey near me', 'NG');
+    expect(data?._directory_near).toEqual({ at: expect.any(Number) });
   });
 
   it('"near me" alone waits for a pin with no category', async () => {
@@ -130,6 +150,30 @@ describe('#1072 step 2 — a location pin', () => {
     expect(ops).toEqual(expect.arrayContaining(['not:latitude', 'not:longitude', 'gte:latitude', 'lte:latitude', 'gte:longitude', 'lte:longitude']));
     const limit = queries[0].find((o) => o.method === 'limit')!.args[0];
     expect(limit).toBe(1000);
+  });
+
+  it('the box sent to the database is snapped to 0.1° and never gives back the pin', async () => {
+    const { queries } = await nearby([NEAR]);
+    const bound = (m: string, c: string) => Number(queries[0].find((o) => o.method === m && o.args[0] === c)!.args[1]);
+    const bounds = [bound('gte', 'latitude'), bound('lte', 'latitude'), bound('gte', 'longitude'), bound('lte', 'longitude')];
+    for (const v of bounds) expect(Math.round(v * 10) / 10).toBe(v);
+    const json = JSON.stringify(queries);
+    expect(json).not.toContain(String(PIN.latitude));
+    expect(json).not.toContain(String(PIN.longitude));
+    // A pin ~1 km away sends exactly the same bounds: the request cannot tell them apart.
+    const { db, queries: other } = directoryFakeDb([NEAR]);
+    await handleDirectoryNearby(db, sender(), PHONE, { latitude: PIN.latitude + 0.008, longitude: PIN.longitude + 0.008 }, 'NG', undefined, undefined);
+    const otherBounds = ['gte', 'lte'].flatMap((m) => ['latitude', 'longitude'].map((c) =>
+      Number(other[0].find((o) => o.method === m && o.args[0] === c)!.args[1])));
+    expect(otherBounds.sort()).toEqual([...bounds].sort());
+  });
+
+  it('a business just inside 25 km due north or east is not cut by the box', async () => {
+    const north = biz(uid(60), 'North Edge', { category: 'salon', latitude: PIN.latitude + 24.99 / 111.195, longitude: PIN.longitude });
+    const east = biz(uid(61), 'East Edge', { category: 'salon', latitude: PIN.latitude,
+      longitude: PIN.longitude + 24.99 / (111.195 * Math.cos((PIN.latitude * Math.PI) / 180)) });
+    const { send } = await nearby([north, east]);
+    expect(listRows(send).map((r) => r.title).sort()).toEqual(['East Edge', 'North Edge']);
   });
 
   it('the nearest business is found even when 250 others sort before it by name', async () => {
