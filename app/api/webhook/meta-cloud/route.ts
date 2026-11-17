@@ -763,6 +763,7 @@ export async function POST(request: NextRequest) {
                   });
                 } catch (err) {
                   msgLog.error('[META-WEBHOOK] Custom flow file answer failed:', err);
+                  reportFailure(err, { area: 'custom_flow', op: 'webhook_file_answer', businessId: preResolvedBusinessId, requestId });
                 }
                 if (fileHandled) {
                   await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
