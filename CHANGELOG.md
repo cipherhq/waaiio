@@ -1,3 +1,620 @@
+## 2026-11-17 — Stripe saved-card PIN prompt gets a "Not now" button (#1065, Owner Option A)
+
+- **Owner decision** (#1065, 2026-11-17): Option A. Keep Stripe Checkout's own "Save card" tick box as the consent. Add one translated "Not now" reply button to the WhatsApp PIN-activation message, doing exactly what typing `cancel` does.
+- **Before:** after a customer ticked "Save card" on Stripe Checkout, WhatsApp sent a plain-text "Create your 4-digit Waaiio PIN" message. The only way out was to type `cancel`.
+- **Changes:**
+  - `lib/payments/stripe-pin-not-now.ts` (new): the postback id prefix `stripe_pin_not_now:`, shared by the senders, the PIN handler and the bot-service guard.
+  - `lib/payments/saved-card-offer.ts`: new `buildStripeActivationPrompt` builds the existing English text plus one button `stripe_pin_not_now:<paymentId>` / "Not now". Body (card label protected) and title are localized with `resolveProactiveLocalization`, like the Paystack offer, falling back to English. `checkStripeConsentAndOffer` builds it before the PIN session is established (that RPC replaces `session_data`, which would drop the detected language).
+  - `app/api/cron/saved-card-activation-retry/route.ts`: the activation re-send uses the same prompt and button.
+  - `lib/payments/saved-card-delivery.ts`: `sendWithFencedDelivery` takes optional `buttons`. When given, it sends with `sendButtons`. Same claim, start, complete, release and ambiguity rules. Callers without buttons (confirmations) still send text.
+  - `lib/bot/handlers/saved-cards.ts` `handleCardPinStep`: a `stripe_pin_not_now:<id>` tap becomes the existing typed `cancel` only when the session is `save_card_pin`, gateway `stripe`, the same payment id, and `_save_card_business_id` equals the session business. Any other tap does nothing. On a Stripe PIN step, the "enter exactly 4 digits" re-prompt keeps the button. Paystack re-prompts are unchanged.
+  - `lib/bot/bot.service.ts`: passes a button sender to the PIN handler. A `stripe_pin_not_now:` tap arriving after the PIN step has ended (duplicate, stale, expired, no session) is a silent no-op.
+- **Unchanged:** Stripe consent capture (Checkout tick box, `provider_checkout`), charging, custody and fees, offer RPCs and states, `cancel_transaction_card_setup` (M534), the follow-up order, the Paystack Save card offer and its postbacks, and BYO/Connect Stripe (still skipped). No migration.
+- **Tests:** `lib/payments/__tests__/stripe-pin-not-now-1065.test.ts` (real offer, fenced delivery and PIN handler) and `lib/payments/__tests__/stripe-pin-not-now-botservice-1065.test.ts` (real `handleMessage`). New Stripe follow-up-order cases in `lib/payments/__tests__/transaction-followup.test.ts`. `lib/__tests__/shared-conversation-routing.test.ts` now expects the extra button-sender argument for save/verify PIN steps.
+- **Could break:**
+  - If a channel's sender has no `sendButtons`, the activation falls back to plain text (no button; typing `cancel` still works).
+  - The PIN session established for Stripe has no detected language, so the PIN-step replies (including "Card save cancelled." and the re-prompt with its button) stay in English. This is the same as before, for both the typed and tapped paths. Only the activation message itself is localized.
+
+## 2026-11-17 — Directory "nearest to me": WhatsApp location pin search (#1072 step 2)
+
+- **Owner decisions** (#1072, 2026-11-17, "Yes, both"): 1A, list only businesses that have a map pin, with the note "Showing businesses that have set their location" and a [Search by area] button. 2A, within 25 km, nearest 10. No geocoding API and no data change. No migration.
+- **Before:** every WhatsApp location pin got "I can't process images or files yet". "salons near me" listed salons across the whole country, ignoring "near me".
+- **Changes:**
+  - `app/api/webhook/meta-cloud/route.ts`: a `location` message to a shared number (no business bound to the channel) with valid coordinates goes to the bot as the text `[Location]`. Its latitude/longitude are set on that message's `BotService` only. The pin's optional `name`/`address` text is dropped. Business numbers and unusable pins keep the existing reply, now the shared `UNSUPPORTED_MEDIA_TEXT` constant (same text).
+  - `lib/bot/bot.service.ts`: `setInboundLocation()` (request-scoped field) and a guard right after the session lookup. If the shared number has no business session (no session and no bound business, or a `directory_search`/`directory_results` step), the pin runs `handleDirectoryPin`. Otherwise it gets the usual reply. `handleDirectoryPin` saves results to the existing directory session or creates one. Past businesses are not offered after a "near me" prompt.
+  - `lib/bot/handlers/directory-search.ts`: `nearMeSubject` ("near me", "salons near me?", "pharmacy nearby", "where is the nearest hospital"…) sends the location prompt. It runs after exact-name entry, so a business named "Nearest Laundry" still opens by name. It saves `_directory_near` (a recognised category plus a time; never a location, and never free text, so an unrecognised subject searches every category) for 10 minutes. `handleDirectoryNearby` runs the nearest search and sends the list (rows start with the distance, e.g. "1.1 km · Salon · Lekki, Lagos"; miles on US/GB numbers) or "nothing within 25 km" with [Search by area] [Browse categories]. Any other search clears `_directory_near`. Saved results drop `distanceKm`.
+  - `lib/marketplace/search.ts`: new `nearest` criterion. Inputs are validated. The SQL filters to rows with coordinates inside a bounding box around the pin. The box is padded and snapped outward to a 0.1° grid, so its bounds, which appear in request URLs, reveal only a roughly 10 km grid area, never the exact pin. Results are then filtered by exact haversine distance with the radius re-checked, sorted nearest first. The pool is 1,000 rows (warns if reached). No fuzzy suggestions for nearest searches. Eligibility (`applyDirectoryEligibility`) and the hidden list are applied as before. The existing `latitude/longitude` scoring path is unchanged.
+  - `lib/bot/flows/flow-localization.ts`: `directory.near_ask`, `directory.near_results`, `directory.near_none` and `directory.search_area_button`. Translated in pcm/fr/es (fr/es are served once those languages are certified). yo/ig/ha/tw are English pending native review.
+- **Privacy:** the pin is used in memory for one search. It is not written to `bot_sessions`, logs or failure reports. Database request URLs carry only the snapped box: pins about 1 km apart send the same bounds. What is stored for a location message: event type, the message id/sender/timestamp receipt, and (shared number only, now that the pin reaches the bot) the customer inbound counter with message type `location` and no text hash. No coordinates.
+- **Unchanged:** typed and place searches (step 1), exact-name and bot-code entry, eligibility and hidden rules, business-number media replies, Custom Flow photo/PDF answers, and all payment, booking and menu flows.
+- **Tests:** `lib/bot/__tests__/directory-nearest-1072.test.ts` (new, handler + real search on the executable fake DB), `lib/__tests__/nearest-location-webhook-1072.test.ts` (new, real webhook route), new cases in `lib/bot/__tests__/directory-flow.test.ts` (real `handleMessage`). The fake DB helper gained `lte`.
+- **Could break / residual:** a 25 km box holding more than 1,000 eligible pinned businesses could drop nearer businesses, because the rows are cut in name order (logged). Businesses without a pin are not in "near me" results (by decision). A pin outside the shared number's country gets "nothing within 25 km". There is no WhatsApp location-request button yet (text instructions only; the contract allowed it "where available"). The pin's no-results reply offers [Search by area] [Browse categories] as the Owner decided, without the contract's "+ past businesses". A pin sent while the shared-number "did you mean" picker or language step is open gets the old reply (conservative; only the directory steps run a nearest search).
+
+## 2026-11-17 — Hidden businesses stay reachable for past customers (#1083)
+
+- **Owner rule** (#1083, 2026-11-16): "yes hidden business customers can still patronize them".
+  - A hidden business (merchant `discovery_enabled = false`, or the admin `platform_settings.directory_hidden` list) stays out of directory search for new customers.
+  - Customers who used it before can still reach it and pay.
+  - Inactive (`status <> 'active'`) or messaging-suspended businesses are reachable by no one.
+- **Before:**
+  - A hidden business was listed in a past customer's "You've used these businesses before" buttons. Tapping it then said "This business is currently unavailable", because the tap ran the full directory check.
+  - A suspended business was also listed in those buttons.
+  - Typing a suspended business's bot code on a shared number gave silence.
+- **Changes:**
+  - `lib/bot/handlers/directory-search.ts` `handleDirectorySelection`: a past-business tap (`dir_biz_<id>` found in the session's stored past list) now checks only that the business is reachable: active, has a bot code, and is not messaging-suspended. Search-result and close-match taps keep the full directory check. The check fails closed on a database error.
+  - `lib/bot/handlers/bot-code-detection.ts` `findReturningCustomerBusinesses`: also requires `messaging_suspended = false`, so a suspended business is never offered as a past business.
+  - `lib/bot/bot.service.ts` business entry: a messaging-suspended business gets the existing "This business is currently unavailable. Please try again later." reply. This only happens on a shared Waaiio number before the business is bound. On the business's own number (sender bound, or a dedicated-number lookup) nothing is sent, as before under the S-1 hard stop; new: no bot session is created there either (before, a session was created and its flow ran with every send blocked). Blocked phones stay silent.
+- **Unchanged:** directory search, categories, `connect <name>`, the web directory, bot codes, `/m/` links, the close-name picker, blocked phones, the S-1 send guard and payments.
+- **Tests:** `lib/bot/__tests__/hidden-business-reachable-1083.test.ts` (executable fake DB) and `lib/__tests__/hidden-business-reachable-botservice-1083.test.ts` (real `handleMessage`). The shared test fake `lib/marketplace/__tests__/helpers/directory-fake-db.ts` gains `in()`.
+- **Could break:**
+  - A past customer can now re-enter a business the admin hid from the directory. That is the Owner's rule. To keep someone out, suspend or deactivate the business, or block the phone.
+  - Known gap, not changed here: the free-text close-name picker (`detectBotCodeWithSuggestions`) only checks `status = 'active'`, so it can still suggest a hidden or suspended business to a new customer.
+
+## 2026-11-17 — Failure tracking: reportFailure() with strict scrubbing (Issue #1092)
+
+- **Why:**
+  - Owner decision 2026-11-16 (#1079): track as many failures as we can so future bugs are easy to find. Many failures were only console-logged (payment webhooks, saved-card charges, follow-ups, cron jobs, Custom Flow, WhatsApp sends) or reached Sentry without any business/area context.
+- **What changed:**
+  - `lib/observability/report-failure.ts` (new): `reportFailure(error, ctx)` sends one Sentry event and one `failure.reported` log line. Only allowlisted fields leave it (area, op, business/payment/session/flow UUIDs, flow type, step, capability, gateway, cron job, error class, error code, HTTP status, request/run id, short commit SHA); every string must be a UUID or pass `isSafeIdentifier()`; request/run ids must be app-generated or UUIDs; error codes drop card tokens (`AUTH_…`), key-like prefixes and long hex runs. The error's free-form message is never sent (only its class name and stack frames). Never throws, never awaits, throttled to 20 Sentry events per fingerprint per minute per instance.
+  - `lib/sentry-redact.ts`: the shared `beforeSend` also strips breadcrumbs, request body/query/cookies, user and extra from events built by `reportFailure` (tag `failure_report`). Other events are unchanged.
+  - Wired beside existing logs (no return/throw/send changed): `lib/bot/bot.service.ts` (handleMessage crash — replaces the untagged raw `Sentry.captureException`), `lib/bot/flows/executor.ts` (batch send failure), `lib/channels/message-sender.ts` (provider send failure, still rethrown), `app/api/webhook/meta-cloud/route.ts` (processing, fallback reply, outer catch, Custom Flow file answer), `app/api/payments/webhook/route.ts` (12 Paystack failure points), `app/api/payments/stripe-webhook/route.ts` (10 Stripe failure points), `lib/payments/charge-saved.ts` (4 saved-card failure points), `lib/payments/authority.ts` (critical effects failed, completion RPC error), `lib/payments/send-confirmation.ts` (`logSafeError`, 36 post-payment points), `lib/payments/transaction-followup.ts` (5 silent DB-read failures), `lib/bot/custom-flow/engine.ts` (entitlement, handoff check, unchecked `custom_flow_logs` insert error, and the 7 Phase 3 answer/upload failure points: answer save, upload, file answer, upload listing and three upload clean-ups), `lib/observability/cron.ts` (`failed`/`itemFailed`), and the 500 exits of 22 cron routes.
+  - Tests: `lib/__tests__/report-failure.test.ts` (privacy: secrets, card numbers, CVV/PIN, phones, emails, message bodies and provider text never reach Sentry or the log; never-throws; throttle; beforeSend scrub), `lib/__tests__/report-failure-wiring.test.ts` (behaviour preserved at cron logger, follow-up resume, sender rethrow, Custom Flow log insert); `lib/bot/custom-flow/__tests__/ask.test.ts` asserts answer-save and upload failures are reported while the customer still gets the same reply.
+- **Affects:** Sentry gets more, better-grouped events (area/op tags, business id). Logs get one extra `failure.reported` line per failure.
+- **Unchanged:** every customer message, payment, retry, webhook response code and return value. No migration, no new tooling, no Sentry/PostHog production setting.
+- **What could break:** Sentry quota use rises during an outage (throttle limits it per instance). Existing raw `Sentry.capture*` calls elsewhere are left as they were.
+
+## 2026-11-17 — Custom Flow: daily sweep for orphaned photo/PDF uploads (#1085)
+
+- **Why:** Reviewer A's condition on PR #1088. A customer's photo or PDF could stay in the private `custom-flow-uploads` bucket with no answer pointing at it (the server stopped between upload and save, an overtaken photo's own delete failed, or a Storage delete failed). Neither the owner's delete nor the 12-month retention job could reach these files.
+- **What changed:**
+  - New `lib/custom-flow-responses/upload-sweep.ts` (`sweepOrphanedUploads`) and cron route `app/api/cron/custom-flow-upload-sweep/route.ts` (CRON_SECRET via `verifyCronAuth`, service client), scheduled daily at 02:00 UTC in `vercel.json`, after retention at 01:30.
+  - A file is deleted only when all hold: it sits at the engine's exact shape `<business uuid>/<flow uuid>/<session uuid>/<node id>-<uuid>.<jpg|png|webp|pdf>`; no `custom_flow_answers` row of that business has that exact `file_path`; and Storage says it was created more than 24 hours ago. A missing created time, a failed or possibly cut-short answers lookup, or any other shape keeps the file.
+  - Walks business by business with `list()` paging; caps per run (2,000 deletes, 5,000 list calls, 45 s) and a random starting business; the response says `complete: false` when a cap stopped it. Re-running is safe.
+  - Failures go to `reportFailure()` (`area: 'cron'`, `job: 'custom-flow-upload-sweep'`, business id only); the run carries on and returns 500 with counts. An unexpected throw stops the run (no further deletes), is reported without its message, and returns 500. Logs and the response carry counts only, never paths.
+- **Unchanged:** M546, the engine upload/save path, the answers API, the retention job and the 12-month rule. No migration.
+- **Tests:** `lib/__tests__/custom-flow-upload-sweep.test.ts` (17, real route handler with an in-memory Storage/answers boundary).
+- **What could break:** if Storage `list()` stops returning folders with `id: null` or files without `created_at`, the sweep keeps everything (fails safe) rather than deleting. Not run against staging or production Storage in this change.
+
+## 2026-11-17 — Custom Flow Phase 3: question steps, Flow answers page, 12-month retention (#1085)
+
+- **Owner rules** (#1079 comment 6936919531):
+  - Only the business owner and that business's own team see answers.
+  - Answers are kept 12 months, then deleted. The owner can delete sooner and download a CSV.
+  - Photos and PDFs only, up to 10 MB, private, short-lived links.
+  - Friendly dates.
+- **M546** (`supabase/migrations/546_custom_flow_answers.sql`): new table `custom_flow_answers`, one row per answered question.
+  - Composite FKs to the same business's flow and session. The flow link is `ON DELETE NO ACTION`: a flow that still has answers cannot be deleted directly, so its uploaded files can never be stranded. Deleting a whole business still removes everything.
+  - CHECKs: the value must match the answer type; files must be photo/PDF types only, ≤ 10 MB, and under the business's own folder.
+  - RLS is default deny:
+    - **Read:** the owner, or an active `business_members` row.
+    - **Delete:** the owner only.
+    - **Write:** service_role only.
+  - Private bucket `custom-flow-uploads`, service_role only, with a 10 MB limit and the four allowed MIME types where Storage supports them.
+  - A fail-closed self-check runs at the end. It covers bucket privacy, storage RLS, any client policy reaching the bucket (USING or WITH CHECK), and every client write privilege. No SECURITY DEFINER function.
+  - **Not applied** to staging or production.
+- **API** `app/api/custom-flows/responses/route.ts`, with helpers in `lib/custom-flow-responses/`:
+  - **Access:** the owner or an active team member (`resolveBusinessRole`). Reads also go through RLS, scoped by business.
+  - **GET:** answers grouped by customer, a CSV (formula-safe through `escapeCell`), and a 300-second signed link for one file.
+  - **POST:** `delete_response` and `delete_flow_answers`, owner only. Files are removed first; rows are kept if Storage fails. The reply says if answers `remaining` need another call, and the page repeats until none are left.
+  - Reading does not require the add-on to be on, following the existing read_history rule.
+- **Page** `/dashboard/custom-flows/responses` (`components/custom-flows/FlowAnswers.tsx`):
+  - Flow picker, answers grouped by customer, full dates, View photo/PDF, Download CSV.
+  - Owner-only delete, behind a confirm. PageHelp and EmptyState.
+  - New Sidebar item "Flow answers", gated on `custom_flow`.
+- **Retention** `app/api/cron/custom-flow-answers-retention` runs daily at 01:30 UTC (`vercel.json`). It deletes answers older than 12 months in bounded batches, files before rows. If one business's files fail, its rows are kept for the next run and the job carries on with everyone else.
+- **Dates** `lib/bot/custom-flow/dates.ts`: upcoming-day list rows ("Sat 21 Nov") plus "Another date", the full confirmation ("Saturday, 21 November 2026") via the existing `formatDisplayDate` seam, and typed-date parsing.
+- **Question steps** (new `ask` node; `lib/bot/custom-flow/types.ts`, `definition.ts`, `engine.ts`, `answers.ts`): Yes or no, Pick one, Pick a date, Short answer, Photo or PDF.
+  - Each shows as buttons or a list where WhatsApp allows; a date question lists the next 7 days plus "Another date", and confirms the chosen day in full.
+  - A valid answer is saved to `custom_flow_answers` (one run = the custom-flow session id) and the flow moves on; a question with no next step ends the chat politely.
+  - A wrong answer is re-asked with the merchant's (or our) retry message and is never saved; after two misses the customer is reminded of *menu* and *human*. Global words (menu, cancel, human) work as before.
+  - If the answer cannot be saved the customer is told and stays on the question.
+- **Photo/PDF intake** (`lib/bot/custom-flow/file-intake.ts`, `app/api/webhook/meta-cloud/route.ts`, `MetaCloudService.downloadMediaWithin` in `lib/channels/meta-cloud.ts`):
+  - An inbound image/document goes to the engine only when the customer's latest active custom-flow step (on a dedicated number, that business's) is a Photo or PDF question of an entitled business. Every other image, document, video, sticker or location keeps the existing "I can't process images or files yet" reply, as does any intake error.
+  - Checks: declared type must be JPEG/PNG/WebP/PDF before download; Meta's file size, the declared length and the bytes read must be ≤ 10 MB; the real type is read from the file's first bytes.
+  - Stored privately at `<business>/<flow>/<run>/<question>-<random>.<ext>` before the answer is saved; removed again if the answer can't be saved. Re-sending replaces the answer and removes the old file.
+- **Privacy and safety details** (review fixes):
+  - Answers typed at a question are logged in `custom_flow_logs` as `[answer]`, never verbatim, so deleting or expiring an answer removes the only copy.
+  - A file answer claims the step (session version check) before downloading and checks the claim again right before saving: of photos sent close together only the latest claim saves, and a superseded one removes its own upload. After a save, the replaced file and leftovers of earlier attempts (uploaded over a minute before the claim) are removed; the saved file and any photo still in flight are never touched. A replaced file is removed even if the question changed type.
+  - A file that arrives after the chat timed out gets the usual "continue or start again?" question. The shared sender is bound to the business only when that business will reply. Once a file is being handled, a later send failure no longer triggers the old "can't process" reply. File intake is skipped when under 30 seconds of the webhook time budget remain.
+  - Plain reasons: "That date has already passed…" and "We couldn't get that file. Please send it again." With past dates allowed, a date typed without a year is the closest one.
+  - Validation: question step ids must be plain characters; "Pick one" choices shown as buttons (3 or fewer) hold 20 characters.
+  - Flow answers page: 44px touch targets with focus outlines; View photo/PDF opens its tab during the tap so pop-up blockers allow it.
+- **Builder** (`StepPalette.tsx`, new `AskSettings.tsx`, `FlowBuilder.tsx`, `FlowMap.tsx`, `ui.tsx`, `block-label.ts`, `friendly-errors.ts`, `definition.ts`, `readiness.ts`, `preview.ts`):
+  - The "Ask a question" palette group works (the "Soon" placeholders and their code are removed), with a "?" tip and example on every field, a picture of the friendly date list and the full-date confirmation, and a note that Try it can't send files.
+  - Try it runs the real engine; answers there go to the preview's in-memory store only.
+  - The Custom flows page passes the business country so the builder formats dates like the bot.
+- **Tests:**
+  - `lib/__tests__/custom-flow-answers-546.pg.test.ts` (real PostgreSQL; added to the CI pg step and the unit-job excludes)
+  - `lib/bot/custom-flow/__tests__/ask.test.ts` (real engine, in-memory DB and Storage)
+  - `lib/__tests__/custom-flow-file-webhook.test.ts` (real webhook route)
+  - `lib/channels/__tests__/download-media-within-1085.test.ts` (Meta size limits with mocked fetch)
+  - `components/custom-flows/AskBuilder.test.tsx`; `PageBuilder.test.tsx`'s "Soon" test is replaced by one proving the five question steps work
+  - `lib/custom-flow-responses/handlers.test.ts`
+  - `components/custom-flows/FlowAnswers.test.tsx`
+  - `lib/bot/custom-flow/dates.test.ts`
+- **Could break:**
+  - The webhook now looks up an active custom-flow session for inbound images/documents before its existing reply (one extra read). Audio, text and every other path are unchanged.
+  - Saving a file adds a download of up to 10 MB inside the webhook's time budget.
+  - `custom_flow_logs` still has no scheduled purge (M541, unchanged); answers no longer appear in it.
+  - **Named residual:** an upload can still be left in the private bucket if the function stops between upload and save and the customer never answers that question again, or if a Storage delete fails (logged). Nothing links to it and it is private, but it outlives the 12-month rule. Follow-up: a daily sweep of `custom-flow-uploads` objects with no answer row (recorded on #1085).
+  - The new cron runs daily; until M546 is applied it fails harmlessly with `read_failed`.
+  - The page lists the newest 1,000 answers and points to the CSV (up to 20,000) for more. When a cap is hit, the oldest customer's possibly incomplete answers are left out, and the CSV ends with a note saying it was capped.
+  - Deleting a flow directly in the database now fails while that flow has answers.
+
+## 2026-11-17 — Custom Flow Phase 2: "Use what you already have" steps (#1086)
+
+- **What changed.** The four orange palette steps (Event tickets, Giving, Take a payment, Talk to a person) now work instead of showing "Soon". Each one adds a new terminal `handoff` node, `{ id, type: 'handoff', capability: 'ticketing' | 'giving' | 'payment' | 'chat', record_id? }` (`lib/bot/custom-flow/types.ts`). It passes the customer to the existing capability flow, which runs unchanged from its first step.
+- **Runtime** (`lib/bot/custom-flow/engine.ts` `renderHandoff`, new `lib/bot/custom-flow/handoff.ts`):
+  - The engine re-checks the capability with the canonical `requireCurrentCapability(..., 'create_new')`.
+  - It then re-checks the record by `id` and `business_id`, using `checkHandoffRecord`: the event must be published, not past and not sold out; the service must be active, not deleted, and the right giving or non-giving kind.
+  - If a check fails, the customer gets a plain-English "not available" message (`handoff-copy.ts`). They go back to the flow's first step when it waits for a reply; otherwise the flow closes.
+  - If the checks pass, BotService (`bot.service.ts`, custom-flow branch) calls `startCapabilityHandoff`, which reuses the quick-rebook re-entry pattern:
+    1. It keeps only `repeatSessionData`, sets `active_capability`, the capability's first step, `_step_history` and a freshly resolved effective `capabilities`, plus `_repeat_selection_id` for giving/payment.
+    2. It writes the existing bot session with `update_session_cas`. If there is no bot session (keyword start on a dedicated number), it inserts one with the same stale/inactive cleanup and `_inbound_channel_id` as the new-session path.
+    3. It closes the custom session.
+    4. It calls `flowExecutor.execute(from, recordId ?? '')`. The record id therefore goes through the flow's own first-step validator, which reloads it under `business_id`.
+- **Builder:**
+  - New `HandoffSettings.tsx`: "Which feature", a record picker ("Which event / giving option / payment option", or "Let people choose"), "?" tips with examples, and an "On WhatsApp" line.
+  - `StepPalette`: a working "Use what you already have" group. Only "Ask a question" stays Soon.
+  - `FlowMap`: an orange-bordered card with a "Continues in …" pill.
+  - `WhatsAppPreview`: handoff preview notes.
+  - `friendly-errors`: three new rules.
+  - `block-label`: feature names.
+- **API:**
+  - `/api/custom-flows/sources` gains `kind=event|giving|payment`, read with the merchant's RLS client and scoped by `business_id`.
+  - `/api/custom-flows` validate/publish/preview return 422 `unavailable_handoff_record` when a step's record is not this business's, or is no longer available.
+  - Preview shows a builder note instead of running the real flow.
+- `readiness.ts` and `templates.ts` treat a handoff as an end node (TypeScript blast radius).
+- **Unchanged:** every existing flow file (`ticketing.flow.ts`, `payment.flow.ts`, `chat.flow.ts`, `capability-selection.flow.ts`, `executor.ts`), payments, custody, fees, routing, webhooks, "I've Paid", confirmations, the stored format of message/menu/lookup nodes, and the custom-flow routing precedence. No migration.
+- **Tests:**
+  - New `lib/bot/custom-flow/__tests__/handoff.test.ts` (29): validator; each capability's handoff; cross-business, past, sold-out, draft, deleted, inactive and wrong-kind records; disabled capability; failed start; first-step loop guard; and the runner (existing/new session, CAS loss, effective caps, foreign session/channel, close failure).
+  - New `components/custom-flows/HandoffBuilder.test.tsx` (7).
+  - `app/api/custom-flows/route.test.ts` (+6): foreign record rejected on validate/publish/preview, own record publishes, preview note, feature-off preview.
+  - `lib/custom-flow-builder/handlers.test.ts` (+4): picker scoping.
+  - `lib/__tests__/custom-flow-botservice-routing.test.ts` (+4): real BotService + real executor. Event tickets reaches the `select_ticket_type` step with the event loaded, and chat sends the existing start message.
+  - `PageBuilder.test.tsx`: the Soon test now covers only the "Ask a question" steps.
+- **Could break:**
+  - A customer who starts by keyword with no bot session now gets a bot session created at handoff. It has no `biz_resolution`, so it is treated as untrusted for first-message promo.
+  - A handoff whose bot-session write loses a race shows the "not available" message, and the customer stays in the custom flow.
+  - Event "upcoming" uses the UTC day, the same as ticketing.
+- **Review fixes (reviewers A and B):**
+  - The runner now returns `'started' | 'unavailable' | 'stale'`. A lost bot-session race (`version_conflict` or a concurrent insert) stays quiet instead of telling the customer "not available".
+  - It never inserts a bot session on a shared number, because that session must be bound to the shared conversation by the normal path.
+  - New `isEventAvailable` is shared by `checkHandoffRecord` and the event picker, so the picker no longer offers sold-out or already-started events that Go live would reject.
+  - `HandoffSettings`:
+    - starts in a loading state, so no false "no longer available" alert appears before the list loads;
+    - shows "Your chosen …" while loading or on error;
+    - adds a Try again button;
+    - shows a giving-specific empty message pointing to Donation Options;
+    - falls back safely on an unknown feature value.
+  - The Go live notice names the step ("Step 3 (Event tickets) uses …").
+
+## 2026-11-17 — Custom Flow builder polish after the Owner's staging test (#1079)
+
+- **Owner feedback** (#1079, 2026-11-17): the builder felt clumsy; after clicking Edit you could not tell what was happening or where you were.
+- **Changes (UI only):**
+  - `components/custom-flows/FlowBuilder.tsx`: "Your flows" shows only while no flow is open; an open flow has a "← All flows" button (locked, like the list, while work is unsaved). Layout: the "Add a step" palette sits right beside the canvas and stays in view (lg+); the phone is beside the canvas on xl+, below it on lg. One step is edited at a time: Edit opens it under its own step, scrolls to it and focuses its first field; the editor starts with an "Editing step N · Name" header, the step's "?" tip and a Done button (focus returns to Edit). The separate wide-screen "Step settings" panel and the tip bar are gone. Greeting and "When we don't understand" take a full row. Shorter header copy; Go live details moved into a "?" tip.
+  - `lib/custom-flow-builder/live-preview.ts` (new): works out, in the browser, what the draft sends — greeting, first step and message chain, buttons/lists, date list, handoff note — using the engine's shared client-safe helpers (`upcomingDateOptions`, `YES_NO_LABELS`, `handoffPreviewNote`, `variablesIn`/`businessValue`) and the engine's rules (greeting skipped when the start menu repeats it, 10-hop chains, 20/24-letter limits, bound business details). `substitute` is copied because `engine.ts` imports server-only modules.
+  - `components/custom-flows/WhatsAppPreview.tsx`: with no test chat running, the phone shows the live preview with a "Preview: start / step N" label, not announced on every keystroke (`aria-live="off"`); options are shown, not tappable. Try it / Restart preview are unchanged.
+  - `components/custom-flows/StepPalette.tsx`: one shared `PaletteItem` with a grip, "Drag onto your flow, or tap to add.", and a drag state; section help shortened with "?" tips.
+  - `components/custom-flows/FlowMap.tsx`: edited step gets a brand outline and an "Editing" badge; while a palette step is dragged every drop target lights up and the one under the pointer shows a drop line. Pills, chips and summaries wrap instead of truncating.
+  - `FlowList.tsx`, `TableEditor.tsx`: no truncation. `AskSettings.tsx`: "If the answer can't be used" is a 2-line box so its example is never cut off.
+- **Unchanged:** engine, API, DB, stored flow format, reorder (drag + keyboard), save / Go live / restore, templates, handoff and question steps, plain-English errors, focus management, announcements, dark mode, mobile order.
+- **Tests:** new `components/custom-flows/BuilderPolish.test.tsx`. Updated for the new behaviour: `FlowBuilder.test.tsx` (template labels test checks each editor in turn), `FlowMap.test.tsx` (list tests use "All flows"; one editor open), `PageBuilder.test.tsx` (tips/code-words checked per open editor).
+- **Could break:** anything expecting several step editors open at once, or the flow list visible while a flow is open. Live preview mirrors engine rules by hand; if the engine's rendering changes, `live-preview.ts` must follow.
+- **Review fixes (Reviewer B on b1eea45):** Show buttons rows stack inside the editor (no page-width `sm:grid-cols-`); Step order rows wrap so Move up/down sit under the step name (`BlockOrder.tsx`, layout only); phone header says "Preview" (not "Live preview"); the open editor is `role="group"` named by its "Editing step N · Name" heading; editing a later step previews it and the messages after it (10-hop cap); answer/row details show as "[name]"; a picture shows only once its link is a complete https image address. New `lib/custom-flow-builder/live-preview.test.ts`. Three slow existing tests get the 15 s timeout already used by the template-labels test (assertions unchanged).
+
+## 2026-11-16 — WhatsApp media arrives before the next message (#1070, PR 1)
+
+- Owner decision 2026-11-16 (option A, every gateway): after payment the customer gets the confirmation, then the tickets (ticket image, then ticket PDF — `lib/bot/flows/shared/send-tickets.ts`), then the receipt PDF, then the card step / updates opt-in / menu. Product and event images arrive before their options.
+- Cause: images and documents were sent by `link`, so Meta fetched them after later text/buttons had already been delivered; the receipt was also sent before the tickets.
+- **Upload before send** (`lib/channels/meta-cloud.ts`, new `lib/channels/media-upload.ts`): `MetaCloudService.uploadMedia` (POST `/{phone_number_id}/media`); `sendImage`/`sendDocument` upload first and send by media `id`. The server fetches only https URLs on this app's host (`NEXT_PUBLIC_APP_URL`, plus its www/apex twin) or this project's Supabase Storage paths, follows redirects only to another allowlisted URL, caps images at 5 MB and documents at 16 MB, and gives fetch + upload 6 s. Any other URL (e.g. a merchant's own image host) is never fetched and is sent by `link` exactly as before; any failure also falls back to `link`. After one upload timeout the rest of that request uses `link`, and all uploads in one request share a 10 s total allowance (`MEDIA_UPLOAD_TOTAL_BUDGET_MS`) so a large ticket order cannot run a 60 s payment webhook out of time inside a ticket emission window.
+- **M545** (`supabase/migrations/545_whatsapp_delivery_waits.sql`): `whatsapp_delivery_waits` (wamid, status sent/delivered/read/failed), RLS on, no policies, service_role only, self-check. Rows exist only while a sender is waiting and are deleted afterwards.
+- New `lib/channels/delivery-wait.ts`: `awaitWhatsAppDelivery` polls every 400 ms until the awaited media is delivered/read/failed or the wait ends (6 s per wait; 15 s per payment confirmation; 10 s per bot prompt batch). A timeout never blocks: the next message is sent anyway. Nothing throws.
+- Meta status webhook (`app/api/webhook/meta-cloud/route.ts`): advances an existing wait row only, forward only, `failed` always wins; failures are non-fatal.
+- `lib/payments/send-confirmation.ts` (shared by all gateways): the ticket stage (inventory, rows, WhatsApp/email delivery, unchanged) now runs right after the confirmation text, behind its own claim renewal (checkpoint 4a), then post-completion (receipt). Media groups are awaited after the tickets and after the receipt (`afterReceipt` hook in `lib/bot/flows/shared/post-completion.ts`). Effect keys, claims, idempotency, retries and finalization gating are unchanged; only the order and one extra claim renewal.
+- `lib/bot/flows/executor.ts`: in a prompt batch an image/document followed by another message is awaited before the next send (not when it is last, not when the sender returns no WhatsApp id). `ticketing.flow.ts` event image: the fixed 3 s pause becomes the delivery wait (the 3 s pause stays when delivery cannot be observed).
+- Tests: `lib/channels/__tests__/media-upload-1070.test.ts`, `lib/channels/__tests__/delivery-wait-1070.test.ts` (helper + real webhook route), `lib/__tests__/executor-media-delivery-wait-1070.test.ts`, `lib/__tests__/post-payment-message-order-1070.test.ts` (Paystack shared/BYO/Connect, Stripe, Flutterwave, Square), `lib/__tests__/whatsapp-delivery-waits-545-db.test.ts` (added to the CI zero-skip DB step). `p0-payment-confirmation.test.ts` renewal counts updated for checkpoint 4a.
+- Could break: payment confirmations and media prompts can take a few seconds longer (bounded as above); the owner's payment alert is now sent after the customer's tickets instead of before; one extra status-row update per Meta status callback. Catalog-oracle delta `supabase/catalog-deltas/545_*.json` still to be generated by CI.
+- `app/api/payments/byo-webhook/[businessId]/route.ts`: `maxDuration = 60`, like the other payment webhooks.
+- Known follow-ups: no sweep for `whatsapp_delivery_waits` rows left if the function is killed mid-wait (rows hold only a wamid + status); a Meta "delivered" status arriving before the row is registered makes that one wait run to its 6 s limit (the bot path now registers right after the send); custom-flow engine, sequence service and owner notifications get the upload but no waits; bulk event invites (`app/api/events/invite`) now upload the same flyer per guest (within the 10 s allowance, then `link`); confirmation on `/payment-success` and payment webhooks can take up to ~25 s longer.
+
+## 2026-11-16 — Stripe saved-card charges: recognise the Endive rejection that has no `param` (#1070)
+
+- **Why:** On staging the Owner's "Pay with 4242" ticket charge failed (`gateway_status=stripe:400:invalid_request_error:request_rejected`). Stripe Workbench request `req_BJ8Z3NDbhXJ5yy` shows that `POST /v1/payment_intents` on API `2026-09-30.endive` rejects `payment_method_types` with message "The `payment_method_types` parameter is no longer supported. …" but **no `param` and no `code`**. The #1068 fallback only retried when `param` was `payment_method_types` (true for Checkout Sessions, not PaymentIntents), so every saved-card charge failed and the bot fell back to a pay link. Same failure at 11:41, 11:43 and 12:40 that day.
+- **What changed:** `lib/payments/stripe-checkout-failure.ts` `mayFallbackFromLegacyPaymentMethodTypes`: when `param` is present the old rule is unchanged; when it is absent, accept only Stripe's documented code `payment_method_types_no_longer_supported` or a message starting exactly with "The `payment_method_types` parameter is no longer supported." The message is matched, never logged.
+- **Affects:** saved-card PaymentIntents (live dispatch and recovery via `postSavedCardPaymentIntent`) and card-only Checkout Sessions (`lib/payments/stripe.ts`, `createCardOnlyCheckoutSession`) — all still gated on the request having carried `payment_method_types[0]`, HTTP 400 and `invalid_request_error`. The retry uses the existing derived idempotency key `<key>_endive_card`; the first request created nothing.
+- **Unchanged:** any other 400 (other params, other messages, card errors) is not retried; older API versions use the legacy request once; evidence/logging stays bounded.
+- **Could break:** if Stripe rewords the message and still omits `param`/`code`, saved-card charges fail closed as before (pay link fallback). Tests: `stripe-endive-fallback-1068.test.ts`, `stripe-checkout-failure-718.test.ts`.
+
+## 2026-11-16 — Stripe Endive API: card-only fallback for saved cards and three Checkout flows (#1068)
+
+- Root cause (staging BalaShop, WA-TK-7579): Waaiio's Stripe account default API version `2026-09-30.endive` rejects `payment_method_types` ("no longer supported", HTTP 400 `invalid_request_error`, nothing created). Checkout links in `lib/payments/stripe.ts` already fell back; four flows did not.
+- Saved-card PaymentIntent (`lib/payments/stripe-saved-card.ts` `postSavedCardPaymentIntent`, used by live charge and `saved-card-recovery.ts` replay): legacy request first; only on that parameter-scoped 400, one retry with `allowed_payment_method_types[0]=card` under `<key>_endive_card`.
+- Recurring Checkout (`stripe-recurring.ts`), merchant messaging top-up (`app/api/messaging/topup/route.ts`) and plan subscription (`app/api/onboarding/subscribe/route.ts`) use the shared `createCardOnlyCheckoutSession` (`stripe-checkout-failure.ts`) with the same scoped retry.
+- A saved-card charge Stripe refuses with any other 400 `invalid_request_error` at creation now fails cleanly (payment failed, card kept, customer gets the payment link like Paystack) instead of "verifying" — but only after the row is provably marked failed (guarded write); recovery terminalizes it instead of leaving it pending. Auth/config errors (401/403) and idempotency errors keep the old indeterminate handling.
+- `gateway_status` evidence now fits its `varchar(50)` column (`stripe:<http>:<code|param>:<class>`); previously the ~85-char write failed silently. Terminal reasons are truncated to the column. Stripe's free-form message is still never stored or logged.
+- Unchanged: on-session charge with 3-D Secure link, splits/application fees, first-attempt idempotency keys, Paystack, `stripe.ts` Checkout.
+- Could break: accounts on an older Stripe API version are unaffected (no retry); a saved-card 400 other than the Endive rejection now shows the customer a payment link instead of waiting.
+- **Deploy note — stuck rows will complete:** saved-card Stripe payments left `pending`/`dispatched` by this bug (stored legacy `pi_params`, < 23 h old) are replayed by the reconciliation cron (rows > 2 h old) or by an "I've paid"/retry tap, and will now succeed — charging the customer and confirming the original order hours later. Before deploying to any environment, list such rows and decide per row (let complete vs mark failed). Staging has one: payment 60143573… (BalaShop WA-TK-7579, $50 test mode).
+- **Do not roll back the Stripe account API version** below Endive while any saved-card payment is `dispatched`: the first-attempt key saved nothing (validation failure), so a replay on an older version would create a second PaymentIntent next to an unlinked `_endive_card` one.
+
+## 2026-11-16 — Staging test businesses seed (Issue #1080)
+
+- **Why:**
+  - Owner decision 2026-11-16 (#1079): add clearly-labelled test businesses on staging so every capability can be tested.
+- **What changed:**
+  - `scripts/staging/seed-test-businesses.sql`: new, staging-only, idempotent seed that creates six `TEST –` businesses (NG restaurant, NG salon, NG church, US events, GB gym, US home services) with fixed ids, following the same writes as sign-up (`provision-business.ts`) and free-plan verify (`onboarding/verify`), plus a few products, services, staff, events, ticket types, campaigns and a draft poll. Waaiio-owned (shared) payment route only; no keys, `example.com` emails, fictional phones. Aborts unless the staging-only shared WhatsApp channel exists.
+  - `scripts/staging/remove-test-businesses.sql`: new removal script. Default retires them (suspended + hidden); optional hard delete refuses if any payment, order, booking, invoice, payout, fee or messaging record exists.
+- **Affects:** staging data only, once applied by hand. No application code, migration or production change.
+- **What could break:** nothing in the app. On staging, the six businesses share the designated shared number with the other staging merchants, and appear in the directory and the owner's business switcher.
+
+## 2026-11-16 — Reject reserved test email domains in bot email capture (#1062)
+
+- Root cause of the staging TestBiz booking payment-link failures (WA-BK-6154, WA-BK-6924, WA-BK-5796): the customer's saved business email was a QA address at `example.invalid`. On a merchant own-account (BYO) Paystack route the typed/saved customer email is sent to Paystack, which rejects reserved domains (`invalid_params`). Bookings with real emails succeeded on the same route.
+- New `isReservedEmailDomain` (lib/bot/flows/shared/user.ts) flags the reserved top-level domains `.invalid`, `.test`, `.example`, `.localhost` (RFC 2606/6761). `isReusableCustomerEmail` now returns false for them, so saved profiles/history with such addresses are neither reused nor persisted, and the bot asks for an email again (customers can still type *skip*).
+- Typed reserved emails are rejected with the existing invalid-email reply in the scheduling, ordering and reservation `collect_email` steps. No wording, payment routing, fee or provider request changes. `example.com` and real domains are unaffected.
+- Could break: a customer who deliberately types an address on one of those four reserved domains is now asked again; existing saved reserved addresses stop being reused.
+
+## 2026-11-16 — Paystack never receives a reserved test-domain payer email (#1062 follow-up)
+
+- `lib/payments/paystack.ts`: on own-account (BYO) and Connect routes, a `userEmail` on a reserved domain (`.invalid`, `.test`, `.example`, `.localhost`) is treated as no email and the existing internal phone alias is sent instead. Covers, in one place, every caller that can reach a merchant own-account/Connect route: web Request Balance (stored booking email), invoice pay, donations, and bot bookings started before #1064 where the customer types *skip*. Pay links and recurring setup always use the shared route and already sent the alias.
+- `lib/bot/flows/shared/user.ts`: `isReservedEmailDomain` ignores trailing dots (`a@x.invalid.`).
+- Unchanged: shared Waaiio Paystack (always alias), real emails on BYO/Connect, splits/fees, Stripe/Flutterwave/Square/PayPal.
+- Could break: a merchant's own Paystack dashboard shows the phone alias instead of a reserved test address for those payments (previously Paystack rejected the request; #1062).
+
+## 2026-11-16 — Messaging credit: charge merchants only for paid messages (#1075)
+
+- **Owner decision, 2026-11-16 (#1075).** Merchants are charged only for messages WhatsApp bills. Bot/service replies and plain-text (non-template) messages are free. Marketing/campaign and template messages stay charged.
+- **Cause.** Bot replies are already tagged `service`. But no country had a `service` rate, so they were priced at the "all other messages" rate (`*`) or the default cost, about ₦19. The admin editor had no field to set a `service` rate.
+- **Admin editor** (`admin/src/pages/Countries.tsx`).
+  - New "Service Replies Rate" column (`rates[country].service`). It loads and saves like the other rates, and 0 is allowed.
+  - Validation is unchanged: whole numbers only, and utility/marketing are still required for active markets.
+  - With `service = 0`, the final-state `authorize_message_send` (M461) reserves nothing. A service reply then still goes out when the balance is zero.
+- **Category re-tags.** No other logic changed.
+  - The broadcast plain-text fallback (`app/api/broadcasts/send/route.ts`, `app/api/cron/scheduled-broadcasts/route.ts`) goes from `service` to `marketing`, so campaign text stays charged.
+  - These plain-text sends go from `utility` to `service`:
+    - the invoice text and the invoice PDF document (`app/api/invoices/send/route.ts`);
+    - the contract text fallback (`app/api/contracts/send/route.ts`);
+    - the payment-request text (`app/api/payment-request/send/route.ts`);
+    - the report link (`app/api/reports/send/route.ts`);
+    - the waiver confirmations (`app/api/waivers/sign/route.ts`).
+  - Template sends keep their real category: invoice/contract templates stay `utility`, and broadcast templates keep the WABA category.
+- **No migration and no config change.** Making service replies free still needs an admin to set `service = 0` for each active country in production. That needs its own Owner authorization at release time. Until then, service sends cost the `*` or default rate as before.
+- **Tests.**
+  - New `lib/__tests__/messaging-paid-only-1075-db.test.ts`: real PostgreSQL, all migrations applied, run by a new zero-skip CI step in migration shard a.
+  - New `lib/__tests__/invoice-send-category-1075.test.ts`: real route handler; the template stays `utility`, and the text fallback and PDF are `service`.
+  - `admin/src/__tests__/countries-messaging-controls.test.tsx`: two new tests.
+  - Updated category assertions in `merchant-send-785.test.ts`, `scheduled-broadcast-consent.test.ts` and `lane01-outbound-delivery-status.test.ts`.
+- **What could break.**
+  - Campaign text sent as a fallback is now priced at the marketing rate instead of the service/`*` rate.
+  - Once `service = 0` is set, the low-balance alert (`lib/messaging/low-balance-alerts.ts`, which estimates from the service rate) falls back to money thresholds only.
+  - Edge-function reminders (`supabase/functions/*`) still send `utility`/`marketing` and are unchanged.
+  - SMS / WhatsApp / both stays out of scope (parked by the Owner).
+
+## 2026-11-16 — WhatsApp directory search: flexible place matching and result fixes (#1072, step 1)
+
+- Places (`lib/marketplace/place-aliases.ts`, new, data only): US states + abbreviations, Nigerian states (Abuja/FCT), well-known Lagos/Abuja areas, Ghana/UK/Canada forms, each area mapped to its state. "X, Y" = place X within region Y. A place matches neighborhood, city, state or address (`searchMarketplace` `place` criterion; values re-validated and `sanitizeFilterValue`d). "shops in Lagos" now finds a business whose city is Lekki and state Lagos; "Maryland"/"MD"/"Laurel, Maryland" find a business in Laurel, MD on a US number ("Maryland" stays the Lagos area on a Nigerian number).
+- Ranking (`lib/marketplace/search.ts`): fixed SQL order (name, id) and a 200-row pool scored before the page is cut; the area/city named first, then the rest of its state. Nothing in the place → the same category/name across the country, labelled ("Nothing found in X…"); a place alone is never widened.
+- Open now: only when today's hours are known, in the business timezone (`isOpenNow`, same timezone/country rule as same-day tables). A business without hours is no longer shown or boosted as open.
+- Handler (`lib/bot/handlers/directory-search.ts`): exact business name (case/space-insensitive, unique) opens the business; ambiguous names are listed. Names containing in/for/at ("Food for Thought") search as names. Parse/place problems never show "temporarily unavailable" (only a database error does). No results: "Search again" / "Browse categories" buttons (categories that have eligible businesses), plus past businesses. Rows: "Category · Area, State". "10+ found, add an area" no longer shown when an area was given.
+- Postbacks: results, close matches, returning-greeting and directory past-business buttons carry the business id (`dir_biz_<uuid>`), checked against the session's stored list and re-checked for eligibility (past businesses as before). Old `dir_result_N`/`dir_sug_N` taps work only for sessions written before this change; otherwise "That list has changed. Please search again" — never a different business. The "Did you mean?" picker (`select_business_suggestion`, `biz_N`) is unchanged.
+- `bot.service.ts`: "search …", "find …" or "<category> in <known place>" typed on a shared-number business menu goes to the directory (dedicated numbers and real menu choices unchanged; once per message). `home` sends one greeting (duplicate prompt removed), keeps `_directory_country` and the conversation language. Directory copy is localized via `flow-localization` (new keys in all locales; English placeholders for ig/ha/tw/yo).
+- `capability-recovery.ts`: "Sorry, that service is not available here right now." (was "are"; also queue check-in / waitlist).
+- Tests: `lib/marketplace/__tests__/place-search-1072.test.ts`, `lib/bot/__tests__/directory-search-1072.test.ts`, new cases in `directory-flow.test.ts`; existing directory suites updated where they pinned the old criteria (`locationText`+`_addressHint`, 3× fetch, plain-text no-results, `biz_0`/`dir_result_N` buttons, the second home prompt).
+- Unchanged: eligibility (active, bot_code, discovery_enabled, not suspended, admin hidden list), bot_code direct entry, search rate limit, payment/booking flows, `/api/directory` filters (it now also fetches in name order with the 200-row pool).
+- Could break: a business stored with only a free-text address and no city/state/area is found by a place only if the address names it; a US state abbreviation only in the address (", MD 20707") is not matched. No migration.
+- Review fixes: on a business menu only clear searches go to the directory — never a question (do/does/can/is/where/… or "?"), a fuzzy-corrected category, "to"/"at" connectors, or menu words ("find a table", "find tickets", "find out more", and delivery/pickup requests like "I need delivery in Lekki"); the redirected search keeps the conversation language. Exact-name auto-entry never fires for a generic word, category word or place ("Salon", "Lagos" list instead), and from the "Did you mean?" picker / connect fallback only in the shared number's country (connect fallback now passes the country). A past-business `dir_biz_` tap is re-checked for directory eligibility. "Laurel, Maryland" on a Nigerian number (Laurel not found in the Lagos-area Maryland) now says "Nothing found in Laurel…" before listing the region.
+
+### Known follow-ups
+- The 200-row ranking pool can truncate very large states before ranking.
+- The place filter URL grows with large admin-hidden lists (`not.in`) and big states.
+- Open-now for hours past midnight checks only today's hours (yesterday's late window is not considered).
+- The AI-path marketplace search (`bot.service` `searchMarketplace` with `locationText`) still uses the old city/address-hint path.
+- "Browse categories" (`dir_categories`) has no rate limit.
+- A menu search redirect closes the business session before the (possibly rate-limited) directory search runs.
+
+## 2026-11-16 — Custom Flow Builder Phase 1: branded, plain-English page builder (#1079)
+
+- `/dashboard/custom-flows` (`components/custom-flows/FlowBuilder.tsx`) is now a three-panel page builder: purple header bar (flow name, "People start it by sending the word …", Live / Not live yet, Try it, Save, Go live in WhatsApp green, Settings, Check for problems, Go back to live version); lavender "Add a step" palette on the left; the flow canvas with an amber 💡 tip in the centre; the WhatsApp phone and, on screens 1280px and wider, the open steps' settings on the right. Mobile stacks actions, palette, canvas, phone, lists, flows.
+- New `StepPalette.tsx`: Send a message / Show buttons / Search my list are dragged onto the canvas (native HTML drag and drop) or pressed to add at the end (keyboard/touch equivalent). Ask a question and Use what you already have (Event tickets, Giving, Take a payment, Talk to a person) are shown with a Soon badge, are not draggable, add nothing, and only show "coming soon" in the tip box.
+- `FlowMap.tsx`: "Someone sends WORD" start pill, steps as cards with a purple left border and icon, dashed lavender "Drop a step here" targets (at the end, and under each Show buttons step, where a dropped step also gets a new empty button pointing to it, max 10). Steps can be dragged by their grip onto another step to reorder (`reorderFlow`, unchanged); the existing Step order list (drag, keyboard, Move up/down) stays.
+- Buttons of a Show buttons step can be reordered with the existing `BlockOrder` control (drag, keyboard, Move button up/down); each shows "Button text → destination". Buttons get a session-only key (WeakMap) because stored options have no id; nothing new is stored.
+- New `LookupSettings.tsx` + `ReplyBuilder.tsx` + `lib/custom-flow-builder/reply-template.ts`: the reply is edited with "Insert: Name / Day …" chips from the list's columns and a live "Example reply" from the first visible saved row (existing data GET). Stored text is still the `{{column}}` template; each chip keeps its token's original spelling, so an unedited reply saves back unchanged.
+- Every field has a plain label, a "?" tooltip (`HelpTip` in new `ui.tsx`) and an "Example: …" placeholder. `blockLabel` now returns Send a message / Show buttons / Search <list> (display only).
+- New `TemplateGallery.tsx`: Church retreat, Festival / event, Restaurant info, Salon info, Start from scratch. Festival and Start from scratch use the existing setup request unchanged. Church retreat, Restaurant info and Salon info (new `lib/custom-flow-builder/starters.ts`) are client-side starters: existing blank setup, then the existing data `create_table` action per list (lists start empty), then the existing `save` action with a menu + Search my list steps. No migration, RPC, API or validation change; the server still only accepts `festival_info` / `blank` templates (`app/api/custom-flows/setup/route.ts`, `readGuided` in `lib/bot/custom-flow/data.ts`).
+- New `Walkthrough.tsx`: 3-step first-time tour, dismissible, remembered in `localStorage` (`waaiio.customFlows.walkthrough.v1`) with try/catch.
+- `TableEditor.tsx`: lists wording (Choose a list, Add a list, List name, Short code, Save list), example row hint, and a "Kind of answer" choice (Words, Number, Amount of money, Date, Time of day, Yes or no) for newly added columns only; saved columns keep their kind. `FlowSetup.tsx`, `FlowList.tsx`, `WhatsAppPreview.tsx`: plain-English copy and brand styling.
+- `FlowBuilder.tsx`: the preview transcript's scroll-to-latest now runs as a layout effect (same commit as the new reply) instead of a passive effect; under heavy test load the passive effect could run after the reply was already visible, which made `scrolls only the transcript…` flaky. Scrolling target and focus rules are unchanged.
+- Unchanged: engine, API actions and payloads, stored definition format, validation limits, capability gating, publish/reset confirmations (copy only), dirty guards, guided Festival template and section toggles.
+- Tests: new `components/custom-flows/PageBuilder.test.tsx` (palette drag + press, branch drop, Soon blocks, step drag/keyboard reorder, button reorder, tooltips/examples, no code words, reply chip round-trip, gallery + starter request order and retry, walkthrough + blocked storage). Existing custom-flow tests updated for renamed copy only.
+- Could break: anything that relied on the old visible copy (e.g. "Publish flow", "Save draft", "Lookup"); a starter that fails part-way leaves a blank flow already created (Try again continues; Cancel leaves that blank flow in Your flows). Not checked in a real browser: pointer drag, the contentEditable reply editor's caret behaviour, and the wide-screen settings column.
+- Flows with no guided sections (Start from scratch and the Church/Restaurant/Salon starters) now open ready to edit instead of behind "Advanced editor". Festival flows with sections stay protected as before.
+- **Review fixes (client display/UX only; no `lib/bot`, `app/api` or `supabase` change):**
+  - New `lib/custom-flow-builder/friendly-errors.ts`: the server's validator messages (unchanged) are shown in plain English naming the step, e.g. "Step 3 (Send a message) has no text yet."; unknown messages are shown only if already plain, otherwise a fixed plain sentence (never ids, quotes or code words). `invalid_definition` gets its own notice instead of "Try again".
+  - Starters store plain list names (Program, Questions, Our menu, Services). `custom_flow_tables.name` and lookup `table` accept any text up to 80 characters and are only compared by equality, so this is a value change, not a format change. Step ids stay slugs (`lookup_program`, `lookup_faqs`, …).
+  - Adding a step (tap or drop) scrolls it into view, focuses its first field and announces "Step N added" politely. Removing a step, removing a button and closing the tour move focus to the previous step's Edit, Add a button, or the page heading.
+  - While a request is pending, palette and step drags, drop zones, `add` and `moveStep` do nothing (the pending reply would otherwise undo them).
+  - Starter recovery: a 409 on `create_table` for a list id this starter already sent counts as made; a `version_conflict` on the starter save re-reads the flow once — steps already there count as done, a still-untouched blank flow is saved once more with the fresh version; Cancel after the blank flow exists opens it (no discard prompt) so it shows in Your flows.
+  - Example reply formats business details with the engine's `businessValue` (opening hours as lines); objects never show as "[object Object]". Empty Search by entries are not shown as blank checkboxes.
+  - Dark-mode focus outlines (`dark:focus-visible:outline-brand-300`), start-word chip wraps (`break-all`), "?" tips for List name / Column name / Short code with reasons when Save list is off, plainer Language / Time zone / record-unavailable / price-information wording, "Turn on {section}" with the On/Off state read with the button.
+  - Tests: new `components/custom-flows/ReviewFixes.test.tsx`, `lib/custom-flow-builder/friendly-errors.test.ts`; `PageBuilder.test.tsx` expects the starter's stored list name `Program` (was `program`).
+  - Could break: anything matching the old starter list slugs (`program`, `faqs`, `menu_items`, `services`) as list names; flows already created from a starter keep their slug names and still work.
+
+## 2026-11-16 — An abandoned save-card PIN step no longer blocks later follow-ups (#1070 Defect B)
+
+- **Why:**
+  - Owner staging test 2026-11-16: the next-steps menu never arrived after a Stripe ticket payment. Its follow-up stayed in `waiting_card` because only one follow-up may own a chat (unique index → 23505 "Blocked by another follow-up on this conversation").
+  - The blocker was an earlier payment's follow-up held in `card_active`. Its save-card offer was `accepted` (replace), but the customer had no active PIN session.
+  - `resumePaidTransactionFollowup` treated every `accepted` offer as owning the chat forever. `dismissTransactionFollowups` (hi/menu) only released sent/ambiguous/declined offers. So every later card offer, opt-in and menu on that chat was blocked.
+  - The Owner approved the fix ("yes fix it").
+- **What changed:**
+  - New `lib/payments/abandoned-card-step.ts`:
+    - `isAbandonedAcceptedCardStep` is true only when all of these hold: the offer is `accepted`; no active `save_card_pin` / `replace_card_pin` / `verify_card_pin` session exists; and the latest of `resolved_at` (set by both accept RPCs), `activation_send_started_at` and `activation_prompt_sent_at` is older than 5 minutes.
+    - The 5-minute grace covers the time between accepting and opening the PIN session. That happens in the same request (a few reads, or one Stripe redisplay call plus `establish_saved_card_session`).
+    - A Stripe Checkout consent whose activation prompt send has not started is still held, because the activation-retry worker still owes that prompt.
+    - A missing timestamp or a failed lookup also keeps the offer held.
+    - `hasActiveCardPin` is the shared PIN-session check, moved from `lib/bot/transaction-followups.ts`. Its behaviour and error message are unchanged.
+  - `lib/payments/transaction-followup.ts` (`resumePaidTransactionFollowup`, used by the webhook and recovery paths): an abandoned accepted step is released with `resumeTransactionFollowupForPayment(..., { cardResolved: true })`. Opt-in and the menu then continue, and the next payment's follow-up claims the chat on its next resume or recovery pass.
+  - `lib/bot/transaction-followups.ts` (`dismissTransactionFollowups`, hi/menu): an abandoned accepted step is retired to `done` without calling `decline_saved_card_offer`.
+  - Neither path changes the offer row, saved cards or any payment. The only writes are the existing follow-up transitions.
+  - Once released, the activation-retry cron skips the offer, because it already checks the follow-up state. A late tap on the old Save button resumes the follow-up instead of starting a PIN.
+  - `lib/payments/send-confirmation.ts`: the paid confirmation no longer says "Type *receipt* to get your receipt" when the amount is above zero.
+    - In that case post-completion now sends the receipt PDF right after (#1071), on the same sender that sent this text.
+    - Zero-amount confirmations keep the line.
+    - `flow-localization.ts` strings are unchanged; this text does not use them.
+- **Tests:**
+  - New `lib/__tests__/abandoned-card-step-1070.test.ts`: real follow-up modules against a fake database that emulates the conversation unique index. It covers release plus the next payment's card step (Stripe and Paystack), an active PIN still holding, the grace window, a Stripe prompt not yet started, a missing timestamp, unchanged sent/ambiguous/committed/confirmed behaviour, and hi/menu navigation.
+  - `lib/__tests__/post-payment-message-order-1070.test.ts`: receipt-line cases added, and the fake claim amount is now a parameter.
+  - `p0-payment-confirmation.test.ts` and `slice-5a-delivery-sequence.test.ts`: the old receipt-line assertions were updated to match the approved copy.
+- **Affects:** paid transaction follow-ups (card step → opt-in → menu) on all gateways, and the paid confirmation text.
+- **Could break:**
+  - A customer who accepted more than 5 minutes ago and whose PIN session ended without cancelling gets the old payment's opt-in/menu on the next recovery pass (cron every 15 minutes) or on hi/menu. No card is saved; they can save one next time.
+  - Stripe offers whose activation prompt never started are still held, as before.
+  - Customers no longer see the "Type receipt" hint after paid confirmations. The *receipt* keyword still works.
+
+## 2026-11-16 — Save Card on a merchant's own Paystack account (#1065 step 1)
+
+- Owner decision 2026-11-16: customers paying a merchant that uses its own Paystack account (BYO) get the same Save Card offer, PIN and remove flow as on Waaiio's shared account. A card saved there works only at that merchant (a Paystack rule) and never replaces or removes the customer's Waaiio-wide card.
+- **M544** (`supabase/migrations/544_byo_paystack_saved_cards.sql`): `saved_payment_methods.byo_business_id` (NULL = shared-account card; otherwise the merchant it belongs to, `ON DELETE CASCADE`), two partial unique indexes (one active shared card per customer+gateway; one active own-account card per customer per merchant) replacing `idx_saved_pm_customer_gateway_active`, and `persist_verified_paystack_card_authorization` now also accepts `payment_origin = 'byo'` (same signature, SECURITY DEFINER, `search_path`, ACL).
+- New `lib/payments/saved-card-scope.ts`: which Paystack account a business's cards live on, whether a payment was taken on it, and a query filter. Used by the offer/eligibility/save-start (`saved-card-offer.ts`), PIN save/replace/remove (`lib/bot/handlers/saved-cards.ts`), checkout lookup and charge (`charge-saved.ts`, `saved-payment-adapter.ts`).
+- Own-account saved charge (`charge-saved.ts`): runs the existing-charge check first, then re-resolves routing (the merchant must still use its own Paystack account), charges with the merchant's current key and the normal BYO reversed split (`paystackByoSplit`, Waaiio fee to Waaiio's subaccount), and records `payment_origin: 'byo'` with `byo_business_id` and `provider_connection_id` so the BYO webhook and reconciliation verify it.
+- BYO webhook (`app/api/payments/byo-webhook/[businessId]/route.ts`) now keeps `authorization_code` and `reusable` in its allowlisted authorization so the reusable card can be recorded through the M544 RPC; all other provider fields stay stripped.
+- `paystackPaymentCannotSaveCard` / transaction follow-ups: only Connect payments skip the card step now.
+- Unchanged: shared-account saved cards, Stripe saved cards, normal checkout, fee amounts, custody routes (BYO money still settles to the merchant by Paystack).
+- Owner decision 2026-11-16 (option B): cards stay with the merchant when it re-enters its Paystack key. If the merchant moves to a different Paystack account, Paystack refuses the old card at charge time and the customer pays by link instead (no money moves).
+- "Remove card" removes only the card for the current business's account (the shared card when there is no business context); if that business's payment setup cannot be read, nothing is removed and the customer is asked to try again.
+- Could break: at an own-account merchant whose customer has only a Waaiio-wide card, "remove card" replies "No saved card found"; after a merchant moves to a different Paystack account, its customers' old saved cards are offered but declined until removed or replaced.
+
+## 2026-11-15 — Group capability pages under Your Business
+
+Capability operating pages now appear under Your Business in the merchant sidebar. Aggregate payment, financial and payout utilities retain their Money section; Grow retains platform growth tools. Existing destinations, labels, capability gates, counts, active-link state and mobile navigation behavior are retained.
+
+Files: shared dashboard sidebar and rendered navigation regression tests. Events businesses now find Parties with the other capability operating pages instead of its prior main-section placement.
+
+Potential breakage: capability pages could appear in the wrong group or lose their entitlement gating; rendered tests cover section placement, existing routes and restricted membership visibility.
+
+## 2026-11-15 — Change service availability from its tile
+
+Adds an Active/Inactive button to existing service and class tiles. The authenticated update changes only the paired status and availability fields, is scoped to the current business and undeleted service, and checks the expected status before saving. Tiles change only after the database returns the saved row; pending clicks are deduplicated and failed saves show the existing error message beside the tile.
+
+Files: services dashboard and rendered interaction tests. Archived tiles retain their badge and edit behavior. Booking records, class sessions, pricing, schedules and the full edit form are unchanged.
+
+Potential breakage: stale or failed saves must not show a false success; tests cover both directions, duplicate clicks, failed/empty responses, archived items and normal edit navigation.
+
+## 2026-11-15 — Keep property calendar dates on their saved day
+
+The property detail calendar now iterates stored date-only reservation and blocked ranges with UTC calendar arithmetic, preventing the viewer's timezone or daylight-saving changes from shifting highlighted days. Reservation checkout remains excluded, blocked range endpoints remain included, and reservations retain display precedence.
+
+Files: property detail dashboard and rendered calendar regression tests. This slice changes display only; it does not add blocking controls or change bookings, availability checks, database records, schema, prices or payments.
+
+Potential breakage: incorrect range boundaries or month transitions; rendered tests cover Nigerian and US Eastern timezones, single-day/range blocks, checkout, year/leap boundaries and both DST transitions.
+
+## 2026-11-15 — Bounded Paystack initialization diagnostics (#1062)
+
+- Paystack initialization rejection logs retain the existing safe provider summary and add an allowlisted validation-hint enum plus a valid numeric HTTP status when available. Unknown or conflicting field indications remain unknown.
+- The Paystack-only helper never emits provider message text, payload values, credentials, email addresses or matched substrings. Shared redaction behavior is unchanged.
+- Request bodies, payment amounts/routing, retries, persistence and returned success/failure behavior are unchanged. A hint is diagnostic evidence, not a confirmed root cause or payment fix.
+- Tests exercise the actual adapter with intercepted HTTP responses, canary secrets/PII, malformed responses, ambiguous hints and unchanged success; existing BYO initialization and redaction regressions are included.
+- Could break: consumers of initialization error logs see an additional bounded diagnostic object. No provider configuration or migration changes.
+
+## 2026-11-15 — Show current status in My Bookings (#1052)
+
+- Show current booking and stay status in both customer My Bookings list entrypoints, including up to five cancelled bookings and five cancelled stays within the existing upcoming date windows. Separate cancelled queries preserve the existing five active bookings, five active stays and five valid tickets; earlier cancellations cannot crowd out active records.
+- Split history into messages of at most ten rows without dropping records; retain the existing Back control once at the end of the handler listing.
+- Keep cancelled booking details readable while removing cancellation/rescheduling controls. Recheck current status before accepting a stale reschedule action.
+- Preserve customer ownership predicates, date windows, existing active allocations and confirmed-booking actions; no payment, refund, notification or database-schema change.
+- Verification uses the actual merchant status PATCH, a mocked cancellation RPC updating shared local fixtures, then both actual list handlers and booking detail/stale reschedule paths. Existing ownership-denial tests remain unchanged. No hosted cancellation or provider send.
+
+## 2026-11-15 — Keep custom-flow preview on the current response
+
+The preview scrolls its bounded transcript to the latest response without scrolling the editor or moving focus. Options from earlier input turns remain visible but disabled and guarded against submission; current-turn options remain usable even when followed by informational messages. Preview loading uses the existing heading with a spinner and local busy state, and failures retain the existing nearby explanation and retry controls.
+
+Files: `components/custom-flows/FlowBuilder.tsx` and its rendered regression tests. Affects preview interaction only; draft edits, save/publish behavior, table data, server validation and the custom-flow engine stay unchanged.
+
+Potential breakage: a turn boundary could disable a current menu or reactivate historical choices. Tests cover menu-to-lookup, lookup replies, return menus, restart, loading/error recovery, container-only scrolling and unchanged saved/publication data.
+
+## 2026-11-15 — Descriptive Custom Flow block labels
+
+- FlowBuilder now shares a display-only block label helper across destination options, block headings and reorder controls. Lookup labels use existing section labels or formatted table names, with generic labels for unconfigured blocks.
+- Affects merchant editor navigation only; option values, node IDs, connections, saved definitions and bot runtime are unchanged.
+- Regression risk: labels could misidentify a custom or unconfigured lookup. Rendered tests cover matching labels, fallback behavior and unchanged saved connections.
+
+## 2026-11-15 — Custom flow action feedback beside its controls
+
+Moves Save, Validate, Publish and Reset results beside the builder action buttons so they remain discoverable below long editors. Preview failures stay beside the preview controls, and initial loading failures stay near the flow chooser. Existing messages and status/alert semantics are retained without duplicate announcements.
+
+Files: `components/custom-flows/FlowBuilder.tsx` and its rendered interaction tests. Affects feedback placement only; API readiness checks, publish confirmation, draft/publication state and table information remain unchanged.
+
+Potential breakage: feedback could appear in the wrong region after switching actions; regression tests cover validation failure/success, publish cancellation/rejection, preview failure and initial load failure.
+
+## 2026-11-15 — Keep Default Reply from intercepting menu selections (#1055)
+
+- Exclude existing deterministic button/list selections and menu tokens from the Default Reply fallback at greeting/capability selection. Let the existing executor validate selections and enforce current capability access.
+- Preserve configured fallback for unknown free text, existing keyword handling, session concurrency controls and configuration caching. No new customer copy, payment changes or hosted settings updates.
+- Real BotService/executor regressions cover scheduling and appointment buttons/lists/typed tokens, numeric selection, invalid and unavailable choices, capability denial, unknown free text and absent fallback. Valid selections are validated once; invalid selections cannot advance merely because fallback is skipped.
+
+## 2026-11-15 — Discover published custom flows in the business menu
+
+- Append entitled, published custom-flow snapshot names to the existing business menu, using its existing pagination and preserving ordinary options. Blank entry keywords work through flow-ID entry.
+- Scope displayed-page selections to business/session, preserve numeric navigation, consume custom starts through the existing session CAS and recheck publication/entitlement before using the existing engine. Preserve active-flow, PIN, business-code and restart precedence.
+- Ordinary numeric selections keep their displayed meaning instead of being interpreted as custom keywords. Directory selections redispatch through the existing handler with original message type and trust provenance; a separate internal accounting marker prevents duplicate inbound metering. Typed opt-in numbers cannot grant consent; genuine taps keep existing handling.
+- First-time dedicated-number greetings also enter the existing menu when a valid published custom flow is eligible; explicit canonical/deep-link routes and absent, unpublished or denied flow behavior stay unchanged.
+- Files: capability-selection flow, BotService, custom-flow menu/entry helpers and engine, related runtime tests, and the capability lifecycle contract. No migration, payment, API, customer-copy or hosted-state change.
+- Risk: menu ordering/pagination, stale selections, tenant routing and inbound accounting. Covered by executable menu, engine, BotService and executor tests; hosted WhatsApp acceptance remains a separate gate.
+
+## 2026-11-15 — Show Custom Flows in capability settings
+
+Adds the existing Custom Flows catalog entry to the Operations group on the capabilities page. Its existing label, description, plan restriction, enable/disable behavior and Save Changes endpoint are reused.
+
+Files: capability page group membership and rendered regression tests. No entitlement, default capability, server configuration, flow content or publication behavior changes.
+
+Potential breakage: a catalog entry could be omitted or duplicated, or plan restrictions bypassed; tests cover complete rendered catalog coverage, enable/disable payloads and the existing upgrade restriction.
+
+## 2026-11-15 — Validate contact import phone numbers
+
+Customer CSV previews and the customer import API share import-specific international phone validation. Valid country-coded strings normalize to the existing customer identity key; invalid numbering plans, overlong values, scientific notation, extensions and non-string phones are rejected before writes. Local numbers without country context are not guessed.
+
+Files: customer dashboard import, customer import API, import phone helper and rendered/API/normalization regression tests. Tenant ownership checks, `business_id,phone` upserts, other contact fields, consent state and general phone helpers are unchanged.
+
+Potential breakage: previously accepted invalid/local phone values now need correction before import; regression tests cover mixed batches, international formats, duplicate identity normalization and denied ownership.
+
+## 2026-11-15 — Preserve validated checkout progress at the reply limit (#1060)
+
+- The ordering executor grants a temporary, identity-scoped reply allowance only after successful validation and destination CAS on enumerated forward checkout edges. It closes after the response group; invalid input, stale saves, empty carts, browsing, edits and backtracking receive no new allowance.
+- Daily usage remains counted once per inbound/business. Financial authorization, spend caps, consent, repeat controls and payment processing remain in place. Promo confirmations retain their wording and are deferred until the destination is saved.
+- Delivery-zone validation now requires an active zone belonging to the current business before progress is accepted.
+- Tests reproduce the original refused checkout/zone prompts and cover scoped lifetime, detached work, multipart counting, auto-skips, negative cases, promo deferral and real sender financial refusal.
+- Could break: invalid/foreign/inactive delivery-zone selections previously accepted by an ID-only lookup are now rejected. No migration or provider configuration change.
+
+## 2026-11-15 — Clarify booking field units
+
+- Label service and appointment duration and buffer inputs explicitly in minutes, and associate the visible labels with their inputs.
+- Replace the appointment buffer's misleading “Enter amount” placeholder with “Enter minutes”; monetary deposit wording stays unchanged.
+- Clarify appointment capacity as “Max bookings per time slot”, matching the Services editor, with an associated label in both editors.
+- Duration means service length; buffer means time between appointments, without claiming a before-only or after-only gap. Slot spacing and advance-booking limits are separate settings and are unchanged.
+- Copy and accessibility-label changes only: values, defaults, constraints, payloads and scheduling behavior are unchanged. Rendered tests cover units, label associations, existing numeric constraints and local edits without writes.
+
+## 2026-11-15 — Confirm cancellation from the Bookings page (#1051)
+
+- Require an explicit confirmation from the Bookings row, detail and bulk cancellation actions. Show the booking reference, customer and date or selected count; focus the safe Keep booking action first and support safe dismissal/Escape.
+- Lock duplicate submissions while pending. Retain failures for retry without repeating successful bulk cancellations; report failure without claiming success.
+- Capture booking type and business before confirmation. Preserve existing booking status API, refund, waitlist and notification behavior; reservation cancellation requires a returned business-scoped row before notification.
+- Scope: shared Bookings page, focused confirmation component and rendered tests. Calendar and appointment catalog actions are unchanged. No migration or hosted cancellation.
+- Validation: rendered page and dialog tests cover all three entrypoints, allow/deny, dismissal, pending duplicates, partial bulk failure and zero-row reservation updates; existing cancellation regressions are run separately.
+
+## 2026-11-14 — Internal seating holds for merchants
+
+- Adds owner-authorized partial-seat and whole-resource holds to Tables & Sections, with explicit resource selection, business-local dates/times, auditable release, and retry-safe creation (Issue #1025).
+- Preserves one customer reservation per resource: held seats reduce the remaining party capacity; whole holds block customer bookings. Booking pickers and the atomic booking function consult holds.
+- Migration 542 introduces tenant-scoped holds and shared resource locking, checks peak simultaneous occupancy, and prevents direct capacity reductions or booking occupancy changes from conflicting with bookings and holds. Calendar and reservation status failures retain the current selection and show an error. Direct conflicting writes fail with an explicit retry instead of waiting in inverted lock order.
+- Implements the Owner-approved form, help, confirmation, status, and error wording. No synthetic customer, booking payment, or revenue is created.
+- Tests cover rendered create/retry/release UI, authenticated API allow/deny paths, interval boundaries, existing table-booking regressions, and disposable PostgreSQL capacity/concurrency tests.
+- Could break: table availability and resource capacity edits if migration 542 is not applied before the application release. PostgreSQL 17 catalog evidence and independent exact-head reviews are required before release.
+
+## 2026-11-14 — Two Codex reviewers and coordinator decision routing
+
+- Implements the Owner decision to use the same two independent Codex reviewers across chats, with functional/accessibility and security/integrity responsibilities, both reviewing the final SHA and rechecking corrections.
+- Aligns AGENTS.md, CLAUDE.md, the Operating Order, release guidance and changelog guidance. Replaces the separate mandatory CLI reviewer invocation with coordinator dispatch to the assigned pair.
+- Records coordinator-only selectable Owner questions and preserves Owner authority, the Evidence Verification gate, exact-head CI and historical review validity.
+- Validation uses the changelog fragment checker, whitespace checks and targeted policy consistency searches.
+- Could break review routing if a chat bypasses the coordinator or treats an automated minimum review count as satisfying the two-reviewer policy. Release automation is unchanged.
+
+## 2026-11-14 — Bound passkey PostgreSQL test cleanup
+
+- Give M538/M539 disposable database teardown a scoped 35-second budget because database removal waits for shared checkpoints; CI observed a checkpoint longer than the default 10-second hook.
+- Bound DROP with a 20-second server cancellation and 22-second client timeout, configuration with 2 seconds, and each owned-client close with 3 seconds. Preserve cleanup failures and always close the control connection.
+- Add phase timing and focused cleanup lifecycle regression tests. Preserve the existing nine PostgreSQL assertions, isolated databases, CI concurrency and zero-skip gates.
+- No runtime, migration, authorization or global test-timeout change. Could fail these two test suites if cleanup exceeds its explicit budget; failures remain visible rather than skipped or retried.
+
+## 2026-11-14 — Share campaign donation pages
+
+- Add public campaign donation pages and dashboard copy/WhatsApp sharing of the same URL.
+- Reuse campaign eligibility, limits, country-authoritative payments and both merchant custody routes. Public donations retain a distinct donor attempt across retries and verify donation linkage before provider dispatch.
+- Include public campaign attempts in verify-first payment recovery when fee policy is disabled.
+- Owner approved the donation form and sharing copy, including international-format phone and optional name/email.
+- Tests cover public route/middleware boundaries, rendered form behavior, concurrent attempts, payment linkage and provider callback/recovery ordering.
+- Could break campaign checkout initiation or recovery if attempt identity or provider correlation changes. Existing bot-only campaign reuse remains a separately tracked issue.
+
+## 2026-11-14 — Restore booking balance request message authorization
+
+- Booking Request balance now supplies the existing `service` category for its free-form transactional WhatsApp message, satisfying the sender financial authorization contract.
+- The change is limited to `app/api/bookings/request-balance/route.ts` and follows the existing message-category decision in #722.
+- Executable route coverage verifies successful categorized delivery, server-calculated balance, deposit-link preservation, and denied financial/ownership/capability paths. Neighboring category and capability assertions also pass locally.
+- Could break the balance-request notification if its category stops matching the financial guard contract. The focused regression exercises this boundary with a category-enforcing sender double.
+
+## 2026-11-14 — Record ACE chat usage with server authority
+
+- Correct the ACE chat route to use the existing service client for usage accounting after authentication, ownership, allowance checks and a successful model response.
+- Return the existing service-unavailable error when accounting fails, without returning the unrecorded suggestion.
+- Preserve allowance limits and post-model accounting timing; no schema, grants, provider or quota redesign.
+- Actual handler regressions exercise the existing helper with mocked database/provider boundaries, including ownership denials, allowance checks, write failures and model failures.
+- Could affect ACE text setup availability when accounting is unavailable. The model call already incurred cost before accounting; a retry can call the model again. This change does not provide exactly-once provider execution.
+
+## 2026-11-14 — Guided Custom Flow templates and live information tables
+
+Adds template/blank setup, five empty Festival Info tables, generic table editing,
+and an advanced view of the same flow definition. Selected public business details
+stay linked to Settings. Product/service/ticket references read canonical values;
+variable and variant prices are not presented as fixed-price offers. No payment
+or settlement behavior changes.
+
+Table Saves affect live lookup answers immediately; Publish and Reset affect
+structure only. Publish requires complete visible information for each selected
+section or explicit disablement. Missing, hidden or unavailable data uses the
+configured fallback without stale prices or fabricated answers.
+
+Affected files: `components/custom-flows/`, `app/api/custom-flows/`,
+`lib/custom-flow-builder/`, `lib/bot/custom-flow/`, migration
+`543_custom_flow_guided_setup.sql`, and the PostgreSQL CI exclusion/discovery path.
+Migration 543 adds atomic retry-safe initialization and direct-writer schema/data
+guards for newly created guided tables; existing table schemas remain unchanged.
+
+Potential breakage: custom-flow table reads require M543 before application
+release; conflicting schema/data edits return retryable errors rather than
+overwriting changes. This branch depends on unmerged Phase 2 PR #1024. Migration
+application, merge and deployment require separate Owner authorization. Hosted
+runtime acceptance and timed nontechnical setup acceptance remain unclaimed.
+
+- Existing guided table names remain fixed after creation, including direct
+  writers, so adding columns preserves published lookup references. Live hours
+  exclude days marked closed in Settings.
+
+## 2026-11-14 — Custom flow draft builder
+
+Adds a separate Custom flows dashboard for eligible businesses with the capability enabled. Merchants can edit Message, Menu and Lookup blocks, reorder message sequences, save and validate drafts, preview through the existing engine, publish the saved draft, and reset a draft to its currently published snapshot. Existing flow-editor overrides remain separate.
+
+Files: `app/dashboard/custom-flows`, `app/api/custom-flows`, `components/custom-flows`, `lib/custom-flow-builder`, dashboard Sidebar, and package manifests. The Vercel UI SDK is pinned to 0.1.0-beta.2 and isolated behind the reorder component with keyboard and up/down controls.
+
+Affects: custom-flow authoring and dashboard navigation. Save/reset preserve the live publication; publish uses a version-conditional update. Preview captures messages and stores sessions/logs in memory while scoping real table reads to the authorized business and flow. Validation enforces existing identifier, message-chain and lookup-table constraints.
+
+Could break: authoring metadata for message sequences, stale-editor conflict handling, SDK interaction compatibility, and lookup configuration validation. Focused tests cover ownership denials, publication boundaries, preview isolation, sequence edits and UI journeys. No migration or runtime routing change.
+
+The builder registers an unsaved-change confirmation for link navigation and business switching before any switch request. Other pages retain their existing behavior. Browser Back/Forward protection is not claimed. Navigation confirmation and complete new-flow authoring journeys have targeted tests.
+
+## 2026-11-14 — Close Custom Flow on a Back-button restart
+
+- Changed `lib/bot/handlers/escape-hatches.ts` to pass the existing internal restart flag when Back at a free-text step has no previous step.
+- Affects normal-bot restarts with a concurrent Custom Flow session: the custom session closes so the next typed answer reaches the normal bot.
+- Preserves existing provenance, customer wording, and navigation with history. No migration or payment changes.
+- Regression coverage exercises the real escape handler and subsequent bot routing. Risk: routing of the next answer after a no-history Back restart.
+
+## 2026-11-13 — Custom Flow: internal 'Hi' re-entries reach the normal bot (Issue #1013)
+
+- **Why:**
+  - The platform restarts the customer by re-entering `handleMessage(from, 'Hi', …)` — waitlist acceptance and the returning-customer path. With an active custom session, that 'Hi' was consumed by the custom engine as node input instead of restarting the customer to the normal menu, so the booking flow never started.
+- **What changed:**
+  - `lib/bot/bot.service.ts`: the custom-flow branch now skips the engine when the call carries the separate restart flag (`_internalRestart`) and the text is a restart signal ('Hi'/'start'/'restart'), closing any active custom session first — a deliberate restart ends the custom session, the same as a typed restart word. The flag is read only by this guard and is separate from provenance, so it changes no metering, trust, or picker behaviour. The guard is deliberately narrow: internal re-entries that redispatch the customer's own text (language-picker, chat handoff) never pass the flag, so they still reach the engine.
+  - `lib/bot/bot.service.ts` + `lib/bot/handlers/escape-hatches.ts`: the restart flag is passed by the platform's deliberate restart re-entries — waitlist acceptance, returning customer, go-back-to-business, cancel/menu restarts, and bot-code redirects that fall back to 'Hi'.
+  - `lib/bot/bot.service.ts`: waitlist acceptance passes no provenance on its 'Hi' re-entry, exactly as on main — the restart signal is the flag, not provenance. Usage counting, promo trust and the language picker for waitlist acceptances are unchanged.
+  - `lib/__tests__/custom-flow-botservice-routing.test.ts`: new test 5 proves waitlist acceptance reaches the booking flow with an active custom session (entry confirmed, custom session closed, language picker shown as on main, then "1" reaches the scheduling date step). New test 6 proves the waitlist step's usage counting is unchanged (the "yes" is still counted as one inbound message / new conversation).
+  - `lib/__tests__/bot-recovery-messaging-682.test.ts`: the structural provenance test keeps the waitlist call as its one known exception (no provenance by design — the restart flag carries the signal instead).
+- **Affects:** internal restart re-entries for businesses with an active custom session (the guard now fires on the separate restart flag). The waitlist "yes" step is unchanged from main: usage counting, promo trust and the language picker behave exactly as before. No published custom flows exist yet, so no customer traffic changes.
+- **Unchanged:**
+  - The custom engine (`lib/bot/custom-flow/engine.ts`) — no changes.
+  - Redispatches of the customer's own text (language-picker, chat handoff) still reach the engine.
+  - All other bot routing, payments, and code flows.
+
 ## 2026-11-16 — Custom flow builder: step map, flow list and WhatsApp preview (UI only, #1074)
 
 - **Why:** The Owner approved a clearer layout for `/dashboard/custom-flows` (issue #1074, parent #1013). The old page was a dropdown, a long settings grid and a flat list of block cards.
