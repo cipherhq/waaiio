@@ -16,10 +16,12 @@ const responses = [
 ];
 let state: { flows: typeof flows; responses: typeof responses; canDelete: boolean; truncated?: boolean; remainingCalls?: number };
 let posts: Array<Record<string, unknown>>;
+let tab: { opener: unknown; location: { href: string }; close: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
   state = { flows, responses: structuredClone(responses), canDelete: true };
   posts = [];
+  tab = { opener: {}, location: { href: '' }, close: vi.fn() };
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === 'POST') {
       const body = JSON.parse(String(options.body)); posts.push(body);
@@ -33,7 +35,7 @@ beforeEach(() => {
     return { ok: true, json: async () => ({ flows: state.flows, canDelete: state.canDelete, truncated: !!state.truncated, ...(flowId ? { responses: flowId === 'f1' ? state.responses : [] } : {}) }) };
   }));
   vi.stubGlobal('confirm', vi.fn(() => true));
-  vi.stubGlobal('open', vi.fn());
+  vi.stubGlobal('open', vi.fn(() => tab));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -55,7 +57,10 @@ describe('Flow answers page', () => {
     expect(within(cards[1]).getByText('Saturday, 21 November 2026')).toBeTruthy();
     expect(within(cards[1]).getByText('Answered 10 Nov 2026, 10:02')).toBeTruthy();
     fireEvent.click(within(cards[1]).getByRole('button', { name: 'View PDF' }));
-    await waitFor(() => expect(window.open).toHaveBeenCalledWith('https://signed/x', '_blank', 'noopener,noreferrer'));
+    // The tab opens during the tap (so pop-up blockers allow it), then gets the short-lived link.
+    expect(window.open).toHaveBeenCalledWith('', '_blank');
+    await waitFor(() => expect(tab.location.href).toBe('https://signed/x'));
+    expect(tab.opener).toBeNull();
     expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u) === `/api/custom-flows/responses?businessId=${biz}&file=a3`)).toBe(true);
   });
 

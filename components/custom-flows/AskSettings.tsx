@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import type { CustomFlowAskNode } from '@/lib/bot/custom-flow/types';
 import { DEFAULT_RETRY } from '@/lib/bot/custom-flow/answers';
 import { formatFullDate, upcomingDateOptions } from '@/lib/bot/custom-flow/dates';
-import { Field, buttonClass, inputClass, type FieldControlProps } from './ui';
+import { Field, HelpTip, buttonClass, inputClass, type FieldControlProps } from './ui';
 
 /**
  * Settings for an "Ask a question" step (#1085). Every field has a "?" tip
@@ -27,6 +27,8 @@ export function AskSettings({ node, timezone, country, onChange, destination }: 
   destination: (props: FieldControlProps) => ReactNode;
 }) {
   const options = node.options ?? [];
+  // Three or fewer choices show as WhatsApp buttons (20 letters); more show as a list (24).
+  const choiceMax = options.length <= 3 ? 20 : 24;
   const dateContext = { timezone, language: 'en', country: country ?? 'GB' };
   const dates = node.answer_type === 'date' ? upcomingDateOptions(dateContext) : [];
   return <>
@@ -41,8 +43,8 @@ export function AskSettings({ node, timezone, country, onChange, destination }: 
       <p className="text-xs text-gray-600 dark:text-gray-400">Add 2 to 10. Up to 3 show as buttons; more show as a list people open.</p>
       {options.map((option, index) => <div key={index} className="flex items-end gap-2">
         <div className="min-w-0 flex-1">
-          <Field label={`Choice ${index + 1}`} help="The words people tap. WhatsApp shows up to 24 letters.">
-            {props => <input {...props} className={inputClass} maxLength={24} placeholder={index === 0 ? 'Example: Jollof rice' : 'Example: Vegetarian'} value={option}
+          <Field label={`Choice ${index + 1}`} help={`The words people tap. Up to ${choiceMax} letters: buttons hold 20, a list of 4 or more choices holds 24.`}>
+            {props => <input {...props} className={inputClass} maxLength={choiceMax} placeholder={index === 0 ? 'Example: Jollof rice' : 'Example: Vegetarian'} value={option}
               onChange={event => onChange({ ...node, options: options.map((item, i) => i === index ? event.target.value : item) })} />}
           </Field>
         </div>
@@ -59,11 +61,14 @@ export function AskSettings({ node, timezone, country, onChange, destination }: 
         </ul>
         <p className="mt-2 text-xs text-gray-700 dark:text-gray-300">“Another date” lets them type one, like 21 Nov 2026. We confirm it in full, for example “✅ {formatFullDate(dates[0]?.id.slice(5) ?? '2026-11-21', dateContext)}”.</p>
       </div>
-      <label className="flex items-start gap-2 text-sm text-gray-800 dark:text-gray-200">
-        <input type="checkbox" className="mt-1 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand" checked={!!node.allow_past}
-          onChange={event => onChange({ ...node, allow_past: event.target.checked || undefined })} />
-        <span>Allow dates before today<span className="block text-xs text-gray-600 dark:text-gray-400">Turn this on for things like a date of birth. Otherwise only today or later is accepted.</span></span>
-      </label>
+      <div className="flex items-start gap-1">
+        <label className="flex min-h-11 items-start gap-2 text-sm text-gray-800 dark:text-gray-200">
+          <input type="checkbox" className="mt-1 h-5 w-5 rounded border-gray-300 text-brand focus:ring-brand" checked={!!node.allow_past} aria-describedby={`allow-past-tip-${node.id}`}
+            onChange={event => onChange({ ...node, allow_past: event.target.checked || undefined })} />
+          <span>Allow dates before today<span className="block text-xs text-gray-600 dark:text-gray-400">Turn this on for things like a date of birth. Otherwise only today or later is accepted.</span></span>
+        </label>
+        <HelpTip id={`allow-past-tip-${node.id}`} label="Allow dates before today" text="Example: “When is your birthday?” needs past dates. “Which day will you arrive?” does not." />
+      </div>
     </div>}
 
     {node.answer_type === 'file' && <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-gray-900 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-gray-100">

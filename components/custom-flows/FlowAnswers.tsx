@@ -48,12 +48,15 @@ export function FlowAnswers({ businessId, timezone, country }: Props) {
 
   async function openFile(answerId: string) {
     setError('');
+    // Open the tab during the tap so pop-up blockers allow it; the short-lived link follows.
+    const tab = window.open('', '_blank');
     try {
       const res = await fetch(`${API}?businessId=${businessId}&file=${answerId}`, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) { setError(friendly(body.error)); return; }
-      window.open(body.url, '_blank', 'noopener,noreferrer');
-    } catch { setError(friendly(null)); }
+      if (!res.ok) { tab?.close(); setError(friendly(body.error)); return; }
+      if (tab) { tab.opener = null; tab.location.href = body.url; }
+      else window.location.assign(body.url);
+    } catch { tab?.close(); setError(friendly(null)); }
   }
 
   async function remove(action: 'delete_response' | 'delete_flow_answers', responseId?: string) {
@@ -103,9 +106,9 @@ export function FlowAnswers({ businessId, timezone, country }: Props) {
         </select>
       </label>
       {!!responses?.length && <a href={`${API}?businessId=${businessId}&flowId=${flowId}&format=csv`} download
-        className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-accent-400">Download CSV</a>}
+        className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-accent-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Download CSV</a>}
       {canDelete && !!responses?.length && <button type="button" disabled={busy} onClick={() => remove('delete_flow_answers')}
-        className="rounded-lg border border-white/60 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60">Delete all answers for this flow</button>}
+        className="min-h-11 rounded-lg border border-white/60 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Delete all answers for this flow</button>}
     </section>}
 
     {selected && responses?.length === 0 && <EmptyState icon="📝" title="No answers yet"
@@ -122,7 +125,7 @@ export function FlowAnswers({ businessId, timezone, country }: Props) {
           </div>
           {canDelete && <button type="button" disabled={busy} onClick={() => remove('delete_response', response.response_id)}
             aria-label={`Delete answers from ${displayNumber(response.customer_number)}`}
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60 dark:text-red-300 dark:hover:bg-red-900/20">Delete</button>}
+            className="min-h-11 rounded-lg px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60 dark:text-red-300 dark:hover:bg-red-900/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand">Delete</button>}
         </div>
         <dl className="mt-3 grid gap-3 sm:grid-cols-2">
           {response.answers.map(answer => <div key={answer.id} className="min-w-0 rounded-xl bg-gray-50 p-3 dark:bg-gray-900/50">
@@ -130,7 +133,7 @@ export function FlowAnswers({ businessId, timezone, country }: Props) {
             <dd className="mt-1 break-words text-sm text-gray-900 dark:text-gray-100">
               {answer.answer_type === 'date' && answer.value_date ? formatFullDate(answer.value_date, { language: 'en', country: country ?? 'GB' })
                 : answer.answer_type === 'file' ? <button type="button" onClick={() => openFile(answer.id)}
-                  className="font-semibold text-brand underline-offset-2 hover:underline dark:text-brand-300">View {fileKind(answer.file_mime) === 'PDF' ? 'PDF' : 'photo'}</button>
+                  className="-my-2 inline-flex min-h-11 items-center font-semibold text-brand underline-offset-2 hover:underline dark:text-brand-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand">View {fileKind(answer.file_mime) === 'PDF' ? 'PDF' : 'photo'}</button>
                 : answer.value_text}
             </dd>
           </div>)}

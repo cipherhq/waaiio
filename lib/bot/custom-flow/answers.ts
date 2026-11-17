@@ -21,6 +21,12 @@ export const DEFAULT_RETRY: Record<CustomFlowAskNode['answer_type'], string> = {
   file: 'Please send a photo or a PDF, up to 10 MB.',
 };
 export const TYPE_A_DATE_TEXT = 'Type the date, for example 21 Nov 2026.';
+/** Plain reasons sent instead of the retry message when we know why (#1085). */
+export const REASON_TEXT = {
+  past_date: 'That date has already passed. Please choose today or a later date.',
+  file_unavailable: 'We couldn’t get that file. Please send it again.',
+} as const;
+export type RetryReason = keyof typeof REASON_TEXT;
 export const ESCAPE_HINT = 'Reply *menu* to start again, or *human* to talk to a person.';
 export const SAVE_FAILED_TEXT = 'Sorry, we couldn’t save that. Please try again.';
 export const YES_NO_LABELS = ['Yes', 'No'] as const;
@@ -45,7 +51,7 @@ export const askPostback = (nodeId: string, value: string | number) => `cf:${nod
 export type ReadAnswer =
   | { kind: 'answer'; value_text: string | null; value_date: string | null }
   | { kind: 'another_date' }
-  | { kind: 'invalid' };
+  | { kind: 'invalid'; reason?: RetryReason };
 
 const YES = new Set(['yes', 'y', 'yeah', 'yep', 'yea']);
 const NO = new Set(['no', 'n', 'nope', 'nah']);
@@ -84,9 +90,9 @@ export function readAnswer(node: CustomFlowAskNode, text: string, ctx: { timezon
       if (postback === ANOTHER_DATE_ID) return { kind: 'another_date' };
       const iso = postback !== null
         ? (postback.startsWith(DATE_OPTION_PREFIX) ? tappedDate(postback) : null)
-        : parseTypedDate(raw, ctx);
+        : parseTypedDate(raw, { ...ctx, nearest: !!node.allow_past });
       if (!iso) return { kind: 'invalid' };
-      if (!node.allow_past && iso < todayIn(ctx.timezone, ctx.now)) return { kind: 'invalid' };
+      if (!node.allow_past && iso < todayIn(ctx.timezone, ctx.now)) return { kind: 'invalid', reason: 'past_date' };
       return answer(null, iso);
     }
     case 'text': {

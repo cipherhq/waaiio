@@ -748,7 +748,9 @@ export async function POST(request: NextRequest) {
               // Custom Flow Photo/PDF question (#1085): answered only when this
               // customer's active custom-flow step is waiting for a file; every
               // other image or document keeps the existing reply below.
-              const flowMedia = !text && !mediaUrl && source && resolved.cloud
+              // Skipped when under 30s of the time budget is left: a download and
+              // upload of up to 10 MB must not run past the deadline.
+              const flowMedia = !text && !mediaUrl && source && resolved.cloud && Date.now() - t0 < SIDE_EFFECT_DEADLINE_MS - 30_000
                 ? inboundMedia(msgAny as Parameters<typeof inboundMedia>[0]) : null;
               if (flowMedia && resolved.cloud) {
                 const cloud = resolved.cloud;

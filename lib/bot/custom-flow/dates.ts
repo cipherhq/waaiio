@@ -83,9 +83,9 @@ const monthNumber = (word: string) => {
  * Parse a date the customer typed. Accepts "21 Nov", "21st November 2026",
  * "Nov 21, 2026", "2026-11-21", "21/11/2026" (month first only for US),
  * "today" and "tomorrow". Without a year, the next such date from today is
- * used. Returns an ISO date or null — never a guess for impossible dates.
+ * used (or, with `nearest`, the closest one to today, past or future). Returns an ISO date or null — never a guess for impossible dates.
  */
-export function parseTypedDate(text: string, ctx: DateContext & { now?: Date }): string | null {
+export function parseTypedDate(text: string, ctx: DateContext & { now?: Date; nearest?: boolean }): string | null {
   const today = todayIn(ctx.timezone, ctx.now);
   const raw = text.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!raw || raw.length > 40) return null;
@@ -94,6 +94,12 @@ export function parseTypedDate(text: string, ctx: DateContext & { now?: Date }):
   const thisYear = Number(today.slice(0, 4));
   const withYear = (month: number, day: number, year?: number) => {
     if (year !== undefined) return isoDate(year < 100 ? 2000 + year : year, month, day);
+    if (ctx.nearest) {
+      // Past dates allowed (e.g. "When did you last visit?"): the closest such date to today.
+      const days = (iso: string) => Math.abs(Date.parse(iso) - Date.parse(today));
+      return [thisYear - 1, thisYear, thisYear + 1].map(y => isoDate(y, month, day)).filter((d): d is string => !!d)
+        .sort((a, b) => days(a) - days(b))[0] ?? null;
+    }
     const candidate = isoDate(thisYear, month, day);
     if (candidate && candidate >= today) return candidate;
     return isoDate(thisYear + 1, month, day);

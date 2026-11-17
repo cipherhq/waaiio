@@ -31,7 +31,8 @@ import { hasValue, variablesIn } from './data';
 import { checkHandoffRecord, type CapabilityHandoff } from './handoff';
 import { HANDOFF_UNAVAILABLE_TEXT } from './handoff-copy';
 import {
-  CUSTOM_FLOW_UPLOADS_BUCKET, DEFAULT_RETRY, ESCAPE_HINT, MAX_UPLOAD_BYTES, SAVE_FAILED_TEXT, TYPE_A_DATE_TEXT,
+  CUSTOM_FLOW_UPLOADS_BUCKET, DEFAULT_RETRY, ESCAPE_HINT, MAX_UPLOAD_BYTES, REASON_TEXT, SAVE_FAILED_TEXT, TYPE_A_DATE_TEXT,
+  type RetryReason,
   UPLOAD_EXTENSION, YES_NO_LABELS, askPostback, isAllowedUploadMime, readAnswer, sniffUploadMime,
 } from './answers';
 import { formatFullDate, upcomingDateOptions } from './dates';
@@ -218,7 +219,11 @@ export class CustomFlowEngine {
       return { handled: false };
     }
 
-    await this.log(session, null, 'in', text, null);
+    // Answers to a question live only in custom_flow_answers, which the owner
+    // can delete and retention removes after 12 months (#1085); the step log
+    // keeps a marker, never the answer itself.
+    const atQuestion = flow.definition.nodes.find((n) => n.id === session.current_node_id)?.type === 'ask';
+    await this.log(session, null, 'in', atQuestion ? '[answer]' : text, null);
 
     // Resume prompt answers are consumed here, before node input.
     if (this.isResumePending(session)) {
@@ -602,7 +607,7 @@ export class CustomFlowEngine {
       return { handled: true };
     }
     if (result.kind === 'invalid') {
-      await this.askAgain(session, flow, node);
+      await this.askAgain(session, flow, node, result.reason);
       return { handled: true };
     }
     await this.acceptAnswer(session, flow, node, { value_text: result.value_text, value_date: result.value_date });
@@ -610,12 +615,13 @@ export class CustomFlowEngine {
   }
 
   /** A wrong answer: say so (with the way out after two misses) and ask again. Nothing is saved. */
-  private async askAgain(session: CustomFlowSessionRow, flow: LoadedFlow, node: CustomFlowAskNode): Promise<void> {
+  private async askAgain(session: CustomFlowSessionRow, flow: LoadedFlow, node: CustomFlowAskNode, reason?: RetryReason): Promise<void> {
     const failures = (session.fields._ask_node === node.id && typeof session.fields._ask_failures === 'number' ? session.fields._ask_failures : 0) + 1;
     const saved = await updateSessionCas(this.deps.supabase, session, { fields: { ...session.fields, _ask_node: node.id, _ask_failures: failures } });
     if (!saved) return; // stale writer won; stay quiet
     const fresh = { ...session, version: session.version + 1, fields: { ...session.fields, _ask_node: node.id, _ask_failures: failures } };
-    const retry = this.renderText(node.retry_message?.trim() || DEFAULT_RETRY[node.answer_type], flow, session.fields);
+    // A known reason (date passed, file not received) is said plainly; otherwise the merchant's retry message.
+    const retry = reason ? REASON_TEXT[reason] : this.renderText(node.retry_message?.trim() || DEFAULT_RETRY[node.answer_type], flow, session.fields);
     await this.sendText(fresh, failures >= 2 ? `${retry}\n\n${ESCAPE_HINT}` : retry);
     // Tap-to-answer questions are shown again so the customer can tap.
     if (node.answer_type === 'yes_no' || node.answer_type === 'choice' || node.answer_type === 'date') await this.renderAsk(fresh, flow, node);
@@ -634,12 +640,11 @@ export class CustomFlowEngine {
     value: { value_text: string | null; value_date: string | null; file_path?: string; file_mime?: string; file_size?: number },
   ): Promise<boolean> {
     const { supabase } = this.deps;
-    let previousFile: string | null = null;
-    if (node.answer_type === 'file') {
-      const { data } = await supabase.from('custom_flow_answers').select('file_path')
-        .eq('business_id', session.business_id).eq('response_id', session.id).eq('node_id', node.id).maybeSingle();
-      previousFile = (data?.file_path as string | null | undefined) ?? null;
-    }
+    // Any earlier answer to this question in this run, of any type: a republish
+    // may have turned a Photo or PDF question into another kind.
+    const { data: previous } = await supabase.from('custom_flow_answers').select('file_path')
+      .eq('business_id', session.business_id).eq('response_id', session.id).eq('node_id', node.id).maybeSingle();
+    const previousFile = (previous?.file_path as string | null | undefined) ?? null;
     const { error } = await supabase.from('custom_flow_answers').upsert({
       business_id: session.business_id,
       flow_id: session.flow_id,
@@ -648,7 +653,8 @@ export class CustomFlowEngine {
       session_id: session.id,
       customer_number: session.whatsapp_number,
       node_id: node.id,
-      question: this.renderText(node.question, flow, session.fields).slice(0, 1000),
+      // A question made only of an empty {{value}} falls back to its own words.
+      question: (this.renderText(node.question, flow, session.fields).trim() || node.question.trim()).slice(0, 1000),
       answer_type: node.answer_type,
       value_text: value.value_text,
       value_date: value.value_date,
@@ -663,10 +669,7 @@ export class CustomFlowEngine {
       return false;
     }
     await this.log(session, node.id, 'in', node.answer_type === 'file' ? '[file]' : null, null);
-    if (previousFile && previousFile !== value.file_path) {
-      const { error: removeError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([previousFile]);
-      if (removeError) logger.error('[CUSTOM-FLOW] Replaced upload could not be removed:', removeError.message);
-    }
+    if (node.answer_type === 'file' || previousFile) await this.removeStaleUploads(session, node, previousFile, value.file_path ?? null);
 
     if (value.value_date) {
       await this.sendText(session, `✅ ${formatFullDate(value.value_date, await this.dateContext(session, flow))}`);
@@ -702,30 +705,74 @@ export class CustomFlowEngine {
     download: (mediaId: string, maxBytes: number) => Promise<{ ok: true; buffer: Buffer } | { ok: false; reason: string }>;
   }): Promise<boolean> {
     const { supabase } = this.deps;
-    this.deps.sender.bindBusiness?.(args.businessId);
-    const session = await loadActiveSession(supabase, args.businessId, args.from);
-    if (!session || isSessionExpired(session) || this.isResumePending(session)) return false;
+    const found = await loadActiveSession(supabase, args.businessId, args.from);
+    if (!found || this.isResumePending(found)) return false;
     if (!(await this.isEntitled(args.businessId))) return false;
-    const flow = await this.loadPublishedFlowById(session.business_id, session.flow_id);
-    const node = flow?.definition.nodes.find(n => n.id === session.current_node_id);
-    if (!flow || node?.type !== 'ask' || node.answer_type !== 'file') return false;
-    await this.log(session, node.id, 'in', '[file received]', null);
-
-    if (!isAllowedUploadMime(args.media.mimeType)) { await this.askAgain(session, flow, node); return true; }
-    const media = await args.download(args.media.id, MAX_UPLOAD_BYTES);
-    const mime = media.ok ? sniffUploadMime(media.buffer) : null;
-    if (!media.ok || !mime || media.buffer.length > MAX_UPLOAD_BYTES) { await this.askAgain(session, flow, node); return true; }
-
-    const path = `${session.business_id}/${session.flow_id}/${session.id}/${node.id}-${crypto.randomUUID()}.${UPLOAD_EXTENSION[mime]}`;
-    const { error } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).upload(path, media.buffer, { contentType: mime, upsert: false });
-    if (error) {
-      logger.error('[CUSTOM-FLOW] Upload failed:', error.message);
-      await this.sendText(session, SAVE_FAILED_TEXT);
-      return true;
+    // Bind the shared sender only once this business will reply (S-1 guard).
+    if (isSessionExpired(found)) {
+      // A file after the chat timed out gets the usual "continue or start again?" question.
+      this.deps.sender.bindBusiness?.(args.businessId);
+      return (await this.handleExpiredSession(found, '')).handled;
     }
-    const saved = await this.acceptAnswer(session, flow, node, { value_text: null, value_date: null, file_path: path, file_mime: mime, file_size: media.buffer.length });
-    if (!saved) await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
+    const flow = await this.loadPublishedFlowById(found.business_id, found.flow_id);
+    const node = flow?.definition.nodes.find(n => n.id === found.current_node_id);
+    if (!flow || node?.type !== 'ask' || node.answer_type !== 'file') return false;
+    this.deps.sender.bindBusiness?.(args.businessId);
+    // Claim the step first (adopting a republished version, as text input does):
+    // of two files sent at once only one is stored, so no replaced file is left behind.
+    const adopt = found.flow_version !== flow.publishedVersion ? { flow_version: flow.publishedVersion } : {};
+    if (!(await updateSessionCas(supabase, found, adopt))) return true;
+    const session = { ...found, ...adopt, version: found.version + 1 };
+    // From here the message is ours: an error is logged, never answered with a second, contradictory reply.
+    try {
+      await this.log(session, node.id, 'in', '[file received]', null);
+      if (!isAllowedUploadMime(args.media.mimeType)) { await this.askAgain(session, flow, node); return true; }
+      const media = await args.download(args.media.id, MAX_UPLOAD_BYTES);
+      if (!media.ok) { await this.askAgain(session, flow, node, media.reason === 'too_large' ? undefined : 'file_unavailable'); return true; }
+      const mime = sniffUploadMime(media.buffer);
+      if (!mime || media.buffer.length > MAX_UPLOAD_BYTES) { await this.askAgain(session, flow, node); return true; }
+
+      const path = `${uploadFolder(session)}/${node.id}-${crypto.randomUUID()}.${UPLOAD_EXTENSION[mime]}`;
+      const { error } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).upload(path, media.buffer, { contentType: mime, upsert: false });
+      if (error) {
+        logger.error('[CUSTOM-FLOW] Upload failed:', error.message);
+        await this.sendText(session, SAVE_FAILED_TEXT);
+        return true;
+      }
+      const saved = await this.acceptAnswer(session, flow, node, { value_text: null, value_date: null, file_path: path, file_mime: mime, file_size: media.buffer.length });
+      if (!saved) {
+        const { error: removeError } = await supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET).remove([path]);
+        if (removeError) logger.error('[CUSTOM-FLOW] Unsaved upload could not be removed:', removeError.message);
+      }
+    } catch (err) {
+      logger.error('[CUSTOM-FLOW] File answer failed after it was accepted for handling:', err);
+    }
     return true;
+  }
+
+  /**
+   * After an answer is saved, remove every other upload for this question in
+   * this run (#1085): the replaced file, and any left by an earlier attempt
+   * that stopped between upload and save. Failures are logged; the next
+   * answer to this question tries again.
+   */
+  private async removeStaleUploads(session: CustomFlowSessionRow, node: CustomFlowAskNode, previousFile: string | null, keep: string | null): Promise<void> {
+    const bucket = this.deps.supabase.storage.from(CUSTOM_FLOW_UPLOADS_BUCKET);
+    const folder = uploadFolder(session);
+    const stale = new Set<string>();
+    if (previousFile && previousFile !== keep) stale.add(previousFile);
+    if (node.answer_type === 'file') try {
+      const { data } = await bucket.list(folder, { search: `${node.id}-` });
+      for (const object of data ?? []) {
+        const path = `${folder}/${object.name}`;
+        if (object.name.startsWith(`${node.id}-`) && path !== keep) stale.add(path);
+      }
+    } catch (err) {
+      logger.error('[CUSTOM-FLOW] Upload folder could not be listed:', err);
+    }
+    if (!stale.size) return;
+    const { error } = await bucket.remove([...stale]);
+    if (error) logger.error('[CUSTOM-FLOW] Replaced upload could not be removed:', error.message);
   }
 
   // ── Rendering ─────────────────────────────────────────────────────
@@ -1042,6 +1089,11 @@ export class CustomFlowEngine {
       // Logging must never break the conversation.
     }
   }
+}
+
+/** Private folder for one run's uploads: <business>/<flow>/<run>. */
+function uploadFolder(session: CustomFlowSessionRow): string {
+  return `${session.business_id}/${session.flow_id}/${session.id}`;
 }
 
 /** Replace {{variable}} tokens from vars; unknown variables render empty. */

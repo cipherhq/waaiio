@@ -303,7 +303,7 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
       {node.type === 'lookup' && <LookupSettings businessId={businessId} flowId={row?.id ?? null} node={node} lists={lists} business={businessDetails} busy={busy}
         onChange={updateNode} destination={props => destination(node.next, value => updateNode({ ...node, next: value }), false, props)} />}
       {node.type === 'handoff' && <HandoffSettings businessId={businessId} node={node} onChange={updateNode} />}
-      {node.type === 'ask' && <AskSettings node={node} timezone={draft.timezone || 'Africa/Lagos'} country={country} onChange={updateNode}
+      {node.type === 'ask' && <AskSettings node={node} timezone={draft.timezone || 'UTC'} country={country} onChange={updateNode}
         destination={props => destination(node.next, value => updateNode({ ...node, next: value }), true, props)} />}
       <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-gray-700">
         <button className={`${buttonClass} text-red-700 dark:text-red-300`} onClick={() => removeStep(node.id)}>Remove this step</button>

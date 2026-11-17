@@ -75,6 +75,15 @@ describe('friendly dates', () => {
       ['3 Jan', '2027-01-03'],
     ])('%s → %s', (text, iso) => expect(parse(text)).toBe(iso));
 
+    it('with nearest (past dates allowed), a date without a year is the closest one', () => {
+      const nearest = (text: string) => parseTypedDate(text, { ...lagos, now, nearest: true });
+      expect(nearest('3 Nov')).toBe('2026-11-03');
+      expect(nearest('20 Nov')).toBe('2026-11-20');
+      expect(nearest('3 Jan')).toBe('2027-01-03');
+      expect(nearest('3 Jun')).toBe('2026-06-03');
+      expect(nearest('3 Nov 2001')).toBe('2001-11-03');
+    });
+
     it('reads numeric dates month-first only for the US', () => {
       expect(parse('11/21/2026', 'US')).toBe('2026-11-21');
       expect(parse('11/21/2026', 'NG')).toBeNull();

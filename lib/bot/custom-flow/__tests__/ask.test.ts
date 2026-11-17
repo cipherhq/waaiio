@@ -12,7 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { CustomFlowEngine, DEFAULT_CLOSE_TEXT } from '../engine';
 import { validateDefinition } from '../definition';
-import { DEFAULT_RETRY, ESCAPE_HINT, SAVE_FAILED_TEXT, TYPE_A_DATE_TEXT, readAnswer, sniffUploadMime } from '../answers';
+import { DEFAULT_RETRY, ESCAPE_HINT, REASON_TEXT, SAVE_FAILED_TEXT, TYPE_A_DATE_TEXT, readAnswer, sniffUploadMime } from '../answers';
 import { handleCustomFlowFile, inboundMedia } from '../file-intake';
 import type { CustomFlowAskNode, CustomFlowDefinition } from '../types';
 
@@ -53,23 +53,31 @@ class FakeQuery {
   }
 }
 
-function fakeSupabase(seed: Record<string, Row[]>, opts: { failAnswerWrites?: boolean; failUpload?: boolean } = {}) {
+function fakeSupabase(seed: Record<string, Row[]>, opts: { failAnswerWrites?: boolean; failUpload?: boolean; leftover?: string[] } = {}) {
   const db: Record<string, Row[]> = { custom_flow_sessions: [], custom_flow_logs: [], custom_flow_answers: [], ...seed };
-  const storage = { uploaded: [] as Array<{ bucket: string; path: string; size: number; contentType: string }>, removed: [] as string[] };
+  const storage = { uploaded: [] as Array<{ bucket: string; path: string; size: number; contentType: string }>, removed: [] as string[], objects: new Set<string>(opts.leftover ?? []) };
+  let loseWrite = false;
   const supabase = {
     from: (table: string) => ({
       select: () => new FakeQuery(db, table, 'select'),
       insert: (row: Row) => new FakeQuery(db, table, 'insert', row),
-      update: (patch: Row) => new FakeQuery(db, table, 'update', patch),
+      update: (patch: Row) => {
+        // Simulates another message winning the session race once.
+        const query = new FakeQuery(db, table, 'update', patch);
+        if (table === 'custom_flow_sessions' && loseWrite && 'version' in patch) { loseWrite = false; query.eq('__never', true); }
+        return query;
+      },
       delete: () => new FakeQuery(db, table, 'delete'),
       upsert: (row: Row, options: { onConflict: string }) => { expect(options.onConflict).toBe('response_id,node_id'); return new FakeQuery(db, table, 'upsert', row, opts.failAnswerWrites); },
     }),
     storage: { from: (bucket: string) => ({
       upload: async (path: string, body: Buffer, o: { contentType: string }) => {
         if (opts.failUpload) return { data: null, error: { message: 'down' } };
-        storage.uploaded.push({ bucket, path, size: body.length, contentType: o.contentType }); return { data: { path }, error: null };
+        storage.uploaded.push({ bucket, path, size: body.length, contentType: o.contentType }); storage.objects.add(path); return { data: { path }, error: null };
       },
-      remove: async (paths: string[]) => { storage.removed.push(...paths); return { data: [], error: null }; },
+      remove: async (paths: string[]) => { storage.removed.push(...paths); paths.forEach(p => storage.objects.delete(p)); return { data: [], error: null }; },
+      list: async (folder: string, o: { search: string }) => ({ data: [...storage.objects].filter(p => p.startsWith(`${folder}/`) && !p.slice(folder.length + 1).includes('/'))
+        .map(p => ({ name: p.slice(folder.length + 1) })).filter(f => f.name.includes(o.search)), error: null }),
     }) },
     rpc: async (_name: string, args: Row) => {
       // update_session_cas: apply the patch when the version matches.
@@ -79,7 +87,7 @@ function fakeSupabase(seed: Record<string, Row[]>, opts: { failAnswerWrites?: bo
       return { data: { success: true, version: session.version }, error: null };
     },
   } as unknown as SupabaseClient;
-  return { supabase, db, storage };
+  return { supabase, db, storage, loseNextSessionWrite: () => { loseWrite = true; } };
 }
 
 function recordingSender() {
@@ -123,12 +131,12 @@ function seed(def: CustomFlowDefinition, caps = ['custom_flow']): Record<string,
 }
 
 async function start(def: CustomFlowDefinition, opts: Parameters<typeof fakeSupabase>[1] = {}) {
-  const { supabase, db, storage } = fakeSupabase(seed(def), opts);
+  const { supabase, db, storage, loseNextSessionWrite } = fakeSupabase(seed(def), opts);
   const sender = recordingSender();
   const engine = new CustomFlowEngine({ supabase, sender });
   expect((await engine.handleMessage({ businessId: BIZ, from: PHONE, text: 'RETREAT' })).handled).toBe(true);
   const say = (text: string) => engine.handleMessage({ businessId: BIZ, from: PHONE, text });
-  return { supabase, db, storage, sender, engine, say };
+  return { supabase, db, storage, sender, engine, say, loseNextSessionWrite };
 }
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100)]);
@@ -223,7 +231,7 @@ describe('ask step — answers saved for this business only', () => {
     expect(db.custom_flow_answers).toEqual([]);
     await say('1 Nov 2026');
     expect(db.custom_flow_answers).toEqual([]);
-    expect(sender.texts.at(-1)).toBe(DEFAULT_RETRY.date);
+    expect(sender.texts.at(-1)).toBe(REASON_TEXT.past_date);
     await say('31 Feb 2027');
     expect(db.custom_flow_answers).toEqual([]);
     await say('3 Jan 2027');
@@ -368,6 +376,96 @@ describe('ask step — photo or PDF', () => {
     await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media: { id: 'm1', mimeType: 'image/jpeg' }, download: download(JPEG) });
     expect(db.custom_flow_answers).toEqual([]);
     expect(sender.texts.at(-1)).toBe(SAVE_FAILED_TEXT);
+  });
+});
+
+describe('review fixes (#1085)', () => {
+  const fileFlow = () => flow({ answer_type: 'file', question: 'Send your ID' });
+  const jpeg = () => vi.fn(async () => ({ ok: true as const, buffer: JPEG }));
+  const media = { id: 'm1', mimeType: 'image/jpeg' };
+
+  it('answers never reach the step log; other replies still do', async () => {
+    const { db, say } = await start(flow({ answer_type: 'text', question: 'Your secret?' }));
+    await say('My passport is A1234567');
+    expect(db.custom_flow_answers[0].value_text).toBe('My passport is A1234567');
+    expect(JSON.stringify(db.custom_flow_logs)).not.toContain('A1234567');
+    expect(db.custom_flow_logs.some(l => l.input === '[answer]')).toBe(true);
+  });
+
+  it('of two files sent at once, the one that loses the step claim stores nothing', async () => {
+    const { supabase, sender, storage, db, loseNextSessionWrite } = await start(fileFlow());
+    loseNextSessionWrite();
+    expect(await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() })).toBe(true);
+    expect(storage.uploaded).toEqual([]);
+    expect(db.custom_flow_answers).toEqual([]);
+  });
+
+  it('after saving, leftover uploads for that question are removed; other questions’ files stay', async () => {
+    const { supabase, sender, storage, db } = await start(fileFlow());
+    const session = db.custom_flow_sessions.find(s => s.is_active)!;
+    const folder = `${BIZ}/flow-1/${session.id}`;
+    storage.objects.add(`${folder}/q-leftover.jpg`);
+    storage.objects.add(`${folder}/other-keep.jpg`);
+    await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() });
+    expect(storage.removed).toEqual([`${folder}/q-leftover.jpg`]);
+    expect([...storage.objects].sort()).toEqual([`${folder}/other-keep.jpg`, db.custom_flow_answers[0].file_path].sort());
+  });
+
+  it('a file after the chat timed out gets the continue-or-start-again question', async () => {
+    const { supabase, sender, storage, db } = await start(fileFlow());
+    db.custom_flow_sessions.find(s => s.is_active)!.expires_at = '2026-11-15T00:00:00Z';
+    expect(await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() })).toBe(true);
+    expect(sender.buttons.at(-1)!.buttons.map(b => b.title)).toEqual(['Continue', 'Start again']);
+    expect(storage.uploaded).toEqual([]);
+  });
+
+  it('a file that could not be fetched says so plainly', async () => {
+    const { supabase, sender } = await start(fileFlow());
+    await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: vi.fn(async () => ({ ok: false as const, reason: 'unavailable' })) });
+    expect(sender.texts.at(-1)).toBe(REASON_TEXT.file_unavailable);
+  });
+
+  it('the sender is bound to the business only when that business will reply', async () => {
+    const { supabase, sender } = await start(flow({ answer_type: 'text', question: 'Name?' }));
+    sender.bindBusiness.mockClear();
+    expect(await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() })).toBe(false);
+    expect(sender.bindBusiness).not.toHaveBeenCalled();
+  });
+
+  it('once a file is being handled, a later send failure does not cause a second reply', async () => {
+    const { supabase, sender, db } = await start(fileFlow());
+    sender.sendText.mockRejectedValueOnce(new Error('deadline'));
+    expect(await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() })).toBe(true);
+    expect(db.custom_flow_answers).toHaveLength(1);
+  });
+
+  it('a file answer after a republish saves the new flow version', async () => {
+    const { supabase, sender, db } = await start(fileFlow());
+    db.custom_flows[0].published_version = 2;
+    await handleCustomFlowFile({ supabase, sender, from: PHONE, businessId: null, media, download: jpeg() });
+    expect(db.custom_flow_answers[0].flow_version).toBe(2);
+  });
+
+  it('a question that renders empty saves its own words', async () => {
+    const { db, say } = await start(flow({ answer_type: 'text', question: '{{missing}}' }));
+    await say('Ada');
+    expect(db.custom_flow_answers[0].question).toBe('{{missing}}');
+  });
+
+  it('validation: plain question ids only, and button choices hold 20 characters', () => {
+    const def = flow({ answer_type: 'text', question: 'Q' });
+    def.nodes[0] = { ...def.nodes[0], id: '../x' } as never;
+    def.start_node = '../x';
+    expect(validateDefinition(def).join(' ')).toContain("characters that can't be stored");
+    expect(validateDefinition(flow({ answer_type: 'choice', question: 'Q', options: ['Rice', 'x'.repeat(21)] })).join(' ')).toContain('longer than 20');
+    expect(validateDefinition(flow({ answer_type: 'choice', question: 'Q', options: ['a', 'b', 'c', 'x'.repeat(21)] }))).toEqual([]);
+  });
+
+  it('with past dates allowed, a date without a year is the closest one', async () => {
+    const { db, sender, say } = await start(flow({ answer_type: 'date', question: 'Last visit?', allow_past: true }));
+    await say('3 Nov');
+    expect(db.custom_flow_answers[0].value_date).toBe('2026-11-03');
+    expect(sender.texts).toContain('✅ Tuesday, 3 November 2026');
   });
 });
 

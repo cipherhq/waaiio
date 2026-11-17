@@ -173,6 +173,10 @@ export function validateDefinition(definition: unknown): string[] {
         break;
       }
       case 'ask': {
+        // The id names the answer's private file; keep it to plain characters.
+        if (!/^[A-Za-z0-9_-]{1,80}$/.test(node.id)) {
+          errors.push(`Question node "${node.id}" has an id with characters that can't be stored.`);
+        }
         if (!(ASK_ANSWER_TYPES as readonly string[]).includes(node.answer_type)) {
           errors.push(`Question node "${node.id}" has no answer type. Choose what kind of answer it asks for.`);
         }
@@ -187,6 +191,9 @@ export function validateDefinition(definition: unknown): string[] {
             errors.push(`Question node "${node.id}" needs 2 to 10 choices.`);
           } else if (options.some(option => typeof option !== 'string' || !option.trim() || option.length > 24)) {
             errors.push(`Question node "${node.id}" has a choice that is empty or longer than 24 characters.`);
+          } else if (options.length <= 3 && options.some(option => option.length > 20)) {
+            // Three or fewer choices show as WhatsApp buttons, which hold 20 characters.
+            errors.push(`Question node "${node.id}" has a button choice longer than 20 characters.`);
           } else if (new Set(options.map(option => option.trim().toLowerCase())).size !== options.length) {
             errors.push(`Question node "${node.id}" has two choices with the same words.`);
           }

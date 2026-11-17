@@ -35,6 +35,13 @@
   - An inbound image/document goes to the engine only when the customer's latest active custom-flow step (on a dedicated number, that business's) is a Photo or PDF question of an entitled business. Every other image, document, video, sticker or location keeps the existing "I can't process images or files yet" reply, as does any intake error.
   - Checks: declared type must be JPEG/PNG/WebP/PDF before download; Meta's file size, the declared length and the bytes read must be ≤ 10 MB; the real type is read from the file's first bytes.
   - Stored privately at `<business>/<flow>/<run>/<question>-<random>.<ext>` before the answer is saved; removed again if the answer can't be saved. Re-sending replaces the answer and removes the old file.
+- **Privacy and safety details** (review fixes):
+  - Answers typed at a question are logged in `custom_flow_logs` as `[answer]`, never verbatim, so deleting or expiring an answer removes the only copy.
+  - A file answer first claims the step (session version check), so of two files sent at once only one is stored. After any file is saved, every other upload for that question in that run is removed (replaced files and leftovers from an interrupted attempt), and a replaced file is removed even if the question changed type.
+  - A file that arrives after the chat timed out gets the usual "continue or start again?" question. The shared sender is bound to the business only when that business will reply. Once a file is being handled, a later send failure no longer triggers the old "can't process" reply. File intake is skipped when under 30 seconds of the webhook time budget remain.
+  - Plain reasons: "That date has already passed…" and "We couldn't get that file. Please send it again." With past dates allowed, a date typed without a year is the closest one.
+  - Validation: question step ids must be plain characters; "Pick one" choices shown as buttons (3 or fewer) hold 20 characters.
+  - Flow answers page: 44px touch targets with focus outlines; View photo/PDF opens its tab during the tap so pop-up blockers allow it.
 - **Builder** (`StepPalette.tsx`, new `AskSettings.tsx`, `FlowBuilder.tsx`, `FlowMap.tsx`, `ui.tsx`, `block-label.ts`, `friendly-errors.ts`, `definition.ts`, `readiness.ts`, `preview.ts`):
   - The "Ask a question" palette group works (the "Soon" placeholders and their code are removed), with a "?" tip and example on every field, a picture of the friendly date list and the full-date confirmation, and a note that Try it can't send files.
   - Try it runs the real engine; answers there go to the preview's in-memory store only.
@@ -43,6 +50,7 @@
   - `lib/__tests__/custom-flow-answers-546.pg.test.ts` (real PostgreSQL; added to the CI pg step and the unit-job excludes)
   - `lib/bot/custom-flow/__tests__/ask.test.ts` (real engine, in-memory DB and Storage)
   - `lib/__tests__/custom-flow-file-webhook.test.ts` (real webhook route)
+  - `lib/channels/__tests__/download-media-within-1085.test.ts` (Meta size limits with mocked fetch)
   - `components/custom-flows/AskBuilder.test.tsx`; `PageBuilder.test.tsx`'s "Soon" test is replaced by one proving the five question steps work
   - `lib/custom-flow-responses/handlers.test.ts`
   - `components/custom-flows/FlowAnswers.test.tsx`
@@ -50,6 +58,7 @@
 - **Could break:**
   - The webhook now looks up an active custom-flow session for inbound images/documents before its existing reply (one extra read). Audio, text and every other path are unchanged.
   - Saving a file adds a download of up to 10 MB inside the webhook's time budget.
+  - `custom_flow_logs` still has no scheduled purge (M541, unchanged); answers no longer appear in it.
   - The new cron runs daily; until M546 is applied it fails harmlessly with `read_failed`.
   - The page lists the newest 1,000 answers and points to the CSV (up to 20,000) for more. When a cap is hit, the oldest customer's possibly incomplete answers are left out, and the CSV ends with a note saying it was capped.
   - Deleting a flow directly in the database now fails while that flow has answers.
