@@ -2,12 +2,16 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { CustomFlowEngine } from '@/lib/bot/custom-flow/engine';
 import type { EditableFlow } from './order';
+import { handoffPreviewNote } from '@/lib/bot/custom-flow/handoff-copy';
+import type { CapabilityHandoffRequest } from '@/lib/bot/custom-flow/handoff';
 
 export interface PreviewMessage {
   text: string;
   image?: string;
   options?: Array<{ label: string; value: string }>;
   input?: boolean;
+  /** A builder note, not a WhatsApp message: where a handoff step passes people on (#1086). */
+  note?: boolean;
 }
 type Row = Record<string, unknown>;
 
@@ -74,7 +78,12 @@ export async function previewDraft(readonlyDb: SupabaseClient, businessId: strin
     async sendDocument() { throw new Error('preview_sender_not_allowed'); },
     async sendAudio() { throw new Error('preview_sender_not_allowed'); },
   };
-  const engine = new CustomFlowEngine({ supabase: facade, sender });
+  const handOff = async (request: CapabilityHandoffRequest) => {
+    messages.push({ text: handoffPreviewNote(request), note: true });
+    // Ends the test chat here, as the real handoff ends the custom flow.
+    return request.closeCustomSession();
+  };
+  const engine = new CustomFlowEngine({ supabase: facade, sender, handOff });
   const from = 'preview-local';
   if (!(await engine.handleMessage({ businessId, from, text: keyword })).handled) throw new Error('preview_unavailable');
   for (const text of inputs) {

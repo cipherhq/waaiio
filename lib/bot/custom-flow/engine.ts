@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────
 // Waaiio Custom Flow — data-driven runtime (Issue #1013, Phase 1)
 //
-// Runs Message / Menu / Lookup nodes from a published definition.
+// Runs Message / Menu / Lookup nodes from a published definition, and
+// Handoff nodes (#1086) that pass the customer to an existing capability flow.
 // No customer logic lives in this file: every word the customer sees
 // comes from the definition or its data tables. When the tables do not
 // have an answer, the engine says so (no_match / fallback) — it never
@@ -26,6 +27,8 @@ import { parseDefinition, validateDefinition } from './definition';
 import { businessData } from './sources';
 import { loadAnswerRows } from './table-data';
 import { hasValue, variablesIn } from './data';
+import { checkHandoffRecord, type CapabilityHandoff } from './handoff';
+import { HANDOFF_UNAVAILABLE_TEXT } from './handoff-copy';
 import {
   loadActiveSession,
   createSession,
@@ -72,6 +75,11 @@ const MIN_LOOKUP_QUERY_LENGTH = 2;
 interface EngineDeps {
   supabase: SupabaseClient;
   sender: MessageSender;
+  /**
+   * Starts the existing capability flow for a handoff step (BotService, or the
+   * builder preview). Without it a handoff step is treated as unavailable.
+   */
+  handOff?: CapabilityHandoff;
 }
 
 interface LoadedFlow {
@@ -391,8 +399,9 @@ export class CustomFlowEngine {
       case 'lookup':
         return this.handleLookupInput(session, flow, node, text);
       case 'message':
-        // Message nodes never wait for input; reaching one with input means
-        // the chain stalled. Re-render it and move on.
+      case 'handoff':
+        // Message and handoff nodes never wait for input; reaching one with
+        // input means the step stalled. Re-render it and move on.
         await this.renderNode(session, flow, node);
         return { handled: true };
       default:
@@ -576,9 +585,64 @@ export class CustomFlowEngine {
         }
         return;
       }
+      case 'handoff': {
+        await this.renderHandoff(session, flow, node, depth);
+        return;
+      }
       default:
         return;
     }
+  }
+
+  /**
+   * Hand the customer to an existing capability flow (#1086). The capability
+   * and the chosen record are re-checked here, for this business, before the
+   * custom session is closed. When either is unusable the customer is told in
+   * plain English and returned to the flow's first step (when it waits for a
+   * reply), so a handoff never strands them or opens another business's data.
+   */
+  private async renderHandoff(
+    session: CustomFlowSessionRow,
+    flow: LoadedFlow,
+    node: Extract<CustomFlowNode, { type: 'handoff' }>,
+    depth: number,
+  ): Promise<void> {
+    const { supabase } = this.deps;
+    let record: { name: string | null } | null = null;
+    try {
+      const guard = await requireCurrentCapability(supabase, {
+        businessId: session.business_id,
+        capability: node.capability,
+        action: 'create_new',
+      });
+      if (guard.allowed) record = await checkHandoffRecord(supabase, session.business_id, node);
+      else logger.warn(`[CUSTOM-FLOW] handoff ${node.capability} not entitled (${guard.reason}) business=${session.business_id}`);
+    } catch (err) {
+      logger.error('[CUSTOM-FLOW] Handoff check failed:', err);
+    }
+
+    if (record && this.deps.handOff) {
+      await this.log(session, node.id, 'out', null, `Continues in ${node.capability}`);
+      const started = await this.deps.handOff({
+        capability: node.capability,
+        recordId: node.record_id ?? null,
+        recordName: record.name,
+        closeCustomSession: () => closeSession(supabase, session.id, session.business_id),
+      });
+      if (started) return;
+    }
+
+    await this.sendText(session, HANDOFF_UNAVAILABLE_TEXT[node.capability]);
+    const startId = flow.definition.start_node ?? flow.definition.nodes[0]?.id;
+    const start = flow.definition.nodes.find((n) => n.id === startId);
+    // Only a start step that waits for a reply is a safe place to return to:
+    // a message chain could lead straight back to this handoff.
+    if (start && start.id !== node.id && (start.type === 'menu' || start.type === 'lookup')) {
+      await this.goToNode(session, flow, start.id, depth + 1);
+      return;
+    }
+    await this.sendText(session, DEFAULT_CLOSE_TEXT);
+    await closeSession(supabase, session.id, session.business_id);
   }
 
   private async renderMenu(
@@ -824,6 +888,8 @@ export async function tryHandleCustomFlow(args: {
   isPinStep?: boolean;
   /** Exact business-code detector (injected by BotService). */
   isBusinessCode?: (text: string) => Promise<boolean>;
+  /** Starts an existing capability flow for a handoff step (injected by BotService). */
+  handOff?: CapabilityHandoff;
 }): Promise<boolean> {
   if (!args.businessId) return false;
   // PIN steps win over the custom session: the input is a card PIN and must
@@ -837,7 +903,7 @@ export async function tryHandleCustomFlow(args: {
   if (args.messageType && args.messageType !== 'text') {
     if (!text.startsWith(MENU_POSTBACK_PREFIX) && !text.startsWith('cf-resume:')) return false;
   }
-  const engine = new CustomFlowEngine({ supabase: args.supabase, sender: args.sender });
+  const engine = new CustomFlowEngine({ supabase: args.supabase, sender: args.sender, handOff: args.handOff });
   const result = await engine.handleMessage({
     businessId: args.businessId,
     from: args.from,

@@ -14,6 +14,7 @@ class Query {
   select(){return this;}
   eq(k:string,v:unknown){this.filters.push(r=>k.startsWith('events.')?state.rows.events.some(e=>e.id===r.event_id&&e[k.slice(7)]===v):r[k]===v);return this;}
   neq(k:string,v:unknown){this.filters.push(r=>r[k]!==v);return this;}
+  gte(k:string,v:string){this.filters.push(r=>r[k]>=v);return this;}
   is(k:string,v:unknown){return this.eq(k,v);}
   order(){return this;}limit(){return this;}
   ilike(k:string,v:string){this.filters.push(r=>String(r[k]).toLowerCase().includes(v.replaceAll('%','').toLowerCase()));return this;}
@@ -116,3 +117,31 @@ describe('guided HTTP handlers: real shared ownership/capability policy, mocked 
     expect(state.rows.custom_flows[0].definition).toEqual(before);expect(state.writes).toEqual([]);
   });
 });
+
+describe('"Use what you already have" record picker (#1086)',()=>{
+  const future=new Date(Date.now()+30*86400000).toISOString().split('T')[0];
+  beforeEach(()=>{
+    state.rows.events=[
+      {id:'e-own',business_id:businessId,name:'Youth Retreat',status:'published',date:future},
+      {id:'e-past',business_id:businessId,name:'Last year',status:'published',date:'2020-01-01'},
+      {id:'e-draft',business_id:businessId,name:'Draft event',status:'draft',date:future},
+      {id:'e-other',business_id:otherId,name:'Other gala',status:'published',date:future},
+    ];
+    state.rows.services=[
+      {id:'s-give',business_id:businessId,name:'Sunday Offering',is_active:true,deleted_at:null,service_type:'giving'},
+      {id:'s-pay',business_id:businessId,name:'Retreat fee',is_active:true,deleted_at:null,service_type:'payment'},
+      {id:'s-off',business_id:businessId,name:'Old fund',is_active:false,deleted_at:null,service_type:'giving'},
+      {id:'s-other',business_id:otherId,name:'Their offering',is_active:true,deleted_at:null,service_type:'giving'},
+    ];
+  });
+  it.each([['event',['e-own']],['giving',['s-give']],['payment',['s-pay']]])('lists only this business\'s usable %s records',async(kind,ids)=>{
+    const response=await sources(get('/sources',`&kind=${kind}`));
+    expect(response.status).toBe(200);
+    expect((await response.json()).records.map((r:Row)=>r.id)).toEqual(ids);
+  });
+  it('denies anonymous and non-premium access to the picker',async()=>{
+    state.user='';expect((await sources(get('/sources','&kind=event'))).status).toBe(401);
+    state.user='owner';state.rows.businesses[0].subscription_tier='free';expect((await sources(get('/sources','&kind=event'))).status).toBe(403);
+  });
+});
+

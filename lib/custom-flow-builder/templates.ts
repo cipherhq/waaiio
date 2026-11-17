@@ -32,7 +32,7 @@ export function toggleSection<T extends CustomFlowDefinition>(definition: T, id:
   const menu = definition.nodes.find(n => n.id === definition.guided?.menu_id);
   const node = definition.nodes.find(n => n.id === section?.node_id);
   if (!section || menu?.type !== 'menu' || node?.type !== 'lookup' || node.table !== section.table) throw Error('custom_section');
-  const incoming = definition.nodes.filter(n => n.id !== menu.id && (n.type === 'menu' ? n.options.some(o => o.next === node.id) : n.next === node.id));
+  const incoming = definition.nodes.filter(n => n.id !== menu.id && (n.type === 'menu' ? n.options.some(o => o.next === node.id) : n.type !== 'handoff' && n.next === node.id));
   if (incoming.length || definition.start_node === node.id) throw Error('custom_section');
   const existing = menu.options.filter(o => o.next === node.id);
   if ((section.enabled && (existing.length !== 1 || existing[0].label !== section.label)) || (!section.enabled && existing.length)) throw Error('custom_section');

@@ -7,7 +7,7 @@ import { hasValue, variablesIn } from '@/lib/bot/custom-flow/data';
 export async function guidedReadiness(db: SupabaseClient, businessId: string, draft: CustomFlowDefinition) {
   if (!draft.guided && !draft.business_bindings) return { missingBusiness: false, sections: [] as string[] };
   const settings = await businessData(db,businessId,draft.business_bindings ?? []);
-  const texts = [draft.greeting,draft.fallback_message,...draft.nodes.flatMap(n=>n.type==='message' ? [n.text] : n.type==='menu' ? [n.text] : [n.prompt ?? '',n.reply,n.no_match])];
+  const texts = [draft.greeting,draft.fallback_message,...draft.nodes.flatMap(n=>n.type==='message' ? [n.text] : n.type==='menu' ? [n.text] : n.type==='handoff' ? [] : [n.prompt ?? '',n.reply,n.no_match])];
   const missingBusiness = !settings.timezone || !settings.currency
     || Object.values(settings.vars).some(v=>!hasValue(v))
     || texts.flatMap(variablesIn).some(key=>key.startsWith('business.') && !hasValue(settings.vars[key]));
@@ -18,7 +18,7 @@ export async function guidedReadiness(db: SupabaseClient, businessId: string, dr
     const node=draft.nodes.find(n=>n.id===id);
     if(node?.type==='menu')node.options.forEach(o=>visit(o.next));
     else if(node?.type==='lookup')visit(node.next ?? draft.start_node ?? draft.nodes[0]?.id);
-    else if(node)visit(node.next);
+    else if(node && node.type!=='handoff')visit(node.next); // a handoff ends the custom flow (#1086)
   };
   visit(draft.start_node ?? draft.nodes[0]?.id);
   const sections: string[]=[];
