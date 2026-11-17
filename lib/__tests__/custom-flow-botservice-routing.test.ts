@@ -62,6 +62,8 @@ vi.mock('@/lib/capabilities/service', () => ({
       : [
           { capability: 'custom_flow', is_enabled: true, sort_order: 0 },
           { capability: 'scheduling', is_enabled: true, sort_order: 1 },
+          // #1086 handoff tests turn on extra capabilities for biz-A only.
+          ...extraCapsA.map((capability, i) => ({ capability, is_enabled: true, sort_order: 2 + i })),
         ],
   })),
   getCapabilityCustomLabels: vi.fn().mockResolvedValue({}),
@@ -83,6 +85,7 @@ vi.mock('@/lib/bot/smart-intent', () => ({
 }));
 
 let suspendedBizIds = new Set<string>();
+let extraCapsA: string[] = [];
 vi.mock('@/lib/channels/send-guard', () => ({
   assertMessagingAllowed: vi.fn().mockImplementation(async (bizId: string) => {
     if (!bizId) throw Object.assign(new Error('Messaging suspended for business unknown: missing_business_id'), { name: 'MessagingSuspendedError' });
@@ -844,3 +847,76 @@ describe('Default Reply yields to deterministic menu routing', () => {
     expect(execute).toHaveBeenCalledTimes(1); expect(f.botSession.session_data.active_capability).toBe('scheduling');
   });
 });
+
+// ── #1086: "Use what you already have" handoff through the real BotService ──
+
+describe('Custom Flow handoff — the existing flow takes over through BotService (#1086)', () => {
+  const EVENT_ID = 'e0000000-0000-4000-8000-000000000001';
+  const HANDOFF_DEF: CustomFlowDefinition = {
+    ...FESTIVAL_DEF,
+    nodes: [
+      { id: 'main_menu', type: 'menu', text: 'Welcome to AfroPlus Fest! What do you need?', options: [{ label: 'Tickets', next: 'tix' }, { label: 'Talk to us', next: 'talk' }] },
+      { id: 'tix', type: 'handoff', capability: 'ticketing', record_id: EVENT_ID },
+      { id: 'talk', type: 'handoff', capability: 'chat' },
+    ],
+  };
+  function handoffFixture(caps: string[]) {
+    extraCapsA = caps;
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const routing = createRoutingSupabase('select_capability');
+    routing.db.custom_flows[0].published_definition = HANDOFF_DEF;
+    routing.db.business_capabilities.push(...caps.map((capability, i) => ({ business_id: 'biz-A', capability, is_enabled: true, sort_order: 2 + i })));
+    routing.db.events = [{ id: EVENT_ID, business_id: 'biz-A', name: 'AfroPlus Fest Day 1', status: 'published', date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0], time: null, venue: 'Main Stage', price: 5000, total_tickets: 100, tickets_sold: 0, max_per_order: 10, image_url: null }];
+    routing.db.event_ticket_types = [];
+    const bot = new BotService(routing.supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+    // The existing CAP-001 capability refresh also writes the session first; only writes that start a capability count here.
+    const casCalls = () => routing.supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas' && c[1].p_session_data?.active_capability).map((c: any[]) => c[1]);
+    return { ...routing, cloud, bot, casCalls };
+  }
+  beforeEach(() => { suspendedBizIds = new Set(); mockDetectionResult = { businessId: null, suggestions: [] }; vi.clearAllMocks(); });
+  afterEach(() => { extraCapsA = []; });
+
+  it('Event tickets with a chosen event: the custom session closes and the ticketing validator accepts that event', async () => {
+    const f = handoffFixture(['ticketing']);
+    await f.bot.handleMessage(PHONE, 'cf:main_menu:0', 'button', 'pnid-1');
+    expect(f.db.custom_flow_sessions[0].is_active).toBe(false);
+    const cas = f.casCalls();
+    // 1) BotService positions the existing bot session on ticketing's first step…
+    expect(cas[0]).toMatchObject({ p_session_id: 'sess-1', p_current_step: 'select_event' });
+    expect(cas[0].p_session_data).toMatchObject({ business_id: 'biz-A', active_capability: 'ticketing', _inbound_channel_id: 'chan-1' });
+    // The mock keeps the object by reference; the executor then appends its own steps.
+    expect(cas[0].p_session_data._step_history.slice(0, 2)).toEqual(['select_capability', 'select_event']);
+    // 2) …then the unchanged ticketing step validates the event id and moves on.
+    const moved = cas.find((c: any) => c.p_current_step !== 'select_event');
+    expect(moved?.p_current_step).toBe('select_ticket_type'); // ticketing's own next step after select_event
+    expect(moved?.p_session_data).toMatchObject({ event_id: EVENT_ID, event_name: 'AfroPlus Fest Day 1' });
+    expect(sentTexts(f.cloud)).not.toContain('Sorry, tickets for this aren’t available right now.');
+  });
+
+  it('Talk to a person: the existing chat start message is sent', async () => {
+    const f = handoffFixture(['chat']);
+    await f.bot.handleMessage(PHONE, 'cf:main_menu:1', 'button', 'pnid-1');
+    expect(f.db.custom_flow_sessions[0].is_active).toBe(false);
+    expect(f.casCalls()[0]).toMatchObject({ p_current_step: 'chat_start' });
+    expect(sentTexts(f.cloud).some(t => t.includes("You're now chatting with *Biz A*"))).toBe(true);
+  });
+
+  it('feature turned off: plain message, back to the custom menu, the bot session is not touched', async () => {
+    const f = handoffFixture([]);
+    await f.bot.handleMessage(PHONE, 'cf:main_menu:0', 'button', 'pnid-1');
+    expect(sentTexts(f.cloud)).toContain('Sorry, tickets for this aren’t available right now.');
+    expect(f.db.custom_flow_sessions[0]).toMatchObject({ is_active: true, current_node_id: 'main_menu' });
+    expect(f.casCalls()).toEqual([]);
+  });
+
+  it('another business\'s event: plain message and no handoff', async () => {
+    const f = handoffFixture(['ticketing']);
+    f.db.events[0].business_id = 'biz-B';
+    await f.bot.handleMessage(PHONE, 'cf:main_menu:0', 'button', 'pnid-1');
+    expect(sentTexts(f.cloud)).toContain('Sorry, tickets for this aren’t available right now.');
+    expect(f.db.custom_flow_sessions[0].is_active).toBe(true);
+    expect(f.casCalls()).toEqual([]);
+  });
+});
+

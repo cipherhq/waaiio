@@ -59,6 +59,8 @@ export function WhatsAppPreview({
         {messages.length === 0 && <p className="mx-auto mt-6 max-w-[16rem] rounded-lg bg-[#FFF5C4] px-3 py-2 text-center text-xs text-gray-800 dark:bg-[#1F2C33] dark:text-gray-200">Select Try it or Restart preview to chat with your flow like a customer.</p>}
         {messages.map((message, index) => {
           const history = index <= lastInputIndex;
+          // A builder note (#1086): where a handoff step passes people on. Not a chat bubble.
+          if (message.note) return <p key={index} className="mx-auto max-w-[90%] rounded-lg bg-[#FFF5C4] px-3 py-2 text-center text-xs font-medium text-gray-900 dark:bg-[#1F2C33] dark:text-gray-100">{message.text}</p>;
           return <div key={index} className={`flex ${message.input ? 'justify-end' : 'justify-start'}`}>
             <div className="max-w-[85%] min-w-0">
               <div className={`rounded-lg px-3 py-2 text-sm shadow-sm ${message.input

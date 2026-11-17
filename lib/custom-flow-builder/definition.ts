@@ -1,4 +1,4 @@
-import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
+import type { CustomFlowHandoffNode, CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { withOrderMetadata, type EditableFlow, type FlowOrderMetadata } from './order';
 import { readBusinessBindings, readGuided } from '@/lib/bot/custom-flow/data';
 
@@ -37,6 +37,12 @@ export function readDraft(value: unknown, id: string, businessId: string): Edita
         return { id: nodeId, type: 'lookup', table: text(raw.table, 80), search_fields: raw.search_fields.map(field => text(field, 200)),
           prompt: raw.prompt === undefined ? undefined : text(raw.prompt), reply: text(raw.reply), no_match: text(raw.no_match),
           ...(raw.next === undefined ? {} : { next: target(raw.next) }) };
+      case 'handoff': {
+        // Capability and record are checked by validateDefinition (plain-English
+        // errors) and, for record ownership, by the route before publish.
+        const capability = text(raw.capability, 20) as CustomFlowHandoffNode['capability'];
+        return { id: nodeId, type: 'handoff', capability, ...(raw.record_id == null || raw.record_id === '' ? {} : { record_id: text(raw.record_id, 80) }) };
+      }
       default: throw new Error('invalid_definition');
     }
   });
