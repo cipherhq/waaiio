@@ -417,3 +417,11 @@ contains migrations through 541; open PR #1027 owns 542. Open PRs #1021–#1024
 and #1026 add no migration. This lane builds on unmerged Phase 2 PR #1024
 at `de871238ba7b46e09881be82a130bcffa943ce6c`. Reservation grants no hosted
 schema application or deployment authority. Recheck collisions before SQL creation.
+
+### Reservation — Waaiio fee rounds to the cent in the database
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 550 | fee_round_to_cent | claude/fee-round-to-cent-db | Reserved; not applied |
+
+Reserved 2026-11-18 after checking main through M548, open PR #1125 (M549) and local worktree and remote branch migration filenames. Owner decision 2026-11-18 (round the fee to the cent/kobo). Rewrites only the whole-unit fee statement in `bind_merchant_tax_fee_980`, `finalize_stripe_recurring_charge` and `finalize_refund_accounting_modern`, keeping schema, SECURITY DEFINER, search_path, owner and ACL. Applying it to staging or production needs separate Owner approval.
