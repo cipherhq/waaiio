@@ -1,0 +1,337 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.admin_broadcast_recipients.broadcast_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.admin_broadcast_recipients.created_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.admin_broadcast_recipients.error",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.admin_broadcast_recipients.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.admin_broadcast_recipients.meta_message_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.admin_broadcast_recipients.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.admin_broadcast_recipients.status",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.admin_broadcast_recipients.updated_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
+   "after_sha256": "6753510ebd3ffda935e9e32e81c21dff52d0fa3aca516dbd2b07fbfc382071cb",
+   "identity": "column:public.admin_broadcasts.request_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (broadcast_id) REFERENCES admin_broadcasts(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "a437181026a7ec65f7cb540a5da3d3983899f5895c60b4f9838c3874b8cfb761",
+   "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_broadcast_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (broadcast_id, phone)",
+    "validated": true
+   },
+   "after_sha256": "ca0ddec42739aa411ec3950dbd2bd1d7047b3f080363357080b071c663bc4fa1",
+   "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_broadcast_id_phone_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (error IS NULL OR char_length(error) <= 500)",
+    "validated": true
+   },
+   "after_sha256": "5d1443194792f2ffab3d3caa1d81f6e4ac9d404d1506dec36178978f2d5a1316",
+   "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_error_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone ~ '^[1-9][0-9]{6,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "bd1afe20a16d93e9983a7d330aba5b9521bf280ade31c1f8a5dd4fd6a8190539",
+   "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_phone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (status = ANY (ARRAY['sending'::text, 'sent'::text, 'failed'::text, 'unknown'::text, 'skipped_opted_out'::text, 'skipped_suspended'::text, 'skipped_unverified'::text]))",
+    "validated": true
+   },
+   "after_sha256": "b840ae829be63250d2018f14a72082941dda1df339abf6d9f13db2c182514ed4",
+   "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_status_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text, 'channel_change_execute'::text, 'passkey_approve'::text, 'passkey_remove'::text, 'customer_suspension'::text, 'admin_broadcast'::text]))",
+    "validated": true
+   },
+   "after_sha256": "11aaab08b8f3a6a2b3f5676f780b5afd63ab0467a70ea3a5db06f938ea8b956c",
+   "identity": "constraint:public.admin_step_up_authorizations.admin_step_up_authorizations_action_type_check",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX admin_broadcast_recipients_broadcast_id_phone_key ON public.admin_broadcast_recipients USING btree (broadcast_id, phone)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "58351d311fb9a62f09a8d4535bf4cd8c41147fb5135f6f0611640152887f5ff0",
+   "identity": "index:public.admin_broadcast_recipients.admin_broadcast_recipients_broadcast_id_phone_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX admin_broadcast_recipients_pkey ON public.admin_broadcast_recipients USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "783da1c220f395f3bda9bbeaa6dd5177eac8a8c16b7e39abe3f2c8252d37af5b",
+   "identity": "index:public.admin_broadcast_recipients.admin_broadcast_recipients_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX admin_broadcasts_request_id_key ON public.admin_broadcasts USING btree (request_id) WHERE (request_id IS NOT NULL)",
+    "predicate": "(request_id IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "42165a57719c7046b90930cae814ca226e33d6e2904a49bdb713a7dd46e7ac3e",
+   "identity": "index:public.admin_broadcasts.admin_broadcasts_request_id_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "public"
+    ],
+    "using": "false",
+    "with_check": "false"
+   },
+   "after_sha256": "6462477c6c36ac19d46569c6f7297bf8d3e7556c39b46dcb0fb5b0749b5f42a1",
+   "identity": "policy:public.admin_broadcast_recipients.admin_broadcast_recipients_deny_all",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "f2fe515ce7cb36576c0b89be5cb24ceaab7d8875f00cfe8dd3cab3149c1d08de",
+   "identity": "table:public.admin_broadcast_recipients",
+   "operation": "add"
+  }
+ ],
+ "migration": "548_admin_whatsapp_broadcasts.sql",
+ "migration_sha256": "14d66a1185ef201ea4de9877b76abf3a149f7c5058dfd2109070a227bd6685a6",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
