@@ -162,6 +162,19 @@ export interface MessageSender {
     items: Array<{ title: string; description?: string; postbackText: string }>;
     footer?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
+  /**
+   * #1104: Waaiio's own template message to its users and account owners
+   * (admin broadcasts), from a shared number. Never business-attributable:
+   * refuses on a sender bound to a business, so no merchant credit is used.
+   * One provider call, no retry.
+   */
+  sendPlatformTemplate?(msg: {
+    to: string;
+    templateName: string;
+    languageCode: string;
+    templateParams: string[];
+    messageCategory: 'marketing' | 'utility';
+  }): Promise<{ success?: boolean; messageId?: string }>;
   /** S-1 (#256): Bind a resolved business to this sender for hard-stop guard. */
   bindBusiness?(businessId: string): void;
   /** S-1 (#256): Transition to tenantless platform discovery scope. */
@@ -570,6 +583,26 @@ export class MetaCloudSender implements MessageSender {
         { platformScopeAllowed: true },
       );
     }, 2, 1000, this.beforeEachAttempt);
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendPlatformTemplate(msg: {
+    to: string;
+    templateName: string;
+    languageCode: string;
+    templateParams: string[];
+    messageCategory: 'marketing' | 'utility';
+  }) {
+    // A bound sender would make this a business send, billed to that business.
+    if (this._businessId) throw new GateBlockError('Platform template send refused on a business-bound sender — zero Meta emission');
+    const components = msg.templateParams.length
+      ? [{ type: 'body' as const, parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })) }]
+      : [];
+    const result = await this.withAttemptAndGuard(
+      () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, languageCode: msg.languageCode, components }),
+      { recipientPhone: msg.to, messageCategory: msg.messageCategory, templateName: msg.templateName },
+      { platformScopeAllowed: true },
+    );
     return { success: true, messageId: result.messageId };
   }
 

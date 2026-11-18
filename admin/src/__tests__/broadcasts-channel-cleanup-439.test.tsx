@@ -3,7 +3,7 @@
  *
  * Proves:
  * - SMS is disabled / not selectable
- * - WhatsApp is disabled / not selectable ("Coming soon")
+ * - WhatsApp: was disabled here; turned on by #1104
  * - Email remains selectable and functional
  * - Existing broadcast history display is untouched
  */
@@ -26,12 +26,13 @@ describe('Slice 0C — Admin Broadcasts channel cleanup (#439)', () => {
     expect(BROADCASTS_SRC).toMatch(/sms.*coming soon/i);
   });
 
-  it('WhatsApp option is marked disabled', () => {
-    expect(BROADCASTS_SRC).toMatch(/value:\s*'whatsapp'.*disabled:\s*true/s);
-  });
-
-  it('WhatsApp label indicates coming soon', () => {
-    expect(BROADCASTS_SRC).toMatch(/whatsapp.*coming soon/i);
+  // #1104 (Owner request 2026-11-17): WhatsApp is on. Its behaviour is proved
+  // on the rendered page in broadcasts-whatsapp-1104.test.tsx.
+  it('WhatsApp option is enabled (#1104)', () => {
+    const whatsappLine = BROADCASTS_SRC.match(/\{[^}]*value:\s*'whatsapp'[^}]*\}/);
+    expect(whatsappLine).not.toBeNull();
+    expect(whatsappLine![0]).not.toContain('disabled');
+    expect(whatsappLine![0]).not.toMatch(/coming soon/i);
   });
 
   it('Email option is NOT disabled', () => {
