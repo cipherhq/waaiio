@@ -2,11 +2,13 @@
 import Link from 'next/link';
 
 import { useEffect, useState, useCallback } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness, useDashboard } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { buildGivingCategoryLink } from '@/lib/giving-category-link';
 
 
 interface GivingCategory {
@@ -30,6 +32,8 @@ export default function GivingPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('list');
   const [saving, setSaving] = useState(false);
+  const [shareOpenId, setShareOpenId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Form
   const [formId, setFormId] = useState<string | null>(null);
@@ -141,6 +145,22 @@ export default function GivingPage() {
   // Stats
   const totalGiving = categories.length;
 
+  const copyLink = (id: string, link: string) => {
+    navigator.clipboard.writeText(link);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const downloadQr = (cat: GivingCategory) => {
+    const canvas = document.getElementById(`giving-qr-${cat.id}`)?.querySelector('canvas');
+    if (!canvas) return;
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    const name = cat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'giving';
+    a.download = `${business.slug || 'giving'}-${name}-qr.png`;
+    a.click();
+  };
+
   if (view === 'add' || view === 'edit') {
     return (
       <div className="space-y-6">
@@ -239,8 +259,11 @@ export default function GivingPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {categories.map(cat => (
-            <div key={cat.id} className={`rounded-lg border bg-white dark:bg-gray-800 p-4 flex items-center justify-between ${cat.is_active ? 'border-gray-200 dark:border-gray-700' : 'border-gray-200 dark:border-gray-700 opacity-60'}`}>
+          {categories.map(cat => {
+            const link = buildGivingCategoryLink(business.id, cat.id);
+            return (
+            <div key={cat.id} className={`rounded-lg border bg-white dark:bg-gray-800 p-4 ${cat.is_active ? 'border-gray-200 dark:border-gray-700' : 'border-gray-200 dark:border-gray-700 opacity-60'}`}>
+            <div className="flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{cat.name}</h3>
@@ -258,6 +281,15 @@ export default function GivingPage() {
                 {cat.description && <p className="text-xs text-gray-400 mt-0.5">{cat.description}</p>}
               </div>
               <div className="flex items-center gap-3">
+                {cat.is_active && (
+                  <button
+                    onClick={() => setShareOpenId(shareOpenId === cat.id ? null : cat.id)}
+                    aria-expanded={shareOpenId === cat.id}
+                    className="text-xs text-brand hover:text-brand-600 font-medium"
+                  >
+                    Share
+                  </button>
+                )}
                 {!isImpersonating && (
                   <>
                     <button
@@ -273,7 +305,41 @@ export default function GivingPage() {
                 )}
               </div>
             </div>
-          ))}
+            {cat.is_active && shareOpenId === cat.id && (
+              <div className="mt-3 rounded-lg border border-brand/20 bg-brand-50/30 p-3 space-y-2">
+                <p className="text-xs font-semibold text-brand uppercase">Share {cat.name}</p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <div id={`giving-qr-${cat.id}`} className="shrink-0 self-start rounded bg-white p-1.5 shadow-sm">
+                    <QRCodeCanvas value={link} size={120} level="H" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-600 dark:text-gray-400">Scanning or tapping opens WhatsApp and starts giving to {cat.name}. Members only enter the amount.</p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 break-all">{link}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        onClick={() => downloadQr(cat)}
+                        className="rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                      >
+                        Download PNG
+                      </button>
+                      <button
+                        onClick={() => copyLink(cat.id, link)}
+                        className="rounded bg-brand px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-brand-600"
+                      >
+                        {copiedId === cat.id ? 'Copied!' : 'Copy Link'}
+                      </button>
+                      <a href={`https://wa.me/?text=${encodeURIComponent(`Give to ${cat.name} at ${business.name}: ${link}`)}`} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded bg-[#25D366] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:opacity-85">
+                        Share on WhatsApp
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            </div>
+            );
+          })}
         </div>
       )}
     </div>

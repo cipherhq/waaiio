@@ -1,0 +1,26 @@
+## 2026-11-18 — Shareable QR code and link for each giving category
+
+- **Owner request (2026-11-18, staging test):** each giving category (Tithe, Offering, Building Fund…) needs its own QR code, a Download PNG for printing, Copy Link and Share on WhatsApp. Scanning or tapping opens WhatsApp with that business and starts giving in that category, so the donor only enters the amount.
+- **What changed:**
+  - New `lib/giving-category-link.ts`:
+    - `buildGivingCategoryLink` builds the permanent link `/m/{businessId}/giving/{categoryId}`.
+    - The WhatsApp prefill is `{BOT_CODE}:giving:{ref}`. The ref is the first 8 hex characters of the category's own `services.id`, so there is no new column and no migration.
+    - `resolveGivingCategoryRef` matches the ref only among the business's own active, non-deleted giving categories.
+  - New route `app/m/[businessId]/giving/[categoryId]/route.ts`. It uses the same guards as the other `/m/` links (`app/m/resolve.ts`: rate limit, no query parameters, active and not messaging-suspended business, ready channel). It then redirects to `wa.me/{number}?text={BOT_CODE}:giving:{ref}`, on both shared and dedicated numbers. A business with no bot code gets the existing "routing code is not configured" page.
+  - `lib/bot/handlers/bot-code-detection.ts` `parseDeepLink` reads `CODE:giving:ref` as the existing `CODE:giving` deep link, so the shared number finds the business by its exact bot code. Hidden businesses stay reachable (#1083).
+  - `lib/bot/bot.service.ts`:
+    - **Restart.** The link restarts like a bot code, also from a free-text step such as the amount prompt, but not from live chat. A donor midway through one amount can scan another category.
+    - **Matching.** On a new or restarted session, the link is used only when its code is the resolved business's own `bot_code` and giving is an effective capability. That business's category is then looked up.
+    - **Preselection.** A valid category is preselected the way quick rebook and the Custom Flow giving handoff already do it: `_repeat_selection_id`, then `select_category` is answered with the category id. That step re-checks that the category is active and a giving one.
+    - **Skipped for the link.** The free-text understanding (CAS-004), the returning-customer "Give again?" prompt and the welcome buttons are skipped. The link text is a machine code, and those steps would replace the category or the giving menu.
+    - **Fallback.** An unknown, inactive or deleted category, or another business's category, falls back to that business's giving menu.
+  - `app/dashboard/giving/page.tsx`: each active category gets a **Share** button. It opens the QR code (`QRCodeCanvas`), Download PNG (`{slug}-{category}-qr.png`), Copy Link and Share on WhatsApp. Inactive categories show no share options. Sharing is still available during admin impersonation because it changes nothing.
+- **Unchanged:** giving amounts, fees, payment and payout logic, the payment flow steps, the completion and next-steps menu, the existing `CODE:capability` deep links, and the other `/m/` links. No migration.
+- **Tests:**
+  - `lib/__tests__/giving-category-link.test.ts`: builder, ref, prefill parse, scoped resolver, and the real route handler (shared, dedicated, bot-code key, bad id, query parameters, inactive, suspended and no-code businesses).
+  - `lib/__tests__/giving-category-bot-routing.test.ts`: real BotService covering a valid category on a hidden business, case-insensitive matching, deleted, inactive and unknown categories falling back to the menu, another business's category, a dedicated number with a foreign code and with its own code, and a restart from the amount step.
+  - `app/dashboard/giving/__tests__/giving-share-qr.test.tsx`: the rendered page buttons.
+- **Could break:**
+  - A ref is 8 hex characters. If two active categories of one business ever share that prefix, the link falls back to the giving menu instead of guessing.
+  - A donor typing exactly `CODE:giving:xxxxxxxx` at a free-text step now restarts instead of having it read as an answer.
+  - The amount prompt does not name the business. It is the same prompt quick rebook uses.
