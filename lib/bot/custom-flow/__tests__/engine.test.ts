@@ -973,3 +973,103 @@ describe('published business-menu entry', () => {
     expect(f.sender.sendButtons).not.toHaveBeenCalled();
   });
 });
+
+// ── #1107: browse mode, the pick fix, and a guided festival flow ─────
+
+import { createTemplate } from '@/lib/custom-flow-builder/templates';
+import { readDraft } from '@/lib/custom-flow-builder/definition';
+
+describe('lookup browse mode and saved festival flows (#1107)', () => {
+  const browseDef = (mode: 'browse' | 'both' | undefined): CustomFlowDefinition => ({
+    ...FESTIVAL_DEF,
+    nodes: FESTIVAL_DEF.nodes.map(node => node.id === 'vendor_lookup' && node.type === 'lookup'
+      ? { ...node, prompt: 'Reply with a number.', ...(mode ? { mode } : {}) } : node),
+  });
+  function setup(def: CustomFlowDefinition) {
+    const { supabase, db } = createFakeSupabase(seedFor([def]));
+    const sender = createRecordingSender();
+    const engine = new CustomFlowEngine({ supabase, sender });
+    const say = (text: string) => engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text });
+    return { db, sender, say };
+  }
+
+  it('returns to the menu after a "few matches" pick (the next step wins its write)', async () => {
+    const { sender, say } = setup(FESTIVAL_DEF);
+    await say('AFROFEST'); await say('cf:main_menu:1'); await say('food');
+    const before = sender.buttons.length;
+    await say('2');
+    expect(sender.texts.at(-1)?.text).toBe('Suya Spot — Food. Find them at Food Court B.');
+    expect(sender.buttons).toHaveLength(before + 1);
+  });
+
+  it('browse lists the visible rows by number, and a number answers', async () => {
+    const { sender, say } = setup(browseDef('browse'));
+    await say('AFROFEST'); await say('cf:main_menu:1');
+    expect(sender.texts.at(-1)?.text).toBe('Reply with a number.\n\n1. Jollof House\n2. Suya Spot');
+    const before = sender.buttons.length;
+    await say('2');
+    expect(sender.texts.at(-1)?.text).toBe('Suya Spot — Food. Find them at Food Court B.');
+    expect(sender.buttons).toHaveLength(before + 1);
+  });
+
+  it('browse only: a typed word is not searched; people get the no-match text and the list again', async () => {
+    const { sender, say } = setup(browseDef('browse'));
+    await say('AFROFEST'); await say('cf:main_menu:1');
+    await say('jollof');
+    expect(sender.texts.at(-2)?.text).toBe('No vendor matches "jollof". Try another name.');
+    expect(sender.texts.at(-1)?.text).toContain('1. Jollof House');
+    await say('1');
+    expect(sender.texts.at(-1)?.text).toBe('Jollof House — Food. Find them at Food Court A.');
+  });
+
+  it('both: lists the rows and still answers a typed word', async () => {
+    const { sender, say } = setup(browseDef('both'));
+    await say('AFROFEST'); await say('cf:main_menu:1');
+    expect(sender.texts.at(-1)?.text).toContain('2. Suya Spot');
+    await say('suya');
+    expect(sender.texts.at(-1)?.text).toBe('Suya Spot — Food. Find them at Food Court B.');
+  });
+
+  it('no mode sends only the prompt, exactly as before', async () => {
+    const { sender, say } = setup(browseDef(undefined));
+    await say('AFROFEST'); await say('cf:main_menu:1');
+    expect(sender.texts.at(-1)?.text).toBe('Reply with a number.');
+  });
+
+  it('rejects an unknown mode', () => {
+    const bad = browseDef(undefined);
+    (bad.nodes[2] as { mode?: string }).mode = 'scroll';
+    expect(validateDefinition(bad).join(' ')).toContain('unknown way to find rows');
+  });
+
+  it('a saved guided festival flow (AfroFest-style) loads, is stored unchanged and runs as before', async () => {
+    const made = createTemplate({ id: 'afro-flow', businessId: BUSINESS_A, template: 'festival_info', name: 'AfroPlus 2027', keyword: 'AFROPLUS', language: 'en', timezone: 'Africa/Lagos', currency: 'NGN', bindings: [] });
+    // A merchant fills the greeting before going live.
+    const definition = { ...made.definition, greeting: 'Welcome to AfroPlus 2027.' };
+    const { tables } = made;
+    // The builder's reader keeps the stored shape: no new keys appear on any step.
+    const stored = readDraft(structuredClone(definition), 'afro-flow', BUSINESS_A);
+    const { editor_order: _order, ...rest } = stored;
+    expect(rest.nodes).toEqual(definition.nodes);
+    expect(rest.nodes.some(node => 'mode' in node)).toBe(false);
+    expect(validateDefinition(definition)).toEqual([]);
+    const seed = seedFor([]);
+    seed.custom_flows = [flowRow(BUSINESS_A, definition)];
+    seed.custom_flow_tables = tables.map(table => ({ id: `tbl-${table.name}`, business_id: BUSINESS_A, flow_id: 'afro-flow', name: table.name, columns: table.columns, editor_schema_version: 1 }));
+    seed.custom_flow_table_rows = [
+      { id: 'a1', table_id: 'tbl-artists', business_id: BUSINESS_A, row_code: 'WIZKID', position: 0, hidden: false, data: { name: 'Wizkid', day: 'Saturday', stage: 'Main stage', start_time: '9pm' } },
+      { id: 'a2', table_id: 'tbl-artists', business_id: BUSINESS_A, row_code: 'TEMS', position: 1, hidden: false, data: { name: 'Tems', day: 'Friday', stage: 'Lagoon stage', start_time: '8pm' } },
+    ];
+    const { supabase } = createFakeSupabase(seed);
+    const sender = createRecordingSender();
+    const engine = new CustomFlowEngine({ supabase, sender });
+    const say = (text: string) => engine.handleMessage({ businessId: BUSINESS_A, from: PHONE, text });
+    expect((await say('AFROPLUS')).handled).toBe(true);
+    expect(sender.lists.at(-1)?.items.map(item => item.title)).toEqual(['Artists', 'Vendors', 'Ticket Types', 'News', 'FAQs']);
+    await say('cf:main_menu:0');
+    expect(sender.texts.at(-1)?.text).toBe('Type an artist’s name or day.');
+    await say('wizkid');
+    expect(sender.texts.at(-1)?.text).toBe('Wizkid — Saturday — Main stage — 9pm');
+    expect(sender.lists).toHaveLength(2); // back at the main menu
+  });
+});

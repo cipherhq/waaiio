@@ -24,7 +24,8 @@ export function AskSettings({ node, timezone, country, onChange, destination }: 
   timezone: string;
   country?: string | null;
   onChange: (node: CustomFlowAskNode) => void;
-  destination: (props: FieldControlProps) => ReactNode;
+  /** Omitted outside the advanced editor of a guided flow (#1107): where the step leads stays as it is. */
+  destination?: (props: FieldControlProps) => ReactNode;
 }) {
   const options = node.options ?? [];
   // Three or fewer choices show as WhatsApp buttons (20 letters); more show as a list (24).
@@ -80,9 +81,9 @@ export function AskSettings({ node, timezone, country, onChange, destination }: 
       {props => <textarea {...props} className={inputClass} rows={2} placeholder={`Example: ${DEFAULT_RETRY[node.answer_type]}`} value={node.retry_message ?? ''}
         onChange={event => onChange({ ...node, retry_message: event.target.value || undefined })} />}
     </Field>
-    <Field label="Then go to" help="Where people go after answering. End the chat stops the flow here.">
+    {destination && <Field label="Then go to" help="Where people go after answering. End the chat stops the flow here.">
       {props => destination(props)}
-    </Field>
+    </Field>}
     <p className="text-xs text-gray-600 dark:text-gray-400">Only you and your team can see answers. They are deleted automatically after 12 months. See them on <a className="font-semibold text-brand underline-offset-2 hover:underline dark:text-brand-300" href="/dashboard/custom-flows/responses">Flow answers</a>.</p>
   </>;
 }

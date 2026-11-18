@@ -1,5 +1,5 @@
 import type { EditableFlow } from './order';
-import { blockLabel } from './block-label';
+import { stepLabel } from './block-label';
 
 /**
  * Display only (#1079). The server keeps returning the validator's messages
@@ -64,7 +64,7 @@ function lower(text: string) { return text.startsWith('One ') ? `o${text.slice(1
 export function stepName(draft: EditableFlow | null, id: string): string {
   const index = draft?.nodes.findIndex(node => node.id === id) ?? -1;
   if (!draft || index < 0) return 'One of your steps';
-  return `Step ${index + 1} (${blockLabel(draft.nodes[index], draft.guided)})`;
+  return `Step ${index + 1} (${stepLabel(draft, draft.nodes[index])})`;
 }
 
 export function friendlyError(message: unknown, draft: EditableFlow | null): string {

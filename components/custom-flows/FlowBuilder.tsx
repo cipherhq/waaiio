@@ -6,7 +6,8 @@ import { appendBlock, removeBlock, reorderFlow, selectStart, setMessageDestinati
 import type { PreviewMessage } from '@/lib/custom-flow-builder/preview';
 import { livePreview } from '@/lib/custom-flow-builder/live-preview';
 import { BlockOrder } from './BlockOrder';
-import { blockLabel } from '@/lib/custom-flow-builder/block-label';
+import { entryNoun, incomingButton, stepLabel } from '@/lib/custom-flow-builder/block-label';
+import { ListEntries, type EntryRow } from './ListEntries';
 import { useDirtyNavigation } from '@/components/dashboard/dirty-navigation';
 import { FlowSetup } from './FlowSetup';
 import { TableEditor } from './TableEditor';
@@ -21,7 +22,7 @@ import { TemplateGallery, type SetupChoice } from './TemplateGallery';
 import { Walkthrough } from './Walkthrough';
 import { Field, HelpTip, buttonClass, cardClass, inputClass, lavenderClass } from './ui';
 import { BUSINESS_FIELDS,businessValue,type BusinessField,type DataTable } from '@/lib/bot/custom-flow/data';
-import { toggleSection } from '@/lib/custom-flow-builder/templates';
+import { renameButton, toggleSection } from '@/lib/custom-flow-builder/templates';
 import { friendlyErrors, stepName } from '@/lib/custom-flow-builder/friendly-errors';
 
 interface FlowRow { id: string; definition: EditableFlow; version: number; published_definition: EditableFlow | null; published_version: number | null }
@@ -73,7 +74,13 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
   const [row, setRow] = useState<FlowRow | null>(null);
   const [draft, setDraft] = useState<EditableFlow | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [tableDirty,setTableDirty] = useState(false);
+  const [listEditorDirty,setTableDirty] = useState(false);
+  // Inline entries (#1107): an open entry form per list step, its saved rows, and the entry being typed.
+  const [entryDirty, setEntryDirty] = useState<Record<string, boolean>>({});
+  const [entryRows, setEntryRows] = useState<Record<string, EntryRow[]>>({});
+  const [draftEntry, setDraftEntry] = useState<{ nodeId: string; data: Record<string, unknown> } | null>(null);
+  const [liveQuery, setLiveQuery] = useState('');
+  const tableDirty = listEditorDirty || Object.values(entryDirty).some(Boolean);
   // 'gallery' only shows the picture cards; a choice opens the setup form.
   const [setup,setSetup] = useState<SetupChoice|'gallery'|null>(null);
   const setupForm = setup !== null && setup !== 'gallery';
@@ -158,7 +165,7 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
     // at its start step so the map shows where customers begin.
     const start = selected.definition.start_node ?? selected.definition.nodes[0]?.id;
     if (selected.id === row?.id) setOpenSteps(current => current.filter(id => selected.definition.nodes.some(node => node.id === id)).slice(-1));
-    else setOpenSteps(start ? [start] : []);
+    else { setOpenSteps(start ? [start] : []); setEntryRows({}); setEntryDirty({}); setDraftEntry(null); setLiveQuery(''); }
   }
   /** "← All flows": close the flow and show the list again. Locked like the list while work is unsaved. */
   function backToList() {
@@ -205,13 +212,14 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
   }
   /** Edit opens one step at a time, scrolled to with its first field focused; Edit again closes it. */
   function toggleStep(id: string) {
+    setLiveQuery('');
     if (openSteps.includes(id)) { setOpenSteps([]); return; }
     setOpenSteps([id]);
     focusNext.current = { id: `flow-step-${id}`, field: true };
   }
   /** Done: close the editor and return focus to that step's Edit button. */
   function closeStep(id: string) {
-    setOpenSteps([]);
+    setOpenSteps([]); setLiveQuery('');
     focusNext.current = { id: `flow-step-edit-${id}` };
   }
   async function action(kind: string, previewInputs = inputs) {
@@ -264,15 +272,35 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
     return <select {...props} className={inputClass} value={selected} onChange={event => change(event.target.value || null)}>
       {allowEnd ? <option value="">End the chat</option> : <option value="" disabled>Choose a destination</option>}
       {missing && <option value={selected} disabled>Choose a destination</option>}
-      {draft?.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {blockLabel(node, draft?.guided)}</option>)}
+      {draft?.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {stepLabel(draft, node)}</option>)}
     </select>;
   }
-  const labelOf = (id: string) => { const index = draft?.nodes.findIndex(node => node.id === id) ?? -1; return index < 0 || !draft ? 'Not connected yet' : `${index + 1}. ${blockLabel(draft.nodes[index], draft.guided)}`; };
+  const labelOf = (id: string) => { const index = draft?.nodes.findIndex(node => node.id === id) ?? -1; return index < 0 || !draft ? 'Not connected yet' : `${index + 1}. ${stepLabel(draft, draft.nodes[index])}`; };
+  /** A list step's entries on its card (#1107). Writes go to the same lists through the data API. */
+  function entriesFor(node: CustomFlowNode) {
+    if (node.type !== 'lookup' || !draft || !row) return null;
+    const table = lists.find(item => item.name === node.table);
+    if (!table) return <p className="border-t border-gray-100 px-4 py-3 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-400">{node.table.trim() ? `The list “${node.table}” isn’t made yet. Add it under Lists and columns.` : 'Choose which list this step uses in Advanced editor.'}</p>;
+    const vars = Object.fromEntries((draft.business_bindings ?? []).map(field => [`business.${field}`, businessValue(field, businessDetails[field])]));
+    return <ListEntries key={table.id} businessId={businessId} flowId={row.id} table={table} node={node} title={stepLabel(draft, node).replace(/^Search /, '')} item={entryNoun(node.table)}
+      businessVars={vars} reloadKey={listsVersion} disabled={busy}
+      onDirty={value => setEntryDirty(current => current[node.id] === value ? current : { ...current, [node.id]: value })}
+      onSaved={() => { setMessages([]); setInputs([]); setListsVersion(v => v + 1); }}
+      onRows={rows => setEntryRows(current => ({ ...current, [node.table]: rows }))}
+      onDraftEntry={data => {
+        // Typing an entry replaces an earlier test word in the phone.
+        if (data) setLiveQuery('');
+        setDraftEntry(current => data ? { nodeId: node.id, data } : current?.nodeId === node.id ? null : current);
+      }} />;
+  }
   // Same fields and draft operations as before; plain labels, help and examples (#1079).
   function stepEditor(node: CustomFlowNode) {
     if (!draft) return null;
     const index = draft.nodes.findIndex(item => item.id === node.id);
-    const name = blockLabel(node, draft.guided);
+    const name = stepLabel(draft, node);
+    // Outside the advanced editor of a guided flow only words change (#1107); structure stays put.
+    const structural = editable;
+    const button = node.type === 'menu' ? null : incomingButton(draft, node.id);
     return <>
       <div className="-mx-3 -mt-3 flex flex-wrap items-center justify-between gap-2 bg-brand px-3 py-2 text-white sm:-mx-4 sm:-mt-4 sm:px-4">
         <div className="flex min-w-0 items-center gap-1">
@@ -282,6 +310,10 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
         <button type="button" onClick={() => closeStep(node.id)}
           className="min-h-11 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Done</button>
       </div>
+      {!structural && <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-800 dark:bg-brand-900/40 dark:text-brand-100">Change any words here. To add, remove or reconnect steps, open Advanced editor under Lists and columns.</p>}
+      {button && <Field label="Button name" help="The words on the button people tap to reach this step. It is also what this step is called here.">
+        {props => <input {...props} className={inputClass} maxLength={20} placeholder="Example: Artists" value={button.label} onChange={event => edit(renameButton(draft, button.menuId, button.index, event.target.value))} />}
+      </Field>}
       {node.type === 'message' && <>
         <Field label="Message" help="The text people get at this step.">
           {props => <textarea {...props} className={inputClass} rows={3} placeholder="Example: The retreat starts Friday at 6pm. See you there!" value={node.text} onChange={event => updateNode({ ...node, text: event.target.value })} />}
@@ -289,15 +321,15 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
         <Field label="Picture link (optional)" help="A web address of a picture to send with the message. It must start with https://.">
           {props => <input {...props} className={inputClass} placeholder="Example: https://site.com/a.jpg" value={node.image ?? ''} onChange={event => updateNode({ ...node, image: event.target.value })} />}
         </Field>
-        <Field label="Then go to" help="Where people go after this message. End the chat stops the flow here.">
+        {structural && <Field label="Then go to" help="Where people go after this message. End the chat stops the flow here.">
           {props => destination(node.next, value => edit(setMessageDestination(draft, node.id, value)), true, props)}
-        </Field>
+        </Field>}
       </>}
       {node.type === 'menu' && <>
         <Field label="Message above the buttons" help="The question people see with the buttons.">
           {props => <textarea {...props} className={inputClass} rows={2} placeholder="Example: What would you like to know?" value={node.text} onChange={event => updateNode({ ...node, text: event.target.value })} />}
         </Field>
-        {node.options.length > 1 && <div className="space-y-2">
+        {structural && node.options.length > 1 && <div className="space-y-2">
           <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Button order</h4>
           <p id={`button-order-help-${node.id}`} className="text-xs text-gray-600 dark:text-gray-400">Drag a button, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>
           <div className="text-sm text-gray-900 dark:text-gray-100">
@@ -309,23 +341,25 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
         </div>}
         {node.options.map((option, optionIndex) => <div key={optionIndex} data-testid="button-row" className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50">
           <Field label="Button text" help="The words on the button. WhatsApp shows up to 20 letters.">
-            {props => <input {...props} className={inputClass} placeholder="Example: Program" value={option.label} onChange={event => updateNode({ ...node, options: node.options.map((item, i) => i === optionIndex ? { ...item, label: event.target.value } : item) })} />}
+            {props => <input {...props} className={inputClass} maxLength={20} placeholder="Example: Program" value={option.label} onChange={event => edit(renameButton(draft, node.id, optionIndex, event.target.value))} />}
           </Field>
-          <Field label="Goes to" help="The step people reach when they tap this button.">
-            {props => destination(option.next, value => updateNode({ ...node, options: node.options.map((item, i) => i === optionIndex ? { ...item, next: value ?? '' } : item) }), false, props)}
-          </Field>
-          <button className={buttonClass} onClick={() => { updateNode({ ...node, options: node.options.filter((_, i) => i !== optionIndex) }); focusNext.current = { id: `add-button-${node.id}` }; }}>Remove button</button>
+          {structural ? <>
+            <Field label="Goes to" help="The step people reach when they tap this button.">
+              {props => destination(option.next, value => updateNode({ ...node, options: node.options.map((item, i) => i === optionIndex ? { ...item, next: value ?? '' } : item) }), false, props)}
+            </Field>
+            <button className={buttonClass} onClick={() => { updateNode({ ...node, options: node.options.filter((_, i) => i !== optionIndex) }); focusNext.current = { id: `add-button-${node.id}` }; }}>Remove button</button>
+          </> : <p className="text-xs text-gray-600 dark:text-gray-400">Goes to {labelOf(option.next)}</p>}
         </div>)}
-        <button id={`add-button-${node.id}`} className={buttonClass} disabled={node.options.length >= 10} onClick={() => updateNode({ ...node, options: [...node.options, { label: '', next: '' }] })}>Add a button</button>
+        {structural && <button id={`add-button-${node.id}`} className={buttonClass} disabled={node.options.length >= 10} onClick={() => updateNode({ ...node, options: [...node.options, { label: '', next: '' }] })}>Add a button</button>}
       </>}
       {node.type === 'lookup' && <LookupSettings businessId={businessId} flowId={row?.id ?? null} node={node} lists={lists} business={businessDetails} busy={busy}
-        onChange={updateNode} destination={props => destination(node.next, value => updateNode({ ...node, next: value }), false, props)} />}
+        onChange={updateNode} destination={structural ? props => destination(node.next, value => updateNode({ ...node, next: value }), false, props) : undefined} />}
       {node.type === 'handoff' && <HandoffSettings businessId={businessId} node={node} onChange={updateNode} />}
       {node.type === 'ask' && <AskSettings node={node} timezone={draft.timezone || 'UTC'} country={country} onChange={updateNode}
-        destination={props => destination(node.next, value => updateNode({ ...node, next: value }), true, props)} />}
-      <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-gray-700">
+        destination={structural ? props => destination(node.next, value => updateNode({ ...node, next: value }), true, props) : undefined} />}
+      {structural && <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-gray-700">
         <button className={`${buttonClass} text-red-700 dark:text-red-300`} onClick={() => removeStep(node.id)}>Remove this step</button>
-      </div>
+      </div>}
     </>;
   }
   const feedback = <>
@@ -342,7 +376,10 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
   const canTry = !!row && !busy && !tableDirty;
   const showGallery = setup === 'gallery' || (!draft && !setup && !loading);
   // Worked out in the browser from the draft, no request (#1079 polish).
-  const live = draft ? livePreview(draft, { focusId: editable ? openSteps.at(-1) : null, business: businessDetails, country }) : null;
+  const focusId = draftEntry?.nodeId ?? openSteps.at(-1) ?? null;
+  const focusNode = draft?.nodes.find(node => node.id === focusId);
+  const previewLists = Object.fromEntries(lists.filter(table => entryRows[table.name]).map(table => [table.name, { columns: table.columns, rows: entryRows[table.name] }]));
+  const live = draft ? livePreview(draft, { focusId, business: businessDetails, country, lists: previewLists, draftEntry: draftEntry?.data ?? null, query: liveQuery }) : null;
   const locked = dirty || tableDirty || setupForm;
 
   return <div className="space-y-6" aria-busy={busy || loading}>
@@ -412,29 +449,41 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
         </div>
       </section>}
       {editing && <fieldset disabled={busy} aria-label="Add a step" className={`${lavenderClass} order-2 min-w-0 space-y-5 lg:sticky lg:top-4 lg:order-none lg:col-start-1 lg:row-span-3 lg:row-start-1 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto`}>
-        <StepPalette enabled={editable} busy={busy} onAdd={type => add(type)} onDragChange={step => setPaletteDragging(!!step)} />
+        {editable ? <StepPalette enabled busy={busy} onAdd={type => add(type)} onDragChange={step => setPaletteDragging(!!step)} />
+          // A guided flow outside the advanced editor: one short note instead of a column of locked steps (#1107).
+          : <div className="space-y-3">
+            <h2 id="palette-heading" tabIndex={-1} className="text-sm font-semibold text-gray-900 outline-none dark:text-gray-100">Add a step</h2>
+            <p className="text-sm text-gray-700 dark:text-gray-300">This flow is built from your sections. You can change any words and fill your lists right on each step.</p>
+            <p className="text-sm text-gray-700 dark:text-gray-300">To add, remove or move steps, open the advanced editor.</p>
+            <button type="button" className={buttonClass} aria-expanded={advanced} onClick={() => setAdvanced(true)}>Open advanced editor</button>
+          </div>}
         {editable && <div className="space-y-2 border-t border-brand-100 pt-4 dark:border-brand-900">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Step order</h2>
           <p id="flow-reorder-help" className="text-xs text-gray-700 dark:text-gray-300">Drag a step, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>
           <div className="text-sm text-gray-900 dark:text-gray-100">
-            <BlockOrder value={draft.nodes.map(node => node.id)} onValueChange={order => edit(reorderFlow(draft, order))} labels={Object.fromEntries(draft.nodes.map((node, index) => [node.id, `${index + 1}. ${blockLabel(node, draft?.guided)}`]))} instructionsId="flow-reorder-help" upLabel="Move up" downLabel="Move down" />
+            <BlockOrder value={draft.nodes.map(node => node.id)} onValueChange={order => edit(reorderFlow(draft, order))} labels={Object.fromEntries(draft.nodes.map((node, index) => [node.id, `${index + 1}. ${stepLabel(draft, node)}`]))} instructionsId="flow-reorder-help" upLabel="Move up" downLabel="Move down" />
           </div>
         </div>}
       </fieldset>}
 
       {/* Centre: gallery or setup, or the flow canvas right beside the palette. */}
       {showGallery && <div className={`${cardClass} order-3 min-w-0 lg:order-none lg:col-start-2 lg:row-start-1`}><TemplateGallery disabled={dirty || tableDirty || busy || loading} onPick={choice => setSetup(choice)} onClose={draft ? () => setSetup(null) : undefined} /></div>}
-      {setupForm && <div className="order-3 min-w-0 lg:order-none lg:col-start-2 lg:row-start-1"><FlowSetup businessId={businessId} template={setup as SetupChoice} onCancel={()=>setSetup(null)} onCreated={flow=>{setRows(current=>[flow,...current.filter(item=>item.id!==flow.id)]);choose(flow);setSetup(null);setListsVersion(v=>v+1);}}/></div>}
+      {setupForm && <div className="order-3 min-w-0 lg:order-none lg:col-start-2 lg:row-start-1"><FlowSetup businessId={businessId} template={setup as SetupChoice} onCancel={()=>setSetup(null)} onCreated={flow=>{setRows(current=>[flow,...current.filter(item=>item.id!==flow.id)]);choose(flow);setSetup(null);setListsVersion(v=>v+1);
+          // Land on filling in (#1107): the first list step's "+ Add" button, once its list has loaded.
+          const first=flow.definition.nodes.find(node=>node.type==='lookup');if(first)focusNext.current={id:`add-entry-${first.id}`};}}/></div>}
       {editing && <>
         <fieldset disabled={busy} className="order-3 min-w-0 space-y-4 lg:order-none lg:col-start-2 lg:row-start-1">
-          {!editable && <p className="text-sm text-gray-600 dark:text-gray-400">This guided flow is built from your sections. Open the advanced editor to change steps.</p>}
-          <FlowMap draft={draft} editable={editable} busy={busy} openSteps={openSteps} onToggleStep={toggleStep} renderEditor={stepEditor} paletteDragging={paletteDragging}
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Buttons and steps</h2>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{editable ? 'Each button leads to a step. Select Edit to change its words, and fill your lists right on their steps.' : 'Built from your sections. Select Edit to change any words, and fill your lists right on their steps.'}</p>
+          </div>
+          <FlowMap draft={draft} editable={editable} textEditable busy={busy} openSteps={openSteps} onToggleStep={toggleStep} renderEditor={stepEditor} renderEntries={entriesFor} paletteDragging={paletteDragging}
             onDropStep={(type, branchOf) => { setPaletteDragging(false); add(type, branchOf); }} onMoveStep={moveStep} />
         </fieldset>
         <section aria-labelledby="flow-data-heading" className={`${cardClass} order-5 min-w-0 space-y-6 lg:order-none lg:col-start-2 lg:row-start-3 xl:row-start-2`}>
           <div>
-            <h2 id="flow-data-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Your lists</h2>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Details people can search, like your program or menu.</p>
+            <h2 id="flow-data-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Lists and columns</h2>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Every list in this flow, with its columns. Most of the time you fill entries on their steps above.</p>
           </div>
           <fieldset disabled={busy} className="min-w-0 space-y-6">
             {draft.guided&&<section className="space-y-4">
@@ -448,7 +497,7 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
               </div>
               <div className="flex flex-wrap items-center gap-3"><button className={buttonClass} onClick={()=>setAdvanced(v=>!v)} aria-expanded={advanced}>Advanced editor</button><p className="text-sm text-gray-600 dark:text-gray-400">Changes here update the same flow.</p></div>
             </section>}
-            {row&&<TableEditor key={row.id} businessId={businessId} flowId={row.id} onDirty={setTableDirty} onSaved={()=>{setMessages([]);setInputs([]);setListsVersion(v=>v+1);}}/>}
+            {row&&<TableEditor key={row.id} businessId={businessId} flowId={row.id} reloadKey={listsVersion} onDirty={setTableDirty} onSaved={()=>{setMessages([]);setInputs([]);setListsVersion(v=>v+1);}}/>}
           </fieldset>
 
         </section>
@@ -459,7 +508,8 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
           canRestart={canTry} reply={reply} transcriptRef={previewTranscript}
           feedback={feedbackLocation === 'preview' ? feedback : undefined}
           onRestart={() => action('preview', [])} onOption={choosePreviewOption} onReplyChange={setReply}
-          onReplySubmit={() => action('preview', [...inputs, reply])} />
+          onReplySubmit={() => action('preview', [...inputs, reply])}
+          onLiveSearch={focusNode?.type === 'lookup' ? query => { setLiveQuery(query); setReply(''); } : undefined} />
       </div>}
     </div>
   </div>;

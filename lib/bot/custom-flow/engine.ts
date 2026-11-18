@@ -80,6 +80,8 @@ const FLOW_UPDATED_TEXT = 'This flow has been updated — starting from the begi
 const MAX_MESSAGE_HOPS = 10;
 /** Substring/whole-word lookup needs at least this many characters (exact row codes excepted). */
 const MIN_LOOKUP_QUERY_LENGTH = 2;
+/** Most rows a browse list shows in one message (#1107); WhatsApp text holds 4096 characters. */
+const BROWSE_LIMIT = 30;
 
 interface EngineDeps {
   supabase: SupabaseClient;
@@ -480,22 +482,31 @@ export class CustomFlowEngine {
       if (picked) {
         const row = rows.find((r) => r.row_code.toLowerCase() === picked.row_code.toLowerCase());
         if (row) {
-          await this.clearLookupCandidates(session);
+          const cleared = await this.clearLookupCandidates(session);
+          if (!cleared) return { handled: true }; // stale writer won; stay quiet
           const reply = this.renderText(node.reply, flow, rowVars(row.data));
-          await this.sendText(session, reply);
+          await this.sendText(cleared, reply);
           const nextId = node.next ?? flow.definition.start_node ?? flow.definition.nodes[0].id;
-          await this.goToNode(session, flow, nextId);
+          // The cleared session carries the new version, so the move to the next step wins its write.
+          await this.goToNode(cleared, flow, nextId);
           return { handled: true };
         }
       }
       // Not a pick: fall through to a fresh search (candidates cleared).
-      await this.clearLookupCandidates(session);
+      const cleared = await this.clearLookupCandidates(session);
+      if (!cleared) return { handled: true };
+      session = cleared;
     }
 
-    const matches = this.findRows(rows, node.search_fields, query);
+    // Browse only (#1107): a reply that isn't a number from the list shows the list again.
+    const matches = node.mode === 'browse' ? [] : this.findRows(rows, node.search_fields, query);
 
     if (matches.length === 0) {
       await this.sendText(session, this.renderText(node.no_match, flow, { query }));
+      if (node.mode === 'browse' || node.mode === 'both') {
+        await this.renderBrowse(session, flow, node, rows);
+        return { handled: true };
+      }
       // Stay on the lookup node so the customer can try another search.
       return { handled: true };
     }
@@ -551,11 +562,52 @@ export class CustomFlowEngine {
     return byCode ?? null;
   }
 
-  private async clearLookupCandidates(session: CustomFlowSessionRow): Promise<void> {
+  /** Clears pending candidates. Returns the session at its new version, or null when another writer won. */
+  private async clearLookupCandidates(session: CustomFlowSessionRow): Promise<CustomFlowSessionRow | null> {
     const fields = { ...session.fields };
     delete fields._lookup_candidates;
     delete fields._lookup_node;
-    await updateSessionCas(this.deps.supabase, session, { fields });
+    const saved = await updateSessionCas(this.deps.supabase, session, { fields });
+    return saved ? { ...session, fields, version: session.version + 1 } : null;
+  }
+
+  /**
+   * Browse (#1107): send the step's prompt with the visible rows as a numbered
+   * list, and keep them as candidates so the existing pick (number or code)
+   * answers. Rows are read the same way as a search.
+   */
+  private async renderBrowse(
+    session: CustomFlowSessionRow,
+    flow: LoadedFlow,
+    node: Extract<CustomFlowNode, { type: 'lookup' }>,
+    loaded?: CustomFlowTableRow[],
+  ): Promise<void> {
+    let rows = loaded;
+    if (!rows) {
+      try { rows = await loadAnswerRows(this.deps.supabase, session.business_id, flow.id, node.table, node.reply, flow.businessVars); }
+      catch { rows = []; }
+    }
+    const prompt = node.prompt ? this.renderText(node.prompt, flow, session.fields) : '';
+    if (rows.length === 0) {
+      // Nothing to list: say so like a search would, and wait for a word.
+      await this.sendText(session, prompt || this.renderText(node.no_match, flow, { query: '' }));
+      return;
+    }
+    const shown = rows.slice(0, BROWSE_LIMIT);
+    const candidates = shown.map((row) => ({ row_code: row.row_code, label: this.browseLabel(row, node.search_fields) }));
+    const saved = await updateSessionCas(this.deps.supabase, session, {
+      fields: { ...session.fields, _lookup_candidates: candidates, _lookup_node: node.id },
+    });
+    if (!saved) return; // stale writer won; stay quiet
+    const list = candidates.map((c, i) => `${i + 1}. ${c.label}`).join('\n');
+    const more = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more.` : '';
+    await this.sendText(session, `${prompt ? `${prompt}\n\n` : ''}${list}${more}`);
+  }
+
+  /** A browse entry's name: the first search field with a value, else its code. */
+  private browseLabel(row: CustomFlowTableRow, searchFields: string[]): string {
+    const first = searchFields.map((f) => row.data[f]).find((v) => v !== undefined && v !== null && String(v).trim() !== '');
+    return first === undefined ? row.row_code : String(first);
   }
 
   /** Short label for a disambiguation entry: code plus the first search field. */
@@ -833,6 +885,10 @@ export class CustomFlowEngine {
         return;
       }
       case 'lookup': {
+        if (node.mode === 'browse' || node.mode === 'both') {
+          await this.renderBrowse(session, flow, node);
+          return;
+        }
         // A lookup node waits for the customer's search text. Render its
         // prompt when the definition has one; otherwise stay silent — the
         // menu option that led here already said what to do.

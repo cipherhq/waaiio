@@ -3,7 +3,7 @@
 import { useState, type DragEvent, type ReactNode } from 'react';
 import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import type { EditableFlow } from '@/lib/custom-flow-builder/order';
-import { blockLabel } from '@/lib/custom-flow-builder/block-label';
+import { stepLabel } from '@/lib/custom-flow-builder/block-label';
 import { isNewStep, stepIcon, type NewStep } from './StepPalette';
 import { HANDOFF_FEATURE_NAME } from '@/lib/bot/custom-flow/handoff-copy';
 import { Icons, MOVE_STEP_TYPE, NEW_STEP_TYPE, hasDragType } from './ui';
@@ -67,10 +67,14 @@ function DropZone({ label, disabled, active = false, onDropStep }: { label: stri
   </div>;
 }
 
-export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep, renderEditor, paletteDragging = false, onDropStep, onMoveStep }: {
+export function FlowMap({ draft, editable, textEditable = editable, busy = false, openSteps, onToggleStep, renderEditor, renderEntries, paletteDragging = false, onDropStep, onMoveStep }: {
   draft: EditableFlow;
-  /** False for guided flows outside the advanced editor: the map stays read-only. */
+  /** False for guided flows outside the advanced editor: no dragging, dropping or moving. */
   editable: boolean;
+  /** Steps can still be opened to change their words (#1107), even when the map's structure is fixed. */
+  textEditable?: boolean;
+  /** A list step's entries, shown on its card (#1107). */
+  renderEntries?: (node: CustomFlowNode) => ReactNode;
   /** A request is pending: its reply replaces the draft, so no drag or drop may change it meanwhile. */
   busy?: boolean;
   openSteps: string[];
@@ -88,7 +92,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
   const startId = draft.start_node ?? draft.nodes[0]?.id;
   const labelOf = (id: string | null | undefined) => {
     const index = draft.nodes.findIndex(node => node.id === id);
-    return index < 0 ? null : `${index + 1}. ${blockLabel(draft.nodes[index], draft.guided)}`;
+    return index < 0 ? null : `${index + 1}. ${stepLabel(draft, draft.nodes[index])}`;
   };
   const startLabel = labelOf(startId);
 
@@ -131,8 +135,8 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
     </>}
     <ol className="mx-auto max-w-2xl">
       {draft.nodes.map((node, index) => {
-        const label = `${index + 1}. ${blockLabel(node, draft.guided)}`;
-        const open = editable && openSteps.includes(node.id);
+        const label = `${index + 1}. ${stepLabel(draft, node)}`;
+        const open = textEditable && openSteps.includes(node.id);
         const exit = exitFor(node, index);
         const summary = node.type === 'lookup' ? node.prompt || (node.table ? `Searches ${node.table}` : '')
           : node.type === 'handoff' ? handoffSummary(node) : node.type === 'ask' ? node.question : node.text;
@@ -170,7 +174,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
                   ? <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400">{summary}</p>
                   : <p className="mt-1 text-sm italic text-gray-500 dark:text-gray-400">No text yet</p>}
               </div>
-              {editable && <button type="button" id={`flow-step-edit-${node.id}`} aria-expanded={open} aria-controls={open ? panelId : undefined} aria-label={`Edit ${label}`} onClick={() => onToggleStep(node.id)}
+              {textEditable && <button type="button" id={`flow-step-edit-${node.id}`} aria-expanded={open} aria-controls={open ? panelId : undefined} aria-label={`Edit ${label}`} onClick={() => onToggleStep(node.id)}
                 className="min-h-11 shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 after:absolute after:inset-0 after:rounded-t-xl after:content-[''] hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand-300 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-700">
                 Edit <span aria-hidden="true" className={`inline-block transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}>▾</span>
               </button>}
@@ -190,6 +194,7 @@ export function FlowMap({ draft, editable, busy = false, openSteps, onToggleStep
                   disabled={busy || node.options.length >= 10} active={paletteDragging} onDropStep={type => onDropStep(type, node.id)} />
               </div>}
             </div>}
+            {renderEntries?.(node)}
             {/* The one open editor sits under its own step (#1079 polish): one place on every screen size. */}
             {open && <div id={panelId} role="group" aria-labelledby={`editing-heading-${node.id}`} className="space-y-4 border-t-2 border-brand p-3 sm:p-4 dark:border-brand-300">{renderEditor(node, index)}</div>}
           </div>

@@ -77,7 +77,7 @@ describe('Use what you already have', () => {
   it('adds Event tickets, picks one of the business\'s events, and saves the step', async () => {
     await openFlow();
     fireEvent.click(screen.getByRole('button', { name: 'Event tickets' }));
-    expect(headings()).toEqual(['1. Show buttons', '2. Send a message', '3. Event tickets']);
+    expect(headings()).toEqual(['1. Show buttons', '2. Program', '3. Event tickets']);
     const picker = await screen.findByLabelText('Which event');
     await screen.findByRole('option', { name: 'Youth Retreat 2026 — 2026-12-12' });
     expect(sourceUrls.at(-1)).toContain('kind=event');
@@ -96,7 +96,7 @@ describe('Use what you already have', () => {
     const zone = within(map()).getByText('Drop a step here to add it as a new button');
     fireEvent.dragOver(zone, { dataTransfer: transfer });
     fireEvent.drop(zone, { dataTransfer: transfer });
-    expect(headings()).toEqual(['1. Show buttons', '2. Send a message', '3. Giving']);
+    expect(headings()).toEqual(['1. Show buttons', '2. Program', '3. Giving']);
     const picker = await screen.findByLabelText('Which giving option');
     await screen.findByRole('option', { name: 'Sunday Offering' });
     expect((picker as HTMLSelectElement).value).toBe('');

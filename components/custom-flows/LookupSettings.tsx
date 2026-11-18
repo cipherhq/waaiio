@@ -1,10 +1,21 @@
 'use client';
 
 import { useEffect, useId, useState, type ReactNode } from 'react';
-import type { CustomFlowLookupNode } from '@/lib/bot/custom-flow/types';
+import type { CustomFlowLookupMode, CustomFlowLookupNode } from '@/lib/bot/custom-flow/types';
 import { BUSINESS_FIELDS, businessValue, type BusinessField, type DataTable } from '@/lib/bot/custom-flow/data';
 import { Field, inputClass } from './ui';
 import { ReplyBuilder } from './ReplyBuilder';
+
+const LOOKUP_MODES: Array<{ value: CustomFlowLookupMode; label: string; hint: string }> = [
+  { value: 'search', label: 'Type to search', hint: 'People type a name or word' },
+  { value: 'browse', label: 'Pick from a list', hint: 'We send the entries, numbered' },
+  { value: 'both', label: 'Both', hint: 'A numbered list, and typing works too' },
+];
+/** Search keeps the stored shape of a step from before #1107: no mode key. */
+function withMode(node: CustomFlowLookupNode, mode: CustomFlowLookupMode): CustomFlowLookupNode {
+  const { mode: _old, ...rest } = node;
+  return mode === 'search' ? rest : { ...rest, mode };
+}
 
 /**
  * Settings for a "Search my list" step. It edits exactly the same fields as
@@ -21,7 +32,8 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
   business: Record<string, unknown>;
   busy?: boolean;
   onChange: (node: CustomFlowLookupNode) => void;
-  destination: (props: { id: string; 'aria-describedby': string }) => ReactNode;
+  /** Omitted outside the advanced editor of a guided flow (#1107): the list and where the step leads stay as they are. */
+  destination?: (props: { id: string; 'aria-describedby': string }) => ReactNode;
 }) {
   const listId = useId();
   const list = lists.find(item => item.name === node.table);
@@ -49,14 +61,26 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
   // An empty entry (e.g. a trailing comma) has no column to show.
   const extraFields = node.search_fields.filter(field => field.trim() && !columns.some(column => column.name === field));
 
+  const mode = node.mode ?? 'search';
   return <>
-    <Field label="Which list" help="The list we search when someone types. Make lists under Your lists.">
+    <fieldset className="min-w-0">
+      <legend className="text-sm font-medium text-gray-800 dark:text-gray-200">How people find an entry</legend>
+      <div className="mt-1 grid gap-1 sm:grid-cols-3">
+        {LOOKUP_MODES.map(item => <label key={item.value} className={`flex min-h-11 items-start gap-2 rounded-lg border p-2 text-sm ${mode === item.value ? 'border-brand bg-brand-50 dark:border-brand-300 dark:bg-brand-900/40' : 'border-gray-200 dark:border-gray-700'}`}>
+          <input type="radio" name={`lookup-mode-${node.id}`} className="mt-0.5 h-5 w-5 accent-brand" checked={mode === item.value}
+            onChange={() => onChange(withMode(node, item.value))} />
+          <span><span className="block font-medium text-gray-900 dark:text-gray-100">{item.label}</span><span className="block text-xs text-gray-600 dark:text-gray-400">{item.hint}</span></span>
+        </label>)}
+      </div>
+    </fieldset>
+    {destination && <Field label="Which list" help="The list we search when someone types. Make lists under Your lists.">
       {props => <>
         <input {...props} list={listId} className={inputClass} placeholder="Example: Program" value={node.table} onChange={event => onChange({ ...node, table: event.target.value })} />
         <datalist id={listId}>{lists.map(item => <option key={item.id} value={item.name} />)}</datalist>
       </>}
-    </Field>
-    {columns.length > 0
+    </Field>}
+    {/* Which columns are searched is part of the step's setup: advanced editor only in a guided flow (#1107). */}
+    {destination && (columns.length > 0
       ? <fieldset className="min-w-0">
         <legend className="text-sm font-medium text-gray-800 dark:text-gray-200">Search by</legend>
         <p className="text-xs text-gray-600 dark:text-gray-400">We look for the typed word in these columns. Example: Session and Day.</p>
@@ -70,7 +94,7 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
       </fieldset>
       : <Field label="Search by" help="The columns we look in for the typed word. Separate them with commas.">
         {props => <input {...props} className={inputClass} placeholder="Example: name, day" value={node.search_fields.join(',')} onChange={event => onChange({ ...node, search_fields: event.target.value.split(',').map(field => field.trim()) })} />}
-      </Field>}
+      </Field>)}
     <Field label="Question we ask" help="What we send when people reach this step, so they know what to type.">
       {props => <textarea {...props} className={inputClass} rows={2} placeholder="Example: Type a day or session name." value={node.prompt ?? ''} onChange={event => onChange({ ...node, prompt: event.target.value })} />}
     </Field>
@@ -81,8 +105,8 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
     <Field label="When nothing matches" help="What we send when no row matches what they typed.">
       {props => <textarea {...props} className={inputClass} rows={2} placeholder="Example: Nothing matches that yet. Try another word." value={node.no_match ?? ''} onChange={event => onChange({ ...node, no_match: event.target.value })} />}
     </Field>
-    <Field label="Then go to" help="Where people go after the reply. If you leave it, they go back to the first step.">
+    {destination && <Field label="Then go to" help="Where people go after the reply. If you leave it, they go back to the first step.">
       {props => destination(props)}
-    </Field>
+    </Field>}
   </>;
 }

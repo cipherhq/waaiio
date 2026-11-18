@@ -13,7 +13,7 @@ import type { LivePreview, LiveMessage } from '@/lib/custom-flow-builder/live-pr
  */
 export function WhatsAppPreview({
   title, messages, live, lastInputIndex, busy, previewBusy, canRestart, reply, transcriptRef, feedback,
-  onRestart, onOption, onReplyChange, onReplySubmit,
+  onRestart, onOption, onReplyChange, onReplySubmit, onLiveSearch,
 }: {
   title: string;
   messages: PreviewMessage[];
@@ -33,9 +33,13 @@ export function WhatsAppPreview({
   onOption: (messageIndex: number, value: string) => void;
   onReplyChange: (value: string) => void;
   onReplySubmit: () => void;
+  /** Set while a list step is open (#1107): the composer tests a word against its entries, in the browser. */
+  onLiveSearch?: (query: string) => void;
 }) {
   const initial = title.trim().charAt(0).toUpperCase() || 'W';
   const showLive = messages.length === 0 && !!live;
+  const liveSearch = showLive && !!onLiveSearch;
+  const canType = !busy && (messages.length > 0 || liveSearch);
   return <aside aria-busy={previewBusy} className="h-fit space-y-3 rounded-2xl border border-brand-100 bg-brand-50 p-4 shadow-sm dark:border-brand-900 dark:bg-brand-900/30">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100">
@@ -95,14 +99,14 @@ export function WhatsAppPreview({
         })}
       </div>
       <form className="flex items-end gap-2 bg-[#F0F2F5] px-2 py-2 dark:bg-[#1F2C33]"
-        onSubmit={event => { event.preventDefault(); if (reply.trim()) onReplySubmit(); }}>
+        onSubmit={event => { event.preventDefault(); if (!reply.trim()) return; if (messages.length) onReplySubmit(); else if (liveSearch) onLiveSearch!(reply.trim()); }}>
         <label className="min-w-0 flex-1">
-          <span className="sr-only">Message</span>
-          <input value={reply} onChange={event => onReplyChange(event.target.value)} disabled={busy || !messages.length}
-            placeholder="Type a message"
+          <span className="sr-only">{liveSearch ? 'Test a word' : 'Message'}</span>
+          <input value={reply} onChange={event => onReplyChange(event.target.value)} disabled={!canType}
+            placeholder={liveSearch ? 'Type a word to test this list' : 'Type a message'}
             className="min-h-11 w-full rounded-full border border-transparent bg-white px-4 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:border-[#00796B] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00796B] disabled:opacity-60 dark:bg-[#2A3942] dark:text-gray-100 dark:placeholder:text-gray-400" />
         </label>
-        <button disabled={busy || !messages.length || !reply.trim()}
+        <button disabled={!canType || !reply.trim()}
           className="flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-[#00796B] px-4 text-sm font-semibold text-white hover:bg-[#00695C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00796B] disabled:opacity-40">
           Send
         </button>
@@ -117,6 +121,8 @@ const chipClass = 'min-h-11 w-full rounded-lg bg-white px-3 py-2 text-center tex
 function LiveBubble({ message }: { message: LiveMessage }) {
   // The arrow marks a builder note (where people are passed on), not a WhatsApp message.
   if (message.note) return <p className="mx-auto max-w-[90%] rounded-lg bg-[#FFF5C4] px-3 py-2 text-center text-xs font-medium text-gray-900 dark:bg-[#1F2C33] dark:text-gray-100">{`↪ ${message.text}`}</p>;
+  // What someone types, in a list step's preview (#1107).
+  if (message.input) return <div className="flex justify-end"><p className="max-w-[85%] whitespace-pre-wrap break-words rounded-lg rounded-tr-none bg-[#DCF8C6] px-3 py-2 text-sm text-gray-900 shadow-sm dark:bg-[#005C4B] dark:text-gray-50">{message.text}</p></div>;
   const options = message.options ?? [];
   return <div className="flex justify-start">
     <div className="max-w-[85%] min-w-0">

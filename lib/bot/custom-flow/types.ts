@@ -51,7 +51,15 @@ export interface CustomFlowLookupNode {
    * when omitted, so a lookup answer always leaves the customer somewhere.
    */
   next?: string | null;
+  /**
+   * How people find a row (#1107). Omitted means 'search', the original
+   * behaviour: people type a word. 'browse' lists the rows by number when the
+   * step opens; 'both' lists them and still accepts a typed word.
+   */
+  mode?: CustomFlowLookupMode;
 }
+
+export type CustomFlowLookupMode = 'search' | 'browse' | 'both';
 
 /** Existing capabilities a flow can hand the customer over to (#1086). */
 export type CustomFlowHandoffCapability = 'ticketing' | 'giving' | 'payment' | 'chat';

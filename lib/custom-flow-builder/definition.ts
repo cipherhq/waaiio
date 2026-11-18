@@ -1,4 +1,4 @@
-import type { CustomFlowAskNode, CustomFlowHandoffNode, CustomFlowNode } from '@/lib/bot/custom-flow/types';
+import type { CustomFlowAskNode, CustomFlowHandoffNode, CustomFlowLookupNode, CustomFlowNode } from '@/lib/bot/custom-flow/types';
 import { withOrderMetadata, type EditableFlow, type FlowOrderMetadata } from './order';
 import { readBusinessBindings, readGuided } from '@/lib/bot/custom-flow/data';
 
@@ -36,7 +36,9 @@ export function readDraft(value: unknown, id: string, businessId: string): Edita
         if (!Array.isArray(raw.search_fields) || raw.search_fields.length > 100) throw new Error('invalid_definition');
         return { id: nodeId, type: 'lookup', table: text(raw.table, 80), search_fields: raw.search_fields.map(field => text(field, 200)),
           prompt: raw.prompt === undefined ? undefined : text(raw.prompt), reply: text(raw.reply), no_match: text(raw.no_match),
-          ...(raw.next === undefined ? {} : { next: target(raw.next) }) };
+          ...(raw.next === undefined ? {} : { next: target(raw.next) }),
+          // #1107: kept only when set, so a definition without it is stored exactly as before.
+          ...(raw.mode === undefined ? {} : { mode: text(raw.mode, 10) as CustomFlowLookupNode['mode'] }) };
       case 'handoff': {
         // Capability and record are checked by validateDefinition (plain-English
         // errors) and, for record ownership, by the route before publish.

@@ -100,7 +100,7 @@ describe('Palette feedback (fix 3) and focus (fix 13)', () => {
     // The start step (Show buttons) opens by default.
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove button' })[0]);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add a button' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit 3. Send a message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit 3. Goodbye' }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove this step' }).at(-1)!);
     expect(headings()).toEqual(['1. Show buttons', '2. Search Program']);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit 2. Search Program' }));
@@ -225,7 +225,7 @@ describe('Small fixes (8–12)', () => {
     flow.definition.entry_keyword = 'AVERYLONGSTARTWORDWITHOUTANYSPACES';
     await openFlow();
     expect(screen.getByText('AVERYLONGSTARTWORDWITHOUTANYSPACES', { selector: 'span' }).className).toContain('break-all');
-    expect(screen.getByRole('button', { name: 'Edit 3. Send a message' }).className).toContain('dark:focus-visible:outline-brand-300');
+    expect(screen.getByRole('button', { name: 'Edit 3. Goodbye' }).className).toContain('dark:focus-visible:outline-brand-300');
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const language = document.getElementById(screen.getByLabelText('Language').getAttribute('aria-describedby')!)!;
     expect(language.textContent).toContain('en means English');

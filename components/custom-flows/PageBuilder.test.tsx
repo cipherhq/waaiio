@@ -75,7 +75,7 @@ describe('Add a step palette', () => {
     const zone = within(map()).getByText('Drop a step here');
     fireEvent.dragOver(zone, { dataTransfer: transfer });
     fireEvent.drop(zone, { dataTransfer: transfer });
-    expect(headings()).toEqual(['1. Show buttons', '2. Search Program', '3. Send a message', '4. Send a message']);
+    expect(headings()).toEqual(['1. Show buttons', '2. Search Program', '3. Goodbye', '4. Send a message']);
     // Keyboard and pointer equivalent: pressing the chip adds the same step at the end.
     fireEvent.click(screen.getByRole('button', { name: 'Search my list' }));
     expect(headings().at(-1)).toBe('5. Search my list');
@@ -127,13 +127,13 @@ describe('Reordering', () => {
     const target = within(map()).getByRole('heading', { name: '1. Show buttons' });
     fireEvent.dragOver(target, { dataTransfer: transfer });
     fireEvent.drop(target, { dataTransfer: transfer });
-    expect(headings()).toEqual(['1. Send a message', '2. Show buttons', '3. Search Program']);
+    expect(headings()).toEqual(['1. Goodbye', '2. Show buttons', '3. Search Program']);
     // Keyboard drag on the step order list: Space picks up, arrow moves, Space drops.
-    const item = screen.getByRole('button', { name: '1. Send a message' });
+    const item = screen.getByRole('button', { name: '1. Goodbye' });
     fireEvent.keyDown(item, { key: ' ' });
     fireEvent.keyDown(item, { key: 'ArrowDown' });
     fireEvent.keyDown(item, { key: ' ' });
-    await waitFor(() => expect(headings()).toEqual(['1. Show buttons', '2. Send a message', '3. Search Program']));
+    await waitFor(() => expect(headings()).toEqual(['1. Show buttons', '2. Goodbye', '3. Search Program']));
     const saved = await saveAndReadDefinition();
     expect(saved.nodes.map(node => node.id)).toEqual(['menu', 'bye', 'program']);
     expect(saved.start_node).toBe('menu');
@@ -143,12 +143,12 @@ describe('Reordering', () => {
   it('reorders buttons by drag (keyboard) and by the move control, showing where each goes', async () => {
     await openFlow();
     expect(screen.getByRole('button', { name: 'Program → 2. Search Program' })).toBeTruthy();
-    const goodbye = screen.getByRole('button', { name: 'Goodbye → 3. Send a message' });
+    const goodbye = screen.getByRole('button', { name: 'Goodbye → 3. Goodbye' });
     fireEvent.keyDown(goodbye, { key: ' ' });
     fireEvent.keyDown(goodbye, { key: 'ArrowUp' });
     fireEvent.keyDown(goodbye, { key: ' ' });
     await waitFor(() => expect(within(map()).getByRole('list', { name: 'Options for 1. Show buttons' }).textContent).toMatch(/^Goodbye.*Program/));
-    fireEvent.click(screen.getByRole('button', { name: 'Move button down: Goodbye → 3. Send a message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move button down: Goodbye → 3. Goodbye' }));
     await waitFor(() => expect(within(map()).getByRole('list', { name: 'Options for 1. Show buttons' }).textContent).toMatch(/^Program.*Goodbye/));
     fireEvent.click(screen.getByRole('button', { name: 'Add a button' }));
     const saved = await saveAndReadDefinition();
@@ -165,7 +165,7 @@ describe('Plain English', () => {
       [null, ['Flow name', 'Greeting', 'When we don’t understand', 'Word people send to start', 'Language', 'Time zone', 'Currency', 'First step',
         'Message above the buttons', 'Button text', 'Goes to']],
       ['Edit 2. Search Program', ['Which list', 'Question we ask', 'Reply', 'When nothing matches', 'Then go to']],
-      ['Edit 3. Send a message', ['Message', 'Picture link (optional)', 'Then go to']],
+      ['Edit 3. Goodbye', ['Button name', 'Message', 'Picture link (optional)', 'Then go to']],
     ];
     for (const [editButton, labels] of byEditor) {
     if (editButton) fireEvent.click(screen.getByRole('button', { name: editButton }));

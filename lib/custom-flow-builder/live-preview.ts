@@ -1,5 +1,5 @@
 import type { CustomFlowNode } from '@/lib/bot/custom-flow/types';
-import { businessValue, hasValue, variablesIn, type BusinessField } from '@/lib/bot/custom-flow/data';
+import { businessValue, completeRow, hasValue, variablesIn, type BusinessField, type DataColumn } from '@/lib/bot/custom-flow/data';
 import { YES_NO_LABELS } from '@/lib/bot/custom-flow/answers';
 import { upcomingDateOptions } from '@/lib/bot/custom-flow/dates';
 import { handoffPreviewNote } from '@/lib/bot/custom-flow/handoff-copy';
@@ -59,11 +59,36 @@ function choices(labels: string[]): Pick<LiveMessage, 'options' | 'listButton' |
   };
 }
 
+/** A list's saved entries, as the builder loaded them (#1107). */
+export interface PreviewList { columns: DataColumn[]; rows: Array<{ row_code: string; data: Record<string, unknown>; hidden: boolean }> }
+
+/** Same as the engine's MIN_LOOKUP_QUERY_LENGTH and BROWSE_LIMIT. */
+const MIN_QUERY = 2;
+const BROWSE_LIMIT = 30;
+
+/** The engine's findRows: exact code, then whole words, then part of a word. */
+export function matchRows<R extends { row_code: string; data: Record<string, unknown> }>(rows: R[], fields: string[], query: string): R[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const byCode = rows.find(row => row.row_code.toLowerCase() === q);
+  if (byCode) return [byCode];
+  if (q.length < MIN_QUERY) return [];
+  const value = (row: R, field: string) => row.data[field] === undefined || row.data[field] === null ? null : String(row.data[field]).toLowerCase();
+  const whole = rows.filter(row => fields.some(field => value(row, field)?.split(/[^a-z0-9]+/).includes(q)));
+  return whole.length ? whole : rows.filter(row => fields.some(field => value(row, field)?.includes(q)));
+}
+
 export function livePreview(draft: EditableFlow, options: {
   /** The step being edited; its message is shown instead of the opening. */
   focusId?: string | null;
   business?: Partial<Record<BusinessField, unknown>>;
   country?: string | null;
+  /** Saved entries by list name, so a list step shows real answers (#1107). */
+  lists?: Record<string, PreviewList>;
+  /** An entry being typed in the focused list step: shown as if someone searched for it. */
+  draftEntry?: Record<string, unknown> | null;
+  /** A word the merchant typed in the phone to test the focused list step. */
+  query?: string;
 }): LivePreview {
   const business = options.business ?? {};
   const vars: Record<string, unknown> = {};
@@ -84,9 +109,18 @@ export function livePreview(draft: EditableFlow, options: {
       }
       case 'menu':
         return [{ text: render(node.text), ...choices(node.options.map(option => option.label)) }];
-      case 'lookup':
+      case 'lookup': {
+        const rows = visibleRows(node);
+        if ((node.mode === 'browse' || node.mode === 'both') && rows.length) {
+          const prompt = node.prompt ? render(node.prompt) : '';
+          const shown = rows.slice(0, BROWSE_LIMIT);
+          const list = shown.map((row, index) => `${index + 1}. ${browseLabel(row, node.search_fields)}`).join('\n');
+          const more = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more.` : '';
+          return [{ text: `${prompt ? `${prompt}\n\n` : ''}${list}${more}` }];
+        }
         // The engine stays silent without a prompt and waits for a search word.
         return node.prompt ? [{ text: render(node.prompt) }] : [{ text: 'Waits for people to type a word to search.', note: true }];
+      }
       case 'handoff':
         return [{ text: handoffPreviewNote({ capability: node.capability, recordName: null }), note: true }];
       case 'ask': {
@@ -115,8 +149,47 @@ export function livePreview(draft: EditableFlow, options: {
     return messages;
   }
 
+  /** Rows people would get: shown, and with every detail the reply needs (engine loadAnswerRows). */
+  function visibleRows(node: Extract<CustomFlowNode, { type: 'lookup' }>) {
+    const list = options.lists?.[node.table];
+    if (!list) return [];
+    return list.rows.filter(row => !row.hidden && (!!row.data._source || completeRow(row.data, list.columns, node.reply, vars)));
+  }
+  function browseLabel(row: { row_code: string; data: Record<string, unknown> }, fields: string[]) {
+    const first = fields.map(field => row.data[field]).find(value => value !== undefined && value !== null && String(value).trim() !== '');
+    return first === undefined ? row.row_code : String(first);
+  }
+  /** What a search for `query` answers, worked out like the engine does. */
+  function answer(node: Extract<CustomFlowNode, { type: 'lookup' }>, query: string): LiveMessage[] {
+    const rows = visibleRows(node);
+    const browsing = node.mode === 'browse' || node.mode === 'both';
+    const number = Number(query.trim());
+    if (browsing && Number.isInteger(number) && number >= 1 && number <= Math.min(rows.length, BROWSE_LIMIT)) {
+      return [{ text: substitute(node.reply, { ...vars, ...rows[number - 1].data }) }];
+    }
+    const matches = node.mode === 'browse' ? [] : matchRows(rows, node.search_fields, query);
+    if (!matches.length) return [{ text: substitute(node.no_match, { ...vars, query: query.trim() }) }];
+    if (matches.length === 1) return [{ text: substitute(node.reply, { ...vars, ...matches[0].data }) }];
+    const list = matches.map((row, index) => {
+      const first = node.search_fields.map(field => row.data[field]).find(value => value !== undefined && value !== null && String(value).trim() !== '');
+      return `${index + 1}. ${first === undefined ? row.row_code : `${row.row_code} — ${String(first)}`}`;
+    }).join('\n');
+    return [{ text: `I found a few matches:\n${list}\nReply with the number or code.` }];
+  }
+
   const startId = draft.start_node ?? draft.nodes[0]?.id;
   const focusIndex = options.focusId ? draft.nodes.findIndex(node => node.id === options.focusId) : -1;
+  const focused = focusIndex >= 0 ? draft.nodes[focusIndex] : null;
+  if (focused?.type === 'lookup' && (options.query?.trim() || options.draftEntry)) {
+    // A list step being filled or tested: its opening message, what someone types, and the reply.
+    const messages = renderChain(focused);
+    if (options.query?.trim()) messages.push({ text: options.query.trim(), input: true }, ...answer(focused, options.query));
+    else if (options.draftEntry) {
+      const typed = focused.search_fields.map(field => options.draftEntry![field]).find(value => hasValue(value));
+      messages.push({ text: typed === undefined ? '…' : String(typed), input: true }, { text: substitute(focused.reply, { ...vars, ...options.draftEntry }) });
+    }
+    return { label: `Preview: step ${focusIndex + 1}`, messages };
+  }
   if (focusIndex >= 0 && draft.nodes[focusIndex].id !== startId) {
     // Like the engine, a message carries on through the messages after it (up to 10).
     return { label: `Preview: step ${focusIndex + 1}`, messages: renderChain(draft.nodes[focusIndex]) };
