@@ -52,14 +52,14 @@ suite('M494 and admin saves with disposable PostgreSQL', () => {
     f.pool = new pg.Pool({ connectionString: url });
     await f.pool.query(`DROP TABLE IF EXISTS public.admin_step_up_authorizations, public.businesses CASCADE;
       CREATE TABLE public.admin_step_up_authorizations(id uuid PRIMARY KEY, action_type text NOT NULL, admin_user_id text, session_id text, target_id uuid, params_hash text, verified_at timestamptz, expires_at timestamptz, consumed_at timestamptz);
-      CREATE TABLE public.businesses(id uuid PRIMARY KEY, name varchar(200), category text, city varchar(50), status text);`);
+      CREATE TABLE public.businesses(id uuid PRIMARY KEY, name varchar(200), category text, city varchar(50), status text, phone varchar(20) NOT NULL, email varchar(255));`);
     await f.pool.query(priorConstraint); await f.pool.query(migration);
   });
   afterAll(async () => { await f.pool?.query('DROP TABLE public.admin_step_up_authorizations, public.businesses'); await f.pool?.end(); });
   beforeEach(async () => {
     f.audit.mockReset().mockResolvedValue({});
     await f.pool!.query('TRUNCATE public.admin_step_up_authorizations, public.businesses');
-    await f.pool!.query('INSERT INTO businesses VALUES ($1,$2,$3,$4,$5)', [id, 'Before', 'restaurant', 'Lagos', 'active']);
+    await f.pool!.query('INSERT INTO businesses VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, 'Before', 'restaurant', 'Lagos', 'active', '+2348000000000', null]);
     await f.pool!.query(`INSERT INTO admin_step_up_authorizations VALUES ($1,'business_status','admin','session',$2,$3,now(),now()+interval '5 minutes',null)`, [grant, id, hashOperationParams(params)]);
   });
   it('validates the final CHECK and preserves every previous action', async () => {
@@ -99,5 +99,16 @@ suite('M494 and admin saves with disposable PostgreSQL', () => {
     expect((await status(request({ previous_status: 'active', status: 'pending', stepUpId: grant }), { params: Promise.resolve({ id }) })).status).toBe(200);
     expect((await f.pool!.query('SELECT name,status FROM businesses WHERE id=$1', [id])).rows).toEqual([{ name: 'After', status: 'pending' }]);
     expect(f.audit.mock.calls.filter(([entry]) => ['edit_business_field','change_business_status'].includes(entry.action))).toHaveLength(2);
+  });
+  // #1108: Impersonation saves phone and email through the same handler (businesses.phone
+  // VARCHAR(20) NOT NULL, email VARCHAR(255), M001).
+  it('saves phone and email through the real handler, guarded by the previous value', async () => {
+    const request = (body: unknown) => new NextRequest('https://local.test/api/admin', { method: 'POST', body: JSON.stringify(body) });
+    expect((await profile(request({ field: 'phone', value: '+234 801 234 5678' }), { params: Promise.resolve({ id }) })).status).toBe(200);
+    expect((await profile(request({ field: 'email', value: 'owner@example.test' }), { params: Promise.resolve({ id }) })).status).toBe(200);
+    expect((await f.pool!.query('SELECT phone,email FROM businesses WHERE id=$1', [id])).rows).toEqual([{ phone: '+234 801 234 5678', email: 'owner@example.test' }]);
+    expect((await profile(request({ field: 'phone', value: '' }), { params: Promise.resolve({ id }) })).status).toBe(400);
+    expect((await profile(request({ field: 'slug', value: 'x' }), { params: Promise.resolve({ id }) })).status).toBe(400);
+    expect((await f.pool!.query('SELECT phone FROM businesses WHERE id=$1', [id])).rows).toEqual([{ phone: '+234 801 234 5678' }]);
   });
 });

@@ -309,12 +309,16 @@ describe('X4: real columns and enum values', () => {
     expect(businessStatusFilters().some(f => JSON.stringify(f.value).includes('cancelled'))).toBe(false);
   });
 
-  it('Subscriptions: the trial count comes from the business trial date', async () => {
+  it('Subscriptions: the trial count uses the feature-trial clock on the free tier (M525)', async () => {
     const future = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const past = new Date(Date.now() - 5 * 86_400_000).toISOString();
     h.fixtures.subscriptions = [
-      { id: 'a', business_id: 'b1', plan: 'free', status: 'active', amount: 0, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'In Trial Co', category: 'retail', subscription_tier: 'free', trial_ends_at: future } },
-      { id: 'b', business_id: 'b2', plan: 'business', status: 'active', amount: 120000, currency: 'NGN', billing_interval: 'year', created_at: NOW, businesses: { name: 'Paid Co', category: 'retail', subscription_tier: 'business', trial_ends_at: past } },
+      { id: 'a', business_id: 'b1', plan: 'free', status: 'active', amount: 0, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'In Trial Co', category: 'retail', subscription_tier: 'free', feature_trial_ends_at: future } },
+      { id: 'b', business_id: 'b2', plan: 'business', status: 'active', amount: 120000, currency: 'NGN', billing_interval: 'year', created_at: NOW, businesses: { name: 'Paid Co', category: 'retail', subscription_tier: 'business', feature_trial_ends_at: past } },
+      // Upgraded businesses are not on trial even if the clock has not run out.
+      { id: 'c', business_id: 'b3', plan: 'growth', status: 'active', amount: 5000, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'Upgraded Co', category: 'retail', subscription_tier: 'growth', feature_trial_ends_at: future } },
+      // The messaging-credit clock (trial_ends_at) is not the trial.
+      { id: 'd', business_id: 'b4', plan: 'free', status: 'active', amount: 0, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'Credit Only Co', category: 'retail', subscription_tier: 'free', trial_ends_at: future, feature_trial_ends_at: null } },
     ];
     render(<Subscriptions />);
     expect((await screen.findAllByText('On Trial'))[0].nextElementSibling).toHaveTextContent('1');

@@ -20,7 +20,7 @@ interface SubscriptionRecord {
   amount: number;
   currency: string | null;
   billing_interval: string | null;
-  /** From businesses.trial_ends_at: subscriptions has no trial column or 'trial' status (#1108 X4). */
+  /** From businesses.feature_trial_ends_at (M525): subscriptions has no trial column or 'trial' status (#1108 X4). */
   trial_ends_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
@@ -34,9 +34,11 @@ interface SubscriptionRecord {
   updated_at: string | null;
 }
 
-// The trial belongs to the business (businesses.trial_ends_at, Owner fee and trial model).
-function inTrial(s: { trial_ends_at: string | null }): boolean {
-  return !!s.trial_ends_at && new Date(s.trial_ends_at).getTime() > Date.now();
+// The Pro/Premium feature trial belongs to the business: businesses.feature_trial_ends_at
+// (M525), active only on the free tier, as isTrialActive in lib/capabilities/policy.ts.
+// businesses.trial_ends_at is the free messaging credit's clock, not the trial.
+function inTrial(s: { trial_ends_at: string | null; business_tier?: string }): boolean {
+  return s.business_tier === 'free' && !!s.trial_ends_at && new Date(s.trial_ends_at).getTime() > Date.now();
 }
 
 // subscriptions.billing_interval CHECK allows 'month' and 'year' (M215); the older
@@ -214,7 +216,7 @@ export default function Subscriptions() {
 
       const { data: subData, error } = await adminDb
         .from('subscriptions')
-        .select('*, businesses(name, category, subscription_tier, trial_ends_at)')
+        .select('*, businesses(name, category, subscription_tier, feature_trial_ends_at)')
         .order('created_at', { ascending: false });
 
       if (error || !subData) {
@@ -225,10 +227,10 @@ export default function Subscriptions() {
 
         const bizIds = [...new Set((rawSubs || []).map(s => s.business_id).filter(Boolean))];
         const { data: businesses } = bizIds.length > 0
-          ? await adminDb.from('businesses').select('id, name, category, subscription_tier, trial_ends_at').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name, category, subscription_tier, feature_trial_ends_at').in('id', bizIds)
           : { data: [] };
 
-        const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category, subscription_tier: b.subscription_tier, trial_ends_at: b.trial_ends_at as string | null }]));
+        const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category, subscription_tier: b.subscription_tier, trial_ends_at: b.feature_trial_ends_at as string | null }]));
 
         const enriched: SubscriptionRecord[] = (rawSubs || []).map(s => ({
           ...s,
@@ -248,7 +250,7 @@ export default function Subscriptions() {
             business_name: biz?.name || 'Unknown',
             business_category: biz?.category || '—',
             business_tier: biz?.subscription_tier || 'free',
-            trial_ends_at: biz?.trial_ends_at ?? null,
+            trial_ends_at: biz?.feature_trial_ends_at ?? null,
           };
         });
 
@@ -515,7 +517,7 @@ export default function Subscriptions() {
   });
 
   const trialConversionRate = (() => {
-    // Businesses whose trial has ended, and how many of them now pay for a plan.
+    // Businesses whose trial is over (date passed, or upgraded, which ends it), and how many now pay.
     const ended = subscriptions.filter(s => s.trial_ends_at && !inTrial(s));
     const everTrial = ended.length;
     const converted = ended.filter(s => s.status === 'active' && Number(s.amount || 0) > 0).length;
