@@ -6,7 +6,7 @@ vi.mock('../saved-card-offer', () => ({ checkAndOfferSavedCard: m.offer, retryPe
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class { resolveByChannelIdForBusiness = m.resolve; } }));
 import { resumePaidTransactionFollowup, finishTransactionCardStep } from '../transaction-followup';
 
-function db(options: { state?: string; finalized?: boolean; delivered?: boolean; offer?: string; gateway?: string; pin?: boolean; errorTable?: string; missing?: boolean; metadata?: Record<string, unknown> } = {}) {
+function db(options: { state?: string; finalized?: boolean; delivered?: boolean; offer?: string; gateway?: string; pin?: boolean | string | null; errorTable?: string; missing?: boolean; metadata?: Record<string, unknown> } = {}) {
   const queries: Array<{ table: string; filters: unknown[][] }> = [];
   return { queries, from: vi.fn((table: string) => {
     const query = { table, filters: [] as unknown[][] }; queries.push(query);
@@ -14,7 +14,7 @@ function db(options: { state?: string; finalized?: boolean; delivered?: boolean;
       : table === 'payments' ? { status: 'success', gateway: options.gateway || 'paystack', confirmation_sent_at: options.finalized === false ? null : '2026-11-11', metadata: options.metadata ?? { payment_origin: 'platform' } }
         : table === 'payment_saved_card_offers' ? options.offer ? { state: options.offer } : null
           : table === 'payment_confirmation_deliveries' ? options.delivered === false ? [] : [{ id: 'delivery' }]
-          : table === 'bot_sessions' ? options.pin ? [{ id: 'pin' }] : [] : null;
+          : table === 'bot_sessions' ? options.pin ? [{ id: 'pin', expires_at: options.pin === true ? null : options.pin }] : [] : null;
     const result = { data, error: options.errorTable === table ? { code: 'failed' } : null };
     const chain: Record<string, any> = {};
     for (const name of ['select', 'eq', 'in', 'limit']) chain[name] = (...args: unknown[]) => { query.filters.push([name, ...args]); return chain; };
@@ -73,6 +73,14 @@ describe('paid completion gates', () => {
   it('does not interrupt another active PIN', async () => {
     await resumePaidTransactionFollowup(db({ pin: true }) as any, 'pay');
     expect(m.offer).not.toHaveBeenCalled(); expect(m.resume).not.toHaveBeenCalled();
+  });
+  it('does not interrupt an unexpired PIN', async () => {
+    await resumePaidTransactionFollowup(db({ pin: new Date(Date.now() + 600_000).toISOString() }) as any, 'pay');
+    expect(m.offer).not.toHaveBeenCalled(); expect(m.resume).not.toHaveBeenCalled();
+  });
+  it('an expired PIN session left open does not hold the card step', async () => {
+    await resumePaidTransactionFollowup(db({ pin: new Date(Date.now() - 600_000).toISOString() }) as any, 'pay');
+    expect(m.offer).toHaveBeenCalledTimes(1);
   });
   it.each(['transaction_followups', 'payments', 'payment_saved_card_offers', 'payment_confirmation_deliveries', 'bot_sessions'])('lookup failure in %s does not advance', async errorTable => {
     await resumePaidTransactionFollowup(db({ errorTable }) as any, 'pay'); expect(m.resume).not.toHaveBeenCalled();

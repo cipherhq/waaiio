@@ -175,6 +175,40 @@ describe('#1070 abandoned accepted card step', () => {
     expect(m.buttons).not.toHaveBeenCalled(); expect(m.stripe).not.toHaveBeenCalled();
   });
 
+  it('an expired PIN session that was never closed does not hold the chat', async () => {
+    const { db, followup, tables } = stagingScenario();
+    tables.bot_sessions.push({ ...pinSession('save_card_pin'), expires_at: ago(60_000) });
+    await resumePaidTransactionFollowup(db, oldPay);
+    expect(followup(oldPay).state).toBe('done');
+  });
+
+  it('an unexpired PIN session still holds the chat', async () => {
+    const { db, followup, tables } = stagingScenario();
+    tables.bot_sessions.push({ ...pinSession('save_card_pin'), expires_at: new Date(Date.now() + 600_000).toISOString() });
+    await recoverTransactionFollowups(db);
+    expect(followup(oldPay).state).toBe('card_active');
+    expect(followup(newPay).state).toBe('waiting_card');
+  });
+
+  it('staging: saved-card payment gets its next-steps menu despite an expired PIN chat at another business', async () => {
+    // TestBiz order paid with a saved own-account Paystack card; this morning's
+    // BalaShop save_card_pin session expired but stayed is_active.
+    const env = database();
+    const { db, tables } = env;
+    tables.payments.push({ id: newPay, business_id: biz, status: 'success', gateway: 'paystack', confirmation_sent_at: ago(60_000),
+      amount: 5000, booking_id: null, metadata: { payment_origin: 'byo', saved_method: true } });
+    tables.payment_confirmation_deliveries.push({ id: 'd-new', payment_id: newPay, delivery_status: 'delivered' });
+    tables.transaction_followups.push({ id: randomUUID(), completion_key: 'payment:new', business_id: biz, phone, channel_id: 'channel',
+      payment_id: newPay, kind: 'ordering', lang: 'en', state: 'waiting_card', updated_at: ago(60_000) });
+    tables.bot_sessions.push({ id: 'old-pin', business_id: 'another-business', whatsapp_number: phone.slice(1), is_active: true,
+      current_step: 'save_card_pin', expires_at: ago(18 * 3_600_000) });
+    m.paystackEligibility.mockResolvedValue({ eligible: false, reason: 'same_auth_already_saved' });
+    await recoverTransactionFollowups(db);
+    expect(m.buttons).toHaveBeenCalledTimes(1);
+    expect(m.buttons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my orders', 'menu']);
+    expect(tables.transaction_followups[0].state).not.toBe('waiting_card');
+  });
+
   it('an inactive PIN session does not hold the chat', async () => {
     const { db, followup, tables } = stagingScenario();
     tables.bot_sessions.push({ ...pinSession(), is_active: false });

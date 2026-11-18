@@ -30,13 +30,25 @@ export interface CardOfferStep {
   activation_prompt_sent_at?: string | null;
 }
 
-/** True when the customer has an active PIN session. Throws on lookup failure. */
+/**
+ * A PIN session still counts only until it expires. An abandoned PIN chat can
+ * stay is_active after its expiry (nothing closes it until the customer writes
+ * again), and it must not hold the next-steps menu forever. A missing expiry
+ * keeps holding.
+ */
+export function isUnexpiredSession(session: { expires_at?: string | null }, now = Date.now()): boolean {
+  if (!session.expires_at) return true;
+  const expiresAt = Date.parse(session.expires_at);
+  return !Number.isFinite(expiresAt) || expiresAt > now;
+}
+
+/** True when the customer has an active, unexpired PIN session. Throws on lookup failure. */
 export async function hasActiveCardPin(db: SupabaseClient, phone: string): Promise<boolean> {
-  const { data, error } = await db.from('bot_sessions').select('id')
+  const { data, error } = await db.from('bot_sessions').select('id,expires_at')
     .in('whatsapp_number', [phone, phone.replace(/^\+/, '')])
-    .eq('is_active', true).in('current_step', CARD_PIN_STEPS).limit(1);
+    .eq('is_active', true).in('current_step', CARD_PIN_STEPS);
   if (error) throw new Error(`transaction_followup_pin_lookup:${error.code}`);
-  return !!data?.length;
+  return (data || []).some(session => isUnexpiredSession(session));
 }
 
 /**
