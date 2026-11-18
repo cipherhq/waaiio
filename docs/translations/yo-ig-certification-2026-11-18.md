@@ -2,7 +2,7 @@
 
 Owner decision 2026-11-18: "Fix, test, then turn on". This lists every Yoruba (yo) and Igbo (ig) bot phrase changed or written new for certification. Placeholders in `{braces}` and words in `*stars*` that customers type (for example *Hi*, *cancel*, *menu*, *my orders*) stay as they are on purpose.
 
-Totals: 351 Yoruba phrases and 305 Igbo phrases changed, 425 phrases in all. "new" means it was English before; "fixed" means the earlier Yoruba/Igbo was replaced.
+Totals: 354 Yoruba phrases and 305 Igbo phrases changed, 428 phrases in all. "new" means it was English before; "fixed" means the earlier Yoruba/Igbo was replaced.
 
 ## Check these first
 
@@ -65,7 +65,7 @@ The bot now accepts *fún ara mi* / *fun ara mi* and *ẹlòmíràn* / *elomiran
 
 ### Resolved: Yoruba word for "booking" (Owner, 2026-11-18)
 
-The Owner chose "ìforúkọsílẹ̀" for "booking" everywhere. Every phrase below switched from "ìforúkọsílẹ̀" (and the reroute question "O dàbí pé o fẹ́ ṣe ìforúkọsílẹ̀ kan…"). The two saved-card lines still use "fipamọ́" because there it means "save".
+The Owner chose "ìforúkọsílẹ̀" for "booking" everywhere. Every phrase below switched from "ìfipamọ́" to "ìforúkọsílẹ̀" (and the reroute question "O dàbí pé o fẹ́ ṣe ìforúkọsílẹ̀ kan…"). The two saved-card lines still use "fipamọ́" because there it means "save".
 
 Because "ìforúkọsílẹ̀" was also the word for "subscription", the Owner chose "ìsanwó lóòrèkóòrè" for subscription: the My Account button is now "Àwọn Ìsanwó Lóòrèkóòrè", and `recurring.not_found`, `recurring.cancel_failed` and `recurring.sub_not_found_retry` say "ìsanwó lóòrèkóòrè náà". `account.bookings_title` became "Ìforúkọsílẹ̀ & Tikẹ̀tì" (without "Rẹ") to fit the 24-character list-title limit.
 
@@ -115,6 +115,9 @@ The Owner also set:
 | Phrase | English | Yoruba | Igbo |
 |---|---|---|---|
 | `rerouteBooking` | It looks like you want to book something. Would you like to switch? | O dàbí pé o fẹ́ ṣe ìforúkọsílẹ̀ kan. Ṣé o fẹ́ yí padà? _(fixed)_ | Ọ dị ka ịchọrọ ịdeba aha maka ihe. Ịchọ ịgbanwe? _(unchanged)_ |
+| `menu.how_can_help` | How can I help you today? | Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? _(Owner)_ | Kedu ka m ga-esi nyere gị aka taa? _(unchanged)_ |
+| `account.subscriptions` | Subscriptions | Àwọn Ìsanwó Lóòrèkóòrè _(Owner)_ | Ndenye aha _(unchanged)_ |
+| `feedback.anything_else` | Is there anything else I can help with? | Nǹkan mìíràn tún wà tí mo lè ràn yín lọ́wọ́ sí? _(Owner)_ | Ọ dị ihe ọzọ m nwere ike inyere gị aka? _(unchanged)_ |
 | `nav.no_thanks` | No Thanks | Rárá o, ẹ ṣeun _(fixed)_ | Ọ dịghị mkpa _(unchanged)_ |
 | `nav.cancelled` | Cancelled. Send *Hi* to start over. | Fagilé tán. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(unchanged)_ | E kagbuola ya. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
 | `error.generic_retry` | Something went wrong. Please try again. | Nǹkan kan ṣẹlẹ̀. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí. _(unchanged)_ | Ihe adaghị mma. Biko nwaa ọzọ. _(fixed)_ |
