@@ -6,6 +6,8 @@ import publicRefundBaseline from './finance-public-refund-baseline.json';
 import bankOrderBaseline from './finance-bank-order-baseline.json';
 const precisionSql = readFileSync('supabase/migrations/529_merchant_tax_money_precision.sql','utf8');
 const bankNonorder = precisionSql.match(/CREATE OR REPLACE FUNCTION public\.confirm_nonorder_transfer_atomic\([\s\S]*?AS \$function\$[\s\S]*?\$function\$/)![0];
+// M550 rewrites the Stripe recurring finalizer too, so the fixture needs its real body.
+const stripeFinalizer = readFileSync('supabase/migrations/339_stripe_recurring_finalization.sql','utf8').match(/CREATE OR REPLACE FUNCTION finalize_stripe_recurring_charge\([\s\S]*?\n\$\$;/)![0];
 
 // Reduced, catalog-typed fixture: these tests execute M532 RPCs, not HTTP/provider
 // integration or a full migration replay. Existing environments are never used.
@@ -80,7 +82,12 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
       GRANT USAGE ON SCHEMA public TO service_role,authenticated,anon;
       INSERT INTO public.businesses(id,subscription_tier) VALUES('${b}','free');
       INSERT INTO public.platform_settings VALUES('pricing_tiers','{"free":{"feePercentage":3,"feeFlat":0}}');
-      ${readFileSync('supabase/migrations/532_merchant_tax_payment_refund_authority.sql','utf8')}`);
+      ${readFileSync('supabase/migrations/532_merchant_tax_payment_refund_authority.sql','utf8')}
+      SET check_function_bodies=off;
+      ${stripeFinalizer}
+      SET check_function_bodies=on;
+      REVOKE ALL ON FUNCTION finalize_stripe_recurring_charge(uuid,text,text,integer,text,text) FROM PUBLIC;
+      ${readFileSync('supabase/migrations/550_fee_round_to_cent.sql','utf8')}`);
   },60_000);
 
   it.each([
@@ -113,10 +120,11 @@ describe.skipIf(!url)('M532 payment/refund authority (disposable PostgreSQL)', (
     expect(() => reserve(order,0.01)).toThrow();
   });
 
-  it('pins v0 fee using pre-tax net and preserves whole-major percentage rounding', () => {
+  it('pins v0 fee using pre-tax net, rounded to the cent (M550, Owner 2026-11-18)', () => {
     const p = reserve(sale(),12).payment;
     const fee = json(`SET ROLE service_role; SELECT public.bind_merchant_tax_fee_980('${p.id}')`);
-    expect(fee).toMatchObject({feePolicyVersion:0,feePercentage:3,feeTotal:0,netAmount:1000,grossAmount:1200});
+    // 3% of the $10.00 net is $0.30; whole-unit rounding (before M550) pinned $0.
+    expect(fee).toMatchObject({feePolicyVersion:0,feePercentage:3,feeTotal:0.3,percentageMinor:30,totalMinor:30,netAmount:1000,grossAmount:1200});
     sql(`UPDATE public.platform_settings SET value='{"free":{"feePercentage":50,"feeFlat":0}}' WHERE key='pricing_tiers'`);
     expect(json(`SET ROLE service_role; SELECT public.bind_merchant_tax_fee_980('${p.id}')`)).toEqual(fee);
     sql(`UPDATE public.platform_settings SET value='{"free":{"feePercentage":3,"feeFlat":0}}' WHERE key='pricing_tiers'`);

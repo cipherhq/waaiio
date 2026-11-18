@@ -14,6 +14,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
+import { calculateFee } from '@/lib/payments/calculateFee';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -826,7 +827,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
     expect(feeRow).not.toBe('');
     const [feePct, feeTotal, feeTier] = feeRow.split('|');
     expect(parseFloat(feePct)).toBe(2.5);        // free tier default
-    expect(parseInt(feeTotal)).toBe(1);           // ROUND(50 * 2.5 / 100) = 1
+    expect(feeTotal).toBe('1.25');                // 2.5% of $50, to the cent (M550)
     expect(feeTier).toBe('free');
 
     // Finalization marker committed
@@ -857,7 +858,7 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
     expect(feeCount).toBe('1');
 
     const feeTotal = psql(`SELECT fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
-    expect(parseInt(feeTotal)).toBe(1);           // ROUND(50 * 2.5 / 100) = 1
+    expect(feeTotal).toBe('1.25');                // 2.5% of $50, to the cent (M550)
 
     // Restore
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
@@ -879,16 +880,44 @@ describe.skipIf(!dbUrl)('Stripe Recurring Finalization: Real PostgreSQL database
 
     expect(result.success).toBe(true);
 
-    // Same fee as a business outside its trial (case r above: 2.5% of 50 → 1)
+    // Same fee as a business outside its trial (case r above: 2.5% of 50 → 1.25)
     const feeRow = psql(`SELECT fee_percentage, fee_flat, fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
     expect(feeRow).not.toBe('');
     const [feePct, feeFlat, feeTotal] = feeRow.split('|');
     expect(parseFloat(feePct)).toBe(2.5);
     expect(parseFloat(feeFlat)).toBe(0);
-    expect(parseInt(feeTotal)).toBe(1);
+    expect(feeTotal).toBe('1.25');
 
     // Restore
     psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day' WHERE id = '${BIZ_ID}'`);
+  });
+
+  // s2. M550 (Owner 2026-11-18): the recorded recurring fee is the same cent
+  //     fee the app charges on a one-off Stripe payment ($50 at 3% = $1.50).
+  it('s2. recurring fee equals the app cent fee for the same amount and rate (M550)', () => {
+    const rates = [{ pct: 3, amount: 50, cents: 5000, fee: '1.50' }, { pct: 2.5, amount: 33.3, cents: 3330, fee: '0.83' }];
+    try {
+      for (const [i, rate] of rates.entries()) {
+        freshFinData();
+        psql(`UPDATE businesses SET trial_ends_at = NOW() - INTERVAL '1 day', payout_mode = 'platform', subscription_tier = 'free' WHERE id = '${BIZ_ID}';
+          UPDATE platform_settings SET value = '{"free":{"feePercentage":${rate.pct},"feeFlat":0},"growth":{"feePercentage":1.5,"feeFlat":0},"business":{"feePercentage":1.5,"feeFlat":0}}'::jsonb WHERE key = 'pricing_tiers';`);
+        createSub(SUB_ID_A, { code: `sub_cent_${i}`, amount: rate.amount });
+        const result = psqlJson(`
+          SELECT finalize_stripe_recurring_charge(
+            '${SUB_ID_A}'::uuid, 'in_cent_${i}', 'sub_cent_${i}',
+            ${rate.cents}, 'USD', 'pi_cent_${i}'
+          );
+        `);
+        expect(result.success).toBe(true);
+        const feeTotal = psql(`SELECT fee_total FROM platform_fees WHERE booking_id = '${result.booking_id}'`);
+        expect(feeTotal).toBe(rate.fee);
+        const snapshot = { pricing_tiers: { free: { feePercentage: rate.pct, feeFlat: 0 } } } as unknown as Parameters<typeof calculateFee>[3];
+        const basis = { payment_routing: 'platform', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null } as Parameters<typeof calculateFee>[1];
+        expect(Number(feeTotal)).toBe(calculateFee(rate.amount, basis, null, snapshot).feeTotal);
+      }
+    } finally {
+      psql(`UPDATE platform_settings SET value = '{"free":{"feePercentage":2.5,"feeFlat":0},"growth":{"feePercentage":1.5,"feeFlat":0},"business":{"feePercentage":1.5,"feeFlat":0}}'::jsonb WHERE key = 'pricing_tiers';`);
+    }
   });
 
   // t. direct_split → no platform_fees row
