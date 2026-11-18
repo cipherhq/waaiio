@@ -81,16 +81,27 @@ describe('with only first assignment on, every other channel operation stays una
   it.each([
     ['add-number', add], ['add-number finish', finish], ['embedded signup', embedded], ['facebook callback', callback],
     ['step-up prepare', prepare], ['step-up verify', stepUpVerify], ['disconnect', disconnect],
-    ['admin change preview', preview], ['admin change list', changeList], ['admin onboarding create', onboardingCreate],
+    ['admin change preview', preview], ['admin change list', changeList],
   ] as const)('%s returns 503 before any service/provider work', async (_name, handler) => {
     const r = await handler(req());
     expect(r.status).toBe(503);
     expect(m.service).not.toHaveBeenCalled();
     expect(m.fetch).not.toHaveBeenCalled();
   });
-  it.each(['ensure_shared_channel', 'retry'])('admin onboarding %s (repair path) stays unavailable', async action => {
-    expect((await onboardingAction(req(action), { params: Promise.resolve({ id: 'invite' }) })).status).toBe(503);
+  it('admin onboarding ensure_shared_channel (repair path) stays unavailable', async () => {
+    expect((await onboardingAction(req('ensure_shared_channel'), { params: Promise.resolve({ id: 'invite' }) })).status).toBe(503);
     expect(m.from).not.toHaveBeenCalled();
+  });
+  // Admin onboarding create and retry provision a new business, so they follow
+  // the same admission as Get Started (see admin-onboarding-get-started-parity).
+  it('admin onboarding create is admitted like Get Started signup', async () => {
+    // The fixture body is not a valid onboarding, so it stops at input validation.
+    expect((await onboardingCreate(req())).status).toBe(400);
+    expect(m.service).toHaveBeenCalled();
+  });
+  it('admin onboarding retry is admitted like Get Started signup', async () => {
+    m.from.mockImplementation(() => { throw new Error('past admission'); });
+    await expect(onboardingAction(req('retry'), { params: Promise.resolve({ id: 'invite' }) })).rejects.toThrow('past admission');
   });
   it.each(['create', 'approve', 'refresh', 'execute'] as const)('admin channel change %s stays unavailable', async action => {
     expect((await mutateChannelChange(req(), action, 'approval')).status).toBe(503);
