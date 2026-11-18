@@ -186,7 +186,7 @@ describe('M549 admin access tightening (real PostgreSQL)', () => {
       if (databases[state]) await control?.query(`DROP DATABASE IF EXISTS ${databases[state]} WITH (FORCE)`);
     }
     await control?.end();
-  });
+  }, 60_000);
 
   for (const state of STATES) {
     describe(`starting from ${state} grants`, () => {
