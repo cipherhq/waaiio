@@ -4,7 +4,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
-import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
+import { assertWhatsAppNameAvailable, provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
       .in('status', ['active', 'cancelled', 'completed'])
       .order('created_at', { ascending: false })
       .limit(100),
-    service.from('countries').select('code, name, dialing_code').eq('is_active', true).order('sort_order'),
+    service.from('countries').select('code, name, dialing_code, phone_digits').eq('is_active', true).order('sort_order'),
     service.from('category_templates').select('key, name:label').eq('is_active', true).order('label'),
   ]);
   if (actionableError || terminalResult.error || countriesResult.error || categoriesResult.error) {
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
   const service = createServiceClient({ noStore: true });
   let input: AdminOnboardingInput;
   try {
-    input = await validateAdminOnboardingInput(service, await request.json());
+    input = await validateAdminOnboardingInput(service, await request.json(), { newRequest: true });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid request' }, { status: 400 });
   }
@@ -132,6 +132,11 @@ export async function POST(request: NextRequest) {
     if (prior.status === 'failed') return NextResponse.json({ error: 'This request previously failed. Use the queue retry action.', onboarding: prior, idempotent: true }, { status: 409 });
     if (prior.status === 'cancelled') return NextResponse.json({ error: 'This request was cancelled. Start again with a new review submission.', onboarding: prior, idempotent: true }, { status: 409 });
     return NextResponse.json({ onboarding: prior, idempotent: true });
+  }
+  try {
+    await assertWhatsAppNameAvailable(service, input.bot_code!);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid request' }, { status: 400 });
   }
 
   try {

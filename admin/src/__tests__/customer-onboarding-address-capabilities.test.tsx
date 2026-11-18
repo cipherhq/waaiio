@@ -41,6 +41,7 @@ async function openBusiness() {
   await screen.findByLabelText('Address');
   fireEvent.change(screen.getByLabelText('Business name'), { target: { value: 'Address Business' } });
   fireEvent.change(screen.getByLabelText('Business phone'), { target: { value: '+2348012345678' } });
+  fireEvent.change(screen.getByLabelText('Your WhatsApp Name'), { target: { value: 'ADDRESS-BIZ' } });
 }
 
 const follows = (earlier: HTMLElement, later: HTMLElement) =>
@@ -74,6 +75,7 @@ describe('Onboard Customer: address directly under Country', () => {
     fireEvent.change(screen.getByLabelText('State'), { target: { value: 'Lagos' } });
     fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '100271' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Online Store' }));
     fireEvent.click(screen.getByRole('button', { name: 'Review onboarding' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create and send invite' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledOnce());

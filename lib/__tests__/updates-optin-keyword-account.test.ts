@@ -155,7 +155,7 @@ describe('typed "updates" (#591 Q6)', () => {
     expect(sent[0]).toMatchObject({
       kind: 'buttons',
       body: "🎉 You're in! Mama Put Kitchen and Waaiio will send you offers and updates. Reply STOP anytime to unsubscribe.\n\nWhat would you like to do next?",
-      buttons: [{ id: 'my account', title: 'My Account' }, { id: 'menu', title: 'View Options' }, { id: 'directory', title: 'Search directory' }],
+      buttons: [{ id: 'my account', title: 'My Account' }, { id: `menu:${BIZ}`, title: 'View Options' }, { id: 'directory', title: 'Search directory' }],
       footer: 'Powered by Waaiio.com',
     });
     expect(sessionWrites(db)).toHaveLength(0); // chat session left as it was
@@ -270,7 +270,7 @@ describe('typed "updates" (#591 Q6)', () => {
     await send(YES, 'button');
     expect(consents(db).map(r => r.purpose).sort()).toEqual(['marketing', 'utility']);
     // Not shared: no directory button.
-    expect(sent[1].buttons?.map(b => b.id)).toEqual(['my account', 'menu']);
+    expect(sent[1].buttons?.map(b => b.id)).toEqual(['my account', `menu:${BIZ}`]);
   });
 });
 

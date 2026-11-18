@@ -1,0 +1,109 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_refund_id uuid",
+    "body_sha256": "a4c36cb180d2579d4552f05283188b52d0ca97820d3d3e9ae1e721eb3a56b46f",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "5eea85c8d0cb9ee227c41dc3ab4c162add12896cd594a4c3feb542bb2d5bde00",
+   "identity": "function:accounting_private.finalize_refund_accounting_modern(p_refund_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_payment_id uuid",
+    "body_sha256": "014c70420e58fc99fc3bcc46e3bcf9d2d9ecbe849466af908c42ba880d1f1a4a",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "06a77fe6d3755725eb40e29abc770bb0753950f62c5496be091042e710895860",
+   "identity": "function:public.bind_merchant_tax_fee_980(p_payment_id uuid)",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text DEFAULT 'USD'::text, p_payment_intent_id text DEFAULT NULL::text",
+    "body_sha256": "10d962409a0a5689c159ff4b72058e0b3247c352b8406da730d93b0adab4b2c5",
+    "config": [
+     "search_path=public"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "198c618b9f0adfea79328a20102b06b77f504f2b402280764f51c86c21c32072",
+   "identity": "function:public.finalize_stripe_recurring_charge(p_subscription_id uuid, p_stripe_invoice_id text, p_stripe_subscription_code text, p_amount_cents integer, p_currency text, p_payment_intent_id text)",
+   "operation": "modify"
+  }
+ ],
+ "migration": "550_fee_round_to_cent.sql",
+ "migration_sha256": "b2e9076d9e5c5643fcb19dd8b5564703e784a26b4692d916f256216a052d1810",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

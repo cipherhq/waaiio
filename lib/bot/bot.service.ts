@@ -1,5 +1,5 @@
 import { isMenuSelectionToken } from './flows/capability-selection.flow';
-import { isSharedConversation, repeatSessionData, persistDirectoryEntry } from './flows/shared/navigation';
+import { isSharedConversation, repeatSessionData, persistDirectoryEntry, parseViewOptionsPostback, isNextStepsNavigation, viewOptionsPostback } from './flows/shared/navigation';
 import { matchBookForAnswer } from './flows/shared/book-for-answer';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
@@ -35,6 +35,7 @@ import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { parseGivingCategoryPrefill, resolveGivingCategoryRef } from '@/lib/giving-category-link';
 import { ensurePlus } from '@/lib/utils/phone';
 import { getPoweredByFooter, getPoweredByHtml, getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
@@ -156,6 +157,10 @@ export class BotService {
   ): Promise<void> {
     try {
     let text = messageText.trim();
+    // "menu:<businessId>" / "pc_options:<businessId>" behave exactly like the bare ids;
+    // the business is used only when no chat is open (see the stale next-steps branch).
+    const viewOptionsTap = parseViewOptionsPostback(text);
+    if (viewOptionsTap) text = viewOptionsTap.id;
     const _bt0 = Date.now();
     const _btimings: Record<string, number> = {};
     const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
@@ -1368,7 +1373,8 @@ export class BotService {
         // Exact business-code match (same query as the restart logic below):
         // a code that is also an entry keyword belongs to the platform.
         const isBusinessCode = async (candidate: string): Promise<boolean> => {
-          const trimmed = candidate.trim();
+          // A scanned giving-category link ("CODE:giving:ref") counts as its business code.
+          const trimmed = (parseGivingCategoryPrefill(candidate)?.botCode ?? candidate).trim();
           if (!/^[a-z0-9-]{2,30}$/i.test(trimmed)) return false;
           const { data } = await this.supabase
             .from('businesses')
@@ -1572,8 +1578,12 @@ export class BotService {
     // Also treat bot codes as restarts so users can switch businesses mid-session
     let isBotCodeRestart = false;
     let explicitRestartBusinessId: string | null = null;
-    if (!isFreeTextStep && session && /^[a-z0-9-]{2,30}$/i.test(text.trim())) {
-      const potentialCode = text.trim().toLowerCase();
+    // A scanned giving-category link ("CODE:giving:ref") restarts like its bot code,
+    // also from a free-text step such as the amount prompt (not from live chat).
+    const givingLinkText = parseGivingCategoryPrefill(text);
+    const restartCodeText = givingLinkText ? givingLinkText.botCode : text.trim();
+    if ((!isFreeTextStep || (givingLinkText && !isChatStep)) && session && /^[a-z0-9-]{2,30}$/i.test(restartCodeText)) {
+      const potentialCode = restartCodeText.toLowerCase();
       const { data: codeMatch } = await this.supabase
         .from('businesses')
         .select('id')
@@ -1606,7 +1616,7 @@ export class BotService {
       isBotCodeRestart
     )
     // Allow greetings to trigger restart even at free-text steps (not chat) — prevents "Hi" being saved as a name
-    || (isFreeTextStep && !isChatStep && isGreetingText);
+    || (isFreeTextStep && !isChatStep && (isGreetingText || (!!givingLinkText && isBotCodeRestart)));
 
     // Mid-flow greeting: ask for confirmation before resetting
     if (session && isMidFlow && isRestart && isGreetingText && !isBotCodeRestart) {
@@ -1954,6 +1964,15 @@ export class BotService {
         }
       }
 
+      // A next-steps button tapped after its chat expired (Owner bug 2026-11-18) is
+      // navigation, never a business search for its own label. Go back to the business
+      // the button names when it is one of this customer's businesses; otherwise offer
+      // the businesses they used before (the "home" picker).
+      if (!businessId && isNextStepsNavigation(text)) {
+        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, null, sharedConversation);
+      }
+
       // Bot code routing + profile lookup in parallel (independent queries)
       let pendingSuggestions: { id: string; name: string; bot_code: string }[] | undefined;
       let isCategoryMatch = false;
@@ -2063,7 +2082,7 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status, messaging_suspended')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status, messaging_suspended, bot_code')
           .eq('id', businessId)
           .single();
         // Reject suspended/deactivated businesses
@@ -2160,6 +2179,21 @@ export class BotService {
         tierInfo = tier;
       }
 
+      // Giving-category link ("CODE:giving:ref") for THIS business — the code must be
+      // this business's own bot code, so a link never selects another business's
+      // category. A valid active category is preselected below; an unknown, inactive
+      // or deleted one leaves the normal giving menu.
+      let givingLinkApplies = false;
+      let givingLinkCategory: { id: string; name: string } | null = null;
+      const businessBotCode = String((business as unknown as { bot_code?: string | null } | null)?.bot_code || '');
+      if (business && givingLinkText && businessBotCode
+          && givingLinkText.botCode.toLowerCase() === businessBotCode.toLowerCase()
+          && capabilities.includes('giving')) {
+        givingLinkApplies = true;
+        if (!deepLinkCapability) deepLinkCapability = 'giving';
+        givingLinkCategory = await resolveGivingCategoryRef(this.supabase, business.id, givingLinkText.ref);
+      }
+
       // #524: A customer-wide response preference is presentation state only.
       // Read it after #266 has authoritatively bound the business, then re-check it
       // against this business's live entitlement and the production certification
@@ -2250,7 +2284,7 @@ export class BotService {
       let directCanonicalCap: string | null = null; // High-confidence direct routing target
       let canonicalActivatedLanguage: string | null = null; // Seamlessly activated language
       let forceCapabilityMenu = false; // CAS-004: confidence/semantic forces menu
-      if (business && text && text.length > 2 && !isRestart && !promoHandledFirstMessage) {
+      if (business && text && text.length > 2 && !isRestart && !promoHandledFirstMessage && !givingLinkApplies) {
         try {
           const { understandCanonicalMessage } = await import('./canonical-understanding');
           canonicalResult = await understandCanonicalMessage({
@@ -2393,6 +2427,8 @@ export class BotService {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
             ...(directCanonicalCap ? { active_capability: directCanonicalCap } : {}),
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability, ...(!directCanonicalCap && capabilities.includes(deepLinkCapability as CapabilityId) ? { active_capability: deepLinkCapability } : {}) } : {}),
+            // select_category re-checks this id is still an active giving category of this business.
+            ...(givingLinkCategory ? { _repeat_selection_id: givingLinkCategory.id } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
@@ -2955,7 +2991,7 @@ export class BotService {
             profileNamePromise,
           ]);
 
-          if (custHistory.isReturning && !directCanonicalCap) {
+          if (custHistory.isReturning && !directCanonicalCap && !givingLinkApplies) {
             session.session_data._customer_history = {
               totalVisits: custHistory.totalVisits,
               ltvTier: custHistory.ltvTier,
@@ -3091,7 +3127,7 @@ export class BotService {
           const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
           if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
           const ufCount = capabilities.filter(c => !nonUF.has(c)).length;
-          if (waConfig.welcome_buttons.length > 0 && ufCount <= 1) {
+          if (waConfig.welcome_buttons.length > 0 && ufCount <= 1 && !givingLinkApplies) {
             const buttons = waConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
               id: `wb_${i}`,
               title: truncTitle(btn.label),
@@ -3227,8 +3263,10 @@ export class BotService {
         // Delegate to flow executor for the first step prompt
         // CAS-004: pass canonical result ephemerally — NOT persisted to session
         const _newSessionOv = business ? await getOverrides(business.id) : emptyOverrides;
+        // A preselected giving category is answered as the select_category choice,
+        // so the donor goes straight to the amount (as a quick rebook does).
         await runWithTranslationOverrides(_newSessionOv, () =>
-          this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined)
+          this.flowExecutor.execute(from, givingLinkCategory?.id ?? '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined)
         );
         return;
       }
@@ -4086,6 +4124,13 @@ export class BotService {
         await this.deactivateSession(session.id);
         await this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance);
       };
+
+      // An old next-steps button (View Options, Book again, My orders…) is navigation,
+      // never a search for its own id.
+      if (isNextStepsNavigation(text)) {
+        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, session, sharedConversation);
+      }
 
       // Navigation commands → restart directory
       if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|directory|search)$/i.test(text)) {
@@ -5240,16 +5285,48 @@ export class BotService {
     pick: { businessId: string; botCode: string },
     session: BotSession | null,
     sharedConversation: { version: number } | null,
+    provenance: 'fuzzy' | 'returning_customer' = 'fuzzy',
   ): Promise<void> {
     if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
     if (sharedConversation) {
       return this.handleMessage(from, pick.botCode, messageType, destinationPhone,
-        undefined, undefined, undefined, 'fuzzy', {
+        undefined, undefined, undefined, provenance, {
           conversationVersion: sharedConversation.version, businessId: pick.businessId,
         });
     }
     if (session) await this.deactivateSession(session.id);
-    return this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, 'fuzzy', undefined, true);
+    return this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance, undefined, true);
+  }
+
+  /**
+   * A next-steps button tapped with no business chat open (Owner bug 2026-11-18).
+   * Goes back to the business the button names when it is one of this customer's
+   * past businesses; otherwise to the past-business picker ("home"). Never searches.
+   */
+  private async resumeStaleNextSteps(
+    from: string, messageType: string, destinationPhone: string | undefined,
+    namedBusinessId: string | undefined, userId: string | null,
+    directorySession: BotSession | null,
+    sharedConversation: { version: number } | null,
+  ): Promise<void> {
+    if (namedBusinessId) {
+      const owner = (await this.findReturningCustomerBusinesses(from, userId, null)).find(b => b.id === namedBusinessId);
+      // An open directory session is closed with the selection, as a directory pick does.
+      if (owner && directorySession && sharedConversation) {
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        return this.handleMessage(from, owner.bot_code, messageType, destinationPhone,
+          undefined, undefined, undefined, 'returning_customer', {
+            id: directorySession.id, version: directorySession.version ?? 0,
+            conversationVersion: sharedConversation.version, businessId: owner.id,
+          });
+      }
+      if (owner) {
+        return this.enterExactDirectoryMatch(from, messageType, destinationPhone,
+          { businessId: owner.id, botCode: owner.bot_code }, directorySession, sharedConversation, 'returning_customer');
+      }
+    }
+    if (directorySession) await this.deactivateSession(directorySession.id);
+    return this.handleMessage(from, 'home', messageType, destinationPhone);
   }
 
   private async createDirectorySession(
@@ -5421,7 +5498,7 @@ export class BotService {
     const buttons = [
       // My Account needs a customer profile, which a session with a user has.
       ...(session.user_id ? [{ id: 'my account', title: getFlowCopy(lang, 'account.title') }] : []),
-      { id: 'menu', title: getFlowCopy(lang, 'nav.view_options') },
+      { id: viewOptionsPostback('menu', session.business_id), title: getFlowCopy(lang, 'nav.view_options') },
       ...(shared ? [{ id: 'directory', title: 'Search directory' }] : []),
     ];
     await this.messageSender.sendButtons({

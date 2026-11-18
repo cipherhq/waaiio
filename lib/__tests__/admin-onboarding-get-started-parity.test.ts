@@ -38,7 +38,7 @@ import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
 const input = {
   request_key: '9f96271c-6715-4e20-ab96-fce6409ed4cd', owner_first_name: 'Ada', owner_last_name: 'Lovelace',
   owner_email: 'ada@example.test', business_name: 'Parity Business', country: 'NG', category: 'restaurant', city: 'Lagos',
-  address: '1 Test Street', business_phone: '+2348012345678', intended_plan: 'free',
+  address: '1 Test Street', business_phone: '+2348012345678', bot_code: 'PARITY', intended_plan: 'free',
   // Free, Pro (growth) and Premium (business) capabilities on a Free-intent business.
   capabilities: ['ordering', 'broadcast', 'reports'], whatsapp_method: 'shared',
 };
@@ -72,6 +72,7 @@ function fakeService() {
         insert: vi.fn((row: Record<string, unknown>) => { businessInserts.push(row); return { select: () => ({ single: async () => ({ data: { id: 'business-1', bot_code: 'PARITY', slug: 'parity-business' }, error: null }) }) }; }),
         delete: vi.fn(() => chain({ data: null, error: null })),
       };
+      if (table === 'countries') return { select: vi.fn(() => chain({ data: { dialing_code: '+234', phone_digits: 10 }, error: null })) };
       if (table === 'category_templates') return { select: vi.fn(() => chain({ data: null, error: null })) };
       if (table === 'whatsapp_config') return { insert: vi.fn(async () => ({ error: null })) };
       if (table === 'business_capabilities') return {

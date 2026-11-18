@@ -20,6 +20,7 @@ vi.mock('@/lib/email/client', () => ({ sendEmail: mocks.sendEmail }));
 vi.mock('@/lib/onboarding/admin-assisted', () => ({
   validateAdminOnboardingInput: mocks.validate,
   provisionAdminBusiness: mocks.provision,
+  assertWhatsAppNameAvailable: async () => undefined,
 }));
 
 import { GET, POST } from '@/app/api/admin/onboarding/route';

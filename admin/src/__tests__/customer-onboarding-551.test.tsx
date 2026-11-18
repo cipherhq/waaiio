@@ -36,9 +36,11 @@ describe('#551 Admin customer onboarding journey', () => {
     const businessFields: Record<string, string> = {
       'Business name': 'Exact Business', 'Business phone': '+2348012345678',
       'Country code': 'NG', 'Category key': 'restaurant', City: 'Lagos', Address: '1 Test Street',
+      'Your WhatsApp Name': 'EXACT-BIZ',
     };
     for (const [label, value] of Object.entries(businessFields)) fireEvent.change(screen.getByLabelText(label), { target: { value } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Online Store' }));
     fireEvent.click(screen.getByRole('button', { name: 'Review onboarding' }));
     expect(screen.getByText('Review before creation')).toBeInTheDocument();
     expect(screen.getByText(/Exact Business/)).toBeInTheDocument();
@@ -87,6 +89,7 @@ describe('#551 Admin customer onboarding journey', () => {
     await screen.findByLabelText('Address');
     fireEvent.change(screen.getByLabelText('Business name'), { target: { value: 'Address Business' } });
     fireEvent.change(screen.getByLabelText('Business phone'), { target: { value: '+2348012345678' } });
+    fireEvent.change(screen.getByLabelText('Your WhatsApp Name'), { target: { value: 'ADDRESS-BIZ' } });
   }
   function enablePlaces() {
     provider.create.mockResolvedValue({ predictions: { getPlacePredictions: provider.predict }, details: { getDetails: provider.details }, reset: vi.fn() });
@@ -119,6 +122,7 @@ describe('#551 Admin customer onboarding journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.getByLabelText('Address')).toHaveValue('10 Main Street');
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Online Store' }));
     fireEvent.click(screen.getByRole('button', { name: 'Review onboarding' }));
     expect(api.post).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Create and send invite' }));
@@ -147,11 +151,13 @@ describe('#551 Admin customer onboarding journey', () => {
     expect(screen.getByLabelText('Country code')).toHaveValue('GB');
     fireEvent.change(screen.getByLabelText('Address'), { target: { value: 'Manual address' } });
     fireEvent.change(screen.getByLabelText('City'), { target: { value: 'London' } });
+    fireEvent.change(screen.getByLabelText('Business phone'), { target: { value: '+447911123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Online Store' }));
     fireEvent.click(screen.getByRole('button', { name: 'Review onboarding' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create and send invite' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledOnce());
-    expect(api.post).toHaveBeenCalledWith('/api/admin/onboarding', expect.objectContaining({ address: 'Manual address', city: 'London', country: 'GB' }));
+    expect(api.post).toHaveBeenCalledWith('/api/admin/onboarding', expect.objectContaining({ address: 'Manual address', city: 'London', country: 'GB', business_phone: '+447911123456' }));
     await screen.findByText('Activation invitation sent. Customer action is now required.');
   });
 

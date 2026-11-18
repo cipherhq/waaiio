@@ -199,7 +199,7 @@ describe('durable transaction follow-up sequence', () => {
     await handleTransactionFollowupTap(db, tap(id));
     expect(mocks.record).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.send.mock.calls[1][0].buttons.some((b: Row) => b.id === 'menu')).toBe(true);
+    expect(mocks.send.mock.calls[1][0].buttons.some((b: Row) => b.id === `menu:${biz}`)).toBe(true);
     expect(tables.transaction_followups[0].state).toBe('done');
   });
 
@@ -227,7 +227,7 @@ describe('durable transaction follow-up sequence', () => {
     mocks.eligibility.mockResolvedValue('ineligible');
     await startTransactionFollowup(db, start());
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(mocks.send.mock.calls[0][0].buttons.some((b: Row) => b.id === 'menu')).toBe(true);
+    expect(mocks.send.mock.calls[0][0].buttons.some((b: Row) => b.id === `menu:${biz}`)).toBe(true);
     expect(mocks.record).not.toHaveBeenCalled();
     expect(tables.transaction_followups[0].state).toBe('done');
   });
