@@ -122,10 +122,10 @@
    "after": {
     "deferrable": false,
     "deferred": false,
-    "definition": "FOREIGN KEY (broadcast_id) REFERENCES admin_broadcasts(id) ON DELETE CASCADE",
+    "definition": "FOREIGN KEY (broadcast_id) REFERENCES admin_broadcasts(id) ON DELETE RESTRICT",
     "validated": true
    },
-   "after_sha256": "a437181026a7ec65f7cb540a5da3d3983899f5895c60b4f9838c3874b8cfb761",
+   "after_sha256": "b7ea6ab8a9459e849768823a9fbd17ca42c68336e079c354d69c50479b0d4319",
    "identity": "constraint:public.admin_broadcast_recipients.admin_broadcast_recipients_broadcast_id_fkey",
    "operation": "add"
   },
@@ -330,7 +330,7 @@
   }
  ],
  "migration": "548_admin_whatsapp_broadcasts.sql",
- "migration_sha256": "14d66a1185ef201ea4de9877b76abf3a149f7c5058dfd2109070a227bd6685a6",
+ "migration_sha256": "cc4dfd9da381ab9cc04dc27616421a7eab14e0d0870fa3d2a50a7304d299f828",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
