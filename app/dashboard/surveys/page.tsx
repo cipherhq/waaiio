@@ -275,7 +275,7 @@ export default function SurveysPage() {
     date: r => sortTime(r.completed_at || r.started_at),
   };
   for (const q of selectedSurvey?.questions ?? []) {
-    responseColumns[`q:${q.id}`] = r => String(r.answers[q.id] ?? '-');
+    responseColumns[`q:${q.id}`] = r => (r.answers[q.id] == null ? null : String(r.answers[q.id]));
   }
   const responseSort = useTableSort(responses.filter(r => r.completed), responseColumns);
 

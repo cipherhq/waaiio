@@ -426,7 +426,7 @@ export default function PropertyDetailPage() {
   }, [calendarMonth, reservations, blockedDates]);
 
   const reservationSort = useTableSort(filteredReservations, {
-    guest: (r: Reservation) => r.guest_name || '—',
+    guest: (r: Reservation) => r.guest_name,
     checkIn: r => sortTime(r.check_in + 'T00:00'),
     checkOut: r => sortTime((r.check_out || r.check_in) + 'T00:00'),
     nights: r => (r.nights ? Number(r.nights) : null),

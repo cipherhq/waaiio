@@ -510,13 +510,13 @@ export default function PartiesPage() {
   // Guest list sort. The detail view's table renders after early returns, so the hook
   // lives here; it sorts the same tag-filtered guests the table shows.
   const inviteSort = useTableSort(tagFilter ? invites.filter(i => (i.tags || []).includes(tagFilter)) : invites, {
-    guest: (i: InviteRow) => i.guest_name || '-',
+    guest: (i: InviteRow) => i.guest_name,
     phone: i => i.guest_phone,
     status: i => i.status,
     tags: i => (i.tags || []).join(', '),
     plusOnes: i => (i.status === 'accepted' ? Number(i.plus_ones) : null),
     table: i => partyTables.find(t => t.id === i.table_id)?.name ?? null,
-    dietary: i => i.dietary_notes || '-',
+    dietary: i => i.dietary_notes,
     responded: i => sortTime(i.responded_at),
   });
 

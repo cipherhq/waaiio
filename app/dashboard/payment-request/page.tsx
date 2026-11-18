@@ -301,7 +301,7 @@ export default function PaymentRequestPage() {
     sent: row => sortTime(row.created_at),
     status: row => getPaymentStatus(row).label,
     source: row => getSource(row).label,
-    provider: row => getProvider(row) || '-',
+    provider: row => getProvider(row),
   });
 
   if (loading) {

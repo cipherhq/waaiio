@@ -237,7 +237,7 @@ export default function PropertyCheckInPage() {
   });
 
   const reservationSort = useTableSort(filteredReservations, {
-    guest: (r: ReservationRecord) => r.guest_name || '—',
+    guest: (r: ReservationRecord) => r.guest_name,
     reference: r => r.reference_code,
     checkIn: r => sortTime(r.check_in),
     checkOut: r => sortTime(r.check_out),

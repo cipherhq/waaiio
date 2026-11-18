@@ -1362,7 +1362,7 @@ export default function PromotionDetailPage() {
                     <SortableTh {...winnerSort.sortProps('code')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Redeemed Code</SortableTh>
                     <SortableTh {...winnerSort.sortProps('prize')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Prize</SortableTh>
                     <SortableTh {...winnerSort.sortProps('claimRef')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claim Ref</SortableTh>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</th>
+                    <SortableTh {...winnerSort.sortProps('claimedAt')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</SortableTh>
                     <SortableTh {...winnerSort.sortProps('verification')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Verification</SortableTh>
                     <SortableTh {...winnerSort.sortProps('fulfillment')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Fulfillment</SortableTh>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
