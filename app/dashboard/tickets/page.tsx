@@ -40,6 +40,7 @@ export default function TicketsPage() {
   const [eventFilter, setEventFilter] = useState('all');
   const [selected, setSelected] = useState<TicketRow | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadTickets = useCallback(async () => {
     try {
@@ -93,28 +94,62 @@ export default function TicketsPage() {
   const validCount = tickets.filter(t => t.status === 'valid').length;
   const usedCount = tickets.filter(t => t.status === 'used').length;
 
+  // Check-in goes through the server route that requires the business owner or
+  // an active team member and guards against double check-in (same as the scanner).
   async function markUsed(ticket: TicketRow) {
     if (ticket.status !== 'valid') return;
     setUpdating(true);
-    const supabase = createClient();
-    await supabase
-      .from('event_tickets')
-      .update({ status: 'used', scanned_at: new Date().toISOString() })
-      .eq('id', ticket.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/tickets/verify/${encodeURIComponent(ticket.ticket_code)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, scanned_by: business.name }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error || 'The ticket was not marked as used.');
+        // A 409 means it was already checked in: show it as used.
+        if (res.status === 409) {
+          setSelected(prev => prev?.id === ticket.id ? { ...prev, status: 'used', scanned_at: data.scanned_at ?? prev.scanned_at } : prev);
+          await loadTickets();
+        }
+        setUpdating(false);
+        return;
+      }
+    } catch {
+      setActionError('Network error. Please try again.');
+      setUpdating(false);
+      return;
+    }
     setSelected(null);
     await loadTickets();
     setUpdating(false);
   }
 
+  // Status change only (no refund or payment change), through the owner/staff-checked route.
   async function cancelTicket(ticket: TicketRow) {
     if (ticket.status !== 'valid') return;
     if (!confirm('Cancel this ticket? This cannot be undone.')) return;
     setUpdating(true);
-    const supabase = createClient();
-    await supabase
-      .from('event_tickets')
-      .update({ status: 'cancelled' })
-      .eq('id', ticket.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/tickets/${ticket.id}/cancel`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error ? `Ticket not cancelled: ${data.error}` : 'The ticket was not cancelled.');
+        if (res.status === 409 && data.status) {
+          setSelected(prev => prev?.id === ticket.id ? { ...prev, status: data.status } : prev);
+          await loadTickets();
+        }
+        setUpdating(false);
+        return;
+      }
+    } catch {
+      setActionError('Network error. Please try again.');
+      setUpdating(false);
+      return;
+    }
     setSelected(null);
     await loadTickets();
     setUpdating(false);
@@ -248,7 +283,7 @@ export default function TicketsPage() {
               {sortedTickets.map(ticket => (
                 <tr
                   key={ticket.id}
-                  onClick={() => setSelected(selected?.id === ticket.id ? null : ticket)}
+                  onClick={() => { setActionError(null); setSelected(selected?.id === ticket.id ? null : ticket); }}
                   className={`cursor-pointer transition hover:bg-gray-50 ${selected?.id === ticket.id ? 'bg-brand-50' : ''}`}
                 >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">{ticket.ticket_code}</td>
@@ -329,6 +364,8 @@ export default function TicketsPage() {
             <p className="mb-2 text-xs font-medium text-gray-500">Send the customer their ticket link</p>
             <CustomerLinkActions kind="ticket" id={selected.id} />
           </div>
+
+          {actionError && <p role="alert" className="mt-4 text-sm text-red-600">{actionError}</p>}
 
           {selected.status === 'valid' && (
             <div className="mt-4 flex gap-3 border-t border-gray-100 pt-4">
