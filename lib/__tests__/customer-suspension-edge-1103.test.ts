@@ -238,6 +238,31 @@ describe('Edge reminders', () => {
     expect(row(db, 'contracts', 'signer_phone', SUSPENDED).reminder_24h_sent).toBe(false);
   });
 
+  it('booking-reminders: the morning check-out message goes only to the guest who is not suspended', async () => {
+    vi.setSystemTime(new Date('2026-11-18T08:00:00Z')); // check-out messages go out 06:00-10:00 UTC
+    world({
+      bookings: [], whatsapp_config: [],
+      reservations: [SUSPENDED, CLEAR].map(phone => ({
+        id: `co-${phone}`, business_id: BIZ, guest_phone: phone, guest_name: 'Ada', check_in: '2026-11-16', check_out: '2026-11-18',
+        status: 'checked_in', property_id: 'pr-1', properties: { name: 'Suite' },
+      })),
+    });
+    await run('booking-reminders');
+    expect(metaTo).toEqual([CLEAR]);
+  });
+
+  it('contract-reminders: the 48-hour reminder also skips the suspended signer', async () => {
+    const db = world({
+      contracts: [SUSPENDED, CLEAR].map(phone => ({
+        id: `ct48-${phone}`, business_id: BIZ, title: 'Lease', signer_phone: `+${phone}`, signer_name: 'Ada', token: `tok-${phone}`,
+        status: 'pending', reminder_24h_sent: true, reminder_48h_sent: false, created_at: ago(50 * HOUR), token_expires_at: new Date(NOW.getTime() + DAY).toISOString(),
+      })),
+    });
+    await run('contract-reminders');
+    expect(metaTo).toEqual([CLEAR]);
+    expect(row(db, 'contracts', 'signer_phone', SUSPENDED).reminder_48h_sent).toBe(false);
+  });
+
   it('noshow-reschedule: only the customer who is not suspended is prompted', async () => {
     const db = world({
       bookings: [SUSPENDED, CLEAR].map(phone => ({

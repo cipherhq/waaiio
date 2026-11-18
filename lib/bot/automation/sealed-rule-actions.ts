@@ -8,7 +8,7 @@ import {
   sealRuleActions,
   type FrozenRuleAction,
 } from '@/lib/payments/terminal-effects';
-import { blocksMarketing } from '@/lib/customer-suspension';
+import { blocksReminder } from '@/lib/customer-suspension';
 import {
   CUSTOMER_MESSAGE_ACTIONS,
   evaluateConditions,
@@ -139,7 +139,7 @@ async function executeFrozenAction(
   // #1103: settle a suspended customer's message as failed before the sending
   // fence, so the skip is recorded as pre-emission rather than indeterminate.
   const customerPhone = context.customer_phone?.replace(/^\+/, '');
-  if (customerPhone && CUSTOMER_MESSAGE_ACTIONS.has(row.action_type) && await blocksMarketing(supabase, customerPhone)) {
+  if (customerPhone && CUSTOMER_MESSAGE_ACTIONS.has(row.action_type) && await blocksReminder(supabase, customerPhone)) {
     const failed = await advanceRuleAction(supabase, paymentId, row.rule_id, 'failed');
     if (!failed.ok) throw new Error(`rule_action_fail_transition_failed:${row.rule_id}:${failed.error}`);
     return;

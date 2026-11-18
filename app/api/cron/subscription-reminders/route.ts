@@ -6,6 +6,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { logger } from '@/lib/logger';
 import { reportFailure } from '@/lib/observability/report-failure';
+import { blocksReminder } from '@/lib/customer-suspension';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -58,6 +59,9 @@ export async function GET(request: NextRequest) {
         const phone = sub.customer_phone;
 
         if (!phone) continue;
+        // #1103: a suspended customer gets no reminder or expiry notice (fails
+        // closed); the pending setup still expires as before.
+        const suspended = await blocksReminder(supabase, phone);
 
         // >72h — mark as failed, send final notice
         if (createdAt < h72Ago) {
@@ -66,7 +70,7 @@ export async function GET(request: NextRequest) {
             .update({ status: 'failed', metadata: { failed_reason: 'setup_timeout_72h' } })
             .eq('id', sub.id);
 
-          const resolved = await resolver.resolveByBusinessId(sub.business_id);
+          const resolved = suspended ? null : await resolver.resolveByBusinessId(sub.business_id);
           if (resolved) {
             const email = sub.customer_email || await findCustomerEmail(supabase, phone, sub.business_id);
             await sendOrEmail({
@@ -85,6 +89,7 @@ export async function GET(request: NextRequest) {
 
         // 24h–48h — send reminder (only once per 24h window)
         if (createdAt < h48Ago && createdAt >= h72Ago) continue; // Between 48-72h, already reminded
+        if (suspended) continue;
 
         const resolved = await resolver.resolveByBusinessId(sub.business_id);
         if (!resolved) continue;

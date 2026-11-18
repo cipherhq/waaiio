@@ -152,14 +152,19 @@ describe('reminders cron (/api/cron/reminders)', () => {
 });
 
 describe('balance-reminder cron (/api/cron/balance-reminder)', () => {
-  it('sends the balance reminder only to the customer who is not suspended; read failure sends none', async () => {
+  it('sends the reservation and booking balance reminders only to the customer who is not suspended; read failure sends none', async () => {
     const world = () => createMemoryDb({
       reservations: [SUSPENDED, CLEAR].map(phone => ({
         id: `rs-${phone}`, business_id: BIZ, check_in: day(1), status: 'confirmed', deposit_status: 'paid',
         total_amount: 50000, deposit_amount: 10000, guest_phone: phone, guest_name: 'Ada', reference_code: 'RES',
         businesses: { name: 'Lagos Suites', country_code: 'NG', payment_gateway: 'paystack' },
       })),
-      bookings: [], whatsapp_config: [], profiles: [], customer_profiles: [], orders: [],
+      bookings: [SUSPENDED, CLEAR].map(phone => ({
+        id: `bk-${phone}`, business_id: BIZ, date: day(1), status: 'confirmed', deposit_status: 'paid',
+        total_amount: 20000, deposit_amount: 5000, guest_phone: phone, guest_name: 'Ada', reference_code: 'BK',
+        businesses: { name: 'Lagos Spa', country_code: 'NG', payment_gateway: 'paystack' },
+      })),
+      whatsapp_config: [], profiles: [], customer_profiles: [], orders: [],
       customer_suspensions: [suspension],
     });
     for (const failRead of [false, true]) {
@@ -170,9 +175,28 @@ describe('balance-reminder cron (/api/cron/balance-reminder)', () => {
       vi.resetModules();
       const { GET } = await import('@/app/api/cron/balance-reminder/route');
       await GET(req());
-      expect(h.sent.map(s => s.to)).toEqual(failRead ? [] : [CLEAR]);
+      expect(h.sent.map(s => s.to)).toEqual(failRead ? [] : [CLEAR, CLEAR]);
       if (!failRead) expect(h.sent[0].text).toContain('Balance Reminder');
     }
+  });
+});
+
+describe('subscription-reminders cron (/api/cron/subscription-reminders)', () => {
+  it('no setup reminder or expiry notice to a suspended customer; the stale setup still expires', async () => {
+    const db: any = createMemoryDb({
+      customer_subscriptions: [SUSPENDED, CLEAR].flatMap(phone => [
+        { id: `remind-${phone}`, business_id: BIZ, customer_phone: phone, customer_name: 'Ada', customer_email: null, status: 'pending', gateway: 'stripe', created_at: new Date(NOW.getTime() - 30 * 3_600_000).toISOString(), businesses: { name: 'Lagos Gym' } },
+        { id: `expire-${phone}`, business_id: BIZ, customer_phone: phone, customer_name: 'Ada', customer_email: null, status: 'pending', gateway: 'stripe', created_at: new Date(NOW.getTime() - 80 * 3_600_000).toISOString(), businesses: { name: 'Lagos Gym' } },
+      ]),
+      customer_profiles: [], bookings: [], orders: [],
+      customer_suspensions: [suspension],
+    });
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: () => db }));
+    vi.resetModules();
+    const { GET } = await import('@/app/api/cron/subscription-reminders/route');
+    await GET(req());
+    expect(h.sent.map(s => s.to)).toEqual([CLEAR, CLEAR]);
+    expect(db.tables.customer_subscriptions.find((r: any) => r.id === `expire-${SUSPENDED}`).status).toBe('failed');
   });
 });
 
@@ -200,6 +224,13 @@ describe('automation rules (merchant-authored messages)', () => {
   it('a customer who is not suspended gets both, as before', async () => {
     await run(world(), CLEAR);
     expect(h.sent.map(s => [s.to, s.kind])).toEqual([[CLEAR, 'text'], [CLEAR, 'template'], ['2348000000001', 'text']]);
+  });
+
+  it('a customer whose number is stored in local format (cannot match a suspension) is still messaged', async () => {
+    const { evaluateRules } = await import('@/lib/bot/automation/rules-engine');
+    const sendMessage = vi.fn(async (to: string, text: string) => { h.sent.push({ to, text, kind: 'text' }); });
+    await evaluateRules(world() as any, BIZ, 'payment_received', { customer_phone: '08099999999', customer_name: 'Ada' }, sendMessage, vi.fn(async () => {}));
+    expect(sendMessage.mock.calls.map(c => c[0])).toContain('08099999999');
   });
 
   it('an unreadable suspension status sends no customer message (fails closed)', async () => {
