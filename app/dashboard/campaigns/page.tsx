@@ -9,6 +9,8 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { canonicalPublicOrigin } from '@/lib/url';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Campaign {
   id: string;
@@ -236,6 +238,13 @@ export default function CampaignsPage() {
     loadCampaigns();
   }
 
+  const donationSort = useTableSort(donations, {
+    donor: d => d.donor_name || 'Anonymous',
+    amount: d => d.amount,
+    status: d => d.status,
+    date: d => sortTime(d.created_at),
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -388,14 +397,14 @@ export default function CampaignsPage() {
                       <table className="w-full text-sm">
                         <thead className="border-b border-gray-100 bg-gray-50">
                           <tr>
-                            <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Donor</th>
-                            <th scope="col" className="px-3 py-2 text-right text-xs font-medium text-gray-500">Amount</th>
-                            <th scope="col" className="hidden sm:table-cell px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
-                            <th scope="col" className="hidden sm:table-cell px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
+                            <SortableTh {...donationSort.sortProps('donor')} scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Donor</SortableTh>
+                            <SortableTh {...donationSort.sortProps('amount')} scope="col" className="px-3 py-2 text-right text-xs font-medium text-gray-500">Amount</SortableTh>
+                            <SortableTh {...donationSort.sortProps('status')} scope="col" className="hidden sm:table-cell px-3 py-2 text-left text-xs font-medium text-gray-500">Status</SortableTh>
+                            <SortableTh {...donationSort.sortProps('date')} scope="col" className="hidden sm:table-cell px-3 py-2 text-left text-xs font-medium text-gray-500">Date</SortableTh>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                          {donations.map(d => (
+                          {donationSort.sorted.map(d => (
                             <tr key={d.id}>
                               <td className="px-3 py-2">
                                 <p className="font-medium text-gray-900">{d.donor_name || 'Anonymous'}</p>

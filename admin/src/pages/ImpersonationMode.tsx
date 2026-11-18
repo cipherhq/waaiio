@@ -7,6 +7,8 @@ import { isAllowedImpersonationUrl } from '@/lib/impersonationUrl';
 import { Search, LogOut, Pencil, Check, X, Building2, ExternalLink } from 'lucide-react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface Business {
   id: string;
@@ -64,6 +66,13 @@ export default function ImpersonationMode() {
   const [payoutAccount, setPayoutAccount] = useState<PayoutAccount | null>(null);
   const [whatsappConfig, setWhatsappConfig] = useState<WhatsAppConfig | null>(null);
   const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
+  const bookingSort = useTableSort(recentBookings, {
+    service: b => b.service_name,
+    customer: b => b.customer_name,
+    status: b => b.status,
+    amount: b => b.total_amount,
+    date: b => sortTime(b.created_at),
+  });
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Admin info
@@ -616,15 +625,15 @@ export default function ImpersonationMode() {
                 <table className="w-full text-sm">
                   <thead className="border-b border-gray-100 bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                      <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                      <SortableTh {...bookingSort.sortProps('service')} className="px-4 py-3 text-left font-medium text-gray-500">Service</SortableTh>
+                      <SortableTh {...bookingSort.sortProps('customer')} className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                      <SortableTh {...bookingSort.sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                      <SortableTh {...bookingSort.sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                      <SortableTh {...bookingSort.sortProps('date')} className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {recentBookings.map(b => (
+                    {bookingSort.sorted.map(b => (
                       <tr key={b.id} className="transition hover:bg-gray-50">
                         <td className="px-4 py-3 font-medium text-gray-900">{b.service_name || '--'}</td>
                         <td className="px-4 py-3 text-gray-600">{b.customer_name || '--'}</td>

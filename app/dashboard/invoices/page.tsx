@@ -14,6 +14,8 @@ import { parseTaxPercent, validateTaxRule, type MerchantTaxConfig, type TaxSnaps
 import { getCurrencyCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface InvoiceItem extends ItemTaxFieldsValue {
   id: string;
@@ -169,7 +171,14 @@ export default function InvoicesPage() {
   }, [invoices, search, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    invoice: (inv: Invoice) => inv.reference_code,
+    customer: inv => inv.customer_name,
+    amount: inv => sortNumber(inv.total_amount),
+    status: inv => inv.status,
+    due: inv => sortTime(inv.due_date),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Reset page on filter change
   useEffect(() => { setPage(1); }, [search, dateFrom, dateTo, statusFilter]);
@@ -504,11 +513,11 @@ export default function InvoicesPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Invoice</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Customer</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Amount</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Due</th>
+                <SortableTh {...sortProps('invoice')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Invoice</SortableTh>
+                <SortableTh {...sortProps('customer')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Customer</SortableTh>
+                <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Amount</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('due')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Due</SortableTh>
                 <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
               </tr>
             </thead>

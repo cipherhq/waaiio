@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -189,6 +191,16 @@ export default function PromotionsPage() {
   }
 
   // ── Loading state ──
+
+  const campaignSort = useTableSort(campaigns, {
+    name: (c: PromoCampaign) => c.name,
+    status: c => c.status,
+    dates: c => sortTime(c.start_at ?? c.end_at),
+    codes: c => sortNumber(c.total_codes),
+    participants: c => sortNumber(c.unique_participants),
+    winners: c => sortNumber(c.total_winners),
+    redemption: c => sortNumber(c.redemption_rate),
+  });
 
   if (loading) {
     return (
@@ -406,18 +418,18 @@ export default function PromotionsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Name</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Status</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Dates</th>
-                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Codes</th>
-                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Participants</th>
-                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Winners</th>
-                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Redemption %</th>
+                <SortableTh {...campaignSort.sortProps('name')} scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Name</SortableTh>
+                <SortableTh {...campaignSort.sortProps('status')} scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Status</SortableTh>
+                <SortableTh {...campaignSort.sortProps('dates')} scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Dates</SortableTh>
+                <SortableTh {...campaignSort.sortProps('codes')} scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Codes</SortableTh>
+                <SortableTh {...campaignSort.sortProps('participants')} scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Participants</SortableTh>
+                <SortableTh {...campaignSort.sortProps('winners')} scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Winners</SortableTh>
+                <SortableTh {...campaignSort.sortProps('redemption')} scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Redemption %</SortableTh>
                 <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-              {campaigns.map(campaign => (
+              {campaignSort.sorted.map(campaign => (
                 <tr
                   key={campaign.id}
                   className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition"

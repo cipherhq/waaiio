@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import { MessageCircle, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
 
 interface ConvUsageRow {
@@ -79,7 +81,15 @@ export default function ConversationUsage() {
   const estimatedMetaCost = (totalConversations * 0.005).toFixed(2);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
-  const items = rows.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(rows, {
+    business: r => r.business_name,
+    tier: r => TIER_LABELS[r.subscription_tier || 'free'] || 'Starter',
+    conversations: r => r.conversation_count,
+    inbound: r => r.inbound_count,
+    outbound: r => r.outbound_count,
+    usage: r => (r.limit >= 999999 ? null : r.usage_pct),
+  }, { onSortChange: () => setPage(1) });
+  const items = sorted.slice((page - 1) * perPage, page * perPage);
 
   return (
     <div className="space-y-6">
@@ -108,12 +118,12 @@ export default function ConversationUsage() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Business</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Tier</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Conversations</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Inbound</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Outbound</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Usage</th>
+              <SortableTh {...sortProps('business')} className="text-left px-4 py-3 font-medium text-gray-600">Business</SortableTh>
+              <SortableTh {...sortProps('tier')} className="text-left px-4 py-3 font-medium text-gray-600">Tier</SortableTh>
+              <SortableTh {...sortProps('conversations')} className="text-right px-4 py-3 font-medium text-gray-600">Conversations</SortableTh>
+              <SortableTh {...sortProps('inbound')} className="text-right px-4 py-3 font-medium text-gray-600">Inbound</SortableTh>
+              <SortableTh {...sortProps('outbound')} className="text-right px-4 py-3 font-medium text-gray-600">Outbound</SortableTh>
+              <SortableTh {...sortProps('usage')} className="text-right px-4 py-3 font-medium text-gray-600">Usage</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

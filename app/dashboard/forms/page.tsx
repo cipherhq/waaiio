@@ -8,6 +8,8 @@ import { FormSendPanel } from '@/components/dashboard/forms/FormSendPanel';
 import { NativeFormOptions } from '@/components/dashboard/forms/NativeFormOptions';
 import { NativeFormEmailComposer } from '@/components/dashboard/forms/NativeFormEmailComposer';
 import { NativeFormPanel } from '@/components/dashboard/forms/NativeFormPanel';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort, type SortValue } from '@/lib/table-sort';
 
 interface FormField {
   id: string;
@@ -309,6 +311,27 @@ export default function FormsPage() {
     }
   }
 
+  // Responses table: one sortable column per form field, keyed 'field:<id>'. Built here
+  // (before the early returns) because the table itself renders inside a conditional view.
+  const responseColumns: Record<string, (r: FormResponse) => SortValue> = {
+    respondent: r => r.customer_name || 'Anonymous',
+    source: r => (r.submission_source === 'native' ? 'WhatsApp' : 'Web'),
+    date: r => sortTime(r.submitted_at),
+  };
+  const answerSortValue = (val: unknown): SortValue => {
+    if (val === undefined || val === null || val === '') return null;
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+    if (Array.isArray(val)) return val.join(', ');
+    return String(val);
+  };
+  const addAnswerColumn = (id: string) => { responseColumns[`field:${id}`] = r => answerSortValue(r.answers[id]); };
+  for (const field of selectedForm?.fields || []) addAnswerColumn(field.id);
+  for (const response of responses) {
+    for (const field of response.metadata?.form_config?.fields || []) addAnswerColumn(field.id);
+    for (const id of Object.keys(response.answers)) addAnswerColumn(id);
+  }
+  const responseSort = useTableSort(responses, responseColumns);
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -350,16 +373,16 @@ export default function FormsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Respondent</th>
+                  <SortableTh {...responseSort.sortProps('respondent')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Respondent</SortableTh>
                   {responseFields.map(f => (
-                    <th key={f.id} className="px-4 py-3 text-left font-medium text-gray-500">{f.label}</th>
+                    <SortableTh key={f.id} {...responseSort.sortProps(`field:${f.id}`)} className="px-4 py-3 text-left font-medium text-gray-500">{f.label}</SortableTh>
                   ))}
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Submitted via</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <SortableTh {...responseSort.sortProps('source')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Submitted via</SortableTh>
+                  <SortableTh {...responseSort.sortProps('date')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {responses.map(r => {
+                {responseSort.sorted.map(r => {
                   const formatValue = (val: unknown) => {
                     if (val === undefined || val === null || val === '') return '—';
                     if (typeof val === 'boolean') return val ? 'Yes' : 'No';

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 
 interface Payment {
   id: string;
@@ -318,6 +320,16 @@ export default function Finance() {
       .slice(0, 24)
       .map(row => ({ ...row, net: row.gross - row.refunded - row.fees }));
   }, [filteredPayments, filteredFees, filteredRefunds, bizCurrencyMap]);
+
+  const monthlySort = useTableSort(monthly, {
+    month: row => row.month,
+    currency: row => row.currency,
+    transactions: row => row.transactions,
+    gross: row => row.gross,
+    refunds: row => row.refunded,
+    fees: row => row.fees,
+    net: row => row.net,
+  });
 
   // Category payment volume breakdown (per currency, ranked by transaction count)
   const categoryVolume = useMemo(() => {
@@ -712,17 +724,17 @@ export default function Finance() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Month</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Currency</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Transactions</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Gross Volume</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Refunds</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
+                  <SortableTh {...monthlySort.sortProps('month')} className="px-4 py-3 text-left font-medium text-gray-500">Month</SortableTh>
+                  <SortableTh {...monthlySort.sortProps('currency')} className="px-4 py-3 text-left font-medium text-gray-500">Currency</SortableTh>
+                  <SortableTh {...monthlySort.sortProps('transactions')} className="px-4 py-3 text-right font-medium text-gray-500">Transactions</SortableTh>
+                  <SortableTh {...monthlySort.sortProps('gross')} className="px-4 py-3 text-right font-medium text-gray-500">Gross Volume</SortableTh>
+                  <SortableTh {...monthlySort.sortProps('refunds')} className="px-4 py-3 text-right font-medium text-gray-500">Refunds</SortableTh>
+                  <SortableTh {...monthlySort.sortProps('fees')} className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</SortableTh>
+                  <SortableTh {...monthlySort.sortProps('net')} className="px-4 py-3 text-right font-medium text-gray-500">Net</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {monthly.map(row => (
+                {monthlySort.sorted.map(row => (
                   <tr key={`${row.month}-${row.currency}`} className="transition hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium text-gray-900">{formatMonth(row.month)}</td>
                     <td className="px-4 py-3 text-gray-600">{row.currency}</td>

@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface SurveyQuestion {
   id: string;
@@ -259,6 +261,24 @@ export default function SurveysPage() {
     setQuestions(copy);
   };
 
+  // Hooks stay above the early returns below. Question columns are dynamic, so
+  // their sort keys are built from the selected survey.
+  const surveySort = useTableSort(surveys, {
+    title: (s: Survey) => s.title,
+    status: (s: Survey) => s.status,
+    questions: (s: Survey) => s.questions?.length || 0,
+    responses: (s: Survey) => s.total_responses || 0,
+    created: (s: Survey) => sortTime(s.created_at),
+  });
+  const responseColumns: Record<string, (r: SurveyResponse) => string | number | null> = {
+    customer: r => r.customer_name || r.customer_phone,
+    date: r => sortTime(r.completed_at || r.started_at),
+  };
+  for (const q of selectedSurvey?.questions ?? []) {
+    responseColumns[`q:${q.id}`] = r => (r.answers[q.id] == null ? null : String(r.answers[q.id]));
+  }
+  const responseSort = useTableSort(responses.filter(r => r.completed), responseColumns);
+
   // ── Tier Gate ──
   if (isGated) {
     return (
@@ -394,15 +414,15 @@ export default function SurveysPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 dark:bg-gray-700/50">
-                        <th scope="col" className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Customer</th>
+                        <SortableTh {...responseSort.sortProps('customer')} scope="col" className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Customer</SortableTh>
                         {selectedSurvey.questions.map((q, i) => (
-                          <th key={q.id} className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Q{i + 1}</th>
+                          <SortableTh key={q.id} {...responseSort.sortProps(`q:${q.id}`)} className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Q{i + 1}</SortableTh>
                         ))}
-                        <th scope="col" className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Date</th>
+                        <SortableTh {...responseSort.sortProps('date')} scope="col" className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Date</SortableTh>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                      {completedResponses.map(r => (
+                      {responseSort.sorted.map(r => (
                         <tr key={r.id}>
                           <td className="px-4 py-2 text-gray-900 dark:text-gray-100">{r.customer_name || r.customer_phone}</td>
                           {selectedSurvey.questions.map(q => (
@@ -668,16 +688,16 @@ export default function SurveysPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Survey</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Questions</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Responses</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Created</th>
+                <SortableTh {...surveySort.sortProps('title')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Survey</SortableTh>
+                <SortableTh {...surveySort.sortProps('status')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
+                <SortableTh {...surveySort.sortProps('questions')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Questions</SortableTh>
+                <SortableTh {...surveySort.sortProps('responses')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Responses</SortableTh>
+                <SortableTh {...surveySort.sortProps('created')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Created</SortableTh>
                 <th scope="col" className="text-right px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {surveys.map(s => (
+              {surveySort.sorted.map(s => (
                 <tr key={s.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
                   <td className="px-4 py-3">
                     <button onClick={() => loadResponses(s)} className="font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 text-left">

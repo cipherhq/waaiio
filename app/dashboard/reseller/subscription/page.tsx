@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 const RESELLER_TIERS = {
   starter: {
@@ -183,6 +185,14 @@ export default function ResellerSubscriptionPage() {
   const currentTier = subscription?.tier || 'starter';
   const tierOrder: TierKey[] = ['starter', 'professional', 'enterprise'];
   const currentTierIndex = tierOrder.indexOf(currentTier);
+
+  const { sorted: sortedInvoices, sortProps } = useTableSort(invoices, {
+    date: (i: Invoice) => sortTime(i.created_at),
+    description: (i: Invoice) => i.description || 'Reseller subscription',
+    period: (i: Invoice) => (i.period_start && i.period_end ? sortTime(i.period_start) : null),
+    amount: (i: Invoice) => sortNumber(i.amount),
+    status: (i: Invoice) => i.status,
+  });
 
   if (loading) {
     return (
@@ -367,15 +377,15 @@ export default function ResellerSubscriptionPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Period</th>
-                  <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
-                  <th scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+                  <SortableTh {...sortProps('date')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</SortableTh>
+                  <SortableTh {...sortProps('description')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</SortableTh>
+                  <SortableTh {...sortProps('period')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Period</SortableTh>
+                  <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Amount</SortableTh>
+                  <SortableTh {...sortProps('status')} scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                {invoices.map((invoice) => (
+                {sortedInvoices.map((invoice) => (
                   <tr key={invoice.id}>
                     <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                       {formatDate(invoice.created_at)}

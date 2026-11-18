@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDateTime } from '@/lib/formatters';
@@ -195,7 +197,12 @@ export default function AdminTeam() {
   }
 
   const totalPages = Math.max(1, Math.ceil(team.length / perPage));
-  const pageItems = team.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(team, {
+    name: m => (m.firstName || m.lastName ? `${m.firstName || ''} ${m.lastName || ''}`.trim() : null),
+    email: m => m.email,
+    role: m => m.role,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -234,9 +241,9 @@ export default function AdminTeam() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Email</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Role</th>
+                <SortableTh {...sortProps('name')} className="px-4 py-3 text-left font-medium text-gray-500">Name</SortableTh>
+                <SortableTh {...sortProps('email')} className="px-4 py-3 text-left font-medium text-gray-500">Email</SortableTh>
+                <SortableTh {...sortProps('role')} className="px-4 py-3 text-left font-medium text-gray-500">Role</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

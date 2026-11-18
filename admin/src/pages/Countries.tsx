@@ -6,6 +6,8 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import {
   Globe, Plus, Pencil, Trash2, Save, X, CreditCard, CheckCircle, XCircle,
   Settings, RefreshCw, AlertTriangle,
@@ -123,7 +125,14 @@ export default function Countries() {
 
   // Pagination
   const totalPages = Math.ceil(total / perPage);
-  const paginated = countries.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(countries, {
+    country: row => row.code,
+    currency: row => `${row.currency_symbol} ${row.currency_code}`,
+    gateway: row => row.payment_gateway,
+    cities: row => Object.keys(row.cities || {}).length,
+    status: row => row.is_active,
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * perPage, page * perPage);
 
   function openAdd() {
     setForm(emptyForm());
@@ -301,11 +310,11 @@ export default function Countries() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="px-4 py-3 text-left font-semibold text-gray-600">Country</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-600">Currency</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-600">Gateway</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-600">Cities</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-600">Status</th>
+                <SortableTh {...sortProps('country')} className="px-4 py-3 text-left font-semibold text-gray-600">Country</SortableTh>
+                <SortableTh {...sortProps('currency')} className="px-4 py-3 text-left font-semibold text-gray-600">Currency</SortableTh>
+                <SortableTh {...sortProps('gateway')} className="px-4 py-3 text-left font-semibold text-gray-600">Gateway</SortableTh>
+                <SortableTh {...sortProps('cities')} className="px-4 py-3 text-left font-semibold text-gray-600">Cities</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-semibold text-gray-600">Status</SortableTh>
                 <th className="px-4 py-3 text-right font-semibold text-gray-600">Actions</th>
               </tr>
             </thead>

@@ -8,6 +8,8 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { ConsentedCustomerPicker } from '@/components/dashboard/ConsentedCustomerPicker';
 import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 
 interface PaymentRequestRow {
@@ -293,6 +295,15 @@ export default function PaymentRequestPage() {
     return { label: 'Pending', color: 'bg-amber-100 text-amber-700' };
   }
 
+  const requestSort = useTableSort(requests, {
+    customer: (row: PaymentRequestRow) => row.guest_name || 'Customer',
+    amount: row => sortNumber(row.total_amount),
+    sent: row => sortTime(row.created_at),
+    status: row => getPaymentStatus(row).label,
+    source: row => getSource(row).label,
+    provider: row => getProvider(row),
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -550,16 +561,16 @@ export default function PaymentRequestPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
-                  <th scope="col" className="pb-3 pr-4">Customer</th>
-                  <th scope="col" className="pb-3 pr-4">Amount</th>
-                  <th scope="col" className="pb-3 pr-4 hidden sm:table-cell">Sent</th>
-                  <th scope="col" className="pb-3 pr-4">Status</th>
-                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Source</th>
-                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Provider</th>
+                  <SortableTh {...requestSort.sortProps('customer')} scope="col" className="pb-3 pr-4">Customer</SortableTh>
+                  <SortableTh {...requestSort.sortProps('amount')} scope="col" className="pb-3 pr-4">Amount</SortableTh>
+                  <SortableTh {...requestSort.sortProps('sent')} scope="col" className="pb-3 pr-4 hidden sm:table-cell">Sent</SortableTh>
+                  <SortableTh {...requestSort.sortProps('status')} scope="col" className="pb-3 pr-4">Status</SortableTh>
+                  <SortableTh {...requestSort.sortProps('source')} scope="col" className="pb-3 pr-4 hidden md:table-cell">Source</SortableTh>
+                  <SortableTh {...requestSort.sortProps('provider')} scope="col" className="pb-3 pr-4 hidden md:table-cell">Provider</SortableTh>
                 </tr>
               </thead>
               <tbody>
-                {requests.map(row => {
+                {requestSort.sorted.map(row => {
                   const payStatus = getPaymentStatus(row);
                   const source = getSource(row);
                   const provider = getProvider(row);

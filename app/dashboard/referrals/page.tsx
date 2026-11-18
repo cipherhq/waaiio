@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Referral {
   id: string;
@@ -132,6 +134,23 @@ export default function ReferralsPage() {
     }
   }
   const topReferrers = Array.from(referrerMap.values()).sort((a, b) => b.total - a.total);
+
+  const referrerSort = useTableSort(topReferrers, {
+    referrer: (ref: (typeof topReferrers)[number]) => ref.referrer_name || 'Unknown',
+    phone: (ref: (typeof topReferrers)[number]) => ref.referrer_phone,
+    total: (ref: (typeof topReferrers)[number]) => ref.total,
+    converted: (ref: (typeof topReferrers)[number]) => ref.converted,
+    rewarded: (ref: (typeof topReferrers)[number]) => ref.rewarded_amount,
+    pending: (ref: (typeof topReferrers)[number]) => ref.pending_amount,
+  });
+  const referralSort = useTableSort(filteredReferrals, {
+    date: (r: Referral) => sortTime(r.created_at),
+    referrer: (r: Referral) => r.referrer_name || r.referrer_phone,
+    referee: (r: Referral) => r.referee_phone,
+    code: (r: Referral) => r.referral_code,
+    reward: (r: Referral) => r.reward_amount,
+    status: (r: Referral) => r.status,
+  });
 
   if (loading) {
     return (
@@ -280,16 +299,16 @@ export default function ReferralsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referrer</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Total Sent</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Converted</th>
-                      <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Rewards Earned</th>
-                      <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Pending Rewards</th>
+                      <SortableTh {...referrerSort.sortProps('referrer')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referrer</SortableTh>
+                      <SortableTh {...referrerSort.sortProps('phone')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                      <SortableTh {...referrerSort.sortProps('total')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Total Sent</SortableTh>
+                      <SortableTh {...referrerSort.sortProps('converted')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Converted</SortableTh>
+                      <SortableTh {...referrerSort.sortProps('rewarded')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Rewards Earned</SortableTh>
+                      <SortableTh {...referrerSort.sortProps('pending')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Pending Rewards</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {topReferrers.map((ref) => (
+                    {referrerSort.sorted.map((ref) => (
                       <tr key={ref.referrer_phone} className="hover:bg-gray-50/50">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
@@ -362,16 +381,16 @@ export default function ReferralsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referrer</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referee Phone</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Code</th>
-                      <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Reward</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                      <SortableTh {...referralSort.sortProps('date')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
+                      <SortableTh {...referralSort.sortProps('referrer')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referrer</SortableTh>
+                      <SortableTh {...referralSort.sortProps('referee')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referee Phone</SortableTh>
+                      <SortableTh {...referralSort.sortProps('code')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Code</SortableTh>
+                      <SortableTh {...referralSort.sortProps('reward')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Reward</SortableTh>
+                      <SortableTh {...referralSort.sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {filteredReferrals.map((r) => (
+                    {referralSort.sorted.map((r) => (
                       <tr key={r.id} className="hover:bg-gray-50/50">
                         <td className="px-4 py-3 text-gray-600">
                           {new Date(r.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {

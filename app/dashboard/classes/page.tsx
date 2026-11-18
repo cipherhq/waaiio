@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 // ── Types ────────────────────────────────────────────
 
@@ -1050,6 +1052,14 @@ function SessionsTab({
   onFilterChange: (id: string | null) => void;
   onSessionClick: (id: string) => void;
 }) {
+  const { sorted: sortedSessions, sortProps } = useTableSort(sessions, {
+    date: s => sortTime(s.date),
+    time: s => s.start_time,
+    class: s => s.services?.name,
+    capacity: s => s.attendee_count,
+    status: s => statusBadge(s.status).label,
+  });
+
   return (
     <div>
       {/* Filter bar */}
@@ -1104,15 +1114,15 @@ function SessionsTab({
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <th className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Date</th>
-                <th className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Time</th>
-                <th className="hidden pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400 sm:table-cell">Class</th>
-                <th className="hidden pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400 md:table-cell">Capacity</th>
-                <th className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Status</th>
+                <SortableTh {...sortProps('date')} className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Date</SortableTh>
+                <SortableTh {...sortProps('time')} className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Time</SortableTh>
+                <SortableTh {...sortProps('class')} className="hidden pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400 sm:table-cell">Class</SortableTh>
+                <SortableTh {...sortProps('capacity')} className="hidden pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400 md:table-cell">Capacity</SortableTh>
+                <SortableTh {...sortProps('status')} className="pb-3 pr-4 font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
-              {sessions.map((session) => {
+              {sortedSessions.map((session) => {
                 const badge = statusBadge(session.status);
                 return (
                   <tr

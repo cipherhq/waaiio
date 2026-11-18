@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
@@ -142,7 +144,14 @@ export default function ChatHistory() {
     return true;
   });
   const chatTotalPages = Math.max(1, Math.ceil(filteredChat.length / perPage));
-  const chatItems = filteredChat.slice((chatPage - 1) * perPage, chatPage * perPage);
+  const chatSort = useTableSort(filteredChat, {
+    business: c => c.business_name,
+    customer: c => c.customer_name,
+    phone: c => c.customer_phone,
+    status: c => c.status,
+    lastActivity: c => sortTime(c.last_message_at || c.created_at),
+  }, { onSortChange: () => setChatPage(1) });
+  const chatItems = chatSort.sorted.slice((chatPage - 1) * perPage, chatPage * perPage);
 
   /* ── Bot filtering ── */
   const filteredBot = botSessions.filter(s => {
@@ -151,7 +160,16 @@ export default function ChatHistory() {
     return (s.whatsapp_number || '').includes(q) || (s.business_name || '').toLowerCase().includes(q) || (s.flow_type || '').includes(q);
   });
   const botTotalPages = Math.max(1, Math.ceil(filteredBot.length / perPage));
-  const botItems = filteredBot.slice((botPage - 1) * perPage, botPage * perPage);
+  const botSort = useTableSort(filteredBot, {
+    phone: s => s.whatsapp_number,
+    business: s => s.business_name,
+    flow: s => s.flow_type,
+    step: s => s.current_step,
+    status: s => (s.is_active ? 'active' : 'ended'),
+    messages: s => s.conversation_log?.length || 0,
+    lastActive: s => sortTime(s.last_active_at),
+  }, { onSortChange: () => setBotPage(1) });
+  const botItems = botSort.sorted.slice((botPage - 1) * perPage, botPage * perPage);
 
   const isLoading = tab === 'chat' ? chatLoading : botLoading;
 
@@ -210,13 +228,13 @@ export default function ChatHistory() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Flow</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Step</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Messages</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Last Active</th>
+                    <SortableTh {...botSort.sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                    <SortableTh {...botSort.sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                    <SortableTh {...botSort.sortProps('flow')} className="px-4 py-3 text-left font-medium text-gray-500">Flow</SortableTh>
+                    <SortableTh {...botSort.sortProps('step')} className="px-4 py-3 text-left font-medium text-gray-500">Step</SortableTh>
+                    <SortableTh {...botSort.sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                    <SortableTh {...botSort.sortProps('messages')} className="px-4 py-3 text-left font-medium text-gray-500">Messages</SortableTh>
+                    <SortableTh {...botSort.sortProps('lastActive')} className="px-4 py-3 text-left font-medium text-gray-500">Last Active</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -269,11 +287,11 @@ export default function ChatHistory() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Last Activity</th>
+                    <SortableTh {...chatSort.sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                    <SortableTh {...chatSort.sortProps('customer')} className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                    <SortableTh {...chatSort.sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                    <SortableTh {...chatSort.sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                    <SortableTh {...chatSort.sortProps('lastActivity')} className="px-4 py-3 text-left font-medium text-gray-500">Last Activity</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">

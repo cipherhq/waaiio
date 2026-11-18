@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface DropoffRow {
   id: string;
@@ -133,6 +135,21 @@ export default function FlowDropoffsPage() {
     return dropoffs.slice(0, 20);
   }, [dropoffs]);
 
+  const funnelSort = useTableSort(funnelData, {
+    flow: r => r.flow_type.replace(/_/g, ' '),
+    total: r => r.total,
+    completed: r => r.completed,
+    cancelled: r => r.cancelled,
+    errors: r => r.error,
+    rate: r => r.completionRate,
+  });
+  const recentSort = useTableSort(recentDropoffs, {
+    time: d => sortTime(d.created_at),
+    flow: d => (d.flow_type || 'unknown').replace(/_/g, ' '),
+    step: d => (d.step_id || '--').replace(/_/g, ' '),
+    reason: d => (d.reason || 'unknown').replace(/_/g, ' '),
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -191,16 +208,16 @@ export default function FlowDropoffsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                 <tr>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Flow Type</th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Total</th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Completed</th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Cancelled</th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Errors</th>
-                  <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Rate</th>
+                  <SortableTh {...funnelSort.sortProps('flow')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Flow Type</SortableTh>
+                  <SortableTh {...funnelSort.sortProps('total')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Total</SortableTh>
+                  <SortableTh {...funnelSort.sortProps('completed')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Completed</SortableTh>
+                  <SortableTh {...funnelSort.sortProps('cancelled')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Cancelled</SortableTh>
+                  <SortableTh {...funnelSort.sortProps('errors')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Errors</SortableTh>
+                  <SortableTh {...funnelSort.sortProps('rate')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Rate</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                {funnelData.map((row) => (
+                {funnelSort.sorted.map((row) => (
                   <tr key={row.flow_type} className="transition hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 capitalize">
                       {row.flow_type.replace(/_/g, ' ')}
@@ -245,14 +262,14 @@ export default function FlowDropoffsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                 <tr>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Time</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Flow Type</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Step</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Reason</th>
+                  <SortableTh {...recentSort.sortProps('time')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Time</SortableTh>
+                  <SortableTh {...recentSort.sortProps('flow')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Flow Type</SortableTh>
+                  <SortableTh {...recentSort.sortProps('step')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Step</SortableTh>
+                  <SortableTh {...recentSort.sortProps('reason')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Reason</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                {recentDropoffs.map((d) => (
+                {recentSort.sorted.map((d) => (
                   <tr key={d.id} className="transition hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                       {timeAgo(d.created_at)}

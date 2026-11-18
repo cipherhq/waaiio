@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
@@ -110,7 +112,13 @@ export default function AISetupLog() {
   }
 
   const totalPages = Math.ceil(events.length / perPage);
-  const paged = events.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(events, {
+    business: e => e.business_name,
+    services: e => e.services_created,
+    products: e => e.products_created,
+    date: e => sortTime(e.latest_created_at),
+  }, { onSortChange: () => setPage(1) });
+  const paged = sorted.slice((page - 1) * perPage, page * perPage);
 
   const totalSetups = events.length;
   const totalServicesCreated = events.reduce((s, e) => s + e.services_created, 0);
@@ -134,10 +142,10 @@ export default function AISetupLog() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Business</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Services</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Products</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Date</th>
+              <SortableTh {...sortProps('business')} className="text-left px-4 py-3 font-medium text-gray-500">Business</SortableTh>
+              <SortableTh {...sortProps('services')} className="text-left px-4 py-3 font-medium text-gray-500">Services</SortableTh>
+              <SortableTh {...sortProps('products')} className="text-left px-4 py-3 font-medium text-gray-500">Products</SortableTh>
+              <SortableTh {...sortProps('date')} className="text-left px-4 py-3 font-medium text-gray-500">Date</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

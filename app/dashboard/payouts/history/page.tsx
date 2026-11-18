@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { formatCalendarDate } from '@/lib/utils/calendar-date';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, useTableSort } from '@/lib/table-sort';
 
 interface PayoutRecord {
   id: string;
@@ -179,6 +181,14 @@ export default function PayoutHistoryPage() {
     );
   }, [monthlySummaryRows]);
 
+  const monthlySort = useTableSort(monthlySummaryRows, {
+    month: (m: MonthBucket) => m.key,
+    payouts: m => sortNumber(m.count),
+    gross: m => sortNumber(m.gross),
+    fees: m => sortNumber(m.fees),
+    net: m => sortNumber(m.net),
+  });
+
   return (
     <div>
       {/* Header */}
@@ -249,15 +259,15 @@ export default function PayoutHistoryPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Month</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Payouts</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Fees</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Net Paid</th>
+                <SortableTh {...monthlySort.sortProps('month')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Month</SortableTh>
+                <SortableTh {...monthlySort.sortProps('payouts')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Payouts</SortableTh>
+                <SortableTh {...monthlySort.sortProps('gross')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Gross</SortableTh>
+                <SortableTh {...monthlySort.sortProps('fees')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Fees</SortableTh>
+                <SortableTh {...monthlySort.sortProps('net')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Net Paid</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {monthlySummaryRows.map(m => (
+              {monthlySort.sorted.map(m => (
                 <tr key={m.key} className={m.count === 0 ? 'text-gray-300' : ''}>
                   <td className="px-4 py-3 text-gray-900">{formatMonthLabel(m.key)}</td>
                   <td className="px-4 py-3 text-right text-gray-600">{m.count}</td>

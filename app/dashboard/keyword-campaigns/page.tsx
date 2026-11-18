@@ -8,6 +8,8 @@ import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { buildMerchantCampaignLink } from '@/lib/url';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface KeywordCampaign {
   id: string;
@@ -269,6 +271,12 @@ export default function KeywordCampaignsPage() {
     URL.revokeObjectURL(url);
   }
 
+  const responseSort = useTableSort(responses, {
+    phone: (r: CampaignResponse) => r.phone,
+    name: r => r.customer_name || 'Unknown',
+    respondedAt: r => sortTime(r.responded_at),
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -340,13 +348,13 @@ export default function KeywordCampaignsPage() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                   <tr>
-                    <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Phone</th>
-                    <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer Name</th>
-                    <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Responded At</th>
+                    <SortableTh {...responseSort.sortProps('phone')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Phone</SortableTh>
+                    <SortableTh {...responseSort.sortProps('name')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer Name</SortableTh>
+                    <SortableTh {...responseSort.sortProps('respondedAt')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Responded At</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                  {responses.map(r => (
+                  {responseSort.sorted.map(r => (
                     <tr key={r.id}>
                       <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">{r.phone}</td>
                       <td className="px-4 py-2.5 text-gray-700 dark:text-gray-300">{r.customer_name || 'Unknown'}</td>

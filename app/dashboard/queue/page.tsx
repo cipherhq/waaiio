@@ -5,6 +5,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface QueueEntry {
   id: string;
@@ -258,6 +260,17 @@ export default function QueuePage() {
     return <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">Normal</span>;
   }
 
+  const { sorted: sortedEntries, sortProps } = useTableSort(entries, {
+    number: (e: QueueEntry) => e.queue_number,
+    name: (e: QueueEntry) => e.customer_name,
+    phone: (e: QueueEntry) => e.customer_phone,
+    priority: (e: QueueEntry) => e.priority_level || 'normal',
+    status: (e: QueueEntry) => (e.status === 'no_show' ? 'No Show' : e.status === 'cancelled' ? 'Left' : e.status),
+    channel: (e: QueueEntry) => e.channel,
+    checkedIn: (e: QueueEntry) => sortTime(e.checked_in_at),
+    wait: (e: QueueEntry) => (sortTime(e.called_at ?? new Date()) ?? NaN) - (sortTime(e.checked_in_at) ?? NaN),
+  });
+
   return (
     <div>
       <div className="flex items-start justify-between">
@@ -371,14 +384,14 @@ export default function QueuePage() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-100 bg-gray-50/50">
             <tr>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">#</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Name</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Priority</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Channel</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Checked In</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Wait</th>
+              <SortableTh {...sortProps('number')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">#</SortableTh>
+              <SortableTh {...sortProps('name')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Name</SortableTh>
+              <SortableTh {...sortProps('phone')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</SortableTh>
+              <SortableTh {...sortProps('priority')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Priority</SortableTh>
+              <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</SortableTh>
+              <SortableTh {...sortProps('channel')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Channel</SortableTh>
+              <SortableTh {...sortProps('checkedIn')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Checked In</SortableTh>
+              <SortableTh {...sortProps('wait')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Wait</SortableTh>
               <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
             </tr>
           </thead>
@@ -387,7 +400,7 @@ export default function QueuePage() {
               <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
             ) : entries.length === 0 ? (
               <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">No queue entries today.</td></tr>
-            ) : entries.map(e => (
+            ) : sortedEntries.map(e => (
               <tr key={e.id} className={`hover:bg-gray-50/50 ${e.status === 'serving' ? 'bg-brand-50/30' : ''}`}>
                 <td className="px-4 py-3 font-bold text-gray-900">{e.queue_number}</td>
                 <td className="px-4 py-3 font-medium text-gray-900">{e.customer_name || '-'}</td>

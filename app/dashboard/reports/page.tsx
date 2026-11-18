@@ -6,6 +6,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { ConsentedCustomerPicker } from '@/components/dashboard/ConsentedCustomerPicker';
 import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 
 interface Document {
@@ -84,7 +86,14 @@ export default function DocumentSharePage() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted: sortedDocs, sortProps } = useTableSort(filtered, {
+    title: (d: Document) => d.title,
+    customer: (d: Document) => d.customer_name,
+    size: (d: Document) => d.file_size,
+    status: (d: Document) => d.status,
+    date: (d: Document) => sortTime(d.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sortedDocs.slice((page - 1) * perPage, page * perPage);
 
   async function handleUpload() {
     if (!file || !title || !customerPhone) return;
@@ -286,11 +295,11 @@ export default function DocumentSharePage() {
                     className="rounded border-gray-300" />
                 )}
               </th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Title</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Size</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Date</th>
+              <SortableTh {...sortProps('title')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Title</SortableTh>
+              <SortableTh {...sortProps('customer')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</SortableTh>
+              <SortableTh {...sortProps('size')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Size</SortableTh>
+              <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</SortableTh>
+              <SortableTh {...sortProps('date')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Date</SortableTh>
               <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
             </tr>
           </thead>

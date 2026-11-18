@@ -7,6 +7,8 @@ import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
+import { SortableTh } from '@/components/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
 
 interface TransferRecord {
   id: string;
@@ -109,7 +111,18 @@ export default function PendingTransfers() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    reference: t => t.reference_code,
+    business: t => t.business_name,
+    customer: t => t.customer_name || t.customer_phone,
+    amount: t => sortNumber(t.expected_amount),
+    status: t => t.status,
+    proof: t => t.proof_type,
+    ocr: t => t.verified_by_ocr,
+    created: t => sortTime(t.created_at),
+    expires: t => sortTime(t.status === 'confirmed' && t.confirmed_at ? t.confirmed_at : t.expires_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Summary stats
   const pendingItems = transfers.filter(t => t.status === 'pending');
@@ -323,15 +336,15 @@ export default function PendingTransfers() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Reference</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Proof</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">OCR</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Expires / Confirmed</th>
+                <SortableTh {...sortProps('reference')} className="px-4 py-3 text-left font-medium text-gray-500">Reference</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('customer')} className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                <SortableTh {...sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('proof')} className="px-4 py-3 text-left font-medium text-gray-500">Proof</SortableTh>
+                <SortableTh {...sortProps('ocr')} className="px-4 py-3 text-left font-medium text-gray-500">OCR</SortableTh>
+                <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
+                <SortableTh {...sortProps('expires')} className="px-4 py-3 text-left font-medium text-gray-500">Expires / Confirmed</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

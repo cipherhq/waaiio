@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { CATEGORY_LABELS } from '@/lib/constants';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface PropertyOption {
   id: string;
@@ -232,6 +234,17 @@ export default function PropertyCheckInPage() {
     return (r.reference_code || '').toLowerCase().includes(q)
       || (r.guest_name || '').toLowerCase().includes(q)
       || (r.guest_phone || '').includes(q);
+  });
+
+  const reservationSort = useTableSort(filteredReservations, {
+    guest: (r: ReservationRecord) => r.guest_name,
+    reference: r => r.reference_code,
+    checkIn: r => sortTime(r.check_in),
+    checkOut: r => sortTime(r.check_out),
+    status: r => (r.status === 'checked_in' || r.status === 'in_progress' ? 'Checked In'
+      : r.status === 'completed' || r.status === 'checked_out' ? 'Checked Out'
+      : r.status.replace('_', ' ')),
+    checkedInAt: r => sortTime(r.checked_in_at),
   });
 
   const selectedProperty = properties.find(p => p.id === selectedPropertyId);
@@ -463,12 +476,12 @@ export default function PropertyCheckInPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  <th className="px-4 py-3">Guest</th>
-                  <th className="px-4 py-3">Reference</th>
-                  <th className="px-4 py-3">Check-in Date</th>
-                  <th className="px-4 py-3">Check-out Date</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Checked In At</th>
+                  <SortableTh {...reservationSort.sortProps('guest')} className="px-4 py-3">Guest</SortableTh>
+                  <SortableTh {...reservationSort.sortProps('reference')} className="px-4 py-3">Reference</SortableTh>
+                  <SortableTh {...reservationSort.sortProps('checkIn')} className="px-4 py-3">Check-in Date</SortableTh>
+                  <SortableTh {...reservationSort.sortProps('checkOut')} className="px-4 py-3">Check-out Date</SortableTh>
+                  <SortableTh {...reservationSort.sortProps('status')} className="px-4 py-3">Status</SortableTh>
+                  <SortableTh {...reservationSort.sortProps('checkedInAt')} className="px-4 py-3">Checked In At</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -479,7 +492,7 @@ export default function PropertyCheckInPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredReservations.map(r => (
+                  reservationSort.sorted.map(r => (
                     <tr key={r.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900">{r.guest_name || '—'}</p>

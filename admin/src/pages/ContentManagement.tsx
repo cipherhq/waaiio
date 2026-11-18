@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -212,7 +214,14 @@ export default function ContentManagement() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    title: p => p.title,
+    slug: p => p.slug,
+    type: p => p.type,
+    status: p => p.status,
+    updated: p => sortTime(p.updated_at || p.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -283,11 +292,11 @@ export default function ContentManagement() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Title</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Slug</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Updated</th>
+                <SortableTh {...sortProps('title')} className="px-4 py-3 text-left font-medium text-gray-500">Title</SortableTh>
+                <SortableTh {...sortProps('slug')} className="px-4 py-3 text-left font-medium text-gray-500">Slug</SortableTh>
+                <SortableTh {...sortProps('type')} className="px-4 py-3 text-left font-medium text-gray-500">Type</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('updated')} className="px-4 py-3 text-left font-medium text-gray-500">Updated</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

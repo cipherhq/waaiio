@@ -5,6 +5,8 @@ import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDateTime } from '@/lib/formatters';
 import { Brain, Cpu, Target, Zap } from 'lucide-react';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface Classification {
   id: string;
@@ -124,7 +126,17 @@ export default function LLMClassifications() {
   });
 
   const totalPages = Math.ceil(filtered.length / perPage);
-  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    time: r => sortTime(r.created_at),
+    business: r => r.business_name,
+    message: r => r.user_message,
+    intent: r => r.detected_intent,
+    confidence: r => r.confidence,
+    language: r => LANGUAGE_LABELS[r.language || ''] || r.language,
+    source: r => (r.llm_used ? 'LLM' : 'Regex'),
+    latency: r => r.latency_ms || null,
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -189,14 +201,14 @@ export default function LLMClassifications() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium uppercase text-gray-500">
-              <th className="px-4 py-3">Time</th>
-              <th className="px-4 py-3">Business</th>
-              <th className="px-4 py-3">Message</th>
-              <th className="px-4 py-3">Intent</th>
-              <th className="px-4 py-3">Confidence</th>
-              <th className="px-4 py-3">Language</th>
-              <th className="px-4 py-3">Source</th>
-              <th className="px-4 py-3">Latency</th>
+              <SortableTh {...sortProps('time')} className="px-4 py-3">Time</SortableTh>
+              <SortableTh {...sortProps('business')} className="px-4 py-3">Business</SortableTh>
+              <SortableTh {...sortProps('message')} className="px-4 py-3">Message</SortableTh>
+              <SortableTh {...sortProps('intent')} className="px-4 py-3">Intent</SortableTh>
+              <SortableTh {...sortProps('confidence')} className="px-4 py-3">Confidence</SortableTh>
+              <SortableTh {...sortProps('language')} className="px-4 py-3">Language</SortableTh>
+              <SortableTh {...sortProps('source')} className="px-4 py-3">Source</SortableTh>
+              <SortableTh {...sortProps('latency')} className="px-4 py-3">Latency</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -444,7 +446,16 @@ export default function Subscriptions() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    business: s => s.business_name,
+    plan: s => s.plan,
+    status: s => s.status,
+    amount: s => sortNumber(s.amount),
+    start: s => sortTime(s.current_period_start || s.created_at),
+    end: s => sortTime(s.current_period_end),
+    autoRenew: s => !!(s as { auto_renew?: boolean }).auto_renew,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   const activeCount = subscriptions.filter(s => s.status === 'active').length;
   const trialCount = subscriptions.filter(s => s.status === 'trial').length;
@@ -594,13 +605,13 @@ export default function Subscriptions() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Plan / Tier</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Start</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">End</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Auto-renew</th>
+                    <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                    <SortableTh {...sortProps('plan')} className="px-4 py-3 text-left font-medium text-gray-500">Plan / Tier</SortableTh>
+                    <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                    <SortableTh {...sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                    <SortableTh {...sortProps('start')} className="px-4 py-3 text-left font-medium text-gray-500">Start</SortableTh>
+                    <SortableTh {...sortProps('end')} className="px-4 py-3 text-left font-medium text-gray-500">End</SortableTh>
+                    <SortableTh {...sortProps('autoRenew')} className="px-4 py-3 text-left font-medium text-gray-500">Auto-renew</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">

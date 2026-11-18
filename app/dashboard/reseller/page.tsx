@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import Link from 'next/link';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface ResellerStats {
   total_accounts: number;
@@ -76,6 +78,14 @@ export default function ResellerOverviewPage() {
     }
     setLoading(false);
   }
+
+  const { sorted: sortedAccounts, sortProps } = useTableSort(recentAccounts, {
+    name: (a: SubAccount) => a.name,
+    category: (a: SubAccount) => formatCategory(a.category),
+    tier: (a: SubAccount) => a.subscription_tier,
+    status: (a: SubAccount) => a.status,
+    created: (a: SubAccount) => sortTime(a.created_at),
+  });
 
   if (loading) {
     return (
@@ -246,15 +256,15 @@ export default function ResellerOverviewPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Tier</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created</th>
+                  <SortableTh {...sortProps('name')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</SortableTh>
+                  <SortableTh {...sortProps('category')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</SortableTh>
+                  <SortableTh {...sortProps('tier')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Tier</SortableTh>
+                  <SortableTh {...sortProps('status')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
+                  <SortableTh {...sortProps('created')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                {recentAccounts.map((account) => (
+                {sortedAccounts.map((account) => (
                   <tr key={account.id}>
                     <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">
                       {account.name}

@@ -4,6 +4,8 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface WaitlistEntry {
   id: string;
@@ -133,6 +135,14 @@ export default function WaitlistPage() {
   const totalEntries = entries.length;
   const conversionRate = totalEntries > 0 ? Math.round((convertedCount / totalEntries) * 100) : 0;
 
+  const { sorted: sortedEntries, sortProps } = useTableSort(entries, {
+    name: (e: WaitlistEntry) => e.customer_name,
+    phone: (e: WaitlistEntry) => e.customer_phone,
+    preferredDate: (e: WaitlistEntry) => sortTime(e.preferred_date),
+    status: (e: WaitlistEntry) => e.status,
+    created: (e: WaitlistEntry) => sortTime(e.created_at),
+  });
+
   return (
     <div>
       <div className="flex items-start justify-between">
@@ -213,16 +223,16 @@ export default function WaitlistPage() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-gray-100 bg-gray-50/50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Customer Name</th>
-                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
-                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Preferred Date</th>
-                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Created At</th>
+                <SortableTh {...sortProps('name')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Customer Name</SortableTh>
+                <SortableTh {...sortProps('phone')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</SortableTh>
+                <SortableTh {...sortProps('preferredDate')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Preferred Date</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('created')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Created At</SortableTh>
                 <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {entries.map((entry) => (
+              {sortedEntries.map((entry) => (
                 <tr key={entry.id} className="hover:bg-gray-50/50">
                   <td className="px-4 py-3 font-medium text-gray-900">
                     {entry.customer_name || '\u2014'}

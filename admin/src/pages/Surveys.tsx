@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -94,7 +96,15 @@ export default function Surveys() {
   });
 
   const totalPages = Math.ceil(filtered.length / perPage);
-  const paged = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    survey: s => s.title,
+    business: s => s.business_name,
+    status: s => s.status,
+    questions: s => s.questions?.length || 0,
+    responses: s => s.total_responses || 0,
+    created: s => sortTime(s.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const paged = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Stats
   const totalSurveys = surveys.length;
@@ -140,12 +150,12 @@ export default function Surveys() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Survey</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Business</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Questions</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Responses</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Created</th>
+              <SortableTh {...sortProps('survey')} className="text-left px-4 py-3 font-medium text-gray-500">Survey</SortableTh>
+              <SortableTh {...sortProps('business')} className="text-left px-4 py-3 font-medium text-gray-500">Business</SortableTh>
+              <SortableTh {...sortProps('status')} className="text-left px-4 py-3 font-medium text-gray-500">Status</SortableTh>
+              <SortableTh {...sortProps('questions')} className="text-left px-4 py-3 font-medium text-gray-500">Questions</SortableTh>
+              <SortableTh {...sortProps('responses')} className="text-left px-4 py-3 font-medium text-gray-500">Responses</SortableTh>
+              <SortableTh {...sortProps('created')} className="text-left px-4 py-3 font-medium text-gray-500">Created</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

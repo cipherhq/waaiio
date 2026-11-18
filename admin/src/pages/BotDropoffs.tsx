@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDateTime } from '@/lib/formatters';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { TrendingDown, AlertCircle, CheckCircle, XCircle, RotateCcw } from 'lucide-react';
 
 interface DropoffRow {
@@ -96,6 +98,15 @@ export default function BotDropoffs() {
   const completedCount = summary.find(s => s.reason === 'completed')?.count || 0;
   const cancelledCount = summary.find(s => s.reason === 'cancelled')?.count || 0;
 
+  const { sorted, sortProps } = useTableSort(dropoffs, {
+    time: d => sortTime(d.created_at),
+    reason: d => (REASON_LABELS[d.reason] || { label: d.reason }).label,
+    flow: d => d.flow_type,
+    step: d => d.step_id,
+    capability: d => d.capability,
+    business: d => d.business_id?.slice(0, 8),
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -167,12 +178,12 @@ export default function BotDropoffs() {
         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Time</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Reason</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Flow</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Step</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Capability</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Business</th>
+              <SortableTh {...sortProps('time')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Time</SortableTh>
+              <SortableTh {...sortProps('reason')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Reason</SortableTh>
+              <SortableTh {...sortProps('flow')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Flow</SortableTh>
+              <SortableTh {...sortProps('step')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Step</SortableTh>
+              <SortableTh {...sortProps('capability')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Capability</SortableTh>
+              <SortableTh {...sortProps('business')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Business</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -180,7 +191,7 @@ export default function BotDropoffs() {
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
             ) : dropoffs.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">No dropoffs found</td></tr>
-            ) : dropoffs.map(d => {
+            ) : sorted.map(d => {
               const info = REASON_LABELS[d.reason] || { label: d.reason, color: 'text-gray-600' };
               return (
                 <tr key={d.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">

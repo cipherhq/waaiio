@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { ROLE_PERMISSIONS, ROLE_ORDER, type BusinessRole } from '@/lib/permissions';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { useTableSort } from '@/lib/table-sort';
 
 interface Member {
   id: string;
@@ -78,6 +80,11 @@ export default function TeamPage() {
 
   const activeCount = members.filter(m => m.status === 'active' || m.isOwner).length;
   const canInvite = activeCount < limit;
+  const { sorted: sortedMembers, sortProps } = useTableSort(members, {
+    member: (m: Member) => m.name || m.email,
+    role: (m: Member) => (m.isOwner ? 'Owner' : ROLE_PERMISSIONS[m.role].label),
+    status: (m: Member) => m.status,
+  });
 
   return (
     <div className="space-y-6">
@@ -131,14 +138,14 @@ export default function TeamPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-700/50 border-b">
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Member</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Role</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
+                <SortableTh {...sortProps('member')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Member</SortableTh>
+                <SortableTh {...sortProps('role')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Role</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Status</SortableTh>
                 <th scope="col" className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {members.map(m => (
+              {sortedMembers.map(m => (
                 <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
                   <td className="px-4 py-3">
                     <p className="font-medium text-gray-900 dark:text-gray-100">{m.name || m.email}</p>

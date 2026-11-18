@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Property {
   id: string;
@@ -423,6 +425,17 @@ export default function PropertyDetailPage() {
     return { firstDay, daysInMonth, dateMap };
   }, [calendarMonth, reservations, blockedDates]);
 
+  const reservationSort = useTableSort(filteredReservations, {
+    guest: (r: Reservation) => r.guest_name,
+    checkIn: r => sortTime(r.check_in + 'T00:00'),
+    checkOut: r => sortTime((r.check_out || r.check_in) + 'T00:00'),
+    nights: r => (r.nights ? Number(r.nights) : null),
+    guests: r => Number(r.guests || 1),
+    amount: r => Number(r.total_amount || 0),
+    status: r => statusLabels[r.status] || r.status.replace('_', ' '),
+    ref: r => r.reference_code,
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -583,19 +596,19 @@ export default function PropertyDetailPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-50 bg-gray-50/50">
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
-                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                    <SortableTh {...reservationSort.sortProps('guest')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('checkIn')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-in</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('checkOut')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-out</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('nights')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Nights</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('guests')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guests</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('amount')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                    <SortableTh {...reservationSort.sortProps('ref')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</SortableTh>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {filteredReservations.map(r => {
+                  {reservationSort.sorted.map(r => {
                     const checkOutDate = r.check_out || (() => {
                       const d = new Date(r.check_in + 'T00:00');
                       d.setDate(d.getDate() + (r.nights || 1));

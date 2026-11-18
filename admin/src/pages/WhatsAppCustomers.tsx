@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { StepUpDialog } from '@/components/StepUpDialog';
@@ -416,7 +418,22 @@ export default function Customers() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    name: c => c.name,
+    email: c => c.email,
+    phone: c => c.phone,
+    business: c => c.businesses[0]?.name,
+    bookings: c => c.booking_count,
+    payments: c => c.payment_count,
+    spent: c => Object.values(c.spending || {}).reduce((sum, amt) => sum + (amt > 0 ? amt : 0), 0),
+    lastActive: c => sortTime(c.last_active),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
+  const suspensionSort = useTableSort([...suspensions.values()], {
+    phone: s => s.phone,
+    reason: s => s.reason,
+    suspended: s => sortTime(s.suspended_at),
+  });
 
   // Stats
   const totalCustomers = customers.length;
@@ -513,14 +530,14 @@ export default function Customers() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Email</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Bookings</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Payments</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Total Spent</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Last Active</th>
+                <SortableTh {...sortProps('name')} className="px-4 py-3 text-left font-medium text-gray-500">Name</SortableTh>
+                <SortableTh {...sortProps('email')} className="px-4 py-3 text-left font-medium text-gray-500">Email</SortableTh>
+                <SortableTh {...sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('bookings')} className="px-4 py-3 text-right font-medium text-gray-500">Bookings</SortableTh>
+                <SortableTh {...sortProps('payments')} className="px-4 py-3 text-right font-medium text-gray-500">Payments</SortableTh>
+                <SortableTh {...sortProps('spent')} className="px-4 py-3 text-right font-medium text-gray-500">Total Spent</SortableTh>
+                <SortableTh {...sortProps('lastActive')} className="px-4 py-3 text-left font-medium text-gray-500">Last Active</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -582,14 +599,14 @@ export default function Customers() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Reason</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Suspended</th>
+                  <SortableTh {...suspensionSort.sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                  <SortableTh {...suspensionSort.sortProps('reason')} className="px-4 py-3 text-left font-medium text-gray-500">Reason</SortableTh>
+                  <SortableTh {...suspensionSort.sortProps('suspended')} className="px-4 py-3 text-left font-medium text-gray-500">Suspended</SortableTh>
                   {isFullAdmin && <th className="px-4 py-3" />}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {[...suspensions.values()].map(s => (
+                {suspensionSort.sorted.map(s => (
                   <tr key={s.phone}>
                     <td className="px-4 py-3 text-gray-700">{maskPhone(s.phone)}</td>
                     <td className="px-4 py-3 text-gray-600">{s.reason}</td>

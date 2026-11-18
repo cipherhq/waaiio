@@ -7,6 +7,8 @@ import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { Heart, Building2, Users, TrendingUp, Search } from 'lucide-react';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 // Records come from GET /api/admin/giving (#1105): giving-service bookings and
 // crowdfunding donations at any business, whatever its category.
@@ -109,7 +111,16 @@ export default function Giving() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    giver: r => r.giver_name,
+    organization: r => r.business_name,
+    type: r => givingTypeLabel(r.business_category),
+    purpose: r => r.service_name || 'General Giving',
+    status: r => r.status,
+    amount: r => r.amount,
+    date: r => sortTime(r.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Stats — only successful payments count as money given, net of partial refunds; each in its own currency.
   const successful = filtered.filter(r => r.status === 'success');
@@ -291,13 +302,13 @@ export default function Giving() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Giver</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Organization</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Purpose</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                <SortableTh {...sortProps('giver')} className="px-4 py-3 text-left font-medium text-gray-500">Giver</SortableTh>
+                <SortableTh {...sortProps('organization')} className="px-4 py-3 text-left font-medium text-gray-500">Organization</SortableTh>
+                <SortableTh {...sortProps('type')} className="px-4 py-3 text-left font-medium text-gray-500">Type</SortableTh>
+                <SortableTh {...sortProps('purpose')} className="px-4 py-3 text-left font-medium text-gray-500">Purpose</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                <SortableTh {...sortProps('date')} className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

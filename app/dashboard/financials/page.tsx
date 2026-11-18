@@ -7,6 +7,8 @@ import { formatCurrency, type CountryCode, getLocale, PRICING_TIERS, type Subscr
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface TransactionRow {
   txn_id: string;
@@ -168,7 +170,20 @@ export default function FinancialsPage() {
   }, [transactions, typeFilter, statusFilter, dateFrom, dateTo, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted: sortedTransactions, sortProps } = useTableSort(
+    filtered,
+    {
+      date: t => sortTime(t.date),
+      type: t => t.type,
+      description: t => t.description,
+      person: t => t.customer,
+      amount: t => t.amount,
+      status: t => t.status.replace('_', ' '),
+      reference: t => t.reference,
+    },
+    { onSortChange: () => setPage(1) },
+  );
+  const pageItems = sortedTransactions.slice((page - 1) * perPage, page * perPage);
 
   // Unique flow types for dynamic filter options
   const availableTypes = useMemo(() => {
@@ -308,15 +323,15 @@ export default function FinancialsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date</th>
+                <SortableTh {...sortProps('date')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date</SortableTh>
                 {availableTypes.length > 1 && (
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Type</th>
+                  <SortableTh {...sortProps('type')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Type</SortableTh>
                 )}
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Description</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
+                <SortableTh {...sortProps('description')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Description</SortableTh>
+                <SortableTh {...sortProps('person')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</SortableTh>
+                <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
+                <SortableTh {...sortProps('reference')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 dark:divide-gray-700">

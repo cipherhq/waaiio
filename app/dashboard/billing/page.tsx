@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { getLimitTier } from '@/lib/capabilities/policy';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 import {
   PRICING_TIERS,
   CONVERSATION_LIMITS,
@@ -297,6 +299,29 @@ export default function BillingPage() {
       setTopUpSubmitting(false);
     }
   }, [business.id, selectedPackage]);
+
+  const topUpSort = useTableSort(topUpPurchases, {
+    date: p => sortTime(p.created_at),
+    amount: p => p.package_amount_minor,
+    gateway: p => p.gateway,
+    status: p => p.status,
+  });
+  const paymentSort = useTableSort(payments, {
+    date: p => sortTime(p.created_at),
+    action: p => p.action,
+    plan: p => TIER_MARKETING_NAMES[p.plan as SubscriptionTier] || p.plan,
+    amount: p => p.amount,
+    gateway: p => (p.gateway === 'none' ? null : p.gateway),
+    status: p => p.status,
+  });
+  const feeInvoiceSort = useTableSort(feeInvoices, {
+    invoice: inv => inv.invoice_number,
+    period: inv => sortTime(inv.period_start),
+    transfers: inv => inv.transaction_count,
+    fee: inv => inv.total_fee_amount,
+    status: inv => inv.status,
+    due: inv => sortTime(inv.due_date),
+  });
 
   if (loading) {
     return (
@@ -617,14 +642,14 @@ export default function BillingPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-50 text-xs text-gray-500">
-                  <th className="px-6 py-3 font-medium">Date</th>
-                  <th className="px-6 py-3 font-medium text-right">Amount</th>
-                  <th className="px-6 py-3 font-medium">Gateway</th>
-                  <th className="px-6 py-3 font-medium">Status</th>
+                  <SortableTh {...topUpSort.sortProps('date')} className="px-6 py-3 font-medium">Date</SortableTh>
+                  <SortableTh {...topUpSort.sortProps('amount')} className="px-6 py-3 font-medium text-right">Amount</SortableTh>
+                  <SortableTh {...topUpSort.sortProps('gateway')} className="px-6 py-3 font-medium">Gateway</SortableTh>
+                  <SortableTh {...topUpSort.sortProps('status')} className="px-6 py-3 font-medium">Status</SortableTh>
                 </tr>
               </thead>
               <tbody>
-                {topUpPurchases.map((p) => (
+                {topUpSort.sorted.map((p) => (
                   <tr key={p.id} className="border-b border-gray-50 last:border-0">
                     <td className="whitespace-nowrap px-6 py-3 text-gray-700">
                       {new Date(p.created_at).toLocaleDateString(undefined, {
@@ -671,16 +696,16 @@ export default function BillingPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-50 text-xs text-gray-500">
-                  <th className="px-6 py-3 font-medium">Date</th>
-                  <th className="px-6 py-3 font-medium">Action</th>
-                  <th className="px-6 py-3 font-medium">Plan</th>
-                  <th className="px-6 py-3 font-medium text-right">Amount</th>
-                  <th className="px-6 py-3 font-medium">Gateway</th>
-                  <th className="px-6 py-3 font-medium">Status</th>
+                  <SortableTh {...paymentSort.sortProps('date')} className="px-6 py-3 font-medium">Date</SortableTh>
+                  <SortableTh {...paymentSort.sortProps('action')} className="px-6 py-3 font-medium">Action</SortableTh>
+                  <SortableTh {...paymentSort.sortProps('plan')} className="px-6 py-3 font-medium">Plan</SortableTh>
+                  <SortableTh {...paymentSort.sortProps('amount')} className="px-6 py-3 font-medium text-right">Amount</SortableTh>
+                  <SortableTh {...paymentSort.sortProps('gateway')} className="px-6 py-3 font-medium">Gateway</SortableTh>
+                  <SortableTh {...paymentSort.sortProps('status')} className="px-6 py-3 font-medium">Status</SortableTh>
                 </tr>
               </thead>
               <tbody>
-                {payments.map((p) => (
+                {paymentSort.sorted.map((p) => (
                   <tr key={p.id} className="border-b border-gray-50 last:border-0">
                     <td className="whitespace-nowrap px-6 py-3 text-gray-700">
                       {new Date(p.created_at).toLocaleDateString(undefined, {
@@ -723,17 +748,17 @@ export default function BillingPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-50 text-xs text-gray-500">
-                  <th className="px-6 py-3 font-medium">Invoice #</th>
-                  <th className="px-6 py-3 font-medium">Period</th>
-                  <th className="px-6 py-3 font-medium text-right">Transfers</th>
-                  <th className="px-6 py-3 font-medium text-right">Fee Amount</th>
-                  <th className="px-6 py-3 font-medium">Status</th>
-                  <th className="px-6 py-3 font-medium">Due Date</th>
+                  <SortableTh {...feeInvoiceSort.sortProps('invoice')} className="px-6 py-3 font-medium">Invoice #</SortableTh>
+                  <SortableTh {...feeInvoiceSort.sortProps('period')} className="px-6 py-3 font-medium">Period</SortableTh>
+                  <SortableTh {...feeInvoiceSort.sortProps('transfers')} className="px-6 py-3 font-medium text-right">Transfers</SortableTh>
+                  <SortableTh {...feeInvoiceSort.sortProps('fee')} className="px-6 py-3 font-medium text-right">Fee Amount</SortableTh>
+                  <SortableTh {...feeInvoiceSort.sortProps('status')} className="px-6 py-3 font-medium">Status</SortableTh>
+                  <SortableTh {...feeInvoiceSort.sortProps('due')} className="px-6 py-3 font-medium">Due Date</SortableTh>
                   <th className="px-6 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {feeInvoices.map((inv) => {
+                {feeInvoiceSort.sorted.map((inv) => {
                   const isExpanded = expandedInvoices.has(inv.id);
                   const lineItems = Array.isArray(inv.line_items) ? inv.line_items : [];
                   return (

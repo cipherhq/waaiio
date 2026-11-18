@@ -6,6 +6,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 import { WAIVER_TEMPLATES, fillWaiverPlaceholders } from '@/lib/waiver-templates';
 
 interface WaiverTemplate {
@@ -355,6 +357,14 @@ export default function WaiversPage() {
   const sortedTemplates = [...templates].sort((a, b) => {
     if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
+  const { sorted: sortedSignedWaivers, sortProps } = useTableSort(signedWaivers, {
+    customer: (sw: SignedWaiver) => sw.customer_name,
+    phone: (sw: SignedWaiver) => sw.customer_phone,
+    email: (sw: SignedWaiver) => sw.customer_email,
+    waiver: (sw: SignedWaiver) => sw.waiver_templates?.title,
+    signed: (sw: SignedWaiver) => sortTime(sw.signed_at),
   });
 
   return (
@@ -832,16 +842,16 @@ export default function WaiversPage() {
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                   <thead className="bg-gray-50 dark:bg-gray-800">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Customer</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 sm:table-cell">Phone</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 md:table-cell">Email</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Waiver</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Signed</th>
+                      <SortableTh {...sortProps('customer')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Customer</SortableTh>
+                      <SortableTh {...sortProps('phone')} className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 sm:table-cell">Phone</SortableTh>
+                      <SortableTh {...sortProps('email')} className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 md:table-cell">Email</SortableTh>
+                      <SortableTh {...sortProps('waiver')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Waiver</SortableTh>
+                      <SortableTh {...sortProps('signed')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Signed</SortableTh>
                       <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
-                    {signedWaivers.map(sw => (
+                    {sortedSignedWaivers.map(sw => (
                       <tr key={sw.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
                         <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white whitespace-nowrap">
                           {sw.customer_name}

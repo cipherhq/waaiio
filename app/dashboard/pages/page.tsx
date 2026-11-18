@@ -3,6 +3,8 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface SitePage {
   id: string;
@@ -51,6 +53,13 @@ export default function PagesPage() {
     setTimeout(() => setSaved(false), 2000);
     fetchPages();
   }
+
+  const pageSort = useTableSort(pages, {
+    page: (p: SitePage) => p.title,
+    slug: p => p.slug,
+    status: p => (p.is_published ? 'Published' : 'Draft'),
+    updated: p => sortTime(p.updated_at),
+  });
 
   if (loading) {
     return (
@@ -154,15 +163,15 @@ export default function PagesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-50 bg-gray-50/50">
-              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Page</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Slug</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Updated</th>
+              <SortableTh {...pageSort.sortProps('page')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Page</SortableTh>
+              <SortableTh {...pageSort.sortProps('slug')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Slug</SortableTh>
+              <SortableTh {...pageSort.sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+              <SortableTh {...pageSort.sortProps('updated')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Updated</SortableTh>
               <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {pages.map((page) => (
+            {pageSort.sorted.map((page) => (
               <tr key={page.id} className="hover:bg-gray-50/50">
                 <td className="px-4 py-3 font-medium text-gray-900">{page.title}</td>
                 <td className="px-4 py-3 font-mono text-xs text-gray-500">/{page.slug}</td>

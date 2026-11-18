@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useSortState } from '@/lib/tableSort';
 import { CreditCard, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 
 interface AllowanceRow {
@@ -51,6 +53,13 @@ const STATUS_COLORS: Record<string, string> = {
   review: 'bg-orange-100 text-orange-700',
 };
 
+// Header click -> real column of the queried table (businesses / messaging_topup_purchases).
+const BALANCE_SORT_COLUMNS = { business: 'name', tier: 'subscription_tier' } as const;
+const PURCHASE_SORT_COLUMNS = {
+  date: 'created_at', amount: 'package_amount_minor', gateway: 'gateway',
+  status: 'status', refunded: 'refund_amount_minor', shortfall: 'consumed_shortfall_minor',
+} as const;
+
 const TYPE_LABELS: Record<string, string> = {
   trial_grant: 'Trial',
   subscription_included: 'Subscription',
@@ -72,6 +81,8 @@ export default function MessagingCredits() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const perPage = 20;
+  const balanceSort = useSortState<keyof typeof BALANCE_SORT_COLUMNS>({ onSortChange: () => setPage(1) });
+  const purchaseSort = useSortState<keyof typeof PURCHASE_SORT_COLUMNS>({ onSortChange: () => setPage(1) });
 
   // Balances view — business-first, includes exhausted
   const [balanceBusinesses, setBalanceBusinesses] = useState<BusinessInfo[]>([]);
@@ -105,7 +116,8 @@ export default function MessagingCredits() {
         const { data: bizData, error: bizErr } = await adminDb.from('businesses')
           .select('id, name, subscription_tier, country_code, messaging_suspended')
           .eq('status', 'active')
-          .order('name', { ascending: true })
+          .order(balanceSort.sortKey ? BALANCE_SORT_COLUMNS[balanceSort.sortKey] : 'name', { ascending: balanceSort.sortKey ? balanceSort.sortDirection === 'asc' : true, nullsFirst: false })
+          .order('id', { ascending: true })
           .range(rangeStart, rangeEnd);
         if (bizErr) { setError(`Failed to load businesses: ${bizErr.message}`); setLoading(false); return; }
 
@@ -173,7 +185,8 @@ export default function MessagingCredits() {
 
         const { data: pageData, error: pageErr } = await adminDb.from('messaging_topup_purchases')
           .select('id, business_id, owner_id, package_amount_minor, currency_code, gateway, status, created_at, completed_at, refunded_at, refund_amount_minor, consumed_shortfall_minor')
-          .order('created_at', { ascending: false })
+          .order(purchaseSort.sortKey ? PURCHASE_SORT_COLUMNS[purchaseSort.sortKey] : 'created_at', { ascending: purchaseSort.sortKey ? purchaseSort.sortDirection === 'asc' : false, nullsFirst: false })
+          .order('id', { ascending: false })
           .range(rangeStart, rangeStart + perPage - 1);
         if (pageErr) { setError(`Failed to load purchases: ${pageErr.message}`); setLoading(false); return; }
 
@@ -202,7 +215,7 @@ export default function MessagingCredits() {
       setLoading(false);
     }
     load();
-  }, [view, page]);
+  }, [view, page, balanceSort.sortKey, balanceSort.sortDirection, purchaseSort.sortKey, purchaseSort.sortDirection]);
 
   const totalItems = view === 'balances' ? balanceTotalCount : purchaseTotalCount;
   const totalPages = Math.max(1, Math.ceil(totalItems / perPage));
@@ -244,7 +257,7 @@ export default function MessagingCredits() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead><tr className="border-b border-gray-100 text-xs text-gray-500">
-                  <th className="px-4 py-3 font-medium">Business</th><th className="px-4 py-3 font-medium">Tier</th><th className="px-4 py-3 font-medium">Type</th>
+                  <SortableTh {...balanceSort.sortProps('business')} className="px-4 py-3 font-medium">Business</SortableTh><SortableTh {...balanceSort.sortProps('tier')} className="px-4 py-3 font-medium">Tier</SortableTh><th className="px-4 py-3 font-medium">Type</th>
                   <th className="px-4 py-3 font-medium text-right">Remaining</th><th className="px-4 py-3 font-medium text-right">Total</th><th className="px-4 py-3 font-medium">Expires</th><th className="px-4 py-3 font-medium">Status</th>
                 </tr></thead>
                 <tbody>{balanceBusinesses.map(biz => {
@@ -274,8 +287,8 @@ export default function MessagingCredits() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead><tr className="border-b border-gray-100 text-xs text-gray-500">
-                  <th className="px-4 py-3 font-medium">Date</th><th className="px-4 py-3 font-medium">Business</th><th className="px-4 py-3 font-medium text-right">Amount</th>
-                  <th className="px-4 py-3 font-medium">Gateway</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium text-right">Refunded</th><th className="px-4 py-3 font-medium text-right">Shortfall</th>
+                  <SortableTh {...purchaseSort.sortProps('date')} className="px-4 py-3 font-medium">Date</SortableTh><th className="px-4 py-3 font-medium">Business</th><SortableTh {...purchaseSort.sortProps('amount')} className="px-4 py-3 font-medium text-right">Amount</SortableTh>
+                  <SortableTh {...purchaseSort.sortProps('gateway')} className="px-4 py-3 font-medium">Gateway</SortableTh><SortableTh {...purchaseSort.sortProps('status')} className="px-4 py-3 font-medium">Status</SortableTh><SortableTh {...purchaseSort.sortProps('refunded')} className="px-4 py-3 font-medium text-right">Refunded</SortableTh><SortableTh {...purchaseSort.sortProps('shortfall')} className="px-4 py-3 font-medium text-right">Shortfall</SortableTh>
                 </tr></thead>
                 <tbody>{purchases.map(p => {
                   const biz = purchaseBusinesses.get(p.business_id);

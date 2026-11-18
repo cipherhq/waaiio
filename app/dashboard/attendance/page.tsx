@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface AttendanceEntry {
   id: string;
@@ -50,6 +52,14 @@ export default function AttendancePage() {
   const [formEmail, setFormEmail] = useState('');
   const [formSaving, setFormSaving] = useState(false);
   const [formError, setFormError] = useState('');
+
+  const { sorted: sortedEntries, sortProps } = useTableSort(entries, {
+    name: e => e.customer_name,
+    phone: e => (e.customer_phone ? maskPhone(e.customer_phone) : null),
+    email: e => e.customer_email,
+    time: e => sortTime(e.checked_in_at),
+    source: e => e.source,
+  });
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
@@ -270,15 +280,15 @@ export default function AttendancePage() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Phone</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Email</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Time</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Source</th>
+                  <SortableTh {...sortProps('name')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Name</SortableTh>
+                  <SortableTh {...sortProps('phone')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Phone</SortableTh>
+                  <SortableTh {...sortProps('email')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Email</SortableTh>
+                  <SortableTh {...sortProps('time')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Time</SortableTh>
+                  <SortableTh {...sortProps('source')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Source</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">
-                {entries.map(entry => (
+                {sortedEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                     <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
                       {entry.customer_name}

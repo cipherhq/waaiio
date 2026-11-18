@@ -7,6 +7,13 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { useSortState } from '@/lib/table-sort';
+
+// Columns the server can sort by (whitelist). Customer, Source and Reference
+// come from joined/derived data and are not sortable on a paged list.
+const SERVER_SORT_COLUMNS = { amount: 'amount', paid: 'paid_at', provider: 'gateway' } as const;
+type PaymentSortKey = keyof typeof SERVER_SORT_COLUMNS;
 
 // ── Types ──
 
@@ -114,6 +121,7 @@ export default function PaymentsReceivedPage() {
   }, [search]);
 
   const fetchIdRef = useRef(0);
+  const { sortKey, sortDirection, sortProps } = useSortState<PaymentSortKey>({ onSortChange: () => goToPage(1) });
 
   const loadPayments = useCallback(async (page = currentPage, size = pageSize) => {
     const fetchId = ++fetchIdRef.current;
@@ -171,11 +179,17 @@ export default function PaymentsReceivedPage() {
         query = query.ilike('gateway_reference', `%${escaped}%`);
       }
 
-      query = query
-        .order('paid_at', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .range(from, to);
+      if (sortKey) {
+        query = query
+          .order(SERVER_SORT_COLUMNS[sortKey], { ascending: sortDirection === 'asc', nullsFirst: false })
+          .order('id', { ascending: false });
+      } else {
+        query = query
+          .order('paid_at', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+      }
+      query = query.range(from, to);
 
       const { data, count, error } = await query;
       if (fetchId !== fetchIdRef.current) return;
@@ -191,7 +205,7 @@ export default function PaymentsReceivedPage() {
     }
     setFetching(false);
     setInitialLoad(false);
-  }, [business.id, currentPage, pageSize, sourceFilter, debouncedSearch]);
+  }, [business.id, currentPage, pageSize, sourceFilter, debouncedSearch, sortKey, sortDirection]);
 
   useEffect(() => { loadPayments(); }, [loadPayments]);
 
@@ -307,10 +321,10 @@ export default function PaymentsReceivedPage() {
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
                   <th scope="col" className="pb-3 pr-4">Customer</th>
-                  <th scope="col" className="pb-3 pr-4">Amount</th>
-                  <th scope="col" className="pb-3 pr-4 hidden sm:table-cell">Paid</th>
+                  <SortableTh {...sortProps('amount')} scope="col" className="pb-3 pr-4">Amount</SortableTh>
+                  <SortableTh {...sortProps('paid')} scope="col" className="pb-3 pr-4 hidden sm:table-cell">Paid</SortableTh>
                   <th scope="col" className="pb-3 pr-4">Source</th>
-                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Provider</th>
+                  <SortableTh {...sortProps('provider')} scope="col" className="pb-3 pr-4 hidden md:table-cell">Provider</SortableTh>
                   <th scope="col" className="pb-3 pr-4 hidden lg:table-cell">Reference</th>
                 </tr>
               </thead>

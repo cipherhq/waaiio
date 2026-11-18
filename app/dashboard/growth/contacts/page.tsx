@@ -7,6 +7,8 @@ import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { buildContactsSearchFilter } from '@/lib/utils/sanitize';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { useSortState } from '@/lib/table-sort';
 
 interface GrowthContact {
   id: string;
@@ -23,6 +25,11 @@ interface GrowthContact {
 type FilterType = 'all' | 'has_consent' | 'needs_consent' | 'opted_out';
 
 const PAGE_SIZE = 25;
+
+// Columns the server can sort by (whitelist). Phone is masked on screen, Tags is an
+// array and Consent is derived from two flags, so those stay unsorted on this paged list.
+const SERVER_SORT_COLUMNS = { name: 'first_name', email: 'email', imported: 'created_at' } as const;
+type ContactSortKey = keyof typeof SERVER_SORT_COLUMNS;
 
 function maskPhone(phone: string | null): string {
   if (!phone) return '\u2014';
@@ -55,15 +62,23 @@ export default function GrowthContactsPage() {
   const [filter, setFilter] = useState<FilterType>('all');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
+  const { sortKey, sortDirection, sortProps } = useSortState<ContactSortKey>({ onSortChange: () => setPage(0) });
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
     let query = supabase
       .from('growth_contacts')
       .select('id, first_name, last_name, phone, email, tags, has_consent, opted_out, created_at', { count: 'exact' })
-      .eq('business_id', business.id)
-      .order('created_at', { ascending: false })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      .eq('business_id', business.id);
+
+    if (sortKey) {
+      query = query.order(SERVER_SORT_COLUMNS[sortKey], { ascending: sortDirection === 'asc', nullsFirst: false });
+      if (sortKey === 'name') query = query.order('last_name', { ascending: sortDirection === 'asc', nullsFirst: false });
+      query = query.order('id', { ascending: false });
+    } else {
+      query = query.order('created_at', { ascending: false });
+    }
+    query = query.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
     if (filter === 'has_consent') {
       query = query.eq('has_consent', true).eq('opted_out', false);
@@ -82,12 +97,12 @@ export default function GrowthContactsPage() {
     setContacts((data as GrowthContact[]) || []);
     setTotalCount(count ?? 0);
     setLoading(false);
-  }, [business.id, supabase, filter, search, page]);
+  }, [business.id, supabase, filter, search, page, sortKey, sortDirection]);
 
   useEffect(() => {
     loadContacts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [business.id, filter, search, page]);
+  }, [business.id, filter, search, page, sortKey, sortDirection]);
 
   // Reset page when filter or search changes
   useEffect(() => {
@@ -183,12 +198,12 @@ export default function GrowthContactsPage() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Name</th>
+                  <SortableTh {...sortProps('name')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Name</SortableTh>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Phone</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Email</th>
+                  <SortableTh {...sortProps('email')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Email</SortableTh>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Tags</th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Consent</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Imported</th>
+                  <SortableTh {...sortProps('imported')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Imported</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">

@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Campaign {
   id: string;
@@ -104,6 +106,17 @@ export default function GrowthCampaignsPage() {
 
   const creditCost = recipientEstimate; // 1 credit per recipient
   const hasEnoughCredits = creditsAvailable >= creditCost;
+
+  const { sorted: sortedCampaigns, sortProps } = useTableSort(campaigns, {
+    name: c => c.name,
+    type: c => typeLabels[c.type] || c.type,
+    status: c => c.status,
+    recipients: c => c.recipient_count,
+    sent: c => c.sent_count,
+    delivered: c => c.delivered_count,
+    converted: c => c.converted_count,
+    created: c => sortTime(c.created_at),
+  });
 
   async function handleCreateCampaign(e: React.FormEvent) {
     e.preventDefault();
@@ -293,19 +306,19 @@ export default function GrowthCampaignsPage() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Type</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Recipients</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Sent</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Delivered</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Converted</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Created</th>
+                  <SortableTh {...sortProps('name')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Name</SortableTh>
+                  <SortableTh {...sortProps('type')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Type</SortableTh>
+                  <SortableTh {...sortProps('status')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</SortableTh>
+                  <SortableTh {...sortProps('recipients')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Recipients</SortableTh>
+                  <SortableTh {...sortProps('sent')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Sent</SortableTh>
+                  <SortableTh {...sortProps('delivered')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Delivered</SortableTh>
+                  <SortableTh {...sortProps('converted')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Converted</SortableTh>
+                  <SortableTh {...sortProps('created')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Created</SortableTh>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">
-                {campaigns.map((campaign) => (
+                {sortedCampaigns.map((campaign) => (
                   <tr key={campaign.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                     <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
                       {campaign.name}

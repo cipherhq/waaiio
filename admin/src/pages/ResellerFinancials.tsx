@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -232,13 +234,23 @@ export default function ResellerFinancials() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   const tierLabel: Record<string, string> = {
     starter: 'Starter',
     professional: 'Professional',
     enterprise: 'Enterprise',
   };
+
+  const { sorted, sortProps } = useTableSort(filtered, {
+    company: r => r.company_name,
+    tier: r => tierLabel[r.tier] || r.tier,
+    subAccounts: r => r.active_sub_accounts,
+    revenue: r => r.total_revenue,
+    earned: r => r.total_commission_earned,
+    owed: r => r.commission_owed,
+    status: r => r.status,
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   return (
     <div className="space-y-6">
@@ -288,13 +300,13 @@ export default function ResellerFinancials() {
         <table className="w-full text-sm">
           <thead className="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Company Name</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Tier</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Active Sub-Accounts</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Total Revenue</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Commission Earned</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Commission Owed</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Status</th>
+              <SortableTh {...sortProps('company')} className="px-4 py-3 text-left font-medium text-gray-600">Company Name</SortableTh>
+              <SortableTh {...sortProps('tier')} className="px-4 py-3 text-left font-medium text-gray-600">Tier</SortableTh>
+              <SortableTh {...sortProps('subAccounts')} className="px-4 py-3 text-center font-medium text-gray-600">Active Sub-Accounts</SortableTh>
+              <SortableTh {...sortProps('revenue')} className="px-4 py-3 text-right font-medium text-gray-600">Total Revenue</SortableTh>
+              <SortableTh {...sortProps('earned')} className="px-4 py-3 text-right font-medium text-gray-600">Commission Earned</SortableTh>
+              <SortableTh {...sortProps('owed')} className="px-4 py-3 text-right font-medium text-gray-600">Commission Owed</SortableTh>
+              <SortableTh {...sortProps('status')} className="px-4 py-3 text-center font-medium text-gray-600">Status</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

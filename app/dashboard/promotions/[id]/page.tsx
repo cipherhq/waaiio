@@ -11,6 +11,8 @@ import type {
   PromoFulfillmentStatus,
 } from '@/lib/promotions/types';
 import { ContactWinnerButton, useContactWinnerActions } from './contact-winner-controls';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                               */
@@ -783,6 +785,21 @@ export default function PromotionDetailPage() {
   /*  Render                                                            */
   /* ---------------------------------------------------------------- */
 
+  const winnerSort = useTableSort(
+    winnersFilter ? winners.filter((w) => w.fulfillment_status === winnersFilter) : winners,
+    {
+      participant: (w: Winner) => revealedPhones[w.id] || w.phone_e164,
+      code: w => w.redeemed_code,
+      prize: w => w.prize_name,
+      claimRef: w => w.claim_reference,
+      claimedAt: w => sortTime(w.claimed_at),
+      verification: w => (w.verification_mode === 'secure_pickup'
+        ? (w.verification_status === 'verified' ? 'Pickup verified' : w.verification_status === 'locked' ? 'Locked' : 'Pickup required')
+        : 'Standard'),
+      fulfillment: w => w.fulfillment_status,
+    },
+  );
+
   if (loading) {
     return (
       <div>
@@ -1212,7 +1229,7 @@ export default function PromotionDetailPage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Code</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Outcome</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</th>
+                      <SortableTh {...winnerSort.sortProps('claimedAt')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
@@ -1341,21 +1358,18 @@ export default function PromotionDetailPage() {
               <table className="w-full min-w-[850px] text-sm">
                 <thead className="border-b border-gray-50 dark:border-gray-700">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Participant</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Redeemed Code</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Prize</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claim Ref</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Verification</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Fulfillment</th>
+                    <SortableTh {...winnerSort.sortProps('participant')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Participant</SortableTh>
+                    <SortableTh {...winnerSort.sortProps('code')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Redeemed Code</SortableTh>
+                    <SortableTh {...winnerSort.sortProps('prize')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Prize</SortableTh>
+                    <SortableTh {...winnerSort.sortProps('claimRef')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claim Ref</SortableTh>
+                    <SortableTh {...winnerSort.sortProps('claimedAt')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Claimed At</SortableTh>
+                    <SortableTh {...winnerSort.sortProps('verification')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Verification</SortableTh>
+                    <SortableTh {...winnerSort.sortProps('fulfillment')} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Fulfillment</SortableTh>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                  {(winnersFilter
-                    ? winners.filter((w) => w.fulfillment_status === winnersFilter)
-                    : winners
-                  ).map((winner) => (
+                  {winnerSort.sorted.map((winner) => (
                     <tr key={winner.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20">
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
                         {revealedPhones[winner.id] || winner.phone_e164}

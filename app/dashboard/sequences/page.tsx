@@ -4,6 +4,8 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 /* ── Types ── */
 
@@ -355,6 +357,13 @@ export default function SequencesPage() {
     });
   }
 
+  const { sorted: sortedEnrollments, sortProps } = useTableSort(enrollments, {
+    phone: (e: Enrollment) => e.customer_phone,
+    step: (e: Enrollment) => e.current_step,
+    nextSend: (e: Enrollment) => sortTime(e.next_send_at),
+    status: (e: Enrollment) => e.status,
+  });
+
   /* ── Loading spinner ── */
 
   if (loading) {
@@ -611,14 +620,14 @@ export default function SequencesPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-gray-100 text-left text-xs font-medium uppercase tracking-wide text-gray-400">
-                          <th scope="col" className="px-6 py-3">Phone</th>
-                          <th scope="col" className="px-6 py-3">Current Step</th>
-                          <th scope="col" className="px-6 py-3">Next Send</th>
-                          <th scope="col" className="px-6 py-3">Status</th>
+                          <SortableTh {...sortProps('phone')} scope="col" className="px-6 py-3">Phone</SortableTh>
+                          <SortableTh {...sortProps('step')} scope="col" className="px-6 py-3">Current Step</SortableTh>
+                          <SortableTh {...sortProps('nextSend')} scope="col" className="px-6 py-3">Next Send</SortableTh>
+                          <SortableTh {...sortProps('status')} scope="col" className="px-6 py-3">Status</SortableTh>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {enrollments.map((e) => (
+                        {sortedEnrollments.map((e) => (
                           <tr key={e.id} className="hover:bg-gray-50">
                             <td className="px-6 py-3 font-medium text-gray-900">
                               {e.customer_phone}

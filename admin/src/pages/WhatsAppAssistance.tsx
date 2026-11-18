@@ -5,6 +5,8 @@ import { hasAccess } from '@/lib/permissions';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { QRCodeSVG } from 'qrcode.react';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 
 interface WhatsAppSetup {
   requested_method: string;
@@ -37,6 +39,12 @@ export default function WhatsAppAssistance() {
   const [pendingStepUpAction, setPendingStepUpAction] = useState<((stepUpId: string) => Promise<void>) | null>(null);
   const session = useAdminSession();
   const stepUp = useStepUp();
+  const { sorted, sortProps } = useTableSort(rows.filter(row => !!row.business_id), {
+    owner: row => row.target_email,
+    country: row => row.whatsapp_setup?.country_code,
+    method: row => row.whatsapp_setup?.requested_method || 'shared',
+    state: row => (row.whatsapp_setup?.channel_ready === true ? 'Assigned channel active' : 'Channel not confirmed ready'),
+  });
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -145,11 +153,11 @@ export default function WhatsAppAssistance() {
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full text-left text-sm">
           <thead className="bg-gray-50 text-gray-600"><tr>
-            <th className="p-3">Business owner</th><th className="p-3">Country</th>
-            <th className="p-3">Requested method</th><th className="p-3">Current state</th>
+            <SortableTh {...sortProps('owner')} className="p-3">Business owner</SortableTh><SortableTh {...sortProps('country')} className="p-3">Country</SortableTh>
+            <SortableTh {...sortProps('method')} className="p-3">Requested method</SortableTh><SortableTh {...sortProps('state')} className="p-3">Current state</SortableTh>
             <th className="p-3">Next step</th>
           </tr></thead>
-          <tbody>{rows.filter(row => !!row.business_id).map(row => {
+          <tbody>{sorted.map(row => {
             const setup = row.whatsapp_setup;
             const ready = setup?.channel_ready === true;
             return <tr key={row.id} className="border-t border-gray-100">

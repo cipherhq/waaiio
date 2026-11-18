@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface BillingSummary {
   billing_type: 'per_seat' | 'revenue_share' | 'flat_monthly';
@@ -73,6 +75,13 @@ export default function ResellerBillingPage() {
   function formatCurrency(amount: number) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount / 100);
   }
+
+  const { sorted: sortedCommissions, sortProps } = useTableSort(commissions, {
+    date: (e: CommissionEntry) => sortTime(e.created_at),
+    account: (e: CommissionEntry) => e.sub_account_name,
+    description: (e: CommissionEntry) => e.description,
+    amount: (e: CommissionEntry) => sortNumber(e.amount),
+  });
 
   if (loading) {
     return (
@@ -195,14 +204,14 @@ export default function ResellerBillingPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Sub-Account</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</th>
-                  <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+                  <SortableTh {...sortProps('date')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</SortableTh>
+                  <SortableTh {...sortProps('account')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Sub-Account</SortableTh>
+                  <SortableTh {...sortProps('description')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</SortableTh>
+                  <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Amount</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                {commissions.map((entry) => (
+                {sortedCommissions.map((entry) => (
                   <tr key={entry.id}>
                     <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                       {new Date(entry.created_at).toLocaleDateString()}

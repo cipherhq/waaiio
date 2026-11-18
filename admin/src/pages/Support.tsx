@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
@@ -352,7 +354,17 @@ export default function Support() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    id: t => t.id.slice(0, 8),
+    subject: t => t.subject,
+    requester: t => t.requester_name,
+    type: t => t.type,
+    priority: t => t.priority,
+    status: t => t.status,
+    assigned: t => t.assigned_name,
+    created: t => sortTime(t.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   /* ================================================================ */
   /*  Render                                                           */
@@ -432,14 +444,14 @@ export default function Support() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">ID</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Subject</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Requester</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Priority</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Assigned</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                <SortableTh {...sortProps('id')} className="px-4 py-3 text-left font-medium text-gray-500">ID</SortableTh>
+                <SortableTh {...sortProps('subject')} className="px-4 py-3 text-left font-medium text-gray-500">Subject</SortableTh>
+                <SortableTh {...sortProps('requester')} className="px-4 py-3 text-left font-medium text-gray-500">Requester</SortableTh>
+                <SortableTh {...sortProps('type')} className="px-4 py-3 text-left font-medium text-gray-500">Type</SortableTh>
+                <SortableTh {...sortProps('priority')} className="px-4 py-3 text-left font-medium text-gray-500">Priority</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('assigned')} className="px-4 py-3 text-left font-medium text-gray-500">Assigned</SortableTh>
+                <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

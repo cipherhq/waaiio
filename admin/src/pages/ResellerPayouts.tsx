@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -440,7 +442,17 @@ export default function ResellerPayouts() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    reseller: p => p.company_name,
+    period: p => sortTime(p.period_start),
+    gross: p => p.gross_commission,
+    holdback: p => p.holdback,
+    deductions: p => p.deductions,
+    net: p => p.net_amount,
+    status: p => p.status,
+    created: p => sortTime(p.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   return (
     <div className="space-y-6">
@@ -504,14 +516,14 @@ export default function ResellerPayouts() {
         <table className="w-full text-sm">
           <thead className="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Reseller</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Period</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Gross</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Holdback</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Deductions</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-600">Net</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Created</th>
+              <SortableTh {...sortProps('reseller')} className="px-4 py-3 text-left font-medium text-gray-600">Reseller</SortableTh>
+              <SortableTh {...sortProps('period')} className="px-4 py-3 text-left font-medium text-gray-600">Period</SortableTh>
+              <SortableTh {...sortProps('gross')} className="px-4 py-3 text-right font-medium text-gray-600">Gross</SortableTh>
+              <SortableTh {...sortProps('holdback')} className="px-4 py-3 text-right font-medium text-gray-600">Holdback</SortableTh>
+              <SortableTh {...sortProps('deductions')} className="px-4 py-3 text-right font-medium text-gray-600">Deductions</SortableTh>
+              <SortableTh {...sortProps('net')} className="px-4 py-3 text-right font-medium text-gray-600">Net</SortableTh>
+              <SortableTh {...sortProps('status')} className="px-4 py-3 text-center font-medium text-gray-600">Status</SortableTh>
+              <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-600">Created</SortableTh>
               <th className="px-4 py-3 text-right font-medium text-gray-600">Actions</th>
             </tr>
           </thead>

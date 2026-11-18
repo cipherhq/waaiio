@@ -5,6 +5,8 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { fmtCalendarDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { adminApiGet, adminApiPut } from '@/lib/adminApi';
 import { loadCountries, getCountryCurrencyMap } from '@/lib/countries';
@@ -251,7 +253,16 @@ export default function Events() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    title: ev => ev.name,
+    business: ev => ev.business_name,
+    date: ev => sortTime(ev.date),
+    location: ev => ev.venue,
+    capacity: ev => ev.total_tickets,
+    sold: ev => ev.tickets_sold ?? 0,
+    status: ev => ev.status,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Collect unique statuses for the filter
   const statuses = [...new Set(events.map(e => e.status))].sort();
@@ -323,13 +334,13 @@ export default function Events() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Title</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Location</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Capacity</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Tickets Sold</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <SortableTh {...sortProps('title')} className="px-4 py-3 text-left font-medium text-gray-500">Title</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('date')} className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
+                <SortableTh {...sortProps('location')} className="px-4 py-3 text-left font-medium text-gray-500">Location</SortableTh>
+                <SortableTh {...sortProps('capacity')} className="px-4 py-3 text-right font-medium text-gray-500">Capacity</SortableTh>
+                <SortableTh {...sortProps('sold')} className="px-4 py-3 text-right font-medium text-gray-500">Tickets Sold</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

@@ -8,6 +8,8 @@ import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface LineItem {
   payment_id?: string;
@@ -118,7 +120,17 @@ export default function FeeInvoices() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    invoice: i => i.invoice_number,
+    business: i => i.business_name,
+    period: i => sortTime(i.period_start),
+    transfers: i => i.transaction_count,
+    fee: i => i.total_fee_amount,
+    status: i => i.status,
+    due: i => sortTime(i.due_date),
+    paid: i => sortTime(i.paid_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Summary stats
   const now = new Date();
@@ -355,14 +367,14 @@ export default function FeeInvoices() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Invoice #</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Period</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Transfers</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Fee Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Due Date</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Paid At</th>
+                <SortableTh {...sortProps('invoice')} className="px-4 py-3 text-left font-medium text-gray-500">Invoice #</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('period')} className="px-4 py-3 text-left font-medium text-gray-500">Period</SortableTh>
+                <SortableTh {...sortProps('transfers')} className="px-4 py-3 text-right font-medium text-gray-500">Transfers</SortableTh>
+                <SortableTh {...sortProps('fee')} className="px-4 py-3 text-right font-medium text-gray-500">Fee Amount</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('due')} className="px-4 py-3 text-left font-medium text-gray-500">Due Date</SortableTh>
+                <SortableTh {...sortProps('paid')} className="px-4 py-3 text-left font-medium text-gray-500">Paid At</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

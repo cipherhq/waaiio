@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { getLocale, type CountryCode } from '@/lib/constants';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface FeedbackEntry {
   id: string;
@@ -64,6 +66,15 @@ export default function FeedbackPage() {
   useEffect(() => {
     fetchReviews();
   }, [fetchReviews]);
+
+  const { sorted: sortedReviews, sortProps } = useTableSort(reviews, {
+    date: r => sortTime(r.created_at),
+    person: r => r.customer_name || r.customer_phone,
+    rating: r => r.rating,
+    comment: r => r.comment,
+    service: r => r.service_type,
+    response: r => r.business_response,
+  });
 
   // Metrics
   const totalReviews = reviews.length;
@@ -150,12 +161,12 @@ export default function FeedbackPage() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-100 bg-gray-50/50">
             <tr>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Date</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">{labels.personLabel}</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Rating</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Comment</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Service Type</th>
-              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Response</th>
+              <SortableTh {...sortProps('date')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Date</SortableTh>
+              <SortableTh {...sortProps('person')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">{labels.personLabel}</SortableTh>
+              <SortableTh {...sortProps('rating')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Rating</SortableTh>
+              <SortableTh {...sortProps('comment')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Comment</SortableTh>
+              <SortableTh {...sortProps('service')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Service Type</SortableTh>
+              <SortableTh {...sortProps('response')} scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Response</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -176,7 +187,7 @@ export default function FeedbackPage() {
                 </td>
               </tr>
             ) : (
-              reviews.map((r) => (
+              sortedReviews.map((r) => (
                 <tr key={r.id} className="hover:bg-gray-50/50">
                   <td className="whitespace-nowrap px-4 py-3 text-gray-500">
                     {new Date(r.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {

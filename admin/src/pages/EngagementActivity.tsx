@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { fmtDateTime, maskEmail, maskPhone } from '@/lib/formatters';
 
 // ── Types ──────────────────────────────────────────────
@@ -326,10 +328,32 @@ export default function EngagementActivity() {
 
   // ── Pagination helpers ───────────────────────────────
 
-  const checkinsPaginated = checkins.slice((checkinsPage - 1) * perPage, checkinsPage * perPage);
+  const checkinsSort = useTableSort(checkins, {
+    business: r => r.business_name,
+    customer: r => r.customer_name,
+    phone: r => maskPhone(r.customer_phone),
+    email: r => maskEmail(r.customer_email),
+    source: r => r.source,
+    time: r => sortTime(r.checked_in_at),
+  }, { onSortChange: () => setCheckinsPage(1) });
+  const topSort = useTableSort(topBusinesses, {
+    business: b => b.business_name,
+    checkins: b => b.checkins,
+    botSessions: b => b.bot_sessions,
+    total: b => b.total,
+    lastActivity: b => sortTime(b.last_activity),
+  });
+  const scansSort = useTableSort(scans, {
+    event: sc => sc.event_name,
+    code: sc => sc.ticket_code,
+    scannedAt: sc => sortTime(sc.scanned_at),
+    scannedBy: sc => sc.scanned_by,
+  }, { onSortChange: () => setScansPage(1) });
+
+  const checkinsPaginated = checkinsSort.sorted.slice((checkinsPage - 1) * perPage, checkinsPage * perPage);
   const checkinsTotalPages = Math.ceil(checkins.length / perPage);
 
-  const scansPaginated = scans.slice((scansPage - 1) * perPage, scansPage * perPage);
+  const scansPaginated = scansSort.sorted.slice((scansPage - 1) * perPage, scansPage * perPage);
   const scansTotalPages = Math.ceil(scans.length / perPage);
 
   // ── Render ───────────────────────────────────────────
@@ -420,12 +444,12 @@ export default function EngagementActivity() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Email</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Source</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Time</th>
+                  <SortableTh {...checkinsSort.sortProps('business')} className="px-4 py-3 text-xs font-semibold text-gray-500">Business</SortableTh>
+                  <SortableTh {...checkinsSort.sortProps('customer')} className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</SortableTh>
+                  <SortableTh {...checkinsSort.sortProps('phone')} className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</SortableTh>
+                  <SortableTh {...checkinsSort.sortProps('email')} className="px-4 py-3 text-xs font-semibold text-gray-500">Email</SortableTh>
+                  <SortableTh {...checkinsSort.sortProps('source')} className="px-4 py-3 text-xs font-semibold text-gray-500">Source</SortableTh>
+                  <SortableTh {...checkinsSort.sortProps('time')} className="px-4 py-3 text-xs font-semibold text-gray-500">Time</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -479,11 +503,11 @@ export default function EngagementActivity() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Web Check-ins</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Bot Sessions</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Total</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Last Activity</th>
+                  <SortableTh {...topSort.sortProps('business')} className="px-4 py-3 text-xs font-semibold text-gray-500">Business</SortableTh>
+                  <SortableTh {...topSort.sortProps('checkins')} className="px-4 py-3 text-xs font-semibold text-gray-500">Web Check-ins</SortableTh>
+                  <SortableTh {...topSort.sortProps('botSessions')} className="px-4 py-3 text-xs font-semibold text-gray-500">Bot Sessions</SortableTh>
+                  <SortableTh {...topSort.sortProps('total')} className="px-4 py-3 text-xs font-semibold text-gray-500">Total</SortableTh>
+                  <SortableTh {...topSort.sortProps('lastActivity')} className="px-4 py-3 text-xs font-semibold text-gray-500">Last Activity</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -491,7 +515,7 @@ export default function EngagementActivity() {
                   <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
                 ) : topBusinesses.length === 0 ? (
                   <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No activity found.</td></tr>
-                ) : topBusinesses.map(b => (
+                ) : topSort.sorted.map(b => (
                   <tr key={b.business_id} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3 font-medium text-gray-900">{b.business_name}</td>
                     <td className="px-4 py-3 text-gray-600">{b.checkins}</td>
@@ -524,10 +548,10 @@ export default function EngagementActivity() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Event</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Ticket Code</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Scanned At</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Scanned By</th>
+                  <SortableTh {...scansSort.sortProps('event')} className="px-4 py-3 text-xs font-semibold text-gray-500">Event</SortableTh>
+                  <SortableTh {...scansSort.sortProps('code')} className="px-4 py-3 text-xs font-semibold text-gray-500">Ticket Code</SortableTh>
+                  <SortableTh {...scansSort.sortProps('scannedAt')} className="px-4 py-3 text-xs font-semibold text-gray-500">Scanned At</SortableTh>
+                  <SortableTh {...scansSort.sortProps('scannedBy')} className="px-4 py-3 text-xs font-semibold text-gray-500">Scanned By</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">

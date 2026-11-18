@@ -5,6 +5,8 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface LoyaltyMember {
   id: string;
@@ -162,6 +164,20 @@ export default function LoyaltyPage() {
     });
   }
 
+  const memberSort = useTableSort(members, {
+    name: (m: LoyaltyMember) => m.customer_name || 'Unknown',
+    phone: m => m.customer_phone,
+    points: m => sortNumber(m.points_balance),
+    visits: m => sortNumber(m.visit_count),
+    earned: m => sortNumber(m.total_earned),
+  });
+  const transactionSort = useTableSort(transactions, {
+    date: (tx: LoyaltyTransaction) => sortTime(tx.created_at),
+    phone: tx => tx.customer_phone,
+    points: tx => sortNumber(tx.points_change),
+    reason: tx => tx.reason || '\u2014',
+  });
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Loyalty Program</h1>
@@ -309,25 +325,25 @@ export default function LoyaltyPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      <SortableTh {...memberSort.sortProps('name')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Customer Name
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...memberSort.sortProps('phone')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Phone
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...memberSort.sortProps('points')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Points Balance
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...memberSort.sortProps('visits')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Visit Count
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...memberSort.sortProps('earned')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Total Earned
-                      </th>
+                      </SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {members.map((m) => (
+                    {memberSort.sorted.map((m) => (
                       <tr key={m.id} className="hover:bg-gray-50/50">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
@@ -380,22 +396,22 @@ export default function LoyaltyPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      <SortableTh {...transactionSort.sortProps('date')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Date
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...transactionSort.sortProps('phone')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Customer Phone
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...transactionSort.sortProps('points')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Points Change
-                      </th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
+                      </SortableTh>
+                      <SortableTh {...transactionSort.sortProps('reason')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Reason
-                      </th>
+                      </SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {transactions.map((tx) => (
+                    {transactionSort.sorted.map((tx) => (
                       <tr key={tx.id} className="hover:bg-gray-50/50">
                         <td className="px-4 py-3 text-gray-600">
                           {formatDate(tx.created_at)}

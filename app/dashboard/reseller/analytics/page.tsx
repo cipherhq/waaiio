@@ -3,6 +3,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Account {
   id: string;
@@ -96,6 +98,17 @@ export default function ResellerAnalyticsPage() {
     if (!dateStr) return '--';
     return new Date(dateStr).toLocaleDateString();
   }
+
+  const { sorted: sortedAccounts, sortProps } = useTableSort(filteredAccounts, {
+    name: (a: Account) => a.name,
+    category: (a: Account) => formatCategory(a.category),
+    status: (a: Account) => a.status,
+    revenue: (a: Account) => sortNumber(a.total_revenue),
+    bookings: (a: Account) => sortNumber(a.total_bookings),
+    orders: (a: Account) => sortNumber(a.total_orders),
+    commission: (a: Account) => sortNumber(a.commission_generated),
+    lastActivity: (a: Account) => sortTime(a.last_activity),
+  });
 
   if (loading) {
     return (
@@ -215,14 +228,14 @@ export default function ResellerAnalyticsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <tr>
-                <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</th>
-                <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</th>
-                <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
-                <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Revenue</th>
-                <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Bookings</th>
-                <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Orders</th>
-                <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Commission</th>
-                <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Last Activity</th>
+                <SortableTh {...sortProps('name')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</SortableTh>
+                <SortableTh {...sortProps('category')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
+                <SortableTh {...sortProps('revenue')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Revenue</SortableTh>
+                <SortableTh {...sortProps('bookings')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Bookings</SortableTh>
+                <SortableTh {...sortProps('orders')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Orders</SortableTh>
+                <SortableTh {...sortProps('commission')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Commission</SortableTh>
+                <SortableTh {...sortProps('lastActivity')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Last Activity</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
@@ -234,7 +247,7 @@ export default function ResellerAnalyticsPage() {
                 </tr>
               ) : (
                 <>
-                  {filteredAccounts.map((account) => (
+                  {sortedAccounts.map((account) => (
                     <tr key={account.id}>
                       <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">
                         {account.name}

@@ -3,6 +3,8 @@ import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { hasAccess } from '@/lib/permissions';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -121,11 +123,26 @@ export default function WhatsAppChannels() {
 
   // Channel pagination
   const channelTotal = Math.max(1, Math.ceil(channels.length / perPage));
-  const channelItems = channels.slice((channelPage - 1) * perPage, channelPage * perPage);
+  const channelSort = useTableSort(channels, {
+    phone: ch => ch.phone_number,
+    name: ch => ch.display_name,
+    country: ch => ch.country_code,
+    type: ch => ch.channel_type,
+    status: ch => ch.connection_status || 'unknown',
+    created: ch => sortTime(ch.created_at),
+  }, { onSortChange: () => setChannelPage(1) });
+  const channelItems = channelSort.sorted.slice((channelPage - 1) * perPage, channelPage * perPage);
 
   // Config pagination
   const configTotal = Math.max(1, Math.ceil(configs.length / perPage));
-  const configItems = configs.slice((configPage - 1) * perPage, configPage * perPage);
+  const configSort = useTableSort(configs, {
+    business: cfg => cfg.business_name,
+    channel: cfg => (cfg.channel_id ? cfg.channel_id.slice(0, 8) + '...' : cfg.phone),
+    webhook: cfg => cfg.webhook_url,
+    status: cfg => cfg.status,
+    created: cfg => sortTime(cfg.created_at),
+  }, { onSortChange: () => setConfigPage(1) });
+  const configItems = configSort.sorted.slice((configPage - 1) * perPage, configPage * perPage);
 
   if (loading) {
     return (
@@ -190,12 +207,12 @@ export default function WhatsAppChannels() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Country</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                    <SortableTh {...channelSort.sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                    <SortableTh {...channelSort.sortProps('name')} className="px-4 py-3 text-left font-medium text-gray-500">Name</SortableTh>
+                    <SortableTh {...channelSort.sortProps('country')} className="px-4 py-3 text-left font-medium text-gray-500">Country</SortableTh>
+                    <SortableTh {...channelSort.sortProps('type')} className="px-4 py-3 text-left font-medium text-gray-500">Type</SortableTh>
+                    <SortableTh {...channelSort.sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                    <SortableTh {...channelSort.sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -238,11 +255,11 @@ export default function WhatsAppChannels() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Channel / Phone</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Webhook URL</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                    <SortableTh {...configSort.sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                    <SortableTh {...configSort.sortProps('channel')} className="px-4 py-3 text-left font-medium text-gray-500">Channel / Phone</SortableTh>
+                    <SortableTh {...configSort.sortProps('webhook')} className="px-4 py-3 text-left font-medium text-gray-500">Webhook URL</SortableTh>
+                    <SortableTh {...configSort.sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                    <SortableTh {...configSort.sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">

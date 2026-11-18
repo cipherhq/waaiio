@@ -9,6 +9,8 @@ import { type CountryCode } from '@/lib/constants';
 import { getCountryList } from '@/lib/countries';
 import { QRCodeSVG } from 'qrcode.react';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 /** Detect country code from an E.164 phone number by matching dialing code prefixes */
 function detectCountryFromPhone(phone: string): CountryCode | null {
@@ -528,6 +530,13 @@ export default function ContractsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedContract?.id]);
 
+  const { sorted: sortedContracts, sortProps } = useTableSort(contracts, {
+    document: c => c.title,
+    signer: c => (c.contract_signers && c.contract_signers.length > 0 ? `${c.contract_signers.length} signers` : c.signer_name),
+    status: c => c.status,
+    date: c => sortTime(c.signed_at || c.created_at),
+  });
+
   // Check if Step 1 can proceed to Step 2
   const canProceed = title && (docTab !== 'upload' || uploadedFileUrl);
 
@@ -596,15 +605,15 @@ export default function ContractsPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Document</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Signer</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Date</th>
+                <SortableTh {...sortProps('document')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Document</SortableTh>
+                <SortableTh {...sortProps('signer')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Signer</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('date')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Date</SortableTh>
                 <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {contracts.map(c => (
+              {sortedContracts.map(c => (
                 <tr
                   key={c.id}
                   className="cursor-pointer hover:bg-gray-50"

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -130,7 +132,16 @@ export default function BotManagement() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    id: s => s.id,
+    business: s => s.business_name,
+    phone: s => s.whatsapp_number,
+    flow: s => getFlowType(s).replace(/_/g, ' '),
+    status: s => getStatus(s),
+    messages: s => getMessageCount(s),
+    lastActive: s => sortTime(s.last_active_at || s.updated_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   function getMessageCount(s: BotSession): number {
     return s.conversation_log?.length || 0;
@@ -297,13 +308,13 @@ export default function BotManagement() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">ID</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Flow Type</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Messages</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Last Active</th>
+                <SortableTh {...sortProps('id')} className="px-4 py-3 text-left font-medium text-gray-500">ID</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                <SortableTh {...sortProps('flow')} className="px-4 py-3 text-left font-medium text-gray-500">Flow Type</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('messages')} className="px-4 py-3 text-right font-medium text-gray-500">Messages</SortableTh>
+                <SortableTh {...sortProps('lastActive')} className="px-4 py-3 text-left font-medium text-gray-500">Last Active</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

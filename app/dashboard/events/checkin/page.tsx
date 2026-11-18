@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface EventOption {
   id: string;
@@ -202,6 +204,15 @@ export default function CheckInPage() {
     return (t.ticket_code || '').toLowerCase().includes(q)
       || (t.guest_name || '').toLowerCase().includes(q)
       || (t.guest_phone || '').includes(q);
+  });
+
+  const { sorted: sortedTickets, sortProps } = useTableSort(filteredTickets, {
+    guest: t => t.guest_name,
+    ticket: t => t.ticket_code,
+    type: t => t.ticket_type_name || 'General',
+    status: t => (t.status === 'used' ? 'Checked In' : t.status === 'cancelled' ? 'Cancelled' : 'Not Yet'),
+    checkedIn: t => sortTime(t.scanned_at),
+    scannedBy: t => t.scanned_by,
   });
 
   // Recently checked in (last 10)
@@ -435,12 +446,12 @@ export default function CheckInPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  <th className="px-4 py-3">Guest</th>
-                  <th className="px-4 py-3">Ticket</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Checked In</th>
-                  <th className="px-4 py-3">Scanned By</th>
+                  <SortableTh {...sortProps('guest')} className="px-4 py-3">Guest</SortableTh>
+                  <SortableTh {...sortProps('ticket')} className="px-4 py-3">Ticket</SortableTh>
+                  <SortableTh {...sortProps('type')} className="px-4 py-3">Type</SortableTh>
+                  <SortableTh {...sortProps('status')} className="px-4 py-3">Status</SortableTh>
+                  <SortableTh {...sortProps('checkedIn')} className="px-4 py-3">Checked In</SortableTh>
+                  <SortableTh {...sortProps('scannedBy')} className="px-4 py-3">Scanned By</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -451,7 +462,7 @@ export default function CheckInPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredTickets.map(t => (
+                  sortedTickets.map(t => (
                     <tr key={t.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900">{t.guest_name || '—'}</p>
