@@ -9,6 +9,8 @@
  * 3. An old menu message (bare "menu" / pc_* ids, sent before this fix): picker.
  * 4. "Payment history" opens the payment history; "Search directory" opens the directory.
  * 5. With a chat still open, "pc_options:<id>" behaves exactly like "pc_options".
+ * 6. With a directory search open (e.g. after the picker), the same taps are navigation too.
+ * 7. On the shared number the re-entry binds the conversation to the named business.
  * No reply ever says "No businesses found".
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -330,5 +332,80 @@ describe('Next-steps button tapped after the chat expired', () => {
       const cas = supabase.rpc.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
       expect(cas.some((c: any[]) => c[1]?.p_session_id === 'sess-pc' && c[1]?.p_current_step === 'select_capability')).toBe(true);
     }
+  });
+
+  const dirSession = {
+    id: 'sess-dir', business_id: null, current_step: 'directory_results', is_active: true, version: 5,
+    whatsapp_number: PHONE, expires_at: new Date(Date.now() + 1800000).toISOString(),
+    session_data: { _directory_mode: true, _directory_results: [], _directory_suggestions: [], suggestions: [TESTBIZ, BALASHOP] },
+  };
+
+  it.each(['pc_options', 'pc_again', 'pc_history', 'pc_done', 'menu', `pc_options:${STRANGER_ID}`])(
+    '6a. directory search open: "%s" goes to the past-business picker, never a search',
+    async (id) => {
+      const supabase = createSupabase(dirSession);
+      const { bot, cloud } = makeBot(supabase);
+
+      await bot.handleMessage(PHONE, id, 'list');
+
+      neverSearched(cloud);
+      const { searchMarketplace } = await import('@/lib/marketplace/search');
+      expect(vi.mocked(searchMarketplace)).not.toHaveBeenCalled();
+      const sent = sentBodies(cloud);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].body).toContain("You've used these businesses before");
+    },
+  );
+
+  it('6b. directory search open: "pc_options:<business>" goes back to that business', async () => {
+    const supabase = createSupabase(dirSession, testBizRecord);
+    const { bot, cloud, sender } = makeBot(supabase);
+    const spy = vi.spyOn(bot, 'handleMessage');
+
+    await bot.handleMessage(PHONE, `pc_options:${TESTBIZ_ID}`, 'list');
+
+    neverSearched(cloud);
+    expect((sender as any).boundBusinessId).toBe(TESTBIZ_ID);
+    const reentry = spy.mock.calls.find(c => c[1] === 'TESTBIZ');
+    expect(reentry?.[7]).toBe('returning_customer');
+  });
+
+  it('7. shared number, no chat: the re-entry selects the named business for this conversation', async () => {
+    const supabase = createSupabase(null, testBizRecord);
+    const baseFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'whatsapp_channels') return makeChain({ id: 'ch-shared', channel_type: 'shared', country_code: 'NG' });
+      const c: any = baseFrom(table);
+      if (table === 'businesses') {
+        // The shared number is no business's own number.
+        const eq = c.eq;
+        c.eq = vi.fn().mockImplementation((col: string, ...rest: unknown[]) => {
+          if (col === 'whatsapp_phone_number_id') { c.single = vi.fn().mockResolvedValue({ data: null, error: null }); }
+          return eq(col, ...rest);
+        });
+      }
+      return c;
+    });
+    const baseRpc = supabase.rpc;
+    supabase.rpc = vi.fn().mockImplementation((fn: string, args: unknown) => {
+      if (fn === 'get_shared_conversation') return Promise.resolve({ data: { version: 4, business_id: null, session: null }, error: null });
+      return baseRpc(fn, args);
+    });
+    // The real detector resolves the business code exactly, as for a typed code.
+    const { detectBotCodeWithSuggestions } = await import('@/lib/bot/handlers/bot-code-detection');
+    vi.mocked(detectBotCodeWithSuggestions).mockImplementation(async (_db: unknown, code: string) => (code === 'TESTBIZ'
+      ? { businessId: TESTBIZ_ID, suggestions: [], authority: 'exact' } : mockDetectionResult) as any);
+    const { bot, cloud } = makeBot(supabase);
+    const spy = vi.spyOn(bot, 'handleMessage');
+
+    await bot.handleMessage(PHONE, `menu:${TESTBIZ_ID}`, 'button', 'pnid-shared');
+
+    neverSearched(cloud);
+    const reentry = spy.mock.calls.find(c => c[1] === 'TESTBIZ');
+    expect(reentry?.[4]).toBeUndefined(); // no business authority passed past the shared binding
+    expect(reentry?.[7]).toBe('returning_customer');
+    expect(reentry?.[8]).toEqual({ conversationVersion: 4, businessId: TESTBIZ_ID });
+    const select = (supabase.rpc as any).mock.calls.find((c: any[]) => c[0] === 'select_shared_conversation');
+    expect(select?.[1]).toMatchObject({ p_channel_id: 'ch-shared', p_expected_version: 4 });
   });
 });

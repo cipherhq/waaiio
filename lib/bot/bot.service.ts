@@ -1968,15 +1968,8 @@ export class BotService {
       // the button names when it is one of this customer's businesses; otherwise offer
       // the businesses they used before (the "home" picker).
       if (!businessId && isNextStepsNavigation(text)) {
-        if (viewOptionsTap) {
-          const owner = (await this.findReturningCustomerBusinesses(from, (await getProfile())?.id || null, null))
-            .find(b => b.id === viewOptionsTap.businessId);
-          if (owner) {
-            return this.enterExactDirectoryMatch(from, messageType, destinationPhone,
-              { businessId: owner.id, botCode: owner.bot_code }, null, sharedConversation, 'returning_customer');
-          }
-        }
-        return this.handleMessage(from, 'home', messageType, destinationPhone);
+        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, null, sharedConversation);
       }
 
       // Bot code routing + profile lookup in parallel (independent queries)
@@ -4129,6 +4122,13 @@ export class BotService {
         await this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance);
       };
 
+      // An old next-steps button (View Options, Book again, My orders…) is navigation,
+      // never a search for its own id.
+      if (isNextStepsNavigation(text)) {
+        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, session, sharedConversation);
+      }
+
       // Navigation commands → restart directory
       if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|directory|search)$/i.test(text)) {
         await this.deactivateSession(session.id);
@@ -5293,6 +5293,37 @@ export class BotService {
     }
     if (session) await this.deactivateSession(session.id);
     return this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance, undefined, true);
+  }
+
+  /**
+   * A next-steps button tapped with no business chat open (Owner bug 2026-11-18).
+   * Goes back to the business the button names when it is one of this customer's
+   * past businesses; otherwise to the past-business picker ("home"). Never searches.
+   */
+  private async resumeStaleNextSteps(
+    from: string, messageType: string, destinationPhone: string | undefined,
+    namedBusinessId: string | undefined, userId: string | null,
+    directorySession: BotSession | null,
+    sharedConversation: { version: number } | null,
+  ): Promise<void> {
+    if (namedBusinessId) {
+      const owner = (await this.findReturningCustomerBusinesses(from, userId, null)).find(b => b.id === namedBusinessId);
+      // An open directory session is closed with the selection, as a directory pick does.
+      if (owner && directorySession && sharedConversation) {
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        return this.handleMessage(from, owner.bot_code, messageType, destinationPhone,
+          undefined, undefined, undefined, 'returning_customer', {
+            id: directorySession.id, version: directorySession.version ?? 0,
+            conversationVersion: sharedConversation.version, businessId: owner.id,
+          });
+      }
+      if (owner) {
+        return this.enterExactDirectoryMatch(from, messageType, destinationPhone,
+          { businessId: owner.id, botCode: owner.bot_code }, directorySession, sharedConversation, 'returning_customer');
+      }
+    }
+    if (directorySession) await this.deactivateSession(directorySession.id);
+    return this.handleMessage(from, 'home', messageType, destinationPhone);
   }
 
   private async createDirectorySession(
