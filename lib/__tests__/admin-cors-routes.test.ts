@@ -27,6 +27,11 @@ describe('Admin API CORS — route-level consistency (#435)', () => {
     'app/api/admin/class-sessions/route.ts',
     'app/api/admin/impersonate/route.ts',
     'app/api/admin/provider-config/route.ts',
+    // Owner staging test 2026-11-17: these kept a local list without admin-staging
+    'app/api/whatsapp/templates/route.ts',
+    'app/api/promotions/admin-list/route.ts',
+    'app/api/promotions/admin-action/route.ts',
+    'app/api/promotions/admin-detail/route.ts',
   ];
 
   for (const routePath of routesWithCors) {

@@ -1,20 +1,11 @@
 import { logger } from '@/lib/logger';
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { adminCorsHeaders } from '@/lib/admin-cors';
 import { createServiceClient } from '@/lib/supabase/service';
 
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+// Shared admin-origin allowlist (includes admin-staging; unknown origins get no valid header).
+const corsHeaders = (origin?: string | null) => adminCorsHeaders(origin, 'GET, OPTIONS');
 
 export async function OPTIONS(request: NextRequest) {
   const origin = request.headers.get('Origin');

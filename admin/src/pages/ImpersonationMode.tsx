@@ -3,6 +3,7 @@ import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
+import { isAllowedImpersonationUrl } from '@/lib/impersonationUrl';
 import { Search, LogOut, Pencil, Check, X, Building2, ExternalLink } from 'lucide-react';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
@@ -212,8 +213,9 @@ export default function ImpersonationMode() {
           return;
         }
 
-        if (data.url && (data.url.startsWith('https://waaiio.com') || data.url.startsWith('https://www.waaiio.com') || data.url.startsWith(window.location.origin))) {
-          window.open(data.url, '_blank');
+        if (isAllowedImpersonationUrl(data.url, window.location.origin)) {
+          const opened = window.open(data.url, '_blank');
+          if (!opened) alert('Your browser blocked the new tab. Allow pop-ups for this site, then click View Dashboard again.');
         } else {
           alert('Invalid redirect URL');
         }

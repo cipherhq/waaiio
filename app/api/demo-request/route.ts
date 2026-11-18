@@ -4,6 +4,7 @@ import { sendEmail } from '@/lib/email/client';
 import { wrap, btn, h, p } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { verifyTurnstileToken } from '@/lib/security/turnstile';
 
 const INDUSTRIES = ['Concierge', 'Hospitality', 'Travel', 'Entertainment', 'Events', 'Membership', 'Other'];
 const USE_CASES = ['own_business', 'reselling'];
@@ -62,6 +63,14 @@ export async function POST(request: NextRequest) {
     // Honeypot
     if (body.website) {
       return NextResponse.json({ success: true });
+    }
+
+    // Cloudflare Turnstile (enforced when configured, same as /api/contact)
+    if (process.env.TURNSTILE_SECRET_KEY) {
+      const turnstile = await verifyTurnstileToken(body.turnstileToken);
+      if (!turnstile.ok) {
+        return NextResponse.json({ error: turnstile.error }, { status: turnstile.status });
+      }
     }
 
     // Persist to Supabase

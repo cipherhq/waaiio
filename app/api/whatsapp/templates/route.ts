@@ -3,20 +3,11 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService, type CreateTemplateInput } from '@/lib/channels/meta-cloud';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { adminCorsHeaders } from '@/lib/admin-cors';
 import { logger } from '@/lib/logger';
 
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+// Shared admin-origin allowlist (includes admin-staging; unknown origins get no valid header).
+const corsHeaders = (origin?: string | null) => adminCorsHeaders(origin, 'GET, POST, DELETE, OPTIONS');
 
 export async function OPTIONS(request: NextRequest) {
   return NextResponse.json({}, { headers: corsHeaders(request.headers.get('origin')) });
