@@ -40,3 +40,19 @@ export function toggleSection<T extends CustomFlowDefinition>(definition: T, id:
   return { ...definition, guided: { ...definition.guided!, sections: definition.guided!.sections.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s) },
     nodes: definition.nodes.map(n => n.id === menu.id ? { ...menu, options: section.enabled ? menu.options.filter(o => o.next !== node.id) : [...menu.options, { label: section.label, next: node.id }] } : n) };
 }
+
+/**
+ * Renames one button (#1107). A guided section's button keeps its section
+ * label in step, so turning the section off and on again still works and
+ * the button comes back with the merchant's name.
+ */
+export function renameButton<T extends CustomFlowDefinition>(definition: T, menuId: string, index: number, label: string): T {
+  const menu = definition.nodes.find(n => n.id === menuId);
+  if (menu?.type !== 'menu' || !menu.options[index]) return definition;
+  const option = menu.options[index];
+  const guided = definition.guided;
+  const sections = guided && guided.menu_id === menuId
+    ? guided.sections.map(s => s.node_id === option.next && s.enabled && s.label === option.label && label.length <= 120 ? { ...s, label } : s) : null;
+  return { ...definition, ...(sections ? { guided: { ...guided!, sections } } : {}),
+    nodes: definition.nodes.map(n => n.id === menuId && n.type === 'menu' ? { ...n, options: n.options.map((o, i) => i === index ? { ...o, label } : o) } : n) };
+}

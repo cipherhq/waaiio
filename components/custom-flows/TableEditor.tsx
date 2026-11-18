@@ -9,7 +9,9 @@ const button='min-h-11 rounded-lg border border-gray-300 bg-white px-3 py-2 text
 const label='block space-y-1 text-sm font-medium text-gray-800 dark:text-gray-200';
 // Plain names for the existing column types (#1079); stored values are unchanged.
 const TYPE_NAMES:Record<ColumnType,string>={text:'Words',number:'Number',money:'Amount of money',date:'Date',time:'Time of day',yes_no:'Yes or no'};
-export function TableEditor({businessId,flowId,onDirty,onSaved}:{businessId:string;flowId:string;onDirty:(dirty:boolean)=>void;onSaved:()=>void}) {
+export function TableEditor({businessId,flowId,reloadKey=0,onDirty,onSaved}:{businessId:string;flowId:string;
+  /** Changes when entries were saved elsewhere, such as on a step (#1107): the lists are read again. */
+  reloadKey?:number;onDirty:(dirty:boolean)=>void;onSaved:()=>void}) {
   const [tables,setTables]=useState<DataTable[]>([]),[tableId,setTableId]=useState('');
   const [rows,setRows]=useState<DataRow[]>([]),[row,setRow]=useState<DataRow|null>(null);
   const [schema,setSchema]=useState<{id:string;name:string;columns:DataColumn[];updated_at?:string}|null>(null);
@@ -26,7 +28,7 @@ export function TableEditor({businessId,flowId,onDirty,onSaved}:{businessId:stri
       .catch(error=>{if(error.name!=='AbortError')setNotice('Unable to save changes. Try again.');})
       .finally(()=>{if(!controller.signal.aborted)setBusy(false);});
     return()=>controller.abort();
-  },[businessId,flowId,tableId,refresh]);
+  },[businessId,flowId,tableId,refresh,reloadKey]);
   function close(){setRow(null);setSchema(null);mark(false);}
   async function save(action:string){
     if(busy)return;

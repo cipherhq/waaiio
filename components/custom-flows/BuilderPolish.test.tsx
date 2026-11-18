@@ -68,27 +68,28 @@ describe('Editing one step at a time', () => {
     await openFlow();
     // The start step opens by default.
     expect(screen.getByRole('heading', { level: 4, name: 'Editing step 1 · Show buttons' })).toBeTruthy();
-    const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
+    const edit = screen.getByRole('button', { name: 'Edit 3. Say goodbye' });
     fireEvent.click(edit);
     expect(edit.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getAllByRole('heading', { level: 4, name: /^Editing step/ }).map(heading => heading.textContent)).toEqual(['Editing step 3 · Send a message']);
+    expect(screen.getAllByRole('heading', { level: 4, name: /^Editing step/ }).map(heading => heading.textContent)).toEqual(['Editing step 3 · Say goodbye']);
     expect(screen.getAllByRole('button', { name: 'Done' })).toHaveLength(1);
     // Brand outline and an Editing badge on that step only.
-    const card = stepCard('3. Send a message');
+    const card = stepCard('3. Say goodbye');
     expect(within(card).getByText('Editing')).toBeTruthy();
     expect(card.querySelector('.ring-brand')).toBeTruthy();
     expect(within(stepCard('1. Show buttons')).queryByText('Editing')).toBeNull();
     expect(stepCard('1. Show buttons').querySelector('.ring-brand')).toBeNull();
-    // Focus moves into the editor, on its first field.
+    // Focus moves into the editor, on its first field: the button that leads here (#1107).
     const editor = document.getElementById(edit.getAttribute('aria-controls')!)!;
     expect(editor.contains(document.activeElement)).toBe(true);
-    expect((document.activeElement as HTMLTextAreaElement).value).toBe('Goodbye for now');
+    expect((document.activeElement as HTMLInputElement).value).toBe('Say goodbye');
+    expect((within(editor).getByLabelText('Message') as HTMLTextAreaElement).value).toBe('Goodbye for now');
     // The step's "?" tip lives in the editing header.
-    expect(within(editor).getByRole('button', { name: 'More about Send a message' })).toBeTruthy();
+    expect(within(editor).getByRole('button', { name: 'More about Say goodbye' })).toBeTruthy();
     // The open editor is one named group.
     expect(editor.getAttribute('role')).toBe('group');
-    expect(screen.getByRole('group', { name: 'Editing step 3 · Send a message' })).toBe(editor);
+    expect(screen.getByRole('group', { name: 'Editing step 3 · Say goodbye' })).toBe(editor);
     fireEvent.click(within(editor).getByRole('button', { name: 'Done' }));
     expect(screen.queryByRole('heading', { level: 4, name: /^Editing step/ })).toBeNull();
     expect(edit.getAttribute('aria-expanded')).toBe('false');
@@ -137,7 +138,7 @@ describe('Live WhatsApp preview', () => {
     expect(within(live()).queryByRole('button')).toBeNull();
 
     // Edit: the edited step's message, as the customer sees it.
-    fireEvent.click(screen.getByRole('button', { name: 'Edit 3. Send a message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit 3. Say goodbye' }));
     expect(within(preview).getByText('Preview: step 3')).toBeTruthy();
     expect(within(live()).getByText('Goodbye for now')).toBeTruthy();
     expect(within(live()).queryByText('Welcome to the fest')).toBeNull();
@@ -203,7 +204,7 @@ describe('Nothing cut off', () => {
     expect(offenders()).toEqual([]);
     fireEvent.click(screen.getByRole('option', { name: `${LONG} flow` }));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    for (const name of ['Edit 2. Search Artists', 'Edit 3. Send a message', 'Edit 1. Show buttons']) {
+    for (const name of [`Edit 2. Search ${LONG}`, 'Edit 3. Say goodbye', 'Edit 1. Show buttons']) {
       fireEvent.click(screen.getByRole('button', { name }));
       expect(offenders()).toEqual([]);
     }

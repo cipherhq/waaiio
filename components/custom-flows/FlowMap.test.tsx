@@ -85,7 +85,7 @@ describe('Your flows list', () => {
 
   it('treats a click or Enter on the already-selected flow as a no-op', async () => {
     await openFlow('Lagos fest');
-    const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
+    const edit = screen.getByRole('button', { name: 'Edit 3. Say goodbye' });
     fireEvent.click(edit);
     fireEvent.change(screen.getByLabelText('Message', { selector: 'textarea' }), { target: { value: 'Changed' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -104,10 +104,10 @@ describe('Step map', () => {
     await openFlow('Lagos fest');
     const map = screen.getByRole('region', { name: 'Step map' });
     expect(within(map).getByText('Someone sends FEST')).toBeTruthy();
-    for (const heading of ['1. Show buttons', '2. Search Artists', '3. Send a message']) expect(within(map).getByRole('heading', { name: heading })).toBeTruthy();
+    for (const heading of ['1. Show buttons', '2. Search Artists', '3. Say goodbye']) expect(within(map).getByRole('heading', { name: heading })).toBeTruthy();
     const branches = within(map).getByRole('list', { name: 'Options for 1. Show buttons' });
     expect(within(branches).getAllByRole('listitem').map(item => item.textContent)).toEqual([
-      'Artists→goes to2. Search Artists', 'Say goodbye→goes to3. Send a message', 'Broken→goes toNot connected yet',
+      'Artists→goes to2. Search Artists', 'Say goodbye→goes to3. Say goodbye', 'Broken→goes toNot connected yet',
     ]);
     // Lookup without next returns to the start step at runtime; a message with next null ends.
     expect(within(map).getByText('Back to start')).toBeTruthy();
@@ -124,7 +124,7 @@ describe('Step map', () => {
   // ~5-6 s in jsdom under full-suite load (same pattern as the template-labels test). Assertions unchanged.
   it('opens a step editor in place when the step is clicked, without any request', async () => {
     await openFlow('Lagos fest');
-    const edit = screen.getByRole('button', { name: 'Edit 3. Send a message' });
+    const edit = screen.getByRole('button', { name: 'Edit 3. Say goodbye' });
     expect(edit.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByDisplayValue('Goodbye for now')).toBeNull();
     fireEvent.click(edit);
@@ -141,7 +141,7 @@ describe('Step map', () => {
 
   it('keeps open step editors after save, check, publish and reset of the same flow, and resets them for another flow', async () => {
     await openFlow('Lagos fest');
-    const editButton = () => screen.getByRole('button', { name: 'Edit 3. Send a message' });
+    const editButton = () => screen.getByRole('button', { name: 'Edit 3. Say goodbye' });
     fireEvent.click(editButton());
     // #1079 polish: one step is edited at a time, so opening step 3 closes the start step.
     expect(screen.getByRole('button', { name: 'Edit 1. Show buttons' }).getAttribute('aria-expanded')).toBe('false');
