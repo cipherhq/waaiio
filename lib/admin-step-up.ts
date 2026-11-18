@@ -48,7 +48,8 @@ export type StepUpAction =
   | 'payout_force_settle'
   | 'channel_change_execute'
   | 'passkey_approve'
-  | 'passkey_remove';
+  | 'passkey_remove'
+  | 'customer_suspension';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 

@@ -8,6 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { blocksMarketing } from '@/lib/customer-suspension';
 
 export const PARTY_INVITE_TEMPLATE = 'waaiio_party_invite_v1';
 
@@ -27,6 +28,8 @@ export async function coldInviteBlocked(db: SupabaseClient, businessId: string, 
   const digits = phone.replace(/\D/g, '');
   const variants = [digits, `+${digits}`];
   try {
+    // #1103: a platform-suspended customer gets no invite (fails closed).
+    if (await blocksMarketing(db, digits)) return true;
     const { count, error } = await db.from('messaging_opt_outs')
       .select('id', { count: 'exact', head: true }).in('phone', variants)
       .or(`business_id.eq.${sanitizeFilterValue(businessId)},business_id.is.null`)

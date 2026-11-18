@@ -72,6 +72,7 @@ import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
 import { parseDirectoryQuery } from '@/lib/marketplace/query-parser';
 import { loadBusinessOverrides, loadPlatformOverrides, runWithTranslationOverrides, createOverridesLoader } from '@/lib/bot/translations';
+import { gateSuspendedCustomer } from '@/lib/customer-suspension';
 import {
   sendDirectoryGreeting,
   sendReturningGreeting,
@@ -241,6 +242,12 @@ export class BotService {
     // bind it to the sender immediately so ALL sends check the hard-stop guard.
     if (preResolvedBusinessId && this.messageSender.bindBusiness) {
       this.messageSender.bindBusiness(preResolvedBusinessId);
+    }
+
+    // #1103: platform-wide customer suspension. The webhook gates first; this
+    // covers every other entry. Re-entries from this method already passed.
+    if (!_internalProvenance && await gateSuspendedCustomer(this.supabase, from, this.messageSender)) {
+      return;
     }
 
     if (maintResult.data?.value === true && !_preResolvedPendingStop) {

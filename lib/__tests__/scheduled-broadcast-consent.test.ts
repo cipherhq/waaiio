@@ -43,6 +43,7 @@ const m = vi.hoisted(() => ({
   due: [] as Array<Record<string, unknown>>,
   consents: {} as Record<string, { status: string; expires_at: string | null } | null>,
   optOutCount: 0, readError: null as unknown,
+  suspended: new Set<string>(), // #1103: platform-suspended numbers (digits)
   writes: [] as Array<{ table: string; kind: string; row: Record<string, unknown> }>,
   calls: [] as unknown[][], from: vi.fn(), rpc: vi.fn(), capability: vi.fn(), cronAuth: vi.fn(),
   text: vi.fn(), template: vi.fn(), category: vi.fn(),
@@ -81,18 +82,20 @@ beforeEach(() => {
   capture.reset(); network.state.attempts = 0; network.state.expected = 0; expectedMetaAttempts = 0;
   installMetaEgressDeny();
   vi.resetAllMocks(); m.user = { id: 'owner' }; m.owns = true; m.due = [];
-  m.consents = { [phone]: grant }; m.optOutCount = 0; m.readError = null; m.writes = []; m.calls = [];
+  m.consents = { [phone]: grant }; m.optOutCount = 0; m.suspended = new Set(); m.readError = null; m.writes = []; m.calls = [];
   m.capability.mockResolvedValue({ allowed: true }); m.cronAuth.mockReturnValue(null);
   m.text.mockImplementation(msg => capture.sendText(msg));
   m.template.mockImplementation(msg => capture.sendTemplate(msg));
   m.category.mockResolvedValue('marketing'); m.rpc.mockResolvedValue({ error: null });
   m.from.mockImplementation((table: string) => {
     let phones: string[] = [];
+    let eqPhone = '';
     let kind = 'read';
     const result = () => ({
       data: table === 'business_broadcasts' ? kind === 'insert' ? { id: 'scheduled1', scheduled_at: body().scheduled_at } : m.due
         : table === 'businesses' ? m.owns ? { id: 'biz', owner_id: 'owner', name: 'QA', subscription_tier: 'growth' } : null
-        : table === 'customer_consents' ? m.consents[(phones[0] || '').replace(/\D/g, '')] ?? null : null,
+        : table === 'customer_consents' ? m.consents[(phones[0] || '').replace(/\D/g, '')] ?? null
+        : table === 'customer_suspensions' ? m.suspended.has(eqPhone) ? { id: 'sus1' } : null : null,
       count: table === 'messaging_opt_outs' ? m.optOutCount : 0,
       error: ['customer_consents', 'messaging_opt_outs'].includes(table) ? m.readError : null,
     });
@@ -101,6 +104,7 @@ beforeEach(() => {
       query[method] = (...args: unknown[]) => {
         m.calls.push([table, method, ...args]);
         if (method === 'in' && args[0] === 'phone') phones = args[1] as string[];
+        if (method === 'eq' && args[0] === 'phone') eqPhone = args[1] as string;
         return query;
       };
     }
@@ -172,6 +176,19 @@ describe('scheduled broadcast dispatch', () => {
     expect(m.calls).toContainEqual(['messaging_opt_outs', 'or', 'business_id.eq.biz,business_id.is.null']);
     expect(m.text).not.toHaveBeenCalled(); expect(m.template).not.toHaveBeenCalled();
     expect(finalWrite()).toMatchObject({ status: 'failed', sent_at: null, sent_count: 0 });
+  });
+  // #1103: a customer suspended after scheduling is skipped at dispatch.
+  it('skips a platform-suspended number at dispatch and when scheduling', async () => {
+    expect((await schedule(request(body()))).status).toBe(200);
+    m.suspended.add(phone); enqueue();
+    await tick();
+    expect(m.calls).toContainEqual(['customer_suspensions', 'eq', 'phone', phone]);
+    expect(m.text).not.toHaveBeenCalled(); expect(m.template).not.toHaveBeenCalled();
+    expect(capture.getCapturedSends()).toEqual([]);
+    expect(finalWrite()).toMatchObject({ status: 'failed', sent_count: 0, error_message: 'No eligible recipients at dispatch time' });
+    m.writes = [];
+    expect((await schedule(request(body()))).status).toBe(403);
+    expect(m.writes).toHaveLength(0);
   });
   it('tags accepted campaign text with the paid marketing category (#1075) and records its acceptance', async () => {
     enqueue(); expect((await tick()).status).toBe(200);
