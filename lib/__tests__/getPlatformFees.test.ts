@@ -103,12 +103,59 @@ describe('getPlatformFees', () => {
     expect(result.feeTotal).toBe(200 + 150); // 10000 * 2% + 150
   });
 
-  it('rounds percentage fee to nearest integer', async () => {
+  it('rounds the fee to the cent/kobo, not to whole units (Owner 2026-11-18)', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
-    // 333 * 2.5% = 8.325 -> rounded to 8
-    const result = await getPlatformFees(333, 'free', false);
+    // Whole-unit rounding gave 9 and 3 here.
+    expect((await getPlatformFees(341.2, 'free', false)).feeTotal).toBe(8.53);
+    expect((await getPlatformFees(333.4, 'free', false)).feeTotal).toBe(8.34);
+    // Exact half-cent ties (333 * 2.5% = 8.325) follow the same float rounding as
+    // v1 calculateFee, so v0 and v1 never disagree; the difference is at most 1 cent.
+    expect((await getPlatformFees(333, 'free', false)).feeTotal).toBe(8.32);
+  });
 
-    expect(result.feeTotal).toBe(8);
+  it('charges $1.50 on $50 at 3% (was $2.00)', async () => {
+    mockLoadSettings.mockResolvedValue(makePricingTiers({ free: { feePercentage: 3 } }));
+
+    const result = await getPlatformFees(50, 'free', false);
+
+    expect(result.feeTotal).toBe(1.5);
+  });
+
+  it('keeps kobo precision on naira amounts', async () => {
+    mockLoadSettings.mockResolvedValue(makePricingTiers({ business: { feePercentage: 1, feeFlat: 0 } }));
+
+    // Staging rows that whole-unit rounding recorded as 14 / 278 / 20
+    expect((await getPlatformFees(1444, 'business', false)).feeTotal).toBe(14.44);
+    expect((await getPlatformFees(27777, 'business', false)).feeTotal).toBe(277.77);
+    expect((await getPlatformFees(2020, 'business', false)).feeTotal).toBe(20.2);
+    expect((await getPlatformFees(5000, 'business', false)).feeTotal).toBe(50);
+  });
+
+  it('matches v1 calculateFee for the same rate and amount', async () => {
+    const { calculateFee } = await import('@/lib/payments/calculateFee');
+    mockLoadSettings.mockResolvedValue(makePricingTiers({ free: { feePercentage: 3, feeFlat: 0 } }));
+    const snapshot = { pricing_tiers: { free: { feePercentage: 3, feeFlat: 0 } } } as unknown as Parameters<typeof calculateFee>[3];
+    const basis = { payment_routing: 'platform', tier: 'free', is_in_trial: false, custom_fee_percentage: null, custom_fee_flat: null } as Parameters<typeof calculateFee>[1];
+
+    for (const amount of [0.99, 1.01, 50, 99.99, 333, 1444, 27777, 123456.78]) {
+      const legacy = await getPlatformFees(amount, 'free', false);
+      expect(legacy.feeTotal).toBe(calculateFee(amount, basis, null, snapshot).feeTotal);
+    }
+  });
+
+  it('provider split amounts derived from the fee stay whole minor units', async () => {
+    mockLoadSettings.mockResolvedValue(makePricingTiers({ free: { feePercentage: 3 } }));
+
+    for (const amount of [50, 333, 1444.5, 27777, 0.99]) {
+      const { feeTotal } = await getPlatformFees(amount, 'free', false);
+      // Same expressions as paystack.ts (merchant + BYO split), charge-saved.ts, stripe.ts
+      const feeMinor = Math.round(feeTotal * 100);
+      const merchantKeepsMinor = Math.round((amount - feeTotal) * 100);
+      expect(Number.isInteger(feeMinor)).toBe(true);
+      expect(Number.isInteger(merchantKeepsMinor)).toBe(true);
+      expect(feeMinor + merchantKeepsMinor).toBe(Math.round(amount * 100));
+      expect(feeMinor / 100).toBe(feeTotal);
+    }
   });
 });

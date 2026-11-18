@@ -1,0 +1,11 @@
+## 2026-11-18 — Waaiio fee on legacy (v0) payments rounds to the cent/kobo
+
+- **Owner decision (2026-11-18):** round Waaiio's platform fee to the cent/kobo instead of whole units, for new payments only. Rates are unchanged and no historical rows are rewritten.
+- **Bug:** `lib/getPlatformFees.ts` used `Math.round(amount * pct / 100)` on major units, so the fee rounded to whole dollars/naira. On staging four $50 Stripe payments at 3% recorded $2.00 instead of $1.50; naira fees were off by under ₦1 (e.g. ₦1,444 → ₦14 instead of ₦14.44).
+- **Change:** `getPlatformFees` now rounds exactly like v1 `calculateFee` (two decimals). It feeds both `recordPlatformFee` versions (`lib/payments/process-success.ts` legacy path, `lib/bot/flows/shared/payment.ts`) and the v0 checkout splits (`charge-saved.ts` merchant split, `resolve-stripe-routing.ts` BYO/connect/subaccount fee), so the amount sent to Paystack/Stripe and the amount recorded stay the same. Provider amounts are still `Math.round(x * 100)` integers in minor units.
+- **Unchanged:** v1 `calculateFee`, rates, the trial rule (fee still charged), custody routing (`is_direct_transfer`), payouts formula, refunds, invoices, existing `platform_fees` rows.
+- **Tests:** `lib/__tests__/getPlatformFees.test.ts` ($50 at 3% → 1.50, kobo precision, parity with v1, split integers); `lib/__tests__/fee-round-to-cent-routes.test.ts` (both `recordPlatformFee` versions on the Waaiio-owned and merchant-connected routes, duplicate and error inserts, cross-business attribution, payout formula).
+- **Could break / not covered:**
+  - Exact half-cent ties follow the same floating-point rounding as v1 (at most 1 cent either way), e.g. 333 at 2.5% → 8.32.
+  - Not changed here (whole-unit rounding remains): `finalize_stripe_recurring_charge` (DB function, recorded fee) and the partial-refund fee reduction in `finalize_refund_accounting_modern` — both need a migration; legacy reseller commission (`process-success.ts:793`); the direct_split fee estimate in `app/api/payouts/balance/route.ts:134`; the unused deprecated `calculatePlatformFee` in `lib/constants.ts`.
+  - The monthly fee-invoice job writes fee sums into `integer` columns; fractional sums would fail that insert. The job is currently broken and on hold pending an Owner decision.

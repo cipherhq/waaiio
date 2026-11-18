@@ -30,7 +30,10 @@ export async function getPlatformFees(
   // Waive flat fee on micro-transactions to protect small merchants
   // If flat fee would be more than 10% of the transaction, skip it
   const effectiveFeeFlat = (feeFlat > 0 && amount > 0 && feeFlat / amount > 0.10) ? 0 : feeFlat;
-  const feeTotal = Math.round(amount * feePercentage / 100) + effectiveFeeFlat;
+  // Round to the cent/kobo, the same way as v1 calculateFee (Owner decision 2026-11-18).
+  // Whole-unit rounding charged $2.00 instead of $1.50 on $50 at 3%.
+  const pctComponent = Math.round(amount * feePercentage * 100) / 10000;
+  const feeTotal = Math.round((pctComponent + effectiveFeeFlat) * 100) / 100;
 
   return { feePercentage, feeFlat: effectiveFeeFlat, feeTotal };
 }
