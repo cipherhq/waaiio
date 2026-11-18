@@ -11,6 +11,8 @@
  * - no yo/ig item is left open in OWNER_REVIEW_ITEMS,
  * - each customer journey renders in yo/ig through the runtime resolver.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   getFlowCopy,
@@ -28,6 +30,8 @@ import { getEffectiveLanguages, detectLanguageDeterministic } from '@/lib/bot/la
 import { resolveEffectiveResponseLanguage } from '@/lib/bot/language-preference';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { formatBankTransferBlock, getBankOnlyButtons, getDualOptionButtons } from '../flows/shared/bank-transfer';
+import { matchBookForAnswer } from '../flows/shared/book-for-answer';
+import { schedulingFlow } from '../flows/scheduling.flow';
 
 const LANGS = ['yo', 'ig'] as const;
 
@@ -136,10 +140,12 @@ for (const lang of LANGS) {
       expect(t('payment.transfer_hint')).toContain(t('payment.ive_sent_transfer'));
       expect(t('payment.transfer_hint')).not.toContain("I've Sent");
     });
-    it('typed-word hints keep the English words the parser accepts', () => {
-      // scheduling.flow.ts book_for validate() accepts only myself / someone else (or the buttons).
-      expect(t('booking.book_for_hint')).toContain('*myself*');
-      expect(t('booking.book_for_hint')).toContain('*someone else*');
+    it('book-for hint only asks for words the parser accepts', () => {
+      // scheduling.flow.ts book_for validate() and bot.service step ownership both use matchBookForAnswer.
+      const words = [...t('booking.book_for_hint').matchAll(/\*([^*]+)\*/g)].map(m => m[1]);
+      expect(words).toHaveLength(2);
+      expect(matchBookForAnswer(words[0])).toBe('myself');
+      expect(matchBookForAnswer(words[1])).toBe('other');
     });
     it('recurring hints quote the localized buttons', () => {
       expect(t('recurring.cancel_hint')).toContain(`*${t('recurring.yes_cancel')}*`);
@@ -184,6 +190,43 @@ for (const lang of LANGS) {
     });
   });
 }
+
+describe('Owner native-speaker corrections (yo, 2026-11-18)', () => {
+  const yo = (k: string) => getFlowCopy('yo', k);
+  it('pins the four corrected Yoruba lines', () => {
+    expect(yo('payment.received_processing')).toBe(
+      '✅ A ti rí owó tí o san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ.\n\nO óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* lẹ́ẹ̀kan sí.'.normalize('NFC'),
+    );
+    expect(yo('ordering.order_received')).toBe('*A Ti Gba Ọjà Tí O Rà!*'.normalize('NFC'));
+    expect(yo('notification.catalog_order_received')).toBe('*A Ti Gba Ọjà Tí O Rà!*'.normalize('NFC'));
+    expect(yo('greeting.welcome_default')).toBe('Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí?'.normalize('NFC'));
+    expect(yo('booking.book_for_hint')).toBe('Tẹ *fún ara mi* tàbí *ẹlòmíràn*, tàbí tẹ bọ́tìnì.'.normalize('NFC'));
+  });
+});
+
+describe('book_for_other accepts Yoruba typed answers', () => {
+  it.each([
+    ['fún ara mi', false], ['fun ara mi', false], ['Fún Ara Mi', false], ['  fun  ara mi ', false],
+    ['ẹlòmíràn', true], ['elomiran', true], ['ELOMIRAN', true], ['Fún ẹlòmíràn', true], ['fun elomiran', true],
+    ['fún ara mi'.normalize('NFD'), false], ['ẹlòmíràn'.normalize('NFD'), true],
+    ['myself', false], ['me', false], ['someone else', true], ['other', true], ['for_myself', false], ['for_other', true],
+  ])('%j → book_for_other=%s', async (input, expected) => {
+    const bfo = schedulingFlow.steps.find((s: { id: string }) => s.id === 'book_for_other')!;
+    const result = await bfo.validate(input, { copyLang: 'yo' } as any);
+    expect(result.valid).toBe(true);
+    expect(result.data?.book_for_other).toBe(expected);
+  });
+  it.each(['ara', 'mi', 'elomi', 'fun', 'someone'])('rejects %j with the localized hint', async input => {
+    const bfo = schedulingFlow.steps.find((s: { id: string }) => s.id === 'book_for_other')!;
+    const result = await bfo.validate(input, { copyLang: 'yo' } as any);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBe(getFlowCopy('yo', 'booking.book_for_hint'));
+  });
+  it('bot.service lets the step own the Yoruba answers (no keyword routing)', () => {
+    const src = readFileSync(resolve(process.cwd(), 'lib/bot/bot.service.ts'), 'utf8');
+    expect(src).toMatch(/step === 'book_for_other' && matchBookForAnswer\(text\) !== null/);
+  });
+});
 
 describe('yo/ig: language detection and response authority', () => {
   it.each([
