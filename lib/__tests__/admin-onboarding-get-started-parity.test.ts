@@ -157,6 +157,14 @@ describe('admin onboarding saves every selected capability, like Get Started', (
     expect(businessInserts[0].metadata).toMatchObject({ intended_plan: 'free', requested_capabilities: ['ordering', 'broadcast', 'reports'] });
   });
 
+  it('saves a repeated capability id once', async () => {
+    const { service, capabilityUpserts } = fakeService();
+    m.service.mockReturnValue(service);
+    const response = await createOnboarding(createRequest({ ...input, capabilities: ['ordering', 'broadcast', 'ordering'] }));
+    expect(response.status).toBe(201);
+    expect(capabilityUpserts[0].map(row => row.capability)).toEqual(['ordering', 'broadcast']);
+  });
+
   it('still rejects an unknown capability id', async () => {
     const { service } = fakeService();
     m.service.mockReturnValue(service);

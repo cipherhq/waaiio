@@ -411,7 +411,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const intendedPlan = String(body.intended_plan || '') as SubscriptionTier;
     if (!['free', 'growth', 'business'].includes(intendedPlan)) return NextResponse.json({ error: 'Invalid intended plan' }, { status: 400 });
     // Capabilities are kept whatever the plan: like Get Started, higher-plan
-    // ones run under the 14-day Pro/Premium trial and are gated at runtime.
+    // ones run under the 14-day Pro/Premium trial (see provisionAdminBusiness).
     const stored = (onboarding.metadata as { input?: AdminOnboardingInput } | null)?.input;
     const metadata = { ...(onboarding.metadata || {}), input: { ...stored, intended_plan: intendedPlan } };
     const { error: updateError } = await service.from('admin_onboarding_invites').update({ intended_plan: intendedPlan, metadata })

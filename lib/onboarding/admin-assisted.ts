@@ -47,7 +47,8 @@ export async function validateAdminOnboardingInput(service: SupabaseClient, raw:
     business_phone: required(raw.business_phone, 'Business phone'),
     bot_code: String(raw.bot_code || '').trim() || undefined,
     intended_plan: raw.intended_plan || 'free',
-    capabilities: Array.isArray(raw.capabilities) ? raw.capabilities : [],
+    // De-duplicated: one capability row each (a repeated id would fail the upsert).
+    capabilities: Array.isArray(raw.capabilities) ? [...new Set(raw.capabilities)] : [],
     whatsapp_method: raw.whatsapp_method || 'shared',
   };
 
@@ -65,7 +66,10 @@ export async function provisionAdminBusiness(service: SupabaseClient, input: Adm
   // Admin plan selection is intent, never entitlement: the business is created
   // on Free exactly like Get Started. Every selected capability is saved, as
   // Get Started does; higher-plan ones run under the 14-day Pro/Premium trial
-  // (feature_trial_ends_at, set at insert) and are gated by the capability policy.
+  // (feature_trial_ends_at, set at insert); access is decided by
+  // getEffectiveCapabilities in lib/capabilities/policy.ts (dashboard, bot menu,
+  // API guards, bot pre-creation checks). Some older paths still read the raw
+  // rows, as they already do for Get Started businesses.
   // An empty selection falls back to the category defaults.
   const provisionedCapabilities = input.capabilities.length ? input.capabilities : undefined;
   const business = await provisionPendingBusiness(service, {
