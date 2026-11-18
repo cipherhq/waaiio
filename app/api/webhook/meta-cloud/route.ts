@@ -14,6 +14,7 @@ import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
 import { logger, generateRequestId } from '@/lib/logger';
 import { reportFailure } from '@/lib/observability/report-failure';
+import { gateSuspendedCustomer } from '@/lib/customer-suspension';
 import { transcribeAudio } from '@/lib/bot/transcription';
 import { checkAIFeature, incrementAIUsage, getVoiceNotSupportedMessage } from '@/lib/bot/ai-tier-guard';
 import { createWhatsAppUser } from '@/lib/bot/flows/shared/user';
@@ -602,6 +603,12 @@ export async function POST(request: NextRequest) {
 
             const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
+            // #1103: a suspended customer starts nothing at any business — no flow,
+            // form, catalog order or payment. One neutral reply per 24 hours.
+            if (await gateSuspendedCustomer(supabase, source, guardedSender)) {
+              await supabase.rpc('complete_webhook_event', { p_event_id: eventId, p_claim_token: claimToken });
+              continue;
+            }
             // Native persistence is retriable BEFORE the ordinary dispatch barrier.
             // Its handler owns a fresh tenant-bound sender, not guardedSender.
             if (isNativeFormMessage(msg)) {

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { blocksMarketing } from '@/lib/customer-suspension';
 
 export const RECIPIENT_POLICY = 'Cold messaging is not allowed. Only contact people who have opted in to this business for this type of message. A previous purchase alone is not consent.';
 
@@ -11,6 +12,8 @@ export async function hasRecipientPermission(
   if (!businessId || !/^[1-9]\d{6,14}$/.test(digits)) return false;
   const variants = [digits, `+${digits}`];
   try {
+    // #1103: marketing skips a platform-suspended customer (fails closed).
+    if (purpose === 'marketing' && await blocksMarketing(db, digits)) return false;
     const { count, error: blockedError } = await db.from('messaging_opt_outs')
       .select('id', { count: 'exact', head: true }).in('phone', variants)
       .or(`business_id.eq.${businessId},business_id.is.null`)
