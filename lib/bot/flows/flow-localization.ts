@@ -2178,7 +2178,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'greeting.away': "A kò sí lẹ́nu iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo nǹkan, ṣe ìforúkọsílẹ̀, kí o sì pàṣẹ! 🕐",
     'greeting.chat_with_us': 'Bá Wa Sọ̀rọ̀',
     'greeting.powered_by': "_Láti ọwọ́ Waaiio_",
-    'greeting.welcome_default': "Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí?",
+    'greeting.welcome_default': "Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí?",
     'greeting.cancel_hint': "_Tẹ *cancel* nígbàkúgbà láti jáde._",
     'greeting.welcome_back': "Ẹ káàbọ̀ padà! 👋",
     'greeting.welcome_back_named': "Ẹ káàbọ̀ padà, {name}! 👋",

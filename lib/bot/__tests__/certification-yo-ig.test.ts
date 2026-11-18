@@ -199,7 +199,7 @@ describe('Owner native-speaker corrections (yo, 2026-11-18)', () => {
     );
     expect(yo('ordering.order_received')).toBe('*A Ti Gba Ọjà Tí O Rà!*'.normalize('NFC'));
     expect(yo('notification.catalog_order_received')).toBe('*A Ti Gba Ọjà Tí O Rà!*'.normalize('NFC'));
-    expect(yo('greeting.welcome_default')).toBe('Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí?'.normalize('NFC'));
+    expect(yo('greeting.welcome_default')).toBe('Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí?'.normalize('NFC'));
     expect(yo('booking.book_for_hint')).toBe('Tẹ *fún ara mi* tàbí *ẹlòmíràn*, tàbí tẹ bọ́tìnì.'.normalize('NFC'));
   });
 });
@@ -207,6 +207,10 @@ describe('Owner native-speaker corrections (yo, 2026-11-18)', () => {
 describe('Owner Yoruba word choices (2026-11-18, second round)', () => {
   const yo = (k: string) => getFlowCopy('yo', k);
   const yoValues = Object.entries(COPY.yo);
+  it('uses "ràn yín" (never ẹ́/ọ́) whenever the bot offers to help the customer', () => {
+    const offenders = yoValues.filter(([, v]) => /ràn (ẹ́|ọ́) lọ́wọ́/.test(v.normalize('NFC'))).map(([k]) => k);
+    expect(offenders).toEqual([]);
+  });
   it('pins the two "help" lines', () => {
     expect(yo('menu.how_can_help')).toBe('Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí?'.normalize('NFC'));
     expect(yo('feedback.anything_else')).toBe('Nǹkan mìíràn tún wà tí mo lè ràn yín lọ́wọ́ sí?'.normalize('NFC'));

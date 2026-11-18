@@ -34,7 +34,7 @@ Buttons, menu labels and the payment confirmation the customer sees most. Button
 | `ordering.order_received` | *Order Received!* | *A Ti Gba Ọjà Tí O Rà!* _(Owner)_ | *Anatala Iwu!* |
 | `ordering.delivery` | 🚚 Delivery | 🚚 Ìfijíṣẹ́ | 🚚 Nnyefe |
 | `ordering.pickup` | 🏪 Pickup | 🏪 Màá Wá Gbà | 🏪 Bịa Were Ya |
-| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí? _(Owner)_ | Nnọọ! Kedu ka m ga-esi nyere gị aka taa? |
+| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? _(Owner)_ | Nnọọ! Kedu ka m ga-esi nyere gị aka taa? |
 | `menu.title` | Menu | Àkójọ | Nhọrọ |
 | `recurring.weekly` | Weekly | Ní ọ̀sọ̀ọ̀sẹ̀ | Kwa izu |
 | `booking.book_for_hint` | Type *myself* or *someone else*, or tap a button. | Tẹ *fún ara mi* tàbí *ẹlòmíràn*, tàbí tẹ bọ́tìnì. _(Owner)_ | Pịnye *myself* ma ọ bụ *someone else*, ma ọ bụ pịa bọtịnụ. _(fixed: the bot only accepts the English typed words)_ |
@@ -58,7 +58,7 @@ Applied as the Owner wrote them, with standard tone marks added:
 |---|---|---|
 | `payment.received_processing` | Payment received! Your booking is being processed… tap *I've Paid* again | A ti rí owó tí o san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ… tẹ *Mo Ti San* lẹ́ẹ̀kan sí |
 | `ordering.order_received`, `notification.catalog_order_received` | Order Received! | A Ti Gba Ọjà Tí O Rà! |
-| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí? |
+| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? |
 | `booking.book_for_hint` | Type *myself* or *someone else*, or tap a button | Tẹ *fún ara mi* tàbí *ẹlòmíràn*, tàbí tẹ bọ́tìnì |
 
 The bot now accepts *fún ara mi* / *fun ara mi* and *ẹlòmíràn* / *elomiran* (with or without tone marks) on the "who is this booking for?" step. English *myself* / *someone else* still work.
@@ -75,6 +75,9 @@ The Owner also set:
 |---|---|---|
 | `menu.how_can_help` | How can I help you today? | Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? |
 | `feedback.anything_else` | Anything else I can help with? | Nǹkan mìíràn tún wà tí mo lè ràn yín lọ́wọ́ sí? |
+| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? |
+
+Owner: "yín everywhere" — every place the bot offers to help the customer uses "ràn yín lọ́wọ́".
 
 | Key | English | Yoruba (booking word switched) |
 |---|---|---|
@@ -345,7 +348,7 @@ The Owner also set:
 | `lang.unavailable` | {langName} is no longer available for this business. | {langName} kò sí fún iṣòwò yìí mọ́. _(new)_ | {langName} adịghịzi maka azụmaahịa a. _(new)_ |
 | `greeting.away` | We're currently outside business hours, but you can still browse, book, and order! 🕐 | A kò sí lẹ́nu iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo nǹkan, ṣe ìforúkọsílẹ̀, kí o sì pàṣẹ! 🕐 _(fixed)_ | Anyị nọghị n'ọrụ ugbu a, mana ị nwere ike ịchọ, ideba aha, ma ọ bụ iwere iwu! 🕐 _(unchanged)_ |
 | `greeting.powered_by` | _Powered by Waaiio_ | _Láti ọwọ́ Waaiio_ _(fixed)_ | _Nke Waaiio emepụtara_ _(unchanged)_ |
-| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí? _(Owner)_ | Nnọọ! Kedu ka m ga-esi nyere gị aka taa? _(new)_ |
+| `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? _(Owner)_ | Nnọọ! Kedu ka m ga-esi nyere gị aka taa? _(new)_ |
 | `greeting.cancel_hint` | _Type *cancel* anytime to exit._ | _Tẹ *cancel* nígbàkúgbà láti jáde._ _(new)_ | _Pịnye *cancel* oge ọbụla ịhapụ._ _(new)_ |
 | `greeting.welcome_back` | Welcome back! 👋 | Ẹ káàbọ̀ padà! 👋 _(new)_ | Nnọọ ọzọ! 👋 _(new)_ |
 | `greeting.welcome_back_named` | Welcome back, {name}! 👋 | Ẹ káàbọ̀ padà, {name}! 👋 _(new)_ | Nnọọ ọzọ, {name}! 👋 _(new)_ |
