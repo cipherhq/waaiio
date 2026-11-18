@@ -7,6 +7,8 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface EventOption {
   id: string;
@@ -218,6 +220,15 @@ export default function InvitesPage() {
     }
     setSendingReminder(false);
   }
+
+  const { sorted: sortedInvites, sortProps } = useTableSort(invites, {
+    guest: i => i.guest_name,
+    phone: i => i.guest_phone,
+    status: i => i.status,
+    plusOnes: i => (i.status === 'accepted' ? i.plus_ones : null),
+    dietary: i => i.dietary_notes,
+    responded: i => sortTime(i.responded_at),
+  });
 
   if (loading) {
     return (
@@ -441,16 +452,16 @@ export default function InvitesPage() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
-                <th scope="col" className="pb-3 pr-4">Guest</th>
-                <th scope="col" className="pb-3 pr-4">Phone</th>
-                <th scope="col" className="pb-3 pr-4">Status</th>
-                <th scope="col" className="pb-3 pr-4">Plus-ones</th>
-                <th scope="col" className="pb-3 pr-4">Dietary</th>
-                <th scope="col" className="pb-3">Responded</th>
+                <SortableTh {...sortProps('guest')} scope="col" className="pb-3 pr-4">Guest</SortableTh>
+                <SortableTh {...sortProps('phone')} scope="col" className="pb-3 pr-4">Phone</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="pb-3 pr-4">Status</SortableTh>
+                <SortableTh {...sortProps('plusOnes')} scope="col" className="pb-3 pr-4">Plus-ones</SortableTh>
+                <SortableTh {...sortProps('dietary')} scope="col" className="pb-3 pr-4">Dietary</SortableTh>
+                <SortableTh {...sortProps('responded')} scope="col" className="pb-3">Responded</SortableTh>
               </tr>
             </thead>
             <tbody>
-              {invites.map(invite => {
+              {sortedInvites.map(invite => {
                 const statusColors: Record<string, string> = {
                   accepted: 'bg-green-100 text-green-700',
                   maybe: 'bg-amber-100 text-amber-700',

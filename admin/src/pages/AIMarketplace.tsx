@@ -3,6 +3,8 @@ import { adminDb } from '@/lib/supabase';
 import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { fmtDateTime } from '@/lib/formatters';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 // ── Types ──────────────────────────────────────────────
 
@@ -320,13 +322,37 @@ export default function AIMarketplace() {
 
   // ── Pagination ───────────────────────────────────────
 
-  const classPaginated = classifications.slice((classPage - 1) * perPage, classPage * perPage);
+  const classSort = useTableSort(classifications, {
+    business: r => r.business_name,
+    intent: r => r.intent,
+    confidence: r => r.confidence,
+    source: r => r.source,
+    action: r => r.action,
+    time: r => sortTime(r.created_at),
+  }, { onSortChange: () => setClassPage(1) });
+  const classPaginated = classSort.sorted.slice((classPage - 1) * perPage, classPage * perPage);
   const classTotalPages = Math.ceil(classifications.length / perPage);
 
-  const reviewPaginated = reviewItems.slice((reviewPage - 1) * perPage, reviewPage * perPage);
+  const reviewSort = useTableSort(reviewItems, {
+    id: r => r.id,
+    intent: r => r.intent,
+    confidence: r => r.confidence,
+    business: r => r.business_name,
+    time: r => sortTime(r.created_at),
+  }, { onSortChange: () => setReviewPage(1) });
+  const reviewPaginated = reviewSort.sorted.slice((reviewPage - 1) * perPage, reviewPage * perPage);
   const reviewTotalPages = Math.ceil(reviewItems.length / perPage);
 
-  const marketPaginated = filteredBusinesses.slice((marketPage - 1) * perPage, marketPage * perPage);
+  const marketSort = useTableSort(filteredBusinesses, {
+    business: b => b.name,
+    category: b => b.category.replace(/_/g, ' '),
+    city: b => b.city,
+    verified: b => (b.is_verified ? 'Verified' : b.latitude != null && b.longitude != null ? 'Has coords' : 'No'),
+    completeness: b => calculateCompleteness(b),
+    discovery: b => (b.discovery_enabled ? 'On' : 'Off'),
+    band: b => b.price_band,
+  }, { onSortChange: () => setMarketPage(1) });
+  const marketPaginated = marketSort.sorted.slice((marketPage - 1) * perPage, marketPage * perPage);
   const marketTotalPages = Math.ceil(filteredBusinesses.length / perPage);
 
   // ── Render ───────────────────────────────────────────
@@ -419,12 +445,12 @@ export default function AIMarketplace() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Intent</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Confidence</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Source</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Action</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Time</th>
+                  <SortableTh {...classSort.sortProps('business')} className="px-4 py-3 text-xs font-semibold text-gray-500">Business</SortableTh>
+                  <SortableTh {...classSort.sortProps('intent')} className="px-4 py-3 text-xs font-semibold text-gray-500">Intent</SortableTh>
+                  <SortableTh {...classSort.sortProps('confidence')} className="px-4 py-3 text-xs font-semibold text-gray-500">Confidence</SortableTh>
+                  <SortableTh {...classSort.sortProps('source')} className="px-4 py-3 text-xs font-semibold text-gray-500">Source</SortableTh>
+                  <SortableTh {...classSort.sortProps('action')} className="px-4 py-3 text-xs font-semibold text-gray-500">Action</SortableTh>
+                  <SortableTh {...classSort.sortProps('time')} className="px-4 py-3 text-xs font-semibold text-gray-500">Time</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -474,11 +500,11 @@ export default function AIMarketplace() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Record ID</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Intent</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Confidence</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Time</th>
+                  <SortableTh {...reviewSort.sortProps('id')} className="px-4 py-3 text-xs font-semibold text-gray-500">Record ID</SortableTh>
+                  <SortableTh {...reviewSort.sortProps('intent')} className="px-4 py-3 text-xs font-semibold text-gray-500">Intent</SortableTh>
+                  <SortableTh {...reviewSort.sortProps('confidence')} className="px-4 py-3 text-xs font-semibold text-gray-500">Confidence</SortableTh>
+                  <SortableTh {...reviewSort.sortProps('business')} className="px-4 py-3 text-xs font-semibold text-gray-500">Business</SortableTh>
+                  <SortableTh {...reviewSort.sortProps('time')} className="px-4 py-3 text-xs font-semibold text-gray-500">Time</SortableTh>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
                 </tr>
               </thead>
@@ -577,13 +603,13 @@ export default function AIMarketplace() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Category</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">City</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Verified</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Completeness</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Discovery</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Price Band</th>
+                  <SortableTh {...marketSort.sortProps('business')} className="px-4 py-3 text-xs font-semibold text-gray-500">Business</SortableTh>
+                  <SortableTh {...marketSort.sortProps('category')} className="px-4 py-3 text-xs font-semibold text-gray-500">Category</SortableTh>
+                  <SortableTh {...marketSort.sortProps('city')} className="px-4 py-3 text-xs font-semibold text-gray-500">City</SortableTh>
+                  <SortableTh {...marketSort.sortProps('verified')} className="px-4 py-3 text-xs font-semibold text-gray-500">Verified</SortableTh>
+                  <SortableTh {...marketSort.sortProps('completeness')} className="px-4 py-3 text-xs font-semibold text-gray-500">Completeness</SortableTh>
+                  <SortableTh {...marketSort.sortProps('discovery')} className="px-4 py-3 text-xs font-semibold text-gray-500">Discovery</SortableTh>
+                  <SortableTh {...marketSort.sortProps('band')} className="px-4 py-3 text-xs font-semibold text-gray-500">Price Band</SortableTh>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
                 </tr>
               </thead>

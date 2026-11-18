@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface AuditEntry {
   id: string;
@@ -57,7 +59,13 @@ export default function AuditLog() {
     : entries.filter(e => e.action === actionFilter);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    time: e => sortTime(e.created_at),
+    admin: e => e.actor_email,
+    action: e => e.action,
+    entity: e => e.entity_type,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -92,10 +100,10 @@ export default function AuditLog() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Timestamp</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Admin</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Action</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Entity</th>
+                <SortableTh {...sortProps('time')} className="px-4 py-3 text-left font-medium text-gray-500">Timestamp</SortableTh>
+                <SortableTh {...sortProps('admin')} className="px-4 py-3 text-left font-medium text-gray-500">Admin</SortableTh>
+                <SortableTh {...sortProps('action')} className="px-4 py-3 text-left font-medium text-gray-500">Action</SortableTh>
+                <SortableTh {...sortProps('entity')} className="px-4 py-3 text-left font-medium text-gray-500">Entity</SortableTh>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Details</th>
               </tr>
             </thead>

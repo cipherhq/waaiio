@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { SummaryCard } from '@/components/SummaryCard';
 import { StatusBadge } from '@/components/StatusBadge';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import { Pagination } from '@/components/Pagination';
 import {
   FileText,
@@ -141,7 +143,13 @@ export default function WhatsAppTemplates() {
     )
     : templates;
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const items = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    name: t => t.name,
+    category: t => t.category,
+    language: t => t.language,
+    status: t => t.status,
+  }, { onSortChange: () => setPage(1) });
+  const items = sorted.slice((page - 1) * perPage, page * perPage);
 
   async function handleCreate() {
     if (!form.name || !form.bodyText) {
@@ -309,10 +317,10 @@ export default function WhatsAppTemplates() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Category</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Language</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+              <SortableTh {...sortProps('name')} className="text-left px-4 py-3 font-medium text-gray-600">Name</SortableTh>
+              <SortableTh {...sortProps('category')} className="text-left px-4 py-3 font-medium text-gray-600">Category</SortableTh>
+              <SortableTh {...sortProps('language')} className="text-left px-4 py-3 font-medium text-gray-600">Language</SortableTh>
+              <SortableTh {...sortProps('status')} className="text-left px-4 py-3 font-medium text-gray-600">Status</SortableTh>
               <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
             </tr>
           </thead>

@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 import {
   formatCurrency, formatPayoutLimit, getVerificationTiers, getDocTypesForCountry,
   type CountryCode, type VerificationLevel,
@@ -125,6 +127,13 @@ export default function VerificationPage() {
   }
 
   const pendingRequest = requests.find(r => r.status === 'pending');
+
+  const { sorted: sortedDocs, sortProps } = useTableSort(docs, {
+    document: (d: BusinessDoc) => docTypes.find(t => t.key === d.type)?.label || d.type.replace(/_/g, ' '),
+    file: (d: BusinessDoc) => d.file_name || 'View',
+    status: (d: BusinessDoc) => d.status,
+    uploaded: (d: BusinessDoc) => sortTime(d.uploaded_at),
+  });
 
   if (loading) {
     return (
@@ -288,14 +297,14 @@ export default function VerificationPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-50 bg-gray-50/50">
                 <tr>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Document</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">File</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Uploaded</th>
+                  <SortableTh {...sortProps('document')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Document</SortableTh>
+                  <SortableTh {...sortProps('file')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">File</SortableTh>
+                  <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                  <SortableTh {...sortProps('uploaded')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Uploaded</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {docs.map(doc => (
+                {sortedDocs.map(doc => (
                   <tr key={doc.id}>
                     <td className="px-4 py-3 font-medium text-gray-900">
                       {docTypes.find(t => t.key === doc.type)?.label || doc.type.replace(/_/g, ' ')}

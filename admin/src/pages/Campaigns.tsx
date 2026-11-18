@@ -3,6 +3,8 @@ import { adminDb } from '@/lib/supabase';
 import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -133,7 +135,16 @@ export default function Campaigns() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    title: c => c.title,
+    business: c => c.business_name,
+    goal: c => c.goal_amount,
+    raised: c => c.raised_amount,
+    backers: c => c.donor_count ?? 0,
+    status: c => c.status,
+    endDate: c => sortTime(c.end_date),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   function getProgress(campaign: Campaign): number {
     if (!campaign.goal_amount || campaign.goal_amount <= 0) return 0;
@@ -193,13 +204,13 @@ export default function Campaigns() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Title</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Goal</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Raised</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Backers</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">End Date</th>
+                <SortableTh {...sortProps('title')} className="px-4 py-3 text-left font-medium text-gray-500">Title</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('goal')} className="px-4 py-3 text-right font-medium text-gray-500">Goal</SortableTh>
+                <SortableTh {...sortProps('raised')} className="px-4 py-3 text-right font-medium text-gray-500">Raised</SortableTh>
+                <SortableTh {...sortProps('backers')} className="px-4 py-3 text-right font-medium text-gray-500">Backers</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('endDate')} className="px-4 py-3 text-left font-medium text-gray-500">End Date</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

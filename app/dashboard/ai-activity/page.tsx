@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface ClassificationEntry {
   id: string;
@@ -47,6 +49,14 @@ export default function AIActivityPage() {
   const [avgConfidence, setAvgConfidence] = useState(0);
   const [llmRate, setLlmRate] = useState(0);
   const [unknownRate, setUnknownRate] = useState(0);
+
+  const { sorted: sortedEntries, sortProps } = useTableSort(entries, {
+    intent: e => e.intent || 'unknown',
+    confidence: e => e.confidence,
+    source: e => e.source || 'deterministic',
+    action: e => e.flow_entered || e.recommended_action,
+    time: e => sortTime(e.created_at),
+  });
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -170,15 +180,15 @@ export default function AIActivityPage() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Intent</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Confidence</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Source</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Action</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Time</th>
+                  <SortableTh {...sortProps('intent')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Intent</SortableTh>
+                  <SortableTh {...sortProps('confidence')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Confidence</SortableTh>
+                  <SortableTh {...sortProps('source')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Source</SortableTh>
+                  <SortableTh {...sortProps('action')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Action</SortableTh>
+                  <SortableTh {...sortProps('time')} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Time</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">
-                {entries.map(entry => (
+                {sortedEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                     <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
                       {entry.intent || 'unknown'}

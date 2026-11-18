@@ -4,6 +4,8 @@ import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDateTime, fmtRelative } from '@/lib/formatters';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface ImpersonationLog {
   id: string;
@@ -114,7 +116,15 @@ export default function ImpersonationAudit() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    timestamp: log => sortTime(log.created_at),
+    admin: log => log.admin_email,
+    business: log => log.business_name,
+    action: log => log.action,
+    changes: log => summarizeChanges(log),
+    ip: log => log.ip_address,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -190,12 +200,12 @@ export default function ImpersonationAudit() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Timestamp</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Admin Email</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Action</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Changes</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">IP</th>
+                <SortableTh {...sortProps('timestamp')} className="px-4 py-3 text-left font-medium text-gray-500">Timestamp</SortableTh>
+                <SortableTh {...sortProps('admin')} className="px-4 py-3 text-left font-medium text-gray-500">Admin Email</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('action')} className="px-4 py-3 text-left font-medium text-gray-500">Action</SortableTh>
+                <SortableTh {...sortProps('changes')} className="px-4 py-3 text-left font-medium text-gray-500">Changes</SortableTh>
+                <SortableTh {...sortProps('ip')} className="px-4 py-3 text-left font-medium text-gray-500">IP</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

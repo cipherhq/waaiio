@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -162,7 +164,16 @@ export default function Bookings() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    id: b => b.id,
+    business: b => b.business_name,
+    customer: b => b.guest_name,
+    service: b => b.service_name,
+    date: b => sortTime(b.date || b.created_at),
+    status: b => b.status,
+    amount: b => (b.total_amount != null ? Number(b.total_amount) : null),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -230,13 +241,13 @@ export default function Bookings() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">ID</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                <SortableTh {...sortProps('id')} className="px-4 py-3 text-left font-medium text-gray-500">ID</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('customer')} className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                <SortableTh {...sortProps('service')} className="px-4 py-3 text-left font-medium text-gray-500">Service</SortableTh>
+                <SortableTh {...sortProps('date')} className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

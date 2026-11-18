@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -161,7 +163,16 @@ export default function CategoryTemplates() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    label: t => t.label,
+    key: t => t.key,
+    group: t => ((t as Record<string, unknown>).category_group as string) || 'Other',
+    flow: t => t.flow_type,
+    services: t => (Array.isArray(t.default_services) ? t.default_services.length : 0),
+    status: t => (t.is_active ? 'active' : 'inactive'),
+    created: t => sortTime(t.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Stats
   const totalTemplates = templates.length;
@@ -440,13 +451,13 @@ export default function CategoryTemplates() {
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Icon</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Label</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Key</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Group</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Flow Type</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Services</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                <SortableTh {...sortProps('label')} className="px-4 py-3 text-left font-medium text-gray-500">Label</SortableTh>
+                <SortableTh {...sortProps('key')} className="px-4 py-3 text-left font-medium text-gray-500">Key</SortableTh>
+                <SortableTh {...sortProps('group')} className="px-4 py-3 text-left font-medium text-gray-500">Group</SortableTh>
+                <SortableTh {...sortProps('flow')} className="px-4 py-3 text-left font-medium text-gray-500">Flow Type</SortableTh>
+                <SortableTh {...sortProps('services')} className="px-4 py-3 text-right font-medium text-gray-500">Services</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
               </tr>
             </thead>

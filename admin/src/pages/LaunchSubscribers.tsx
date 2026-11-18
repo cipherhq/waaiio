@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { adminApiFetch, adminApiGet } from '@/lib/adminApi';
 import { downloadCSV } from '@/lib/csv';
 import { Rocket, Download, Users, Globe, QrCode, TrendingUp, Send, RefreshCw } from 'lucide-react';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface Subscriber {
   id: string;
@@ -117,6 +119,16 @@ export default function LaunchSubscribers() {
   const total = subscribers.length;
   const active = subscribers.filter(s => s.opt_in_status === 'active').length;
   const optedOut = subscribers.filter(s => s.opt_in_status === 'opted_out').length;
+
+  const { sorted, sortProps } = useTableSort(subscribers, {
+    whatsapp: s => s.wa_number,
+    market: s => s.market,
+    waaiio: s => s.receiving_number,
+    source: s => s.signup_source,
+    status: s => s.opt_in_status,
+    notification: s => s.notification_status,
+    signedUp: s => sortTime(s.created_at),
+  });
 
   const byMarket: MarketBreakdown[] = [];
   const marketMap = new Map<string, number>();
@@ -355,19 +367,19 @@ export default function LaunchSubscribers() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">WhatsApp</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Market</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Waaiio #</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Source</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Notification</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Signed Up</th>
+                <SortableTh {...sortProps('whatsapp')} className="px-4 py-3 text-left font-medium text-gray-500">WhatsApp</SortableTh>
+                <SortableTh {...sortProps('market')} className="px-4 py-3 text-left font-medium text-gray-500">Market</SortableTh>
+                <SortableTh {...sortProps('waaiio')} className="px-4 py-3 text-left font-medium text-gray-500">Waaiio #</SortableTh>
+                <SortableTh {...sortProps('source')} className="px-4 py-3 text-left font-medium text-gray-500">Source</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('notification')} className="px-4 py-3 text-left font-medium text-gray-500">Notification</SortableTh>
+                <SortableTh {...sortProps('signedUp')} className="px-4 py-3 text-left font-medium text-gray-500">Signed Up</SortableTh>
               </tr>
             </thead>
             <tbody>
               {subscribers.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No subscribers yet</td></tr>
-              ) : subscribers.map(s => (
+              ) : sorted.map(s => (
                 <tr key={s.id} className="border-b border-gray-50 transition hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-xs text-gray-700">{s.wa_number}</td>
                   <td className="px-4 py-3 text-gray-600">{s.market}</td>

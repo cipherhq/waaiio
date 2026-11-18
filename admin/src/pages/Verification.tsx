@@ -4,6 +4,8 @@ import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -144,7 +146,14 @@ export default function Verification() {
     : requests;
 
   const totalPages = Math.max(1, Math.ceil(filteredRequests.length / perPage));
-  const pageItems = filteredRequests.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filteredRequests, {
+    business: r => r.businesses?.name,
+    level: r => LEVEL_LABELS[r.requested_level] || r.requested_level,
+    documents: r => r.documents_required.map(d => getDocTypeLabel((r.businesses?.country_code || 'NG') as CountryCode, d)).join(', '),
+    status: r => r.status,
+    requested: r => sortTime(r.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
 
   async function viewDocument(id: string) {
@@ -310,11 +319,11 @@ export default function Verification() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Level Requested</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Documents</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Requested</th>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('level')} className="px-4 py-3 text-left font-medium text-gray-500">Level Requested</SortableTh>
+                <SortableTh {...sortProps('documents')} className="px-4 py-3 text-left font-medium text-gray-500">Documents</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('requested')} className="px-4 py-3 text-left font-medium text-gray-500">Requested</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

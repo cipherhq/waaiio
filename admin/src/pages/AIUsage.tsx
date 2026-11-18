@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import { BrainCircuit, MessageCircle, Globe, Zap } from 'lucide-react';
 import { fmtDate } from '@/lib/formatters';
 
@@ -67,7 +69,15 @@ export default function AIUsage() {
   const estimatedCost = (totalCalls * 0.001).toFixed(2); // ~$0.001 per Haiku call
 
   const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
-  const items = rows.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(rows, {
+    business: r => r.business_name,
+    intent: r => r.intent_calls,
+    translate: r => r.translate_calls,
+    detect: r => r.detect_lang_calls,
+    total: r => r.total_calls,
+    cost: r => r.total_calls,
+  }, { onSortChange: () => setPage(1) });
+  const items = sorted.slice((page - 1) * perPage, page * perPage);
 
   return (
     <div className="space-y-6">
@@ -95,12 +105,12 @@ export default function AIUsage() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Business</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Intent</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Translation</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Lang Detect</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Total</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Est. Cost</th>
+              <SortableTh {...sortProps('business')} className="text-left px-4 py-3 font-medium text-gray-600">Business</SortableTh>
+              <SortableTh {...sortProps('intent')} className="text-right px-4 py-3 font-medium text-gray-600">Intent</SortableTh>
+              <SortableTh {...sortProps('translate')} className="text-right px-4 py-3 font-medium text-gray-600">Translation</SortableTh>
+              <SortableTh {...sortProps('detect')} className="text-right px-4 py-3 font-medium text-gray-600">Lang Detect</SortableTh>
+              <SortableTh {...sortProps('total')} className="text-right px-4 py-3 font-medium text-gray-600">Total</SortableTh>
+              <SortableTh {...sortProps('cost')} className="text-right px-4 py-3 font-medium text-gray-600">Est. Cost</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

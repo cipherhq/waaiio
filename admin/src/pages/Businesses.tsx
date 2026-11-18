@@ -5,6 +5,8 @@ import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { hasAccess } from '@/lib/permissions';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -716,7 +718,17 @@ export default function Businesses() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    name: b => b.name,
+    category: b => (b.category || '').replace(/_/g, ' '),
+    country: b => b.country_code,
+    tier: b => b.subscription_tier,
+    payoutMode: b => (b.payout_mode === 'direct_split' ? 'Direct Split' : 'Platform Managed'),
+    verified: b => (b.verification_level || 'unverified').replace(/_/g, ' '),
+    status: b => b.status,
+    created: b => sortTime(b.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Stats (real businesses only)
   const total = realBusinesses.length;
@@ -819,14 +831,14 @@ export default function Businesses() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Country</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Payout Mode</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Verified</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                <SortableTh {...sortProps('name')} className="px-4 py-3 text-left font-medium text-gray-500">Name</SortableTh>
+                <SortableTh {...sortProps('category')} className="px-4 py-3 text-left font-medium text-gray-500">Category</SortableTh>
+                <SortableTh {...sortProps('country')} className="px-4 py-3 text-left font-medium text-gray-500">Country</SortableTh>
+                <SortableTh {...sortProps('tier')} className="px-4 py-3 text-left font-medium text-gray-500">Tier</SortableTh>
+                <SortableTh {...sortProps('payoutMode')} className="px-4 py-3 text-left font-medium text-gray-500">Payout Mode</SortableTh>
+                <SortableTh {...sortProps('verified')} className="px-4 py-3 text-left font-medium text-gray-500">Verified</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

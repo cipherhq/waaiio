@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -88,8 +90,17 @@ export default function DemoRequests() {
     return true;
   });
 
+  const { sorted, sortProps } = useTableSort(filtered, {
+    business: r => r.business_name,
+    contact: r => r.contact_name,
+    industry: r => r.industry,
+    useCase: r => ({ own_business: 'Own Business', reselling: 'Reselling to Clients' } as Record<string, string>)[r.use_case || ''],
+    waba: r => r.has_waba,
+    status: r => r.status,
+    submitted: r => sortTime(r.created_at),
+  }, { onSortChange: () => setPage(1) });
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const paginated = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   async function updateStatus(request: DemoRequest, newStatus: string) {
     const { error } = await adminDb
@@ -164,13 +175,13 @@ export default function DemoRequests() {
         <table className="w-full text-sm">
           <thead className="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Business</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Contact</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Industry</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Use Case</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">WABA</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Submitted</th>
+              <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-600">Business</SortableTh>
+              <SortableTh {...sortProps('contact')} className="px-4 py-3 text-left font-medium text-gray-600">Contact</SortableTh>
+              <SortableTh {...sortProps('industry')} className="px-4 py-3 text-left font-medium text-gray-600">Industry</SortableTh>
+              <SortableTh {...sortProps('useCase')} className="px-4 py-3 text-left font-medium text-gray-600">Use Case</SortableTh>
+              <SortableTh {...sortProps('waba')} className="px-4 py-3 text-center font-medium text-gray-600">WABA</SortableTh>
+              <SortableTh {...sortProps('status')} className="px-4 py-3 text-center font-medium text-gray-600">Status</SortableTh>
+              <SortableTh {...sortProps('submitted')} className="px-4 py-3 text-left font-medium text-gray-600">Submitted</SortableTh>
               {canUpdate && <th className="px-4 py-3 text-right font-medium text-gray-600">Actions</th>}
             </tr>
           </thead>

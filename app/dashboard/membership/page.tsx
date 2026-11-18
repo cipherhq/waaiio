@@ -5,6 +5,8 @@ import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { useTableSort } from '@/lib/table-sort';
 
 interface MembershipTier {
   id: string;
@@ -201,6 +203,22 @@ export default function MembershipPage() {
     if (!tierId) return '#6B7280';
     return tiers.find((t) => t.id === tierId)?.color || '#6B7280';
   }
+
+  const tierSort = useTableSort(tiers, {
+    tier: (t: MembershipTier) => t.name,
+    minSpend: t => Number(t.min_spend),
+    discount: t => Number(t.discount_percent),
+    multiplier: t => Number(t.points_multiplier),
+    members: t => tierCounts.get(t.id) || 0,
+    status: t => (t.is_active ? 'Active' : 'Inactive'),
+  });
+  const memberSort = useTableSort(topMembers, {
+    customer: (m: TopMember) => m.name || 'Unknown',
+    phone: m => m.phone,
+    tier: m => getTierName(m.membership_tier_id),
+    spent: m => Number(m.total_spent),
+    visits: m => Number(m.total_visits),
+  });
 
   return (
     <div>
@@ -415,17 +433,17 @@ export default function MembershipPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Min Spend</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Discount</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Points Multiplier</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Members</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                      <SortableTh {...tierSort.sortProps('tier')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tier</SortableTh>
+                      <SortableTh {...tierSort.sortProps('minSpend')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Min Spend</SortableTh>
+                      <SortableTh {...tierSort.sortProps('discount')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Discount</SortableTh>
+                      <SortableTh {...tierSort.sortProps('multiplier')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Points Multiplier</SortableTh>
+                      <SortableTh {...tierSort.sortProps('members')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Members</SortableTh>
+                      <SortableTh {...tierSort.sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
                       <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {tiers.map((tier) => (
+                    {tierSort.sorted.map((tier) => (
                       <tr key={tier.id} className="hover:bg-gray-50/50">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
@@ -494,15 +512,15 @@ export default function MembershipPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Total Spent</th>
-                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Visits</th>
+                      <SortableTh {...memberSort.sortProps('customer')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                      <SortableTh {...memberSort.sortProps('phone')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                      <SortableTh {...memberSort.sortProps('tier')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tier</SortableTh>
+                      <SortableTh {...memberSort.sortProps('spent')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Total Spent</SortableTh>
+                      <SortableTh {...memberSort.sortProps('visits')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Visits</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {topMembers.map((m) => (
+                    {memberSort.sorted.map((m) => (
                       <tr key={m.id} className="hover:bg-gray-50/50">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">

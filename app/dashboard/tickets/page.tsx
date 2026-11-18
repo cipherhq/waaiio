@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface TicketRow {
   id: string;
@@ -74,6 +76,15 @@ export default function TicketsPage() {
       ) return false;
     }
     return true;
+  });
+
+  const { sorted: sortedTickets, sortProps } = useTableSort(filtered, {
+    code: (t: TicketRow) => t.ticket_code,
+    guest: (t: TicketRow) => t.guest_name,
+    event: (t: TicketRow) => t.event?.name,
+    number: (t: TicketRow) => t.ticket_number,
+    status: (t: TicketRow) => t.status,
+    scanned: (t: TicketRow) => sortTime(t.scanned_at),
   });
 
   // Stats
@@ -224,16 +235,16 @@ export default function TicketsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Code</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Event</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Ticket #</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Scanned</th>
+                <SortableTh {...sortProps('code')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Code</SortableTh>
+                <SortableTh {...sortProps('guest')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</SortableTh>
+                <SortableTh {...sortProps('event')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Event</SortableTh>
+                <SortableTh {...sortProps('number')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Ticket #</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('scanned')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Scanned</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map(ticket => (
+              {sortedTickets.map(ticket => (
                 <tr
                   key={ticket.id}
                   onClick={() => setSelected(selected?.id === ticket.id ? null : ticket)}

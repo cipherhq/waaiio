@@ -5,6 +5,8 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -113,7 +115,19 @@ export default function RecurringPayments() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    business: r => r.business_name,
+    customer: r => r.customer_name || 'Unknown',
+    service: r => r.service_name,
+    source: r => (r.service_billing_type === 'recurring' ? 'Service' : 'Opt-in'),
+    amount: r => Number(r.amount),
+    frequency: r => r.frequency,
+    gateway: r => r.gateway,
+    status: r => r.status,
+    created: r => sortTime(r.created_at),
+    lastCharged: r => sortTime(r.last_charged_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Summary stats
   const active = records.filter(r => r.status === 'active');
@@ -299,16 +313,16 @@ export default function RecurringPayments() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Source</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Freq</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Gateway</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Last Charged</th>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('customer')} className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                <SortableTh {...sortProps('service')} className="px-4 py-3 text-left font-medium text-gray-500">Service</SortableTh>
+                <SortableTh {...sortProps('source')} className="px-4 py-3 text-left font-medium text-gray-500">Source</SortableTh>
+                <SortableTh {...sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                <SortableTh {...sortProps('frequency')} className="px-4 py-3 text-left font-medium text-gray-500">Freq</SortableTh>
+                <SortableTh {...sortProps('gateway')} className="px-4 py-3 text-left font-medium text-gray-500">Gateway</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
+                <SortableTh {...sortProps('lastCharged')} className="px-4 py-3 text-left font-medium text-gray-500">Last Charged</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

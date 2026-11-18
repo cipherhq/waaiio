@@ -5,6 +5,8 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Guest {
   guest_phone: string;
@@ -91,6 +93,16 @@ export default function GuestsPage() {
     if (sortBy === 'last_visit') return b.last_visit.localeCompare(a.last_visit);
     if (sortBy === 'guest_name') return (a.guest_name || 'zzz').localeCompare(b.guest_name || 'zzz');
     return 0;
+  });
+
+  // The dropdown above sets the starting order; clicking a column header overrides it.
+  const { sorted: sortedGuests, sortProps } = useTableSort(sorted, {
+    person: g => g.guest_name || 'Unknown',
+    phone: g => g.guest_phone,
+    count: g => g.booking_count,
+    spent: g => g.total_spent,
+    firstVisit: g => sortTime(g.first_visit),
+    lastVisit: g => sortTime(g.last_visit),
   });
 
   const totalSpent = guests.reduce((s, g) => s + g.total_spent, 0);
@@ -207,16 +219,16 @@ export default function GuestsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.entityNamePlural}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Spent</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">First Visit</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Visit</th>
+                <SortableTh {...sortProps('person')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</SortableTh>
+                <SortableTh {...sortProps('phone')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                <SortableTh {...sortProps('count')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.entityNamePlural}</SortableTh>
+                <SortableTh {...sortProps('spent')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Spent</SortableTh>
+                <SortableTh {...sortProps('firstVisit')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">First Visit</SortableTh>
+                <SortableTh {...sortProps('lastVisit')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Visit</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {sorted.map((g) => (
+              {sortedGuests.map((g) => (
                 <tr
                   key={g.guest_phone}
                   className="cursor-pointer hover:bg-gray-50/50"

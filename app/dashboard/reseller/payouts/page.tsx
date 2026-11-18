@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Payout {
   id: string;
@@ -79,6 +81,16 @@ export default function ResellerPayoutsPage() {
     .reduce((sum, p) => sum + p.holdback, 0);
 
   const availableBalance = totalEarned - totalPaid - totalPending - pendingHoldbacks;
+
+  const { sorted: sortedPayouts, sortProps } = useTableSort(payouts, {
+    period: (p: Payout) => sortTime(p.period_start),
+    gross: (p: Payout) => Number(p.gross_commission),
+    holdback: (p: Payout) => Number(p.holdback),
+    deductions: (p: Payout) => Number(p.deductions),
+    net: (p: Payout) => Number(p.net_amount),
+    status: (p: Payout) => (STATUS_STYLES[p.status] || STATUS_STYLES.pending).label,
+    paid: (p: Payout) => sortTime(p.paid_at),
+  });
 
   if (loading) {
     return (
@@ -186,17 +198,17 @@ export default function ResellerPayoutsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Period</th>
-                  <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Gross</th>
-                  <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Holdback</th>
-                  <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Deductions</th>
-                  <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Net</th>
-                  <th scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Paid</th>
+                  <SortableTh {...sortProps('period')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Period</SortableTh>
+                  <SortableTh {...sortProps('gross')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Gross</SortableTh>
+                  <SortableTh {...sortProps('holdback')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Holdback</SortableTh>
+                  <SortableTh {...sortProps('deductions')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Deductions</SortableTh>
+                  <SortableTh {...sortProps('net')} scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Net</SortableTh>
+                  <SortableTh {...sortProps('status')} scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
+                  <SortableTh {...sortProps('paid')} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Paid</SortableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-                {payouts.map((payout) => {
+                {sortedPayouts.map((payout) => {
                   const style = STATUS_STYLES[payout.status] || STATUS_STYLES.pending;
                   return (
                     <tr key={payout.id}>

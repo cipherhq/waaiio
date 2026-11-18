@@ -10,6 +10,8 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { normalizeImportPhone } from '@/lib/customers/import-phone';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -207,7 +209,19 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1);
   const perPage = 20;
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted: sortedCustomers, sortProps } = useTableSort(
+    filtered,
+    {
+      name: c => c.name || 'Unknown',
+      visits: c => c.total_visits,
+      spent: c => c.total_spent,
+      rating: c => c.avg_rating,
+      lastSeen: c => sortTime(c.last_seen_at),
+      tags: c => (c.tags || []).join(', '),
+    },
+    { onSortChange: () => setPage(1) },
+  );
+  const pageItems = sortedCustomers.slice((page - 1) * perPage, page * perPage);
 
   // Reset page on search change
   useEffect(() => { setPage(1); }, [search]);
@@ -551,13 +565,13 @@ export default function CustomersPage() {
             <thead>
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Givings' : 'Total Visits'}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Given' : 'Total Spent'}</th>
-                <th scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Avg Rating</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Last Seen</th>
+                <SortableTh {...sortProps('name')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</SortableTh>
+                <SortableTh {...sortProps('visits')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Givings' : 'Total Visits'}</SortableTh>
+                <SortableTh {...sortProps('spent')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Given' : 'Total Spent'}</SortableTh>
+                <SortableTh {...sortProps('rating')} scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Avg Rating</SortableTh>
+                <SortableTh {...sortProps('lastSeen')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Last Seen</SortableTh>
                 {/* Segment header hidden until intelligence calculation is implemented (#225) */}
-                <th scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Tags</th>
+                <SortableTh {...sortProps('tags')} scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Tags</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 dark:divide-gray-700">

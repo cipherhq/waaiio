@@ -14,6 +14,8 @@ import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 import {
   schedulingActions,
   tableReservationActions,
@@ -362,7 +364,25 @@ export default function BookingsPage() {
     : bookings.filter(b => !b._isReservation && b.flow_type !== 'table_reservation');
 
   const totalPages = Math.max(1, Math.ceil(filteredByType.length / perPage));
-  const pageItems = filteredByType.slice((page - 1) * perPage, page * perPage);
+  // Header clicks sort the loaded rows (up to 100 per table) before they are paged.
+  const isStayRow = (b: Booking) => !!b._isReservation || bookingType === 'reservations';
+  const { sorted: sortedBookings, sortProps } = useTableSort(filteredByType, {
+    guest: (b: Booking) => b.guest_name,
+    resource: (b: Booking) => (isStayRow(b) || b.flow_type !== 'table_reservation' ? b.staff_name : b.seating_resource_name),
+    checkIn: (b: Booking) => sortTime(b.date),
+    checkOut: (b: Booking) => {
+      const nights = parseInt(b.time?.match(/\d+ night.*/)?.[0] ?? '', 10);
+      const checkIn = sortTime(`${b.date}T00:00`);
+      return Number.isNaN(nights) || checkIn === null ? null : checkIn + nights * 86400000;
+    },
+    nights: (b: Booking) => Number(b.time?.match(/\d+/)?.[0]),
+    guests: (b: Booking) => b.party_size,
+    dateTime: (b: Booking) => sortTime(`${b.date}T${b.time && !b.time.includes('night') ? b.time.slice(0, 5) : '00:00'}`),
+    amount: (b: Booking) => Number(isStayRow(b) ? b.total_amount || 0 : b.total_amount || b.deposit_amount || 0),
+    status: (b: Booking) => (b._isReservation && reservationStatusLabels[b.status]) || b.status.replace('_', ' '),
+    ref: (b: Booking) => b.reference_code,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sortedBookings.slice((page - 1) * perPage, page * perPage);
 
   // Reset page on filter change
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -860,28 +880,28 @@ export default function BookingsPage() {
             <thead>
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</th>
+                <SortableTh {...sortProps('guest')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</SortableTh>
                 {bookingType === 'reservations' || (!hasMultipleTypes && showReservations && bookingType !== 'table_reservations') ? (
                   <>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</th>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-out</th>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Nights</th>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guests</th>
-                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
+                    <SortableTh {...sortProps('resource')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</SortableTh>
+                    <SortableTh {...sortProps('checkIn')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</SortableTh>
+                    <SortableTh {...sortProps('checkOut')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-out</SortableTh>
+                    <SortableTh {...sortProps('nights')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Nights</SortableTh>
+                    <SortableTh {...sortProps('guests')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guests</SortableTh>
+                    <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</SortableTh>
                   </>
                 ) : (
                   <>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
+                    <SortableTh {...sortProps('resource')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
                       {getColumnHeader(bookingType)}
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
-                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
-                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
+                    </SortableTh>
+                    <SortableTh {...sortProps('dateTime')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</SortableTh>
+                    <SortableTh {...sortProps('guests')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</SortableTh>
+                    <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</SortableTh>
                   </>
                 )}
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
-                <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</SortableTh>
+                <SortableTh {...sortProps('ref')} scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</SortableTh>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Actions</th>
               </tr>
             </thead>

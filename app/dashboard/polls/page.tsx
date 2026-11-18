@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { useTableSort } from '@/lib/table-sort';
 
 interface Poll {
   id: string;
@@ -158,6 +160,13 @@ export default function PollsPage() {
     if (res.ok) { const result = await res.json(); if (epoch === businessEpoch.current) { setSendResult(result); fetchPolls(); } }
     if (epoch === businessEpoch.current) setSending(false);
   };
+
+  const pollSort = useTableSort(polls, {
+    poll: (p: Poll) => p.question,
+    status: p => p.status,
+    options: p => p.options?.length || 0,
+    votes: p => Number(p.total_votes || 0),
+  });
 
   // Results view
   if (view === 'results' && selected) {
@@ -323,15 +332,15 @@ export default function PollsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-700/50 border-b">
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Poll</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Options</th>
-                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Votes</th>
+                <SortableTh {...pollSort.sortProps('poll')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Poll</SortableTh>
+                <SortableTh {...pollSort.sortProps('status')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...pollSort.sortProps('options')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Options</SortableTh>
+                <SortableTh {...pollSort.sortProps('votes')} scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Votes</SortableTh>
                 <th scope="col" className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {polls.map(p => (
+              {pollSort.sorted.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
                   <td className="px-4 py-3">
                     <button onClick={() => loadResults(p)} className="font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 text-left">{p.question}</button>

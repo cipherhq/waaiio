@@ -3,6 +3,8 @@ import { adminDb } from '@/lib/supabase';
 import { adminApiFetch, adminApiGet, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { maskPhone } from '@/lib/formatters';
@@ -197,7 +199,16 @@ export default function UserManagement() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    name: p => `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+    email: p => p.email,
+    phone: p => p.phone,
+    role: p => roleLabel(p.role),
+    country: p => p.country_code,
+    created: p => sortTime(p.created_at),
+    status: p => getUserStatus(p),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Summary stats
   const totalUsers = profiles.length;
@@ -271,13 +282,13 @@ export default function UserManagement() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Email</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Role</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Country</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <SortableTh {...sortProps('name')} className="px-4 py-3 text-left font-medium text-gray-500">Name</SortableTh>
+                <SortableTh {...sortProps('email')} className="px-4 py-3 text-left font-medium text-gray-500">Email</SortableTh>
+                <SortableTh {...sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                <SortableTh {...sortProps('role')} className="px-4 py-3 text-left font-medium text-gray-500">Role</SortableTh>
+                <SortableTh {...sortProps('country')} className="px-4 py-3 text-left font-medium text-gray-500">Country</SortableTh>
+                <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

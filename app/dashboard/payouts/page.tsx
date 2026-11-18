@@ -7,6 +7,8 @@ import { type CountryCode, formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 import { t } from '@/lib/dashboard-i18n';
 import { formatCalendarDate } from '@/lib/utils/calendar-date';
 
@@ -391,6 +393,13 @@ export default function PayoutsPage() {
     setChangePassword('');
     setPageView('setup');
   }
+
+  const payoutSort = useTableSort(recentPayouts, {
+    date: (p: PayoutRecord) => sortTime(p.created_at),
+    period: p => sortTime(p.period_start),
+    net: p => Number(p.net_amount),
+    status: p => p.status,
+  });
 
   // Loading state
   if (pageView === 'loading') {
@@ -794,14 +803,14 @@ export default function PayoutsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
-                      <th scope="col" className="pb-2 font-medium">Date</th>
-                      <th scope="col" className="pb-2 font-medium">Period</th>
-                      <th scope="col" className="pb-2 font-medium text-right">Net</th>
-                      <th scope="col" className="pb-2 font-medium text-right">Status</th>
+                      <SortableTh {...payoutSort.sortProps('date')} scope="col" className="pb-2 font-medium">Date</SortableTh>
+                      <SortableTh {...payoutSort.sortProps('period')} scope="col" className="pb-2 font-medium">Period</SortableTh>
+                      <SortableTh {...payoutSort.sortProps('net')} scope="col" className="pb-2 font-medium text-right">Net</SortableTh>
+                      <SortableTh {...payoutSort.sortProps('status')} scope="col" className="pb-2 font-medium text-right">Status</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {recentPayouts.map(p => (
+                    {payoutSort.sorted.map(p => (
                       <tr key={p.id}>
                         <td className="py-2 text-gray-700">
                           {new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}

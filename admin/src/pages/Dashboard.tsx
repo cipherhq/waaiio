@@ -4,6 +4,8 @@ import { supabase, adminDb } from '@/lib/supabase';
 import { loadCountries, getCountryCurrencyMap } from '@/lib/countries';
 import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap, CreditCard, BrainCircuit, Bell, Globe, MessageCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 
 interface StatCard {
   label: string;
@@ -41,6 +43,11 @@ export default function Dashboard() {
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
   const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenueByCurrency: Record<string, number> }>>([]);
+  const categorySort = useTableSort(categoryBreakdown, {
+    category: cat => cat.category.replace(/_/g, ' '),
+    accounts: cat => cat.count,
+    bookings: cat => cat.bookings,
+  });
   // Revenue summary with time periods + country filter
   const [revenuePeriod, setRevenuePeriod] = useState<'week' | 'month' | 'all'>('month');
   const [revenueCountry, setRevenueCountry] = useState<string>('all');
@@ -822,15 +829,15 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Accounts</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Bookings</th>
+                  <SortableTh {...categorySort.sortProps('category')} className="px-4 py-3 text-left font-medium text-gray-500">Category</SortableTh>
+                  <SortableTh {...categorySort.sortProps('accounts')} className="px-4 py-3 text-right font-medium text-gray-500">Accounts</SortableTh>
+                  <SortableTh {...categorySort.sortProps('bookings')} className="px-4 py-3 text-right font-medium text-gray-500">Bookings</SortableTh>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Payment Volume</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500 w-40">Activity</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {categoryBreakdown.map(cat => {
+                {categorySort.sorted.map(cat => {
                   const maxBookings = categoryBreakdown[0]?.bookings || 1;
                   return (
                     <tr key={cat.category} className="hover:bg-gray-50 transition">

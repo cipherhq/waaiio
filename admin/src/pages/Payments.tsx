@@ -6,6 +6,8 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -236,8 +238,17 @@ export default function Payments() {
     return true;
   });
 
+  const { sorted, sortProps } = useTableSort(filtered, {
+    ref: p => p.gateway_ref || p.id.slice(0, 8),
+    business: p => p.business_name,
+    amount: p => p.amount,
+    gateway: p => p.gateway,
+    status: p => p.status,
+    method: p => p.payment_method,
+    date: p => sortTime(p.created_at),
+  }, { onSortChange: () => setPage(1) });
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Summary stats — per currency. The headline counts successful payments only;
   // failed and pending attempts never collected money (#1108).
@@ -577,13 +588,13 @@ export default function Payments() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Gateway</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Method</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                <SortableTh {...sortProps('ref')} className="px-4 py-3 text-left font-medium text-gray-500">Ref</SortableTh>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('amount')} className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                <SortableTh {...sortProps('gateway')} className="px-4 py-3 text-left font-medium text-gray-500">Gateway</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('method')} className="px-4 py-3 text-left font-medium text-gray-500">Method</SortableTh>
+                <SortableTh {...sortProps('date')} className="px-4 py-3 text-left font-medium text-gray-500">Date</SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

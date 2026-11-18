@@ -4,6 +4,8 @@ import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { SummaryCard } from '@/components/SummaryCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDateTime } from '@/lib/formatters';
@@ -140,7 +142,15 @@ export default function Alerts() {
   });
 
   const totalPages = Math.ceil(filtered.length / perPage);
-  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    time: a => sortTime(a.created_at),
+    business: a => a.business_name,
+    type: a => a.type.replace(/_/g, ' '),
+    severity: a => a.severity,
+    title: a => a.title,
+    message: a => a.message,
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Get unique types for filter dropdown
   const alertTypes = [...new Set(alerts.map(a => a.type))];
@@ -216,12 +226,12 @@ export default function Alerts() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium uppercase text-gray-500">
-              <th className="px-4 py-3">Time</th>
-              <th className="px-4 py-3">Business</th>
-              <th className="px-4 py-3">Type</th>
-              <th className="px-4 py-3">Severity</th>
-              <th className="px-4 py-3">Title</th>
-              <th className="px-4 py-3">Message</th>
+              <SortableTh {...sortProps('time')} className="px-4 py-3">Time</SortableTh>
+              <SortableTh {...sortProps('business')} className="px-4 py-3">Business</SortableTh>
+              <SortableTh {...sortProps('type')} className="px-4 py-3">Type</SortableTh>
+              <SortableTh {...sortProps('severity')} className="px-4 py-3">Severity</SortableTh>
+              <SortableTh {...sortProps('title')} className="px-4 py-3">Title</SortableTh>
+              <SortableTh {...sortProps('message')} className="px-4 py-3">Message</SortableTh>
               <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>

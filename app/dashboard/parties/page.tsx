@@ -10,6 +10,8 @@ import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 import { type CountryCode } from '@/lib/constants';
 import { seatingRequest } from '@/lib/parties/table-assignment';
 import { reservedTagsFor, type SeatingSnapshot, type SeatingPreview, type SeatingGroup } from '@/lib/parties/seating-planner';
@@ -504,6 +506,19 @@ export default function PartiesPage() {
     ? (q.yes_tag ? [q.yes_tag] : [])
     : (q.options || []).map(o => o.label.replace(/^ +| +$/g, '')));
   const reservableTags = [...new Set([...answerTags.filter(Boolean), ...allTags])].sort();
+
+  // Guest list sort. The detail view's table renders after early returns, so the hook
+  // lives here; it sorts the same tag-filtered guests the table shows.
+  const inviteSort = useTableSort(tagFilter ? invites.filter(i => (i.tags || []).includes(tagFilter)) : invites, {
+    guest: (i: InviteRow) => i.guest_name || '-',
+    phone: i => i.guest_phone,
+    status: i => i.status,
+    tags: i => (i.tags || []).join(', '),
+    plusOnes: i => (i.status === 'accepted' ? Number(i.plus_ones) : null),
+    table: i => partyTables.find(t => t.id === i.table_id)?.name ?? null,
+    dietary: i => i.dietary_notes || '-',
+    responded: i => sortTime(i.responded_at),
+  });
 
   // Loading
   if (loading) {
@@ -1236,20 +1251,20 @@ export default function PartiesPage() {
                       className="rounded border-gray-300"
                     />
                   </th>
-                  <th scope="col" className="pb-3 pr-4">Guest</th>
-                  <th scope="col" className="pb-3 pr-4">Phone</th>
-                  <th scope="col" className="pb-3 pr-4">Status</th>
-                  <th scope="col" className="pb-3 pr-4">Tags</th>
-                  <th scope="col" className="pb-3 pr-4">Plus-ones</th>
-                  {partyTables.length > 0 && <th scope="col" className="pb-3 pr-4">Table</th>}
-                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Dietary</th>
+                  <SortableTh {...inviteSort.sortProps('guest')} scope="col" className="pb-3 pr-4">Guest</SortableTh>
+                  <SortableTh {...inviteSort.sortProps('phone')} scope="col" className="pb-3 pr-4">Phone</SortableTh>
+                  <SortableTh {...inviteSort.sortProps('status')} scope="col" className="pb-3 pr-4">Status</SortableTh>
+                  <SortableTh {...inviteSort.sortProps('tags')} scope="col" className="pb-3 pr-4">Tags</SortableTh>
+                  <SortableTh {...inviteSort.sortProps('plusOnes')} scope="col" className="pb-3 pr-4">Plus-ones</SortableTh>
+                  {partyTables.length > 0 && <SortableTh {...inviteSort.sortProps('table')} scope="col" className="pb-3 pr-4">Table</SortableTh>}
+                  <SortableTh {...inviteSort.sortProps('dietary')} scope="col" className="pb-3 pr-4 hidden md:table-cell">Dietary</SortableTh>
                   {partyQuestions.length > 0 && <th scope="col" className="pb-3 pr-4">RSVP answers</th>}
-                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Responded</th>
+                  <SortableTh {...inviteSort.sortProps('responded')} scope="col" className="pb-3 pr-4 hidden md:table-cell">Responded</SortableTh>
                   <th scope="col" className="pb-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredInvites.map(invite => {
+                {inviteSort.sorted.map(invite => {
                   const statusColors: Record<string, string> = {
                     accepted: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
                     maybe: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',

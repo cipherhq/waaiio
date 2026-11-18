@@ -5,6 +5,8 @@ import { useBusiness, useRequireCapability } from '@/components/dashboard/Dashbo
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Sub {
   id: string;
@@ -123,6 +125,17 @@ export default function RecurringDashboardPage() {
     return new Date(cancelledAt) >= startOfMonth;
   }).length;
 
+  const { sorted: sortedSubs, sortProps } = useTableSort(filtered, {
+    customer: (s: Sub) => s.customer_name || 'Unknown',
+    service: (s: Sub) => s.service_name,
+    amount: (s: Sub) => s.amount,
+    frequency: (s: Sub) => s.frequency,
+    status: (s: Sub) => s.status.replace('_', ' '),
+    card: (s: Sub) => s.card_last_four,
+    lastCharged: (s: Sub) => sortTime(s.last_charged_at),
+    nextCharge: (s: Sub) => (s.status === 'active' ? sortTime(s.next_charge_at) : null),
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -203,19 +216,19 @@ export default function RecurringDashboardPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Frequency</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Card</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Charged</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Next Charge</th>
+                <SortableTh {...sortProps('customer')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Customer</SortableTh>
+                <SortableTh {...sortProps('service')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Service</SortableTh>
+                <SortableTh {...sortProps('amount')} scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</SortableTh>
+                <SortableTh {...sortProps('frequency')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Frequency</SortableTh>
+                <SortableTh {...sortProps('status')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
+                <SortableTh {...sortProps('card')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Card</SortableTh>
+                <SortableTh {...sortProps('lastCharged')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Charged</SortableTh>
+                <SortableTh {...sortProps('nextCharge')} scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Next Charge</SortableTh>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map((s) => (
+              {sortedSubs.map((s) => (
                 <tr key={s.id} className="transition hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">{s.customer_name || 'Unknown'}</div>

@@ -6,6 +6,8 @@ import { Pagination } from '@/components/Pagination';
 import { loadCountries, getCountryCurrencyDetailMap } from '@/lib/countries';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 
 interface PayoutFlag {
   type: string;
@@ -175,7 +177,16 @@ export default function Payouts() {
   });
 
   const totalPages = Math.max(1, Math.ceil(displayPayouts.length / perPage));
-  const pageItems = displayPayouts.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(displayPayouts, {
+    business: p => p.business_name,
+    period: p => sortTime(p.period_start),
+    gross: p => p.gross_amount,
+    platformFees: p => p.platform_fee,
+    gatewayFees: p => p.gateway_fee,
+    net: p => p.net_amount,
+    status: p => p.status,
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Load payout account details when approve modal opens
   async function loadApproveAccount(payoutAccountId: string | null, businessId: string) {
@@ -601,13 +612,13 @@ export default function Payouts() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Period</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Gateway Fees</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <SortableTh {...sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
+                <SortableTh {...sortProps('period')} className="px-4 py-3 text-left font-medium text-gray-500">Period</SortableTh>
+                <SortableTh {...sortProps('gross')} className="px-4 py-3 text-right font-medium text-gray-500">Gross</SortableTh>
+                <SortableTh {...sortProps('platformFees')} className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</SortableTh>
+                <SortableTh {...sortProps('gatewayFees')} className="px-4 py-3 text-right font-medium text-gray-500">Gateway Fees</SortableTh>
+                <SortableTh {...sortProps('net')} className="px-4 py-3 text-right font-medium text-gray-500">Net</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
                 {tab === 'review' && <th className="px-4 py-3 text-left font-medium text-gray-500">Flags</th>}
                 {(tab === 'pending' || tab === 'review') && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
               </tr>

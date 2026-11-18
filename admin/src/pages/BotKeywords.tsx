@@ -2,6 +2,8 @@ import { KeywordPayloadEditor } from '@/components/SettingFields';
 import { useEffect, useRef, useState } from 'react';
 import { adminApiDelete, adminApiFetch, adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -123,7 +125,16 @@ export default function BotKeywords() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(filtered, {
+    keyword: k => k.keyword,
+    match: k => k.match_type,
+    scope: k => k.scope,
+    category: k => k.category,
+    action: k => k.action_type.replace(/_/g, ' '),
+    priority: k => k.priority,
+    status: k => (k.is_active ? 'active' : 'inactive'),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Stats
   const totalCount = keywords.length;
@@ -317,13 +328,13 @@ export default function BotKeywords() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Keyword</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Match</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Scope</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Action</th>
-                <th className="px-4 py-3 text-center font-medium text-gray-500">Priority</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <SortableTh {...sortProps('keyword')} className="px-4 py-3 text-left font-medium text-gray-500">Keyword</SortableTh>
+                <SortableTh {...sortProps('match')} className="px-4 py-3 text-left font-medium text-gray-500">Match</SortableTh>
+                <SortableTh {...sortProps('scope')} className="px-4 py-3 text-left font-medium text-gray-500">Scope</SortableTh>
+                <SortableTh {...sortProps('category')} className="px-4 py-3 text-left font-medium text-gray-500">Category</SortableTh>
+                <SortableTh {...sortProps('action')} className="px-4 py-3 text-left font-medium text-gray-500">Action</SortableTh>
+                <SortableTh {...sortProps('priority')} className="px-4 py-3 text-center font-medium text-gray-500">Priority</SortableTh>
+                <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
               </tr>
             </thead>

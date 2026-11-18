@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime, maskPhone } from '@/lib/formatters';
 
@@ -55,7 +57,20 @@ export default function QueueManagement() {
 
   const total = entries.length;
   const totalPages = Math.ceil(total / perPage);
-  const paginated = entries.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(entries, {
+    business: e => e.business_name,
+    customer: e => e.customer_name,
+    number: e => e.queue_number,
+    status: e => e.status,
+    channel: e => e.channel,
+    checkedIn: e => sortTime(e.checked_in_at),
+    wait: e => {
+      const start = sortTime(e.checked_in_at);
+      if (start === null) return null;
+      return (e.called_at ? sortTime(e.called_at) ?? Date.now() : Date.now()) - start;
+    },
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * perPage, page * perPage);
 
   // Stats
   const totalCheckins = entries.length;
@@ -131,13 +146,13 @@ export default function QueueManagement() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-100 bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">#</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Channel</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Checked In</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Wait</th>
+              <SortableTh {...sortProps('business')} className="px-4 py-3 text-xs font-semibold text-gray-500">Business</SortableTh>
+              <SortableTh {...sortProps('customer')} className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</SortableTh>
+              <SortableTh {...sortProps('number')} className="px-4 py-3 text-xs font-semibold text-gray-500">#</SortableTh>
+              <SortableTh {...sortProps('status')} className="px-4 py-3 text-xs font-semibold text-gray-500">Status</SortableTh>
+              <SortableTh {...sortProps('channel')} className="px-4 py-3 text-xs font-semibold text-gray-500">Channel</SortableTh>
+              <SortableTh {...sortProps('checkedIn')} className="px-4 py-3 text-xs font-semibold text-gray-500">Checked In</SortableTh>
+              <SortableTh {...sortProps('wait')} className="px-4 py-3 text-xs font-semibold text-gray-500">Wait</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">

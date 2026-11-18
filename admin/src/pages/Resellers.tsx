@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -132,7 +134,6 @@ export default function Resellers() {
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   function openAddModal() {
     setEditingReseller(null);
@@ -258,6 +259,17 @@ export default function Resellers() {
     flat_monthly: 'Flat Monthly',
   };
 
+  const { sorted, sortProps } = useTableSort(filtered, {
+    company: r => r.company_name,
+    email: r => r.user_email,
+    commission: r => r.commission_percentage,
+    billing: r => billingTypeLabel[r.billing_type] || r.billing_type,
+    subAccounts: r => r.sub_account_count ?? 0,
+    status: r => r.status,
+    created: r => sortTime(r.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const paginated = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -311,13 +323,13 @@ export default function Resellers() {
         <table className="w-full text-sm">
           <thead className="border-b border-gray-200 bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Company Name</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">User Email</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Commission %</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Billing Type</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Sub-Accounts</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-600">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">Created</th>
+              <SortableTh {...sortProps('company')} className="px-4 py-3 text-left font-medium text-gray-600">Company Name</SortableTh>
+              <SortableTh {...sortProps('email')} className="px-4 py-3 text-left font-medium text-gray-600">User Email</SortableTh>
+              <SortableTh {...sortProps('commission')} className="px-4 py-3 text-center font-medium text-gray-600">Commission %</SortableTh>
+              <SortableTh {...sortProps('billing')} className="px-4 py-3 text-left font-medium text-gray-600">Billing Type</SortableTh>
+              <SortableTh {...sortProps('subAccounts')} className="px-4 py-3 text-center font-medium text-gray-600">Sub-Accounts</SortableTh>
+              <SortableTh {...sortProps('status')} className="px-4 py-3 text-center font-medium text-gray-600">Status</SortableTh>
+              <SortableTh {...sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-600">Created</SortableTh>
               {isFullAdmin && <th className="px-4 py-3 text-right font-medium text-gray-600">Actions</th>}
             </tr>
           </thead>

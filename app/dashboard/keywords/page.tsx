@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { SortableTh } from '@/components/dashboard/SortableTh';
+import { useTableSort } from '@/lib/table-sort';
 
 // ── Types ──
 interface BotKeyword {
@@ -246,6 +248,15 @@ export default function KeywordsPage() {
   }
 
   const activeCount = keywords.filter((k) => k.is_active).length;
+
+  const keywordSort = useTableSort(keywords, {
+    keyword: (kw: BotKeyword) => kw.keyword,
+    match: kw => matchTypeLabel(kw.match_type),
+    action: kw => actionTypeLabel(kw.action_type),
+    payload: kw => kw.payload,
+    priority: kw => Number(kw.priority),
+    active: kw => kw.is_active,
+  });
 
   if (loading) {
     return (
@@ -529,17 +540,17 @@ export default function KeywordsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Keyword</th>
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Match</th>
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Action</th>
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Payload</th>
-                  <th scope="col" className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Priority</th>
-                  <th scope="col" className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Active</th>
+                  <SortableTh {...keywordSort.sortProps('keyword')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Keyword</SortableTh>
+                  <SortableTh {...keywordSort.sortProps('match')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Match</SortableTh>
+                  <SortableTh {...keywordSort.sortProps('action')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Action</SortableTh>
+                  <SortableTh {...keywordSort.sortProps('payload')} scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Payload</SortableTh>
+                  <SortableTh {...keywordSort.sortProps('priority')} scope="col" className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Priority</SortableTh>
+                  <SortableTh {...keywordSort.sortProps('active')} scope="col" className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Active</SortableTh>
                   <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {keywords.map((kw) => (
+                {keywordSort.sorted.map((kw) => (
                   <tr
                     key={kw.id}
                     className={`transition hover:bg-gray-50 ${!kw.is_active ? 'opacity-60' : ''}`}
