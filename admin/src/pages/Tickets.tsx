@@ -6,6 +6,7 @@ import { SortableTh } from '@/components/SortableTh';
 import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
+import { CustomerLinkActions } from '@/components/CustomerLinkActions';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 
 interface Ticket {
@@ -333,6 +334,12 @@ export default function Tickets() {
                   value={selected.scanned_at ? fmtDateTime(selected.scanned_at) : '—'}
                 />
               </div>
+            </div>
+
+            {/* Customer link */}
+            <div className="rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Ticket link</p>
+              <CustomerLinkActions kind="ticket" id={selected.id} />
             </div>
 
             {/* Admin Actions */}

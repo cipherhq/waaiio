@@ -5,6 +5,7 @@ import { SortableTh } from '@/components/SortableTh';
 import { sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
+import { CustomerLinkActions } from '@/components/CustomerLinkActions';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 
 interface Booking {
@@ -33,6 +34,8 @@ interface Booking {
   business_name?: string;
   service_name?: string;
   currency?: string;
+  /** A property stay from the reservations table (no customer confirmation page yet). */
+  _isStay?: boolean;
 }
 
 // Categories handled by the Giving page — excluded here
@@ -75,6 +78,7 @@ export default function Bookings() {
         time: r.check_out ? `${r.nights || '?'} nights` : '',
         party_size: r.guests || 1,
         flow_type: 'reservation',
+        _isStay: true,
         staff_name: null,
         reference_code: r.reference_code || '',
       }));
@@ -334,6 +338,14 @@ export default function Bookings() {
                 <DetailRow label="Reference" value={selected.reference_code || '—'} />
               </div>
             </div>
+
+            {/* Confirmation link: bookings only; stays have no customer page yet */}
+            {!selected._isStay && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Confirmation link</p>
+                <CustomerLinkActions kind="booking" id={selected.id} />
+              </div>
+            )}
 
             {selected.special_requests && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
