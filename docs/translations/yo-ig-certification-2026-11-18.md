@@ -21,8 +21,8 @@ Buttons, menu labels and the payment confirmation the customer sees most. Button
 | `cap.waitlist` | Join Waitlist | Wọ Àtòjọ Ìdúró | Sonyere Ndepụta |
 | `cap.waiver` | Sign Waiver | Fọwọ́ Sí Ìwé Ìyọ̀ǹda | Bịanye Aka na Waiver |
 | `cap.class_booking` | Book a Class | Gba Àyè Kíláàsì | Debe Klas |
-| `account.bookings_title` | Your Bookings & Tickets | Ìfipamọ́ & Tikẹ̀tì Rẹ | Ndebi & Tiketi Gị |
-| `account.my_bookings` | My Bookings | Àwọn Ìfipamọ́ Mi | Ndebi m |
+| `account.bookings_title` | Your Bookings & Tickets | Ìforúkọsílẹ̀ & Tikẹ̀tì | Ndebi & Tiketi Gị |
+| `account.my_bookings` | My Bookings | Àwọn Ìforúkọsílẹ̀ Mi | Ndebi m |
 | `booking.type_date_hint` | Or type a date, like *20 Dec*. | Tàbí kọ ọjọ́ kan, bíi *20 Dec*. | Ma ọ bụ pịnye ụbọchị, dị ka *20 Dec*. |
 | `booking.later_dates` | Later dates ▸ | Àwọn ọjọ́ tó kàn ▸ | Ụbọchị ndị na-esote ▸ |
 | `booking.earlier_dates` | ◂ Earlier dates | ◂ Àwọn ọjọ́ tó ṣáájú | ◂ Ụbọchị ndị gara aga |
@@ -41,7 +41,7 @@ Buttons, menu labels and the payment confirmation the customer sees most. Button
 
 ### Word choices to confirm
 
-- Yoruba "booking" was "ìpèdè" (means dialect); now "ìfipamọ́". The Owner used "ìforúkọsílẹ̀" in one line; see "Open: Yoruba word for booking".
+- Yoruba "booking" was "ìpèdè" (means dialect); now "ìforúkọsílẹ̀" (Owner). "Subscription" is "ìsanwó lóòrèkóòrè" (Owner).
 - Yoruba "giving/offering" was "ẹbọ" (ritual sacrifice); now "ọrẹ". The menu label `cap.giving` "Ṣa n owo" is the Owner's label and is unchanged.
 - Yoruba "correct" was "tọ̀" (urinate); now "tọ́".
 - Igbo "cancelled" was "Ekweghị" (refused); now from "kagbuo" (cancel).
@@ -63,49 +63,58 @@ Applied as the Owner wrote them, with standard tone marks added:
 
 The bot now accepts *fún ara mi* / *fun ara mi* and *ẹlòmíràn* / *elomiran* (with or without tone marks) on the "who is this booking for?" step. English *myself* / *someone else* still work.
 
-### Open: Yoruba word for "booking"
+### Resolved: Yoruba word for "booking" (Owner, 2026-11-18)
 
-The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywhere else still uses "ìfipamọ́" (31 phrases plus the reroute question "O dàbí pé o fẹ́ ṣe ìfipamọ́ kan…"). They are unchanged until the Owner decides. The two saved-card lines use "fipamọ́" to mean "save" and are not about bookings.
+The Owner chose "ìforúkọsílẹ̀" for "booking" everywhere. Every phrase below switched from "ìforúkọsílẹ̀" (and the reroute question "O dàbí pé o fẹ́ ṣe ìforúkọsílẹ̀ kan…"). The two saved-card lines still use "fipamọ́" because there it means "save".
 
-| Key | English | Yoruba now |
+Because "ìforúkọsílẹ̀" was also the word for "subscription", the Owner chose "ìsanwó lóòrèkóòrè" for subscription: the My Account button is now "Àwọn Ìsanwó Lóòrèkóòrè", and `recurring.not_found`, `recurring.cancel_failed` and `recurring.sub_not_found_retry` say "ìsanwó lóòrèkóòrè náà". `account.bookings_title` became "Ìforúkọsílẹ̀ & Tikẹ̀tì" (without "Rẹ") to fit the 24-character list-title limit.
+
+The Owner also set:
+
+| Key | English | Yoruba (Owner) |
 |---|---|---|
-| `account.body` | Manage your bookings, orders, and more.<br><br>Type *cancel* to exit or *Hi* to start over. | Ṣàkóso àwọn ìfipamọ́, pàṣẹ rẹ, àti àwọn mìíràn.<br><br>Tẹ *cancel* láti jáde tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. |
-| `account.my_bookings` | My Bookings | Àwọn Ìfipamọ́ Mi |
-| `account.no_bookings` | You don't have any upcoming bookings, tickets, or stays. Send *Hi* to start over. | O kò ní ìfipamọ́, tikẹ̀tì, tàbí ibùgbé kankan tó ń bọ̀. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. |
-| `account.bookings_title` | Your Bookings & Tickets | Ìfipamọ́ & Tikẹ̀tì Rẹ |
-| `account.bookings_body` | Select a booking, ticket, or stay to view: | Yan ìfipamọ́, tikẹ̀tì, tàbí ibùgbé láti wò: |
-| `booking.date_default` | When would you like to book? | Ìgbà wo ni o fẹ́ ṣe ìfipamọ́? |
-| `booking.special_requests_long` | Any special requests or notes for your booking? | Àwọn ìbéèrè àkànṣe tàbí àkọsílẹ̀ fún ìfipamọ́ rẹ? |
-| `booking.confirm_question` | Confirm this booking? | Jẹ́rìísí ìfipamọ́ yìí? |
-| `booking.cancelled` | Booking cancelled. Send *Hi* to start over. | A ti fagilé ìfipamọ́ náà. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. |
-| `booking.collect_name` | To complete your booking, I need your name.<br><br>Please type your *full name* (e.g. Ade Johnson): | Láti parí ìfipamọ́ rẹ, mo nílò orúkọ rẹ.<br><br>Jọ̀wọ́ tẹ *orúkọ rẹ kíkún* (e.g. Ade Johnson): |
-| `booking.book_for_who` | Who is this booking for? | Ta ni ìfipamọ́ yìí wà fún? |
-| `booking.collect_email` | 📧 We'll send your booking confirmation to your email. Type your email or *skip* to skip: | 📧 A óò fi ìjẹ́rìísí ìfipamọ́ rẹ ránṣẹ́ sí ìméèlì rẹ. Tẹ ìméèlì rẹ tàbí *skip* láti fò ó: |
-| `booking.end_date_body` | When does the booking end? | Nígbà wo ni ìfipamọ́ náà yóò parí? |
-| `payment.cancel_booking` | Cancel Booking | Fagilé Ìfipamọ́ |
-| `payment.card_charged` | ✅ Card charged! Your booking is being processed.<br><br>You'll get a confirmation shortly. If not, tap *I've Paid* to check. | ✅ A ti gba owó lórí káàdì rẹ! A ń ṣiṣẹ́ lórí ìfipamọ́ rẹ.<br><br>O óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* láti ṣàyẹ̀wò. |
-| `payment.already_paid_hint` | If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking. | Tí o bá ti san, tẹ *Mo Ti San*. Bí bẹ́ẹ̀ kọ́, tẹ *Hi* láti bẹ̀rẹ̀ ìfipamọ́ tuntun. |
-| `payment.setup_failed_saved` | Sorry, we couldn't set up payment right now. Your booking has been saved but is pending payment. | Má bínú, a kò lè ṣètò ìsanwó báyìí. A ti fi ìfipamọ́ rẹ pamọ́ ṣùgbọ́n ó ń dúró de ìsanwó. |
-| `post.book_again` | Book Again | Ṣe Ìfipamọ́ Míì |
-| `post.my_bookings` | My Bookings | Ìfipamọ́ Mi |
-| `post.bookings_hint` | Type *my bookings* to view your bookings | Tẹ *my bookings* láti wo àwọn ìfipamọ́ rẹ |
-| `confirm.booking_rescheduled` | ✅ *Booking Rescheduled!* | ✅ *A Ti Yí Àkókò Ìfipamọ́ Rẹ Padà!* |
-| `greeting.away` | We're currently outside business hours, but you can still browse, book, and order! 🕐 | A kò sí lẹ́nu iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo nǹkan, ṣe ìfipamọ́, kí o sì pàṣẹ! 🕐 |
-| `reservation.what_to_book` | What would you like to book? | Kí ni o fẹ́ ṣe ìfipamọ́ fún? |
-| `tips.my_bookings` | • Type *my bookings* to view your appointments | • Tẹ *my bookings* láti wo àwọn ìfipamọ́ rẹ |
-| `tips.cancel_booking` | • Type *cancel* to cancel this booking | • Tẹ *cancel* láti fagilé ìfipamọ́ yìí |
-| `docs.no_transactions` | No transactions found. Make a booking first, then come back for your {docType}! | A kò rí ìsanwó kankan. Kọ́kọ́ ṣe ìfipamọ́ kan, lẹ́yìn náà padà wá gba {docType} rẹ! |
-| `notification.no_show` | *Missed Appointment*<br><br>{businessName}<br>Ref: *{referenceCode}*<br>Date: {date} at {time}<br><br>Please contact us to reschedule. Type *Hi* to book again. | *Ìpàdé Tí O Pàdánù*<br><br>{businessName}<br>Ìtọ́kasí: *{referenceCode}*<br>Ọjọ́: {date} ní {time}<br><br>Jọ̀wọ́ kàn sí wa láti yí àkókò padà. Tẹ *Hi* láti ṣe ìfipamọ́ lẹ́ẹ̀kan sí. |
-| `notification.booking_cancelled` | Your booking at {businessName} on {date} has been cancelled. Contact us if you have questions. | A ti fagilé ìfipamọ́ rẹ ní {businessName} ní {date}. Kàn sí wa tí o bá ní ìbéèrè. |
-| `notification.reservation_cancelled` | Your reservation at *{businessName}* has been cancelled.<br><br>🔑 Ref: *{referenceCode}*<br>📅 Check-in: {checkInDate}<br><br>Contact us if you have questions. | A ti fagilé ìfipamọ́ rẹ ní *{businessName}*.<br><br>🔑 Ìtọ́kasí: *{referenceCode}*<br>📅 Ọjọ́ wíwọlé: {checkInDate}<br><br>Kàn sí wa tí o bá ní ìbéèrè. |
-| `notification.waitlist_slot_open` | Hi {name}! A slot just opened up at *{businessName}* on *{displayDate}*. Would you like to book? Reply *Hi* to get started. | Báwo {name}! Àyè kan ṣẹ̀ṣẹ̀ ṣí ní *{businessName}* ní *{displayDate}*. Ṣé o fẹ́ ṣe ìfipamọ́? Fèsì *Hi* láti bẹ̀rẹ̀. |
-| `handoff.session_closed` | This chat session has been closed. ✅<br><br>Send *Hi* to continue with bookings, payments, and other services. 🙏<br><br>💡 *What you can do:*<br>• Type *Hi* to start a new conversation<br>• Type *my bookings* to check your bookings | A ti pa ìjíròrò yìí. ✅<br><br>Firánṣẹ́ *Hi* láti tẹ̀síwájú pẹ̀lú ìfipamọ́, ìsanwó àti àwọn iṣẹ́ mìíràn. 🙏<br><br>💡 *Ohun tí o lè ṣe:*<br>• Tẹ *Hi* láti bẹ̀rẹ̀ ìjíròrò tuntun<br>• Tẹ *my bookings* láti wo àwọn ìfipamọ́ rẹ |
+| `menu.how_can_help` | How can I help you today? | Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? |
+| `feedback.anything_else` | Anything else I can help with? | Nǹkan mìíràn tún wà tí mo lè ràn yín lọ́wọ́ sí? |
+
+| Key | English | Yoruba (booking word switched) |
+|---|---|---|
+| `account.body` | Manage your bookings, orders, and more.<br><br>Type *cancel* to exit or *Hi* to start over. | Ṣàkóso àwọn ìforúkọsílẹ̀, pàṣẹ rẹ, àti àwọn mìíràn.<br><br>Tẹ *cancel* láti jáde tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. |
+| `account.my_bookings` | My Bookings | Àwọn Ìforúkọsílẹ̀ Mi |
+| `account.no_bookings` | You don't have any upcoming bookings, tickets, or stays. Send *Hi* to start over. | O kò ní ìforúkọsílẹ̀, tikẹ̀tì, tàbí ibùgbé kankan tó ń bọ̀. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. |
+| `account.bookings_title` | Your Bookings & Tickets | Ìforúkọsílẹ̀ & Tikẹ̀tì |
+| `account.bookings_body` | Select a booking, ticket, or stay to view: | Yan ìforúkọsílẹ̀, tikẹ̀tì, tàbí ibùgbé láti wò: |
+| `booking.date_default` | When would you like to book? | Ìgbà wo ni o fẹ́ ṣe ìforúkọsílẹ̀? |
+| `booking.special_requests_long` | Any special requests or notes for your booking? | Àwọn ìbéèrè àkànṣe tàbí àkọsílẹ̀ fún ìforúkọsílẹ̀ rẹ? |
+| `booking.confirm_question` | Confirm this booking? | Jẹ́rìísí ìforúkọsílẹ̀ yìí? |
+| `booking.cancelled` | Booking cancelled. Send *Hi* to start over. | A ti fagilé ìforúkọsílẹ̀ náà. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. |
+| `booking.collect_name` | To complete your booking, I need your name.<br><br>Please type your *full name* (e.g. Ade Johnson): | Láti parí ìforúkọsílẹ̀ rẹ, mo nílò orúkọ rẹ.<br><br>Jọ̀wọ́ tẹ *orúkọ rẹ kíkún* (e.g. Ade Johnson): |
+| `booking.book_for_who` | Who is this booking for? | Ta ni ìforúkọsílẹ̀ yìí wà fún? |
+| `booking.collect_email` | 📧 We'll send your booking confirmation to your email. Type your email or *skip* to skip: | 📧 A óò fi ìjẹ́rìísí ìforúkọsílẹ̀ rẹ ránṣẹ́ sí ìméèlì rẹ. Tẹ ìméèlì rẹ tàbí *skip* láti fò ó: |
+| `booking.end_date_body` | When does the booking end? | Nígbà wo ni ìforúkọsílẹ̀ náà yóò parí? |
+| `payment.cancel_booking` | Cancel Booking | Fagilé Ìforúkọsílẹ̀ |
+| `payment.card_charged` | ✅ Card charged! Your booking is being processed.<br><br>You'll get a confirmation shortly. If not, tap *I've Paid* to check. | ✅ A ti gba owó lórí káàdì rẹ! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ.<br><br>O óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* láti ṣàyẹ̀wò. |
+| `payment.already_paid_hint` | If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking. | Tí o bá ti san, tẹ *Mo Ti San*. Bí bẹ́ẹ̀ kọ́, tẹ *Hi* láti bẹ̀rẹ̀ ìforúkọsílẹ̀ tuntun. |
+| `payment.setup_failed_saved` | Sorry, we couldn't set up payment right now. Your booking has been saved but is pending payment. | Má bínú, a kò lè ṣètò ìsanwó báyìí. A ti fi ìforúkọsílẹ̀ rẹ pamọ́ ṣùgbọ́n ó ń dúró de ìsanwó. |
+| `post.book_again` | Book Again | Ṣe Ìforúkọsílẹ̀ Míì |
+| `post.my_bookings` | My Bookings | Ìforúkọsílẹ̀ Mi |
+| `post.bookings_hint` | Type *my bookings* to view your bookings | Tẹ *my bookings* láti wo àwọn ìforúkọsílẹ̀ rẹ |
+| `confirm.booking_rescheduled` | ✅ *Booking Rescheduled!* | ✅ *A Ti Yí Àkókò Ìforúkọsílẹ̀ Rẹ Padà!* |
+| `greeting.away` | We're currently outside business hours, but you can still browse, book, and order! 🕐 | A kò sí lẹ́nu iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo nǹkan, ṣe ìforúkọsílẹ̀, kí o sì pàṣẹ! 🕐 |
+| `reservation.what_to_book` | What would you like to book? | Kí ni o fẹ́ ṣe ìforúkọsílẹ̀ fún? |
+| `tips.my_bookings` | • Type *my bookings* to view your appointments | • Tẹ *my bookings* láti wo àwọn ìforúkọsílẹ̀ rẹ |
+| `tips.cancel_booking` | • Type *cancel* to cancel this booking | • Tẹ *cancel* láti fagilé ìforúkọsílẹ̀ yìí |
+| `docs.no_transactions` | No transactions found. Make a booking first, then come back for your {docType}! | A kò rí ìsanwó kankan. Kọ́kọ́ ṣe ìforúkọsílẹ̀ kan, lẹ́yìn náà padà wá gba {docType} rẹ! |
+| `notification.no_show` | *Missed Appointment*<br><br>{businessName}<br>Ref: *{referenceCode}*<br>Date: {date} at {time}<br><br>Please contact us to reschedule. Type *Hi* to book again. | *Ìpàdé Tí O Pàdánù*<br><br>{businessName}<br>Ìtọ́kasí: *{referenceCode}*<br>Ọjọ́: {date} ní {time}<br><br>Jọ̀wọ́ kàn sí wa láti yí àkókò padà. Tẹ *Hi* láti ṣe ìforúkọsílẹ̀ lẹ́ẹ̀kan sí. |
+| `notification.booking_cancelled` | Your booking at {businessName} on {date} has been cancelled. Contact us if you have questions. | A ti fagilé ìforúkọsílẹ̀ rẹ ní {businessName} ní {date}. Kàn sí wa tí o bá ní ìbéèrè. |
+| `notification.reservation_cancelled` | Your reservation at *{businessName}* has been cancelled.<br><br>🔑 Ref: *{referenceCode}*<br>📅 Check-in: {checkInDate}<br><br>Contact us if you have questions. | A ti fagilé ìforúkọsílẹ̀ rẹ ní *{businessName}*.<br><br>🔑 Ìtọ́kasí: *{referenceCode}*<br>📅 Ọjọ́ wíwọlé: {checkInDate}<br><br>Kàn sí wa tí o bá ní ìbéèrè. |
+| `notification.waitlist_slot_open` | Hi {name}! A slot just opened up at *{businessName}* on *{displayDate}*. Would you like to book? Reply *Hi* to get started. | Báwo {name}! Àyè kan ṣẹ̀ṣẹ̀ ṣí ní *{businessName}* ní *{displayDate}*. Ṣé o fẹ́ ṣe ìforúkọsílẹ̀? Fèsì *Hi* láti bẹ̀rẹ̀. |
+| `handoff.session_closed` | This chat session has been closed. ✅<br><br>Send *Hi* to continue with bookings, payments, and other services. 🙏<br><br>💡 *What you can do:*<br>• Type *Hi* to start a new conversation<br>• Type *my bookings* to check your bookings | A ti pa ìjíròrò yìí. ✅<br><br>Firánṣẹ́ *Hi* láti tẹ̀síwájú pẹ̀lú ìforúkọsílẹ̀, ìsanwó àti àwọn iṣẹ́ mìíràn. 🙏<br><br>💡 *Ohun tí o lè ṣe:*<br>• Tẹ *Hi* láti bẹ̀rẹ̀ ìjíròrò tuntun<br>• Tẹ *my bookings* láti wo àwọn ìforúkọsílẹ̀ rẹ |
 
 ## Every changed phrase
 
 | Phrase | English | Yoruba | Igbo |
 |---|---|---|---|
-| `rerouteBooking` | It looks like you want to book something. Would you like to switch? | O dàbí pé o fẹ́ ṣe ìfipamọ́ kan. Ṣé o fẹ́ yí padà? _(fixed)_ | Ọ dị ka ịchọrọ ịdeba aha maka ihe. Ịchọ ịgbanwe? _(unchanged)_ |
+| `rerouteBooking` | It looks like you want to book something. Would you like to switch? | O dàbí pé o fẹ́ ṣe ìforúkọsílẹ̀ kan. Ṣé o fẹ́ yí padà? _(fixed)_ | Ọ dị ka ịchọrọ ịdeba aha maka ihe. Ịchọ ịgbanwe? _(unchanged)_ |
 | `nav.no_thanks` | No Thanks | Rárá o, ẹ ṣeun _(fixed)_ | Ọ dịghị mkpa _(unchanged)_ |
 | `nav.cancelled` | Cancelled. Send *Hi* to start over. | Fagilé tán. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(unchanged)_ | E kagbuola ya. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
 | `error.generic_retry` | Something went wrong. Please try again. | Nǹkan kan ṣẹlẹ̀. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí. _(unchanged)_ | Ihe adaghị mma. Biko nwaa ọzọ. _(fixed)_ |
@@ -128,8 +137,8 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `updates.confirm_business` | Get offers and updates from {businessName} on WhatsApp? You can reply STOP any time. | Ṣé o fẹ́ máa gba ẹ̀dínwó àti ìròyìn láti {businessName} lórí WhatsApp? O lè fèsì STOP nígbàkígbà. _(fixed)_ | Ị chọrọ ịnata onyinye na ozi site na {businessName} na WhatsApp? Ị nwere ike ịza STOP mgbe ọbụla. _(unchanged)_ |
 | `updates.confirm_no` | No thanks | Rárá o, ẹ ṣeun _(fixed)_ | Mba, daalụ _(unchanged)_ |
 | `updates.choose_business` | Choose a business first: send its code, or type *directory* to find one. Then type *updates* to get their offers and updates. | Kọ́kọ́ yan iṣòwò kan: fi kóòdù rẹ̀ ránṣẹ́, tàbí tẹ *directory* láti wá a. Lẹ́yìn náà tẹ *updates* láti máa gba ẹ̀dínwó àti ìròyìn wọn. _(fixed)_ | Buru ụzọ họrọ azụmaahịa: ziga koodu ya, ma ọ bụ pịa *directory* ịchọta ya. Mgbe ahụ pịa *updates* ịnata onyinye na ozi ha. _(fixed)_ |
-| `account.body` | Manage your bookings, orders, and more.<br><br>Type *cancel* to exit or *Hi* to start over. | Ṣàkóso àwọn ìfipamọ́, pàṣẹ rẹ, àti àwọn mìíràn.<br><br>Tẹ *cancel* láti jáde tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | Chekwaa ndekọ ndebi gị, iwu, na ihe ndị ọzọ.<br><br>Pịnye *cancel* ịhapụ ma ọ bụ *Hi* ịmalite ọzọ. _(unchanged)_ |
-| `account.my_bookings` | My Bookings | Àwọn Ìfipamọ́ Mi _(fixed)_ | Ndebi m _(unchanged)_ |
+| `account.body` | Manage your bookings, orders, and more.<br><br>Type *cancel* to exit or *Hi* to start over. | Ṣàkóso àwọn ìforúkọsílẹ̀, pàṣẹ rẹ, àti àwọn mìíràn.<br><br>Tẹ *cancel* láti jáde tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | Chekwaa ndekọ ndebi gị, iwu, na ihe ndị ọzọ.<br><br>Pịnye *cancel* ịhapụ ma ọ bụ *Hi* ịmalite ọzọ. _(unchanged)_ |
+| `account.my_bookings` | My Bookings | Àwọn Ìforúkọsílẹ̀ Mi _(fixed)_ | Ndebi m _(unchanged)_ |
 | `account.my_bookings_desc` | Appointments, tickets, & stays | Ìpàdé, tikẹ̀tì & ibùgbé _(fixed)_ | Oge ndebi, tiketi, & ebe ịnọ _(fixed)_ |
 | `account.my_orders_desc` | Track order status | Tọpasẹ ipò pàṣẹ _(unchanged)_ | Soro ọnọdụ iwu _(fixed)_ |
 | `account.my_giving` | My Giving | Ọrẹ Mi _(fixed)_ | Onyinye m _(unchanged)_ |
@@ -143,11 +152,11 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `account.instant_win_desc` | Promotion results | Àbájáde ìpolówó _(fixed)_ | Nsonaazụ nkwalite _(unchanged)_ |
 | `account.get_receipt` | Get Receipt | Gba Rìsíìtì _(fixed)_ | Nweta Rịsịt _(fixed)_ |
 | `account.get_receipt_desc` | Download your last receipt | Gba rìsíìtì rẹ tó kẹ́yìn _(fixed)_ | Budata rịsịt ikpeazụ gị _(fixed)_ |
-| `account.no_bookings` | You don't have any upcoming bookings, tickets, or stays. Send *Hi* to start over. | O kò ní ìfipamọ́, tikẹ̀tì, tàbí ibùgbé kankan tó ń bọ̀. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | Ị nweghị ndebi, tiketi, ma ọ bụ ebe ịnọ ọ bụla na-abịa. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
+| `account.no_bookings` | You don't have any upcoming bookings, tickets, or stays. Send *Hi* to start over. | O kò ní ìforúkọsílẹ̀, tikẹ̀tì, tàbí ibùgbé kankan tó ń bọ̀. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | Ị nweghị ndebi, tiketi, ma ọ bụ ebe ịnọ ọ bụla na-abịa. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
 | `account.no_giving` | You don't have any giving history yet. Send *Hi* to give! | O kò tíì ní ìtàn ọrẹ kankan. Firánṣẹ́ *Hi* láti fúnni! _(fixed)_ | Ị nweghị akụkọ onyinye ọ bụla ka ugbu a. Zipu *Hi* ịnye! _(fixed)_ |
 | `account.no_quotes` | You don't have any price requests. | O kò ní àwọn ìbéèrè ìdíyelé. _(unchanged)_ | Ị nweghị arịrịọ ọnụahịa ọ bụla. _(fixed)_ |
-| `account.bookings_title` | Your Bookings & Tickets | Ìfipamọ́ & Tikẹ̀tì Rẹ _(fixed)_ | Ndebi & Tiketi Gị _(unchanged)_ |
-| `account.bookings_body` | Select a booking, ticket, or stay to view: | Yan ìfipamọ́, tikẹ̀tì, tàbí ibùgbé láti wò: _(fixed)_ | Họrọ ndebi, tiketi, ma ọ bụ ebe ịnọ ịhụ: _(fixed)_ |
+| `account.bookings_title` | Your Bookings & Tickets | Ìforúkọsílẹ̀ & Tikẹ̀tì _(fixed)_ | Ndebi & Tiketi Gị _(unchanged)_ |
+| `account.bookings_body` | Select a booking, ticket, or stay to view: | Yan ìforúkọsílẹ̀, tikẹ̀tì, tàbí ibùgbé láti wò: _(fixed)_ | Họrọ ndebi, tiketi, ma ọ bụ ebe ịnọ ịhụ: _(fixed)_ |
 | `booking.no_services` | This business hasn't added any services yet. Please check back later or type *cancel* to go back. | Iṣòwò yìí kò tíì fi iṣẹ́ kankan kún un. Jọ̀wọ́ padà wá nígbà míì tàbí tẹ *cancel* láti padà. _(fixed)_ | Azụmaahịa a etinyebeghị ọrụ ọ bụla. Biko lelee ọzọ mgbe ọzọ ma ọ bụ pịnye *cancel* ịlaghachi. _(fixed)_ |
 | `booking.service_title` | Select Service | Yan Iṣẹ́ _(fixed)_ | Họrọ Ọrụ _(unchanged)_ |
 | `booking.service_not_found` | I didn't find that service. Try typing the name (e.g. *haircut*) or tap an option from the list. | Mi ò rí iṣẹ́ yẹn. Gbìyànjú tẹ orúkọ rẹ̀ (e.g. *haircut*) tàbí yan aṣayan kan. _(fixed)_ | Achọtaghị m ọrụ ahụ. Nwaa pịnye aha ya (dị ka *haircut*) ma ọ bụ pịa nhọrọ site na ndepụta. _(fixed)_ |
@@ -157,7 +166,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `booking.session_full` | This session just filled up. Please choose another. | Àpérò yìí kún tán. Jọ̀wọ́ yan ìkan mìíràn. _(unchanged)_ | Nnọkọ a ejupụtala. Biko họrọ ọzọ. _(fixed)_ |
 | `booking.no_staff` | Sorry, no staff members are available for your selected date. Would you like to pick another date or cancel? | Má bínú, kò sí òṣìṣẹ́ kankan fún ọjọ́ tí o yàn. Ṣé o fẹ́ yan ọjọ́ mìíràn tàbí fagilé? _(fixed)_ | Ndo, ọ dịghị onye ọrụ ọ bụla maka ụbọchị i họrọ. Ịchọ họrọ ụbọchị ọzọ ma ọ bụ kagbuo? _(unchanged)_ |
 | `booking.staff_doctor` | Which doctor/specialist? | Dókítà tàbí akọ̀ṣẹ́mọṣẹ́ wo? _(fixed)_ | Dọkịta/onye ọkachamara ole? _(unchanged)_ |
-| `booking.date_default` | When would you like to book? | Ìgbà wo ni o fẹ́ ṣe ìfipamọ́? _(fixed)_ | Ịchọ ideba aha mgbe ole? _(unchanged)_ |
+| `booking.date_default` | When would you like to book? | Ìgbà wo ni o fẹ́ ṣe ìforúkọsílẹ̀? _(fixed)_ | Ịchọ ideba aha mgbe ole? _(unchanged)_ |
 | `booking.date_appointment` | When would you like your appointment? | Ìgbà wo ni o fẹ́ ìpàdé rẹ? _(unchanged)_ | Mgbe ole ka ịchọrọ oge ndebi gị? _(fixed)_ |
 | `booking.date_event` | When is your event? | Ìgbà wo ni ayẹyẹ rẹ? _(fixed)_ | Mmemme gị ga-abụ mgbe? _(unchanged)_ |
 | `booking.no_dates` | Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit. | Má bínú, kò sí ọjọ́ tó wà fún iṣẹ́ yìí báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí tàbí firánṣẹ́ *cancel* láti jáde. _(fixed)_ | Ndo, ọ dịghị ụbọchị maka ọrụ a ugbu a. Biko nwaa ọzọ ma ọ bụ zipu *cancel* ịhapụ. _(unchanged)_ |
@@ -172,7 +181,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `booking.view_addons` | View Add-ons | Wo Àwọn Àfikún _(unchanged)_ | Hụ Mgbakwunye _(fixed)_ |
 | `booking.no_addons` | No add-ons | Kò sí àfikún _(unchanged)_ | Enweghị mgbakwunye _(fixed)_ |
 | `booking.addon_hint` | Please select an add-on or tap *No add-ons*. | Jọ̀wọ́ yan àfikún tàbí tẹ *Kò sí àfikún*. _(fixed)_ | Biko họrọ mgbakwunye ma ọ bụ pịa *Enweghị mgbakwunye*. _(fixed)_ |
-| `booking.special_requests_long` | Any special requests or notes for your booking? | Àwọn ìbéèrè àkànṣe tàbí àkọsílẹ̀ fún ìfipamọ́ rẹ? _(fixed)_ | Arịọ pụrụ iche ma ọ bụ ndetu maka ndebi gị? _(unchanged)_ |
+| `booking.special_requests_long` | Any special requests or notes for your booking? | Àwọn ìbéèrè àkànṣe tàbí àkọsílẹ̀ fún ìforúkọsílẹ̀ rẹ? _(fixed)_ | Arịọ pụrụ iche ma ọ bụ ndetu maka ndebi gị? _(unchanged)_ |
 | `booking.promo_ask` | Do you have a promo code? | Ṣé o ní kóòdù ẹ̀dínwó? _(fixed)_ | Ị nwere koodu mbelata? _(fixed)_ |
 | `booking.promo_enter` | Please type your promo code: | Jọ̀wọ́ tẹ kóòdù ẹ̀dínwó rẹ: _(fixed)_ | Biko pịnye koodu mbelata gị: _(fixed)_ |
 | `booking.promo_invalid` | Invalid promo code. Check the spelling and try again, or type *skip*. | Kóòdù ẹ̀dínwó kò tọ́. Ṣàyẹ̀wò bí o ṣe kọ ọ́ kí o gbìyànjú lẹ́ẹ̀kan sí, tàbí tẹ *skip*. _(fixed)_ | Koodu mbelata ezighi ezi. Lelee otu i si dee ya ma nwaa ọzọ, ma ọ bụ pịnye *skip*. _(fixed)_ |
@@ -181,18 +190,18 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `booking.promo_used` | You have already used this promo code. | O ti lo kóòdù ẹ̀dínwó yìí tẹ́lẹ̀. _(fixed)_ | Ị ejirila koodu mbelata a. _(fixed)_ |
 | `booking.promo_short` | Please enter a valid promo code. | Jọ̀wọ́ tẹ kóòdù ẹ̀dínwó tó tọ́. _(fixed)_ | Biko tinye koodu mbelata ziri ezi. _(fixed)_ |
 | `booking.guest_names_hint` | Please enter the guest names, separated by commas: "John, Mary, Sarah" | Jọ̀wọ́ tẹ orúkọ àwọn àlejò, kí o fi kọ́mà yà wọ́n sọ́tọ̀: "John, Mary, Sarah" _(fixed)_ | Biko tinye aha ndị ọbịa, kewaa ha na kọma: "John, Mary, Sarah" _(fixed)_ |
-| `booking.confirm_question` | Confirm this booking? | Jẹ́rìísí ìfipamọ́ yìí? _(fixed)_ | Kwenye ndebi a? _(unchanged)_ |
+| `booking.confirm_question` | Confirm this booking? | Jẹ́rìísí ìforúkọsílẹ̀ yìí? _(fixed)_ | Kwenye ndebi a? _(unchanged)_ |
 | `booking.confirm_hint` | Please tap *Confirm* or *Cancel*. | Jọ̀wọ́ tẹ *Jẹ́rìísí* tàbí *Fagilé*. _(fixed)_ | Biko pịa *Kwenye* ma ọ bụ *Kagbuo*. _(unchanged)_ |
-| `booking.cancelled` | Booking cancelled. Send *Hi* to start over. | A ti fagilé ìfipamọ́ náà. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | E kagbuola ndebi. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
-| `booking.collect_name` | To complete your booking, I need your name.<br><br>Please type your *full name* (e.g. Ade Johnson): | Láti parí ìfipamọ́ rẹ, mo nílò orúkọ rẹ.<br><br>Jọ̀wọ́ tẹ *orúkọ rẹ kíkún* (e.g. Ade Johnson): _(fixed)_ | Ka ị mezuo ndebi gị, achọrọ m aha gị.<br><br>Biko pịnye *aha gị zuru ezu* (dị ka Ade Johnson): _(fixed)_ |
+| `booking.cancelled` | Booking cancelled. Send *Hi* to start over. | A ti fagilé ìforúkọsílẹ̀ náà. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | E kagbuola ndebi. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
+| `booking.collect_name` | To complete your booking, I need your name.<br><br>Please type your *full name* (e.g. Ade Johnson): | Láti parí ìforúkọsílẹ̀ rẹ, mo nílò orúkọ rẹ.<br><br>Jọ̀wọ́ tẹ *orúkọ rẹ kíkún* (e.g. Ade Johnson): _(fixed)_ | Ka ị mezuo ndebi gị, achọrọ m aha gị.<br><br>Biko pịnye *aha gị zuru ezu* (dị ka Ade Johnson): _(fixed)_ |
 | `booking.invalid_name` | Please enter a valid name (first and last name): | Jọ̀wọ́ tẹ orúkọ tó tọ́ (orúkọ àkọ́kọ́ àti ti ìdílé): _(fixed)_ | Biko tinye aha ziri ezi (aha mbụ na aha ikpeazụ): _(unchanged)_ |
-| `booking.book_for_who` | Who is this booking for? | Ta ni ìfipamọ́ yìí wà fún? _(fixed)_ | Ndebi a bụ maka onye? _(unchanged)_ |
-| `booking.collect_email` | 📧 We'll send your booking confirmation to your email. Type your email or *skip* to skip: | 📧 A óò fi ìjẹ́rìísí ìfipamọ́ rẹ ránṣẹ́ sí ìméèlì rẹ. Tẹ ìméèlì rẹ tàbí *skip* láti fò ó: _(fixed)_ | 📧 Anyị ga-eziga nkwenye ndebi gị na email. Pịnye email gị ma ọ bụ *skip* ịwụfee: _(unchanged)_ |
+| `booking.book_for_who` | Who is this booking for? | Ta ni ìforúkọsílẹ̀ yìí wà fún? _(fixed)_ | Ndebi a bụ maka onye? _(unchanged)_ |
+| `booking.collect_email` | 📧 We'll send your booking confirmation to your email. Type your email or *skip* to skip: | 📧 A óò fi ìjẹ́rìísí ìforúkọsílẹ̀ rẹ ránṣẹ́ sí ìméèlì rẹ. Tẹ ìméèlì rẹ tàbí *skip* láti fò ó: _(fixed)_ | 📧 Anyị ga-eziga nkwenye ndebi gị na email. Pịnye email gị ma ọ bụ *skip* ịwụfee: _(unchanged)_ |
 | `booking.referral_enter` | 🎁 Enter your referral code below.<br><br>Type *skip* if you changed your mind. | 🎁 Tẹ kóòdù ìtọ́kasí rẹ nísàlẹ̀.<br><br>Tẹ *skip* tí o bá yí ọkàn rẹ padà. _(unchanged)_ | 🎁 Tinye koodu ntugharị gị n'okpuru.<br><br>Pịnye *skip* ọ bụrụ na i gbanwere obi gị. _(fixed)_ |
 | `booking.tier_limit` | This account has reached its monthly limit. Please contact the business owner. | Àkáǹtì yìí ti dé òpin oṣù rẹ̀. Jọ̀wọ́ kàn sí ẹni tó ni iṣòwò náà. _(fixed)_ | Akaụntụ a eruola ókè ya n'ọnwa. Biko kpọtụrụ onye nwe azụmaahịa. _(unchanged)_ |
 | `booking.class_full_waitlist` | This class is full! Would you like to join the waitlist? We'll notify you if a spot opens up. | Kíláàsì yìí ti kún! Ṣé o fẹ́ wọ àtòjọ ìdúró? A óò jẹ́ kí o mọ̀ tí àyè bá ṣí. _(fixed)_ | Klas a ejupụtala! Ị chọrọ isonyere ndepụta ichere? Anyị ga-agwa gị ma ọ bụrụ na ohere mepere. _(fixed)_ |
 | `booking.class_full` | Sorry, this class is full. Send *Hi* to try a different class or time. | Má bínú, kíláàsì yìí ti kún. Firánṣẹ́ *Hi* láti gbìyànjú kíláàsì tàbí àkókò mìíràn. _(fixed)_ | Ndo, klas a jupụtara. Zipu *Hi* ịnwaa klas ma ọ bụ oge ọzọ. _(unchanged)_ |
-| `booking.end_date_body` | When does the booking end? | Nígbà wo ni ìfipamọ́ náà yóò parí? _(fixed)_ | Olee mgbe ndebi ga-akwụsị? _(fixed)_ |
+| `booking.end_date_body` | When does the booking end? | Nígbà wo ni ìforúkọsílẹ̀ náà yóò parí? _(fixed)_ | Olee mgbe ndebi ga-akwụsị? _(fixed)_ |
 | `booking.package_failed` | Sorry, your package session could not be reserved. Please try again or contact the business. | Má bínú, a kò lè fi àyè pamọ́ fún ìgbà package rẹ. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí tàbí kàn sí iṣòwò náà. _(fixed)_ | Ndo, anyị enweghị ike idobere gị oge ngwugwu ọrụ gị. Biko nwaa ọzọ ma ọ bụ kpọtụrụ azụmaahịa. _(fixed)_ |
 | `booking.invalid_address` | Please enter a valid address (at least 5 characters). | Jọ̀wọ́ fi àdírẹ́ẹ̀sì tó tọ́ sílẹ̀ (ó kéré tán lẹ́tà márùn-ún). _(unchanged)_ | Biko tinye adreesị ziri ezi (opekata mpe mkpụrụedemede ise). _(fixed)_ |
 | `booking.delivery_title` | Pickup or Drop-off | Gbígba tàbí Fífún _(unchanged)_ | Ibute ma ọ bụ Iweta _(fixed)_ |
@@ -206,14 +215,14 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `payment.invalid_name` | Please enter a valid name. | Jọ̀wọ́ tẹ orúkọ tó tọ́. _(fixed)_ | Biko tinye aha ziri ezi. _(unchanged)_ |
 | `payment.invalid_amount` | Please enter a valid amount. | Jọ̀wọ́ tẹ iye owó tó tọ́. _(fixed)_ | Biko tinye ọnụ ụgwọ ziri ezi. _(unchanged)_ |
 | `payment.setup_failed` | We couldn't set up your payment right now. Please send *Hi* to try again. | A kò lè ṣètò ìsanwó rẹ báyìí. Jọ̀wọ́ firánṣẹ́ *Hi* láti gbìyànjú lẹ́ẹ̀kan sí. _(unchanged)_ | Anyị enweghị ike ịhazi ụgwọ gị ugbu a. Biko zipu *Hi* ịnwaa ọzọ. _(fixed)_ |
-| `payment.cancel_booking` | Cancel Booking | Fagilé Ìfipamọ́ _(fixed)_ | Kagbuo Ndebi _(unchanged)_ |
+| `payment.cancel_booking` | Cancel Booking | Fagilé Ìforúkọsílẹ̀ _(fixed)_ | Kagbuo Ndebi _(unchanged)_ |
 | `payment.received_processing` | ✅ Payment received! Your booking is being processed.<br><br>You'll get a confirmation shortly. If not, tap *I've Paid* again. | ✅ A ti rí owó tí o san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ.<br><br>O óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* lẹ́ẹ̀kan sí. _(Owner)_ | ✅ Anatala ụgwọ! Anyị na-ahazi ndebi gị.<br><br>Nkwenye ga-abịa n'oge na-adịghị anya. Ọ bụrụ na ọ bịaghị, pịa *Akwụọla m* ọzọ. _(fixed)_ |
-| `payment.card_charged` | ✅ Card charged! Your booking is being processed.<br><br>You'll get a confirmation shortly. If not, tap *I've Paid* to check. | ✅ A ti gba owó lórí káàdì rẹ! A ń ṣiṣẹ́ lórí ìfipamọ́ rẹ.<br><br>O óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* láti ṣàyẹ̀wò. _(fixed)_ | ✅ E wepụla ego na kaadị gị! Anyị na-ahazi ndebi gị.<br><br>Nkwenye ga-abịa n'oge na-adịghị anya. Ọ bụrụ na ọ bịaghị, pịa *Akwụọla m* ịlele. _(fixed)_ |
+| `payment.card_charged` | ✅ Card charged! Your booking is being processed.<br><br>You'll get a confirmation shortly. If not, tap *I've Paid* to check. | ✅ A ti gba owó lórí káàdì rẹ! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ.<br><br>O óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* láti ṣàyẹ̀wò. _(fixed)_ | ✅ E wepụla ego na kaadị gị! Anyị na-ahazi ndebi gị.<br><br>Nkwenye ga-abịa n'oge na-adịghị anya. Ọ bụrụ na ọ bịaghị, pịa *Akwụọla m* ịlele. _(fixed)_ |
 | `payment.verifying` | ⏳ Payment is being verified. You'll get a confirmation shortly.<br><br>If not, tap *I've Paid* to check again. | ⏳ A ń ṣàyẹ̀wò ìsanwó rẹ. O óò gba ìjẹ́rìísí láìpẹ́.<br><br>Bí kò bá dé, tẹ *Mo Ti San* láti ṣàyẹ̀wò lẹ́ẹ̀kan sí. _(fixed)_ | ⏳ Anyị na-enyocha ụgwọ. Ọ ga-abịa nkwenye n'oge obere.<br><br>Ọ bụrụ na ọ bịaghị, pịa *Akwụọla m* ịnwale ọzọ. _(unchanged)_ |
 | `payment.not_received` | Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one. | Ìsanwó kò tíì dé. Ìjápọ̀ náà lè ti parí — tẹ *Gba Ìjápọ̀ Tuntun* láti gba òmíràn. _(fixed)_ | Ụgwọ erubeghị anyị aka. Njikọ ahụ nwere ike ịgwụla oge — pịa *Nweta Njikọ Ọhụrụ* maka nke ọhụrụ. _(fixed)_ |
 | `payment.verify_failed` | We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment. | A kò lè fìdí ìsanwó rẹ múlẹ̀ báyìí. Tí o bá ti san, tẹ *Mo Ti San* lẹ́ẹ̀kan sí láìpẹ́. _(fixed)_ | Anyị enweghị ike ịnyocha ụgwọ gị ugbu a. Ọ bụrụ na i kwụọla, pịa *Akwụọla m* ọzọ n'oge na-adịghị anya. _(fixed)_ |
 | `payment.ive_paid_hint` | Tap *I've Paid* after completing payment, or *Cancel* to cancel. | Tẹ *Mo Ti San* lẹ́yìn ìsanwó, tàbí *Fagilé* láti fagilé. _(fixed)_ | Pịa *Akwụọla m* mgbe i kwụọ ụgwọ, ma ọ bụ *Kagbuo* ịkagbuo. _(unchanged)_ |
-| `payment.already_paid_hint` | If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking. | Tí o bá ti san, tẹ *Mo Ti San*. Bí bẹ́ẹ̀ kọ́, tẹ *Hi* láti bẹ̀rẹ̀ ìfipamọ́ tuntun. _(fixed)_ | Ọ bụrụ na i kwụọla, pịa *Akwụọla m*. Ma ọ bụ, pịnye *Hi* ịmalite ndebi ọhụrụ. _(unchanged)_ |
+| `payment.already_paid_hint` | If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking. | Tí o bá ti san, tẹ *Mo Ti San*. Bí bẹ́ẹ̀ kọ́, tẹ *Hi* láti bẹ̀rẹ̀ ìforúkọsílẹ̀ tuntun. _(fixed)_ | Ọ bụrụ na i kwụọla, pịa *Akwụọla m*. Ma ọ bụ, pịnye *Hi* ịmalite ndebi ọhụrụ. _(unchanged)_ |
 | `payment.still_verifying` | We're still verifying your previous payment. Tap *I've Paid* to check again. | A ṣì ń fìdí ìsanwó rẹ tó kọjá múlẹ̀. Tẹ *Mo Ti San* láti ṣàyẹ̀wò lẹ́ẹ̀kan sí. _(fixed)_ | Anyị ka na-enyocha ụgwọ gị gara aga. Pịa *Akwụọla m* ịnwale ọzọ. _(unchanged)_ |
 | `payment.no_bank_ref` | No bank transfer reference found. Please use the online payment link instead. | A kò rí ìtọ́kasí fún fífi owó ránṣẹ́ sí bánkì. Jọ̀wọ́ lo ìjápọ̀ ìsanwó lórí ayélujára dípò bẹ́ẹ̀. _(fixed)_ | Ọ dịghị nọmba ntinye ụlọakụ. Biko jiri njikọ ụgwọ n'ịntanetị. _(unchanged)_ |
 | `payment.proof_ocr_hint` | 🤖 _Receipt details match your payment reference. The business will confirm shortly._ | 🤖 _Àlàyé rìsíìtì náà bá ìtọ́kasí ìsanwó rẹ mu. Iṣòwò náà yóò jẹ́rìísí láìpẹ́._ _(fixed)_ | 🤖 _Nkọwa rịsịt gị dabara na ntụaka ụgwọ gị. Azụmaahịa ga-akwado ya n'oge na-adịghị anya._ _(fixed)_ |
@@ -228,7 +237,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `payment.giving_summary` | Giving Summary | Àkójọpọ̀ Ọrẹ _(fixed)_ | Nchịkọta Onyinye _(unchanged)_ |
 | `payment.accept_confirm` | I Accept & Confirm | Mo Gbà, Jẹ́rìísí _(fixed)_ | Anabata & Kwenye _(unchanged)_ |
 | `payment.giving_title` | Select Giving Category | Yan Ẹ̀ka Ọrẹ _(fixed)_ | Họrọ Ụdị Onyinye _(unchanged)_ |
-| `payment.setup_failed_saved` | Sorry, we couldn't set up payment right now. Your booking has been saved but is pending payment. | Má bínú, a kò lè ṣètò ìsanwó báyìí. A ti fi ìfipamọ́ rẹ pamọ́ ṣùgbọ́n ó ń dúró de ìsanwó. _(fixed)_ | Ndo, anyị enweghị ike ịhazi ịkwụ ụgwọ ugbu a. Echekwala ndebi gị mana ọ ka na-echere ịkwụ ụgwọ. _(fixed)_ |
+| `payment.setup_failed_saved` | Sorry, we couldn't set up payment right now. Your booking has been saved but is pending payment. | Má bínú, a kò lè ṣètò ìsanwó báyìí. A ti fi ìforúkọsílẹ̀ rẹ pamọ́ ṣùgbọ́n ó ń dúró de ìsanwó. _(fixed)_ | Ndo, anyị enweghị ike ịhazi ịkwụ ụgwọ ugbu a. Echekwala ndebi gị mana ọ ka na-echere ịkwụ ụgwọ. _(fixed)_ |
 | `payment.bank_label` | Bank: {bankName} | Bánkì: {bankName} _(new)_ | Ụlọakụ: {bankName} _(new)_ |
 | `payment.account_label` | Account: {accountNumber} | Nọ́mbà àkáǹtì: {accountNumber} _(new)_ | Akaụntụ: {accountNumber} _(new)_ |
 | `payment.name_label` | Name: {accountName} | Orúkọ: {accountName} _(new)_ | Aha: {accountName} _(new)_ |
@@ -294,7 +303,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `docs.caption_history` | Your transaction history | Ìtàn ìsanwó rẹ _(new)_ | Akụkọ ụgwọ gị niile _(new)_ |
 | `docs.caption_annual` | Your annual statement | Ìwé ìṣirò ọdọọdún rẹ _(new)_ | Nchịkọta ego gị nke afọ _(new)_ |
 | `docs.caption_receipt` | Your latest receipt | Rìsíìtì rẹ tó kẹ́yìn _(new)_ | Rịsịt gị kachasị ọhụrụ _(new)_ |
-| `docs.no_transactions` | No transactions found. Make a booking first, then come back for your {docType}! | A kò rí ìsanwó kankan. Kọ́kọ́ ṣe ìfipamọ́ kan, lẹ́yìn náà padà wá gba {docType} rẹ! _(new)_ | Ọ dịghị ụgwọ a hụrụ. Buru ụzọ debe ndebi, wee lọta maka {docType} gị! _(new)_ |
+| `docs.no_transactions` | No transactions found. Make a booking first, then come back for your {docType}! | A kò rí ìsanwó kankan. Kọ́kọ́ ṣe ìforúkọsílẹ̀ kan, lẹ́yìn náà padà wá gba {docType} rẹ! _(new)_ | Ọ dịghị ụgwọ a hụrụ. Buru ụzọ debe ndebi, wee lọta maka {docType} gị! _(new)_ |
 | `docs.error_generating` | Sorry, I couldn't generate your {docType} right now. Please try again later. | Má bínú, mi ò lè ṣe {docType} rẹ báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí nígbà míì. _(new)_ | Ndo, enweghị m ike ịmepụta {docType} gị ugbu a. Biko nwaa ọzọ mgbe e mesịrị. _(new)_ |
 | `docs.receipt_header` | 🧾 *Receipt* | 🧾 *Rìsíìtì* _(new)_ | 🧾 *Rịsịt* _(new)_ |
 | `docs.order_receipt_header` | 🧾 *Order Receipt* | 🧾 *Rìsíìtì Pàṣẹ* _(new)_ | 🧾 *Rịsịt Iwu* _(new)_ |
@@ -308,13 +317,13 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `docs.lbl_status` | Status: | Ipò: _(new)_ | Ọnọdụ: _(new)_ |
 | `docs.continue_hint` | Type *Hi* to continue | Tẹ *Hi* láti tẹ̀síwájú _(new)_ | Pịnye *Hi* ịga n'ihu _(new)_ |
 | `post.my_giving` | My Giving | Ọrẹ Mi _(fixed)_ | Onyinye m _(unchanged)_ |
-| `post.book_again` | Book Again | Ṣe Ìfipamọ́ Míì _(fixed)_ | Deba Aha Ọzọ _(unchanged)_ |
-| `post.my_bookings` | My Bookings | Ìfipamọ́ Mi _(fixed)_ | Ndebi m _(unchanged)_ |
+| `post.book_again` | Book Again | Ṣe Ìforúkọsílẹ̀ Míì _(fixed)_ | Deba Aha Ọzọ _(unchanged)_ |
+| `post.my_bookings` | My Bookings | Ìforúkọsílẹ̀ Mi _(fixed)_ | Ndebi m _(unchanged)_ |
 | `post.receipt_hint` | Type *receipt* to get your receipt | Tẹ *receipt* láti gba rìsíìtì rẹ _(fixed)_ | Pịnye *receipt* ịnweta rịsịt gị _(fixed)_ |
-| `post.bookings_hint` | Type *my bookings* to view your bookings | Tẹ *my bookings* láti wo àwọn ìfipamọ́ rẹ _(fixed)_ | Pịnye *my bookings* ịhụ ndebi gị _(unchanged)_ |
+| `post.bookings_hint` | Type *my bookings* to view your bookings | Tẹ *my bookings* láti wo àwọn ìforúkọsílẹ̀ rẹ _(fixed)_ | Pịnye *my bookings* ịhụ ndebi gị _(unchanged)_ |
 | `confirm.payment_received` | ✅ *Payment Received!* | ✅ *Ìsanwó Ti Dé!* _(unchanged)_ | ✅ *Anatala Ụgwọ!* _(fixed)_ |
 | `confirm.reservation_summary` | 🏨 *Reservation Summary* | 🏨 *Àkójọpọ̀ Ìpamọ́ Yàrá* _(unchanged)_ | 🏨 *Nchịkọta Ndebi Ebe Ịnọ* _(fixed)_ |
-| `confirm.booking_rescheduled` | ✅ *Booking Rescheduled!* | ✅ *A Ti Yí Àkókò Ìfipamọ́ Rẹ Padà!* _(fixed)_ | ✅ *Agbanwela Oge Ndebi!* _(unchanged)_ |
+| `confirm.booking_rescheduled` | ✅ *Booking Rescheduled!* | ✅ *A Ti Yí Àkókò Ìforúkọsílẹ̀ Rẹ Padà!* _(fixed)_ | ✅ *Agbanwela Oge Ndebi!* _(unchanged)_ |
 | `confirm.reservation_confirmed` | ✅ *Reservation Confirmed!* | ✅ *Ìpamọ́ Yàrá Ti Fìdí Múlẹ̀!* _(unchanged)_ | ✅ *Anabatara Ndebi Ebe Ịnọ!* _(fixed)_ |
 | `confirm.see_you` | See you there! | A óò rí ara wa níbẹ̀! _(fixed)_ | Anyị ga-ahụ gị ebe ahụ! _(unchanged)_ |
 | `confirm.lbl_deposit` | Deposit: | Owó ìdógò: _(fixed)_ | Ntinye mbu: _(unchanged)_ |
@@ -331,7 +340,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `lang.detected_offer` | I noticed you might prefer {langName}. Would you like me to respond in {langName}? | Mo kíyèsí pé o lè fẹ́ràn {langName}. Ṣé kí n máa fèsì ní {langName}? _(new)_ | Ahụrụ m na ị nwere ike ịchọ {langName}. Ị chọrọ ka m zaa gị na {langName}? _(new)_ |
 | `lang.remembered_offer` | You previously chose {langName}. Would you like me to respond in {langName}? | O ti yan {langName} tẹ́lẹ̀. Ṣé kí n máa fèsì ní {langName}? _(new)_ | I họọrọ {langName} na mbụ. Ị chọrọ ka m zaa gị na {langName}? _(new)_ |
 | `lang.unavailable` | {langName} is no longer available for this business. | {langName} kò sí fún iṣòwò yìí mọ́. _(new)_ | {langName} adịghịzi maka azụmaahịa a. _(new)_ |
-| `greeting.away` | We're currently outside business hours, but you can still browse, book, and order! 🕐 | A kò sí lẹ́nu iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo nǹkan, ṣe ìfipamọ́, kí o sì pàṣẹ! 🕐 _(fixed)_ | Anyị nọghị n'ọrụ ugbu a, mana ị nwere ike ịchọ, ideba aha, ma ọ bụ iwere iwu! 🕐 _(unchanged)_ |
+| `greeting.away` | We're currently outside business hours, but you can still browse, book, and order! 🕐 | A kò sí lẹ́nu iṣẹ́ báyìí, ṣùgbọ́n o ṣì lè wo nǹkan, ṣe ìforúkọsílẹ̀, kí o sì pàṣẹ! 🕐 _(fixed)_ | Anyị nọghị n'ọrụ ugbu a, mana ị nwere ike ịchọ, ideba aha, ma ọ bụ iwere iwu! 🕐 _(unchanged)_ |
 | `greeting.powered_by` | _Powered by Waaiio_ | _Láti ọwọ́ Waaiio_ _(fixed)_ | _Nke Waaiio emepụtara_ _(unchanged)_ |
 | `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ẹ́ lọ́wọ́ lónìí? _(Owner)_ | Nnọọ! Kedu ka m ga-esi nyere gị aka taa? _(new)_ |
 | `greeting.cancel_hint` | _Type *cancel* anytime to exit._ | _Tẹ *cancel* nígbàkúgbà láti jáde._ _(new)_ | _Pịnye *cancel* oge ọbụla ịhapụ._ _(new)_ |
@@ -343,7 +352,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `recurring.choose_frequency` | Choose Frequency | Yan Ìgbà Ìsan _(unchanged)_ | Họrọ Ugboro Ole _(fixed)_ |
 | `recurring.pause` | Pause | Dáwọ́ dúró _(unchanged)_ | Kwụsịtụ _(fixed)_ |
 | `recurring.yes_pause` | Yes, Pause | Bẹ́ẹ̀ni, Dáwọ́ _(unchanged)_ | Ee, Kwụsịtụ _(fixed)_ |
-| `recurring.not_found` | Subscription not found. Send *Hi* to start over. | A kò rí ìforúkọsílẹ̀ náà. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | Achọtaghị ndenye aha. Zipu *Hi* ịmalite ọzọ. _(unchanged)_ |
+| `recurring.not_found` | Subscription not found. Send *Hi* to start over. | A kò rí ìsanwó lóòrèkóòrè náà. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(fixed)_ | Achọtaghị ndenye aha. Zipu *Hi* ịmalite ọzọ. _(unchanged)_ |
 | `recurring.still_active` | Your recurring payment is still active. | Ìsanwó léraléra rẹ ṣì ń ṣiṣẹ́. _(fixed)_ | Ụgwọ ugboro gị ka na-arụ ọrụ. _(unchanged)_ |
 | `survey.start_hint` | Please tap *Start* or *Not now*. | Jọ̀wọ́ tẹ *Bẹ̀rẹ̀* tàbí *Kì í ṣe báyìí*. _(fixed)_ | Biko pịa *Bido* ma ọ bụ *Ugbu a ọ dịghị*. _(unchanged)_ |
 | `survey.complete` | ✅ Thank you for completing the survey! Your feedback helps us improve. | ✅ Ẹ ṣeun fún píparí ìwádìí náà! Èsì rẹ ń ràn wá lọ́wọ́ láti túbọ̀ dára sí i. _(fixed)_ | ✅ Daalụ maka ịmechaa nyocha! Azịza gị ga-enyere anyị ike ịkwalite. _(unchanged)_ |
@@ -389,7 +398,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `poll.closed` | This poll has closed. Thank you for your interest! | Ìdìbò yìí ti parí. E ṣeun fún ìfẹ́ rẹ! _(unchanged)_ | Ntuli aka a emechiela. Daalụ maka mmasị gị! _(fixed)_ |
 | `poll.title` | Poll | Ìdìbò _(unchanged)_ | Ntuli Aka _(fixed)_ |
 | `poll.results_when_closed` | Results will be shared when the poll closes. | A óò pín àbájáde nígbà tí ìdìbò bá parí. _(unchanged)_ | A ga-ekesa nsonaazụ mgbe ntuli aka mechiri. _(fixed)_ |
-| `reservation.what_to_book` | What would you like to book? | Kí ni o fẹ́ ṣe ìfipamọ́ fún? _(fixed)_ | Gịnị ịchọ ideba aha maka? _(unchanged)_ |
+| `reservation.what_to_book` | What would you like to book? | Kí ni o fẹ́ ṣe ìforúkọsílẹ̀ fún? _(fixed)_ | Gịnị ịchọ ideba aha maka? _(unchanged)_ |
 | `reservation.date_unavailable` | Sorry, this date is not available. Please choose another date. | Má bínú, ọjọ́ yìí kò sí. Jọ̀wọ́ yan ọjọ́ mìíràn. _(fixed)_ | Ndo, ụbọchị a adịghị. Biko họrọ ụbọchị ọzọ. _(unchanged)_ |
 | `reservation.cancelled` | Reservation cancelled. Send *Hi* to start over. | Ìpamọ́ yàrá fagilé. Firánṣẹ́ *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(unchanged)_ | E kagbuola ndebi ebe ịnọ. Zipu *Hi* ịmalite ọzọ. _(fixed)_ |
 | `reservation.collect_name` | To complete your reservation, I need your name.<br><br>Please type your *full name*: | Láti parí ìpamọ́ yàrá rẹ, mo nílò orúkọ rẹ.<br><br>Jọ̀wọ́ tẹ *orúkọ rẹ kíkún*: _(unchanged)_ | Ka ị mezuo ndebi ebe ịnọ gị, achọrọ m aha gị.<br><br>Biko pịnye *aha gị zuru ezu*: _(fixed)_ |
@@ -429,15 +438,15 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `recurring.cancel_hint` | Please choose *Yes, Cancel* or *Keep It*. | Jọ̀wọ́ yan *Bẹ́ẹ̀ni, Fagilé* tàbí *Jẹ́ kó wà*. _(new)_ | Biko họrọ *Ee, Kagbuo* ma ọ bụ *Dobe Ya*. _(new)_ |
 | `recurring.pause_hint` | Please choose *Yes, Pause* or *No, Keep Active*. | Jọ̀wọ́ yan *Bẹ́ẹ̀ni, Dáwọ́* tàbí *Rárá, Jẹ́ kó ṣiṣẹ́*. _(new)_ | Biko họrọ *Ee, Kwụsịtụ* ma ọ bụ *Mba, Dobe Ya Na-arụ*. _(new)_ |
 | `recurring.cancelled_ok` | ✅ Your recurring payment has been cancelled. You will no longer be charged automatically.<br><br>💡 Type *subscriptions* to manage payments or *Hi* to start over. | ✅ A ti fagilé ìsanwó léraléra rẹ. A kò ní gba owó lọ́wọ́ rẹ fúnra wa mọ́.<br><br>💡 Tẹ *subscriptions* láti ṣàkóso àwọn ìsanwó, tàbí *Hi* láti bẹ̀rẹ̀ lẹ́ẹ̀kan sí. _(new)_ | ✅ E kagbuola ụgwọ ugboro ugboro gị. A gaghịzi ana gị ego n'onwe ya.<br><br>💡 Pịnye *subscriptions* ijikwa ụgwọ ma ọ bụ *Hi* ịmalite ọzọ. _(new)_ |
-| `recurring.cancel_failed` | We couldn't cancel the subscription at the payment provider right now. Please try again later or contact support.<br><br>💡 Type *subscriptions* to try again. | A kò lè fagilé ìforúkọsílẹ̀ náà lọ́dọ̀ ilé-iṣẹ́ ìsanwó báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí nígbà míì tàbí kàn sí àwọn olùrànlọ́wọ́.<br><br>💡 Tẹ *subscriptions* láti gbìyànjú lẹ́ẹ̀kan sí. _(new)_ | Anyị enweghị ike ịkagbu ndenye aha a n'aka onye na-ahazi ụgwọ ugbu a. Biko nwaa ọzọ mgbe e mesịrị ma ọ bụ kpọtụrụ ndị enyemaka.<br><br>💡 Pịnye *subscriptions* ịnwa ọzọ. _(new)_ |
+| `recurring.cancel_failed` | We couldn't cancel the subscription at the payment provider right now. Please try again later or contact support.<br><br>💡 Type *subscriptions* to try again. | A kò lè fagilé ìsanwó lóòrèkóòrè náà lọ́dọ̀ ilé-iṣẹ́ ìsanwó báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí nígbà míì tàbí kàn sí àwọn olùrànlọ́wọ́.<br><br>💡 Tẹ *subscriptions* láti gbìyànjú lẹ́ẹ̀kan sí. _(new)_ | Anyị enweghị ike ịkagbu ndenye aha a n'aka onye na-ahazi ụgwọ ugbu a. Biko nwaa ọzọ mgbe e mesịrị ma ọ bụ kpọtụrụ ndị enyemaka.<br><br>💡 Pịnye *subscriptions* ịnwa ọzọ. _(new)_ |
 | `recurring.details_hint` | Type *history* or *back*, or tap a button. | Tẹ *history* tàbí *back*, tàbí tẹ bọ́tìnì kan. _(new)_ | Pịnye *history* ma ọ bụ *back*, ma ọ bụ pịa bọtịnụ. _(new)_ |
 | `recurring.select_hint` | Please select a recurring payment from the list, or type a number. | Jọ̀wọ́ yan ìsanwó léraléra kan láti àkójọ, tàbí tẹ nọ́mbà kan. _(new)_ | Biko họrọ ụgwọ ugboro ugboro site na ndepụta, ma ọ bụ pịnye nọmba. _(new)_ |
 | `recurring.action_hint` | Please choose an option from the buttons. | Jọ̀wọ́ yan àṣàyàn kan láti àwọn bọ́tìnì. _(new)_ | Biko họrọ nhọrọ site na bọtịnụ. _(new)_ |
 | `recurring.no_history` | No payment history available yet.<br><br>💡 Type *subscriptions* to go back. | Kò sí ìtàn ìsanwó kankan síbẹ̀.<br><br>💡 Tẹ *subscriptions* láti padà. _(new)_ | Ọ dịghị akụkọ ụgwọ ka ugbu a.<br><br>💡 Pịnye *subscriptions* ịlaghachi. _(new)_ |
-| `recurring.sub_not_found_retry` | Subscription not found. Type *subscriptions* to try again. | A kò rí ìforúkọsílẹ̀ náà. Tẹ *subscriptions* láti gbìyànjú lẹ́ẹ̀kan sí. _(new)_ | Achọtaghị ndenye aha. Pịnye *subscriptions* ịnwa ọzọ. _(new)_ |
+| `recurring.sub_not_found_retry` | Subscription not found. Type *subscriptions* to try again. | A kò rí ìsanwó lóòrèkóòrè náà. Tẹ *subscriptions* láti gbìyànjú lẹ́ẹ̀kan sí. _(new)_ | Achọtaghị ndenye aha. Pịnye *subscriptions* ịnwa ọzọ. _(new)_ |
 | `invoice.no_user` | We couldn't match your number to an account. Please contact the business directly for help. | A kò rí àkáǹtì kankan fún nọ́mbà rẹ. Jọ̀wọ́ kàn sí iṣòwò náà tààrà fún ìrànlọ́wọ́. _(new)_ | Anyị enweghị ike ijikọ nọmba gị na akaụntụ ọ bụla. Biko kpọtụrụ azụmaahịa ahụ ozugbo maka enyemaka. _(new)_ |
-| `tips.my_bookings` | • Type *my bookings* to view your appointments | • Tẹ *my bookings* láti wo àwọn ìfipamọ́ rẹ _(fixed)_ | • Pịnye *my bookings* ịhụ oge ndebi gị _(fixed)_ |
-| `tips.cancel_booking` | • Type *cancel* to cancel this booking | • Tẹ *cancel* láti fagilé ìfipamọ́ yìí _(fixed)_ | • Pịnye *cancel* ịkagbuo ndebi a _(unchanged)_ |
+| `tips.my_bookings` | • Type *my bookings* to view your appointments | • Tẹ *my bookings* láti wo àwọn ìforúkọsílẹ̀ rẹ _(fixed)_ | • Pịnye *my bookings* ịhụ oge ndebi gị _(fixed)_ |
+| `tips.cancel_booking` | • Type *cancel* to cancel this booking | • Tẹ *cancel* láti fagilé ìforúkọsílẹ̀ yìí _(fixed)_ | • Pịnye *cancel* ịkagbuo ndebi a _(unchanged)_ |
 | `tips.my_points` | • Type *my points* to check your loyalty balance | • Tẹ *my points* láti ṣàyẹ̀wò iye pọ́ìǹtì rẹ _(fixed)_ | • Pịnye *my points* ịlele ihe fọdụrụ n'iguzosi ike _(unchanged)_ |
 | `tips.refer` | • Type *refer* to invite friends and earn rewards | • Tẹ *refer* láti pèé àwọn ọrẹ àti gba àwọn èrè _(unchanged)_ | • Pịnye *refer* ịkpọ ndị enyi gị ma nweta onyinye _(fixed)_ |
 | `tips.my_orders` | • Type *my orders* to track your order status | • Tẹ *my orders* láti tọpasẹ ipò pàṣẹ rẹ _(unchanged)_ | • Pịnye *my orders* ịsochi ọnọdụ iwu gị _(fixed)_ |
@@ -480,12 +489,12 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `notification.queue_your_turn` | 🔔 Hi {name}, it's your turn at *{businessName}*! Please proceed to the counter. 🙏 | 🔔 Báwo {name}, àkókò rẹ ti tó ní *{businessName}*! Jọ̀wọ́ lọ sí kaúntà. 🙏 _(new)_ | 🔔 Ndewo {name}, oge gị eruola na *{businessName}*! Biko gaa n'ebe a na-elekọta ndị mmadụ. 🙏 _(new)_ |
 | `notification.queue_reopened` | The queue at *{businessName}* is now open! Send *Hi* to join the queue. | Ìlà ní *{businessName}* ti ṣí báyìí! Firánṣẹ́ *Hi* láti wọ ìlà. _(new)_ | Ahịrị dị na *{businessName}* emepela ugbu a! Zipu *Hi* isonyere ahịrị. _(new)_ |
 | `notification.checked_in` | *You're checked in!*<br><br>{businessName}<br>Ref: *{referenceCode}*<br><br>Your appointment is starting. Enjoy your experience! | *O ti wọlé!*<br><br>{businessName}<br>Ìtọ́kasí: *{referenceCode}*<br><br>Ìpàdé rẹ ti ń bẹ̀rẹ̀. Gbádùn rẹ̀! _(new)_ | *Ị banyela!*<br><br>{businessName}<br>Ntụaka: *{referenceCode}*<br><br>Oge ndebi gị na-amalite. Nwee obi ụtọ! _(new)_ |
-| `notification.no_show` | *Missed Appointment*<br><br>{businessName}<br>Ref: *{referenceCode}*<br>Date: {date} at {time}<br><br>Please contact us to reschedule. Type *Hi* to book again. | *Ìpàdé Tí O Pàdánù*<br><br>{businessName}<br>Ìtọ́kasí: *{referenceCode}*<br>Ọjọ́: {date} ní {time}<br><br>Jọ̀wọ́ kàn sí wa láti yí àkókò padà. Tẹ *Hi* láti ṣe ìfipamọ́ lẹ́ẹ̀kan sí. _(new)_ | *Ndebi I Tụfuru*<br><br>{businessName}<br>Ntụaka: *{referenceCode}*<br>Ụbọchị: {date} na {time}<br><br>Biko kpọtụrụ anyị ịgbanwe oge. Pịnye *Hi* ideba aha ọzọ. _(new)_ |
+| `notification.no_show` | *Missed Appointment*<br><br>{businessName}<br>Ref: *{referenceCode}*<br>Date: {date} at {time}<br><br>Please contact us to reschedule. Type *Hi* to book again. | *Ìpàdé Tí O Pàdánù*<br><br>{businessName}<br>Ìtọ́kasí: *{referenceCode}*<br>Ọjọ́: {date} ní {time}<br><br>Jọ̀wọ́ kàn sí wa láti yí àkókò padà. Tẹ *Hi* láti ṣe ìforúkọsílẹ̀ lẹ́ẹ̀kan sí. _(new)_ | *Ndebi I Tụfuru*<br><br>{businessName}<br>Ntụaka: *{referenceCode}*<br>Ụbọchị: {date} na {time}<br><br>Biko kpọtụrụ anyị ịgbanwe oge. Pịnye *Hi* ideba aha ọzọ. _(new)_ |
 | `notification.no_show_reason` | <br>Reason: {reason} | <br>Ìdí: {reason} _(new)_ | <br>Ihe kpatara ya: {reason} _(new)_ |
-| `notification.booking_cancelled` | Your booking at {businessName} on {date} has been cancelled. Contact us if you have questions. | A ti fagilé ìfipamọ́ rẹ ní {businessName} ní {date}. Kàn sí wa tí o bá ní ìbéèrè. _(new)_ | E kagbuola ndebi gị na {businessName} n'ụbọchị {date}. Kpọtụrụ anyị ma ọ bụrụ na ị nwere ajụjụ. _(new)_ |
-| `notification.reservation_cancelled` | Your reservation at *{businessName}* has been cancelled.<br><br>🔑 Ref: *{referenceCode}*<br>📅 Check-in: {checkInDate}<br><br>Contact us if you have questions. | A ti fagilé ìfipamọ́ rẹ ní *{businessName}*.<br><br>🔑 Ìtọ́kasí: *{referenceCode}*<br>📅 Ọjọ́ wíwọlé: {checkInDate}<br><br>Kàn sí wa tí o bá ní ìbéèrè. _(new)_ | E kagbuola ndebi ebe ịnọ gị na *{businessName}*.<br><br>🔑 Ntụaka: *{referenceCode}*<br>📅 Ịbata: {checkInDate}<br><br>Kpọtụrụ anyị ma ọ bụrụ na ị nwere ajụjụ. _(new)_ |
+| `notification.booking_cancelled` | Your booking at {businessName} on {date} has been cancelled. Contact us if you have questions. | A ti fagilé ìforúkọsílẹ̀ rẹ ní {businessName} ní {date}. Kàn sí wa tí o bá ní ìbéèrè. _(new)_ | E kagbuola ndebi gị na {businessName} n'ụbọchị {date}. Kpọtụrụ anyị ma ọ bụrụ na ị nwere ajụjụ. _(new)_ |
+| `notification.reservation_cancelled` | Your reservation at *{businessName}* has been cancelled.<br><br>🔑 Ref: *{referenceCode}*<br>📅 Check-in: {checkInDate}<br><br>Contact us if you have questions. | A ti fagilé ìforúkọsílẹ̀ rẹ ní *{businessName}*.<br><br>🔑 Ìtọ́kasí: *{referenceCode}*<br>📅 Ọjọ́ wíwọlé: {checkInDate}<br><br>Kàn sí wa tí o bá ní ìbéèrè. _(new)_ | E kagbuola ndebi ebe ịnọ gị na *{businessName}*.<br><br>🔑 Ntụaka: *{referenceCode}*<br>📅 Ịbata: {checkInDate}<br><br>Kpọtụrụ anyị ma ọ bụrụ na ị nwere ajụjụ. _(new)_ |
 | `notification.balance_due` | 💰 *Balance Payment Due*<br><br>from *{businessName}*<br>🔑 Ref: *{referenceCode}*<br>💵 Balance: *{balance}*<br><br>Pay here 👇<br>{paymentUrl} | 💰 *Ìyókù Owó Tí O Gbọ́dọ̀ San*<br><br>láti *{businessName}*<br>🔑 Ìtọ́kasí: *{referenceCode}*<br>💵 Ìyókù: *{balance}*<br><br>San níbí 👇<br>{paymentUrl} _(new)_ | 💰 *Ụgwọ Fọdụrụ Ruru Ịkwụ*<br><br>site na *{businessName}*<br>🔑 Ntụaka: *{referenceCode}*<br>💵 Ego fọdụrụ: *{balance}*<br><br>Kwụọ ụgwọ ebe a 👇<br>{paymentUrl} _(new)_ |
-| `notification.waitlist_slot_open` | Hi {name}! A slot just opened up at *{businessName}* on *{displayDate}*. Would you like to book? Reply *Hi* to get started. | Báwo {name}! Àyè kan ṣẹ̀ṣẹ̀ ṣí ní *{businessName}* ní *{displayDate}*. Ṣé o fẹ́ ṣe ìfipamọ́? Fèsì *Hi* láti bẹ̀rẹ̀. _(new)_ | Ndewo {name}! Ohere emepela na *{businessName}* na *{displayDate}*. Ị chọrọ ideba aha? Zaa *Hi* ịmalite. _(new)_ |
+| `notification.waitlist_slot_open` | Hi {name}! A slot just opened up at *{businessName}* on *{displayDate}*. Would you like to book? Reply *Hi* to get started. | Báwo {name}! Àyè kan ṣẹ̀ṣẹ̀ ṣí ní *{businessName}* ní *{displayDate}*. Ṣé o fẹ́ ṣe ìforúkọsílẹ̀? Fèsì *Hi* láti bẹ̀rẹ̀. _(new)_ | Ndewo {name}! Ohere emepela na *{businessName}* na *{displayDate}*. Ị chọrọ ideba aha? Zaa *Hi* ịmalite. _(new)_ |
 | `notification.catalog_unavailable` | Sorry, this catalog is currently unavailable. Please try again later. | Má bínú, àkójọ ọjà yìí kò sí báyìí. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí nígbà míì. _(new)_ | Ndo, ndepụta a adịghị ugbu a. Biko nwaa ọzọ mgbe ọzọ. _(new)_ |
 | `notification.catalog_error` | Something went wrong on our end. Please try again. | Nǹkan kan ò ṣiṣẹ́ ní ọ̀dọ̀ wa. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí. _(new)_ | Ihe adaghị mma n'akụkụ anyị. Biko nwaa ọzọ. _(new)_ |
 | `notification.catalog_order_error` | Something went wrong on our end creating your order. Please try again. | Nǹkan kan ò ṣiṣẹ́ ní ọ̀dọ̀ wa nígbà tí a ń ṣe pàṣẹ rẹ. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí. _(new)_ | Ihe adaghị mma n'akụkụ anyị mgbe anyị na-emepụta iwu gị. Biko nwaa ọzọ. _(new)_ |
@@ -498,7 +507,7 @@ The Owner used "ìforúkọsílẹ̀" for "booking" in the payment line. Everywh
 | `notification.report_sent` | 📄 *{reportTitle}*<br>from *{businessName}*<br><br>View your document securely:<br>{secureLink}<br><br>You'll need the last 4 digits of your phone number to open it. | 📄 *{reportTitle}*<br>láti *{businessName}*<br><br>Wo ìwé rẹ láìléwu:<br>{secureLink}<br><br>Ìwọ yóò nílò nọ́mbà mẹ́rin tó kẹ́yìn nínú nọ́mbà fóònù rẹ láti ṣí i. _(new)_ | 📄 *{reportTitle}*<br>site na *{businessName}*<br><br>Lelee akwụkwọ gị n'enweghị nsogbu:<br>{secureLink}<br><br>Ị ga-achọ ọnụọgụ anọ ikpeazụ nke nọmba ekwentị gị iji mepee ya. _(new)_ |
 | `handoff.already_connected` | You're already connected to the team at *{businessName}*. A team member will respond shortly.<br><br>Type *end chat* to return to the menu. | O ti ń bá àwọn òṣìṣẹ́ *{businessName}* sọ̀rọ̀ tẹ́lẹ̀. Ọ̀kan nínú wọn yóò fèsì láìpẹ́.<br><br>Tẹ *end chat* láti padà sí àkójọ. _(new)_ | Ejikọọla gị na ndị otu *{businessName}*. Onye otu ga-aza gị n'oge na-adịghị anya.<br><br>Pịnye *end chat* ịlaghachi na menu. _(new)_ |
 | `handoff.connecting` | Connecting you to a team member at *{businessName}*... 🙋<br><br>Type *end chat* to close this session and return to the menu. | A ń so ọ́ pọ̀ mọ́ òṣìṣẹ́ kan ní *{businessName}*... 🙋<br><br>Tẹ *end chat* láti pa ìjíròrò yìí kí o sì padà sí àkójọ. _(new)_ | Anyị na-ejikọ gị na onye otu na *{businessName}*... 🙋<br><br>Pịnye *end chat* imechi mkparịta ụka a ma laghachi na menu. _(new)_ |
-| `handoff.session_closed` | This chat session has been closed. ✅<br><br>Send *Hi* to continue with bookings, payments, and other services. 🙏<br><br>💡 *What you can do:*<br>• Type *Hi* to start a new conversation<br>• Type *my bookings* to check your bookings | A ti pa ìjíròrò yìí. ✅<br><br>Firánṣẹ́ *Hi* láti tẹ̀síwájú pẹ̀lú ìfipamọ́, ìsanwó àti àwọn iṣẹ́ mìíràn. 🙏<br><br>💡 *Ohun tí o lè ṣe:*<br>• Tẹ *Hi* láti bẹ̀rẹ̀ ìjíròrò tuntun<br>• Tẹ *my bookings* láti wo àwọn ìfipamọ́ rẹ _(new)_ | E mechiela mkparịta ụka a. ✅<br><br>Zipu *Hi* ịga n'ihu na ndebi, ịkwụ ụgwọ, na ọrụ ndị ọzọ. 🙏<br><br>💡 *Ihe ị nwere ike ime:*<br>• Pịnye *Hi* ịmalite mkparịta ụka ọhụrụ<br>• Pịnye *my bookings* ilele ndebi gị _(new)_ |
+| `handoff.session_closed` | This chat session has been closed. ✅<br><br>Send *Hi* to continue with bookings, payments, and other services. 🙏<br><br>💡 *What you can do:*<br>• Type *Hi* to start a new conversation<br>• Type *my bookings* to check your bookings | A ti pa ìjíròrò yìí. ✅<br><br>Firánṣẹ́ *Hi* láti tẹ̀síwájú pẹ̀lú ìforúkọsílẹ̀, ìsanwó àti àwọn iṣẹ́ mìíràn. 🙏<br><br>💡 *Ohun tí o lè ṣe:*<br>• Tẹ *Hi* láti bẹ̀rẹ̀ ìjíròrò tuntun<br>• Tẹ *my bookings* láti wo àwọn ìforúkọsílẹ̀ rẹ _(new)_ | E mechiela mkparịta ụka a. ✅<br><br>Zipu *Hi* ịga n'ihu na ndebi, ịkwụ ụgwọ, na ọrụ ndị ọzọ. 🙏<br><br>💡 *Ihe ị nwere ike ime:*<br>• Pịnye *Hi* ịmalite mkparịta ụka ọhụrụ<br>• Pịnye *my bookings* ilele ndebi gị _(new)_ |
 | `notification.receipt_caption` | Your payment receipt | Rìsíìtì ìsanwó rẹ _(new)_ | Rịsịt ụgwọ gị _(new)_ |
 | `notification.ticket_pdf_caption` | Your {quantity} {ticketLabel} for {eventName} | {quantity} {ticketLabel} rẹ fún {eventName} _(new)_ | {ticketLabel} {quantity} gị maka {eventName} _(new)_ |
 | `directory.welcome` | Welcome to Waaiio! 👋 I can help you find businesses (salons, restaurants, spas and more) right here on WhatsApp.<br><br>Type what you're looking for, e.g. *restaurants in Ikoyi* or *barbers in Lekki*.<br><br>Already know the business? Type *connect* and its name, e.g. _connect Glow Studio_, or send its business code. | Ẹ káàbọ̀ sí Waaiio! 👋 Mo lè ràn yín lọ́wọ́ láti wá àwọn iṣòwò (ṣọ́ọ̀bù irun, ilé oúnjẹ, spa àti àwọn mìíràn) níbí lórí WhatsApp.<br><br>Tẹ ohun tí ẹ ń wá, f.a. *restaurants in Ikoyi* tàbí *barbers in Lekki*.<br><br>Ẹ ti mọ iṣòwò náà? Tẹ *connect* àti orúkọ rẹ̀, f.a. _connect Glow Studio_, tàbí fi kóòdù iṣòwò náà ránṣẹ́. _(fixed)_ | Nnọọ na Waaiio! 👋 M nwere ike inyere gị aka ịchọta azụmaahịa (ụlọ ịchọ mma, ụlọ oriri, spa na ndị ọzọ) ebe a na WhatsApp.<br><br>Pịnye ihe ị na-achọ, d.m. *restaurants in Ikoyi* ma ọ bụ *barbers in Lekki*.<br><br>Ị maara azụmaahịa ahụ? Pịnye *connect* na aha ya, d.m. _connect Glow Studio_, ma ọ bụ ziga koodu azụmaahịa ya. _(fixed)_ |

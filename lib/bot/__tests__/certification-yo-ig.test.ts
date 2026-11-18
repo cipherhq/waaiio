@@ -204,6 +204,28 @@ describe('Owner native-speaker corrections (yo, 2026-11-18)', () => {
   });
 });
 
+describe('Owner Yoruba word choices (2026-11-18, second round)', () => {
+  const yo = (k: string) => getFlowCopy('yo', k);
+  const yoValues = Object.entries(COPY.yo);
+  it('pins the two "help" lines', () => {
+    expect(yo('menu.how_can_help')).toBe('Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí?'.normalize('NFC'));
+    expect(yo('feedback.anything_else')).toBe('Nǹkan mìíràn tún wà tí mo lè ràn yín lọ́wọ́ sí?'.normalize('NFC'));
+  });
+  it('"booking" is ìforúkọsílẹ̀ everywhere; ìfipamọ́ is gone', () => {
+    const old = yoValues.filter(([, v]) => /ìfipamọ́/i.test(v.normalize('NFC')));
+    expect(old.map(([k]) => k)).toEqual([]);
+    expect(yo('account.my_bookings')).toContain('Ìforúkọsílẹ̀'.normalize('NFC'));
+    expect(yo('post.book_again')).toContain('Ìforúkọsílẹ̀'.normalize('NFC'));
+  });
+  it('"subscription" is ìsanwó lóòrèkóòrè, so it never shares the booking word', () => {
+    expect(yo('account.subscriptions')).toBe('Àwọn Ìsanwó Lóòrèkóòrè'.normalize('NFC'));
+    for (const k of ['account.subscriptions', 'recurring.not_found', 'recurring.cancel_failed', 'recurring.sub_not_found_retry']) {
+      expect(yo(k).normalize('NFC'), k).not.toMatch(/ìforúkọsílẹ̀/i);
+      expect(yo(k).normalize('NFC').toLowerCase(), k).toContain('ìsanwó lóòrèkóòrè'.normalize('NFC'));
+    }
+  });
+});
+
 describe('book_for_other accepts Yoruba typed answers', () => {
   it.each([
     ['fún ara mi', false], ['fun ara mi', false], ['Fún Ara Mi', false], ['  fun  ara mi ', false],
