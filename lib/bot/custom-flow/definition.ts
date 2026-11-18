@@ -11,6 +11,9 @@ import { isUuid, readBusinessBindings, readGuided } from './data';
 /** Answer types an ask node may use (#1085). */
 export const ASK_ANSWER_TYPES = ['yes_no', 'choice', 'date', 'text', 'file'] as const;
 
+/** How a lookup node finds rows (#1107); omitted means search. */
+export const LOOKUP_MODES = ['search', 'browse', 'both'] as const;
+
 /** Capabilities a handoff node may name, and whether each takes a record (#1086). */
 export const HANDOFF_CAPABILITIES = ['ticketing', 'giving', 'payment', 'chat'] as const;
 
@@ -154,6 +157,9 @@ export function validateDefinition(definition: unknown): string[] {
         }
         if (typeof node.no_match !== 'string' || node.no_match.trim().length === 0) {
           errors.push(`Lookup node "${node.id}" has no message for when nothing matches.`);
+        }
+        if (node.mode !== undefined && !(LOOKUP_MODES as readonly string[]).includes(node.mode)) {
+          errors.push(`Lookup node "${node.id}" has an unknown way to find rows. Choose search, browse or both.`);
         }
         if (node.next !== null && node.next !== undefined) {
           checkTarget(node.id, node.next, 'its next step');
