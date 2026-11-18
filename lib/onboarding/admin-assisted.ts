@@ -87,10 +87,16 @@ async function applyGetStartedRequiredFields(service: SupabaseClient, input: Adm
   const phone = normalizeFullPhoneNumber(input.business_phone, dialingCode, phoneDigits);
   if (!phone) throw new Error(fullPhoneNumberMessage(dialingCode, phoneDigits));
   input.business_phone = phone;
+}
 
-  // Checked before the invite is created, so a taken name never leaves a failed record.
-  const { data: taken, error: takenError } = await service.from('businesses').select('id').eq('bot_code', botCode).maybeSingle();
-  if (takenError) throw new Error('Unable to check the WhatsApp Name. Please try again.');
+/**
+ * Create calls this after its repeated-request lookup and before the invite is
+ * created, so a taken name never leaves a failed record and a repeat of a
+ * request that already succeeded still returns that record.
+ */
+export async function assertWhatsAppNameAvailable(service: SupabaseClient, botCode: string) {
+  const { data: taken, error } = await service.from('businesses').select('id').eq('bot_code', botCode).maybeSingle();
+  if (error) throw new Error('Unable to check the WhatsApp Name. Please try again.');
   if (taken) throw new Error('Bot code is already taken. Please choose a different one.');
 }
 

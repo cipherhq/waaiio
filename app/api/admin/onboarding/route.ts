@@ -4,7 +4,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
-import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
+import { assertWhatsAppNameAvailable, provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
 import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
@@ -132,6 +132,11 @@ export async function POST(request: NextRequest) {
     if (prior.status === 'failed') return NextResponse.json({ error: 'This request previously failed. Use the queue retry action.', onboarding: prior, idempotent: true }, { status: 409 });
     if (prior.status === 'cancelled') return NextResponse.json({ error: 'This request was cancelled. Start again with a new review submission.', onboarding: prior, idempotent: true }, { status: 409 });
     return NextResponse.json({ onboarding: prior, idempotent: true });
+  }
+  try {
+    await assertWhatsAppNameAvailable(service, input.bot_code!);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid request' }, { status: 400 });
   }
 
   try {

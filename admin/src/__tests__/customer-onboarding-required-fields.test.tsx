@@ -73,7 +73,7 @@ describe('Onboard Customer: WhatsApp Name, as in Get Started', () => {
 describe('Onboard Customer: full business phone number, as in Get Started', () => {
   it('shows the expected format for the selected country', async () => {
     await openBusiness();
-    expect(screen.getByText('Full number: +234 followed by 10 digits')).toBeInTheDocument();
+    expect(screen.getByLabelText('Business phone')).toHaveAccessibleDescription('Full number: +234 followed by 10 digits');
   });
 
   it.each(['08012345678', '+234801234567', '+23480123456789'])('stops on %s', async phone => {

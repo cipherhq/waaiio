@@ -44,7 +44,7 @@ function chain(result: { data?: unknown; error?: unknown }) {
   return q;
 }
 
-function fakeService({ takenBotCode = null as string | null } = {}) {
+function fakeService({ takenBotCode = null as string | null, prior = null as Record<string, unknown> | null } = {}) {
   const inviteInserts: Array<Record<string, unknown>> = [];
   const businessInserts: Array<Record<string, unknown>> = [];
   const service = {
@@ -56,7 +56,7 @@ function fakeService({ takenBotCode = null as string | null } = {}) {
     from: vi.fn((table: string) => {
       if (table === 'countries') return { select: vi.fn(() => chain({ data: { dialing_code: '+234', phone_digits: 10 }, error: null })) };
       if (table === 'admin_onboarding_invites') return {
-        select: vi.fn(() => chain({ data: null, error: null })),
+        select: vi.fn(() => chain({ data: prior, error: null })),
         insert: vi.fn((row: Record<string, unknown>) => { inviteInserts.push(row); return { select: () => ({ single: async () => ({ data: { id: 'onboarding-1', status: 'provisioning' }, error: null }) }) }; }),
         update: vi.fn(() => chain({ data: null, error: null })),
       };
@@ -137,6 +137,17 @@ describe('admin onboarding create rejects what Get Started requires', () => {
 
   it('rejects a taken WhatsApp Name before creating the invite', async () => {
     await expectRejected({ ...input, bot_code: 'taken name' }, 'Bot code is already taken. Please choose a different one.', { takenBotCode: 'TAKEN-NAME' });
+  });
+
+  it('returns the earlier record for a repeat of a request that already succeeded, though its name is now taken', async () => {
+    const prior = { id: 'onboarding-1', status: 'customer_action_required', business_id: 'business-1' };
+    const { service, inviteInserts } = fakeService({ takenBotCode: 'REQUIRED-FIELDS', prior });
+    m.service.mockReturnValue(service);
+    const response = await createOnboarding(createRequest(input));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ onboarding: prior, idempotent: true });
+    expect(inviteInserts).toHaveLength(0);
+    expect(service.auth.admin.generateLink).not.toHaveBeenCalled();
   });
 
   it('still rejects the fields that were already required', async () => {
