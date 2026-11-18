@@ -57,7 +57,7 @@ function historicalAccount() {
   fixture.business.payment_gateway = 'flutterwave';
   fixture.account = {
     id: 'account-fixture', gateway: 'flutterwave', bank_name: 'Historical Bank',
-    account_number: '0123456789', account_name: 'Historical Merchant',
+    account_number_last4: '6789', account_name: 'Historical Merchant',
     square_merchant_id: null, verified_at: '2026-01-01T00:00:00Z',
   };
 }

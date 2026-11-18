@@ -5,8 +5,9 @@
 --     may insert, update or delete. anon has no rights.
 -- §2. payout_accounts and business_bank_accounts: browser sessions read the
 --     last four digits of the account number (account_number_last4, a stored
---     generated column), never the full number. Server routes use
---     service_role and keep the full number for transfers.
+--     generated column), never the full number. A stored number of four
+--     characters or fewer gives '' so it is never shown whole. Server routes
+--     use service_role and keep the full number for transfers.
 -- §3. public.get_effective_commercial_config() is dropped. The admin Countries
 --     page reads the effective config through the admin-only server route
 --     GET /api/admin/countries/messaging-config instead.
@@ -30,9 +31,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.admin_role_permissions TO a
 
 -- §2
 ALTER TABLE public.payout_accounts
-  ADD COLUMN IF NOT EXISTS account_number_last4 text GENERATED ALWAYS AS (right(account_number, 4)) STORED;
+  ADD COLUMN IF NOT EXISTS account_number_last4 text GENERATED ALWAYS AS (
+    CASE WHEN length(account_number) > 4 THEN right(account_number, 4) WHEN account_number IS NOT NULL THEN '' END) STORED;
 ALTER TABLE public.business_bank_accounts
-  ADD COLUMN IF NOT EXISTS account_number_last4 text GENERATED ALWAYS AS (right(account_number, 4)) STORED;
+  ADD COLUMN IF NOT EXISTS account_number_last4 text GENERATED ALWAYS AS (
+    CASE WHEN length(account_number) > 4 THEN right(account_number, 4) WHEN account_number IS NOT NULL THEN '' END) STORED;
 
 -- A table-level REVOKE also removes every column-level grant, so both tables
 -- end with exactly the column list below whatever an environment held before.

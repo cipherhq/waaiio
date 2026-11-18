@@ -308,7 +308,8 @@ export default function PayoutsPage() {
         id: data.payout_account_id,
         gateway,
         bank_name: selectedBank?.name || '',
-        account_number_last4: accountNumber.slice(-4),
+        // Same rule as M549's generated column: a short number is never shown whole.
+        account_number_last4: accountNumber.length > 4 ? accountNumber.slice(-4) : '',
         account_name: data.account_name || resolvedName,
         square_merchant_id: null,
         verified_at: data.verified ? new Date().toISOString() : null,

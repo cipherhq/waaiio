@@ -7,7 +7,8 @@
  *    column, shows ****6789 and never asks for the full number. Approving still
  *    goes to the server route, which reads the full number with the service role.
  * 2. Every browser read of payout_accounts / business_bank_accounts (admin panel
- *    and merchant dashboard) projects account_number_last4, never account_number.
+ *    and merchant dashboard), and the signed-in payout history route, projects
+ *    account_number_last4, never account_number.
  */
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -82,5 +83,11 @@ describe('M549 masked account numbers', () => {
         expect(cols, `${file} ${table}`).not.toContain('*');
       }
     }
+    // The merchant payout history route reads with the signed-in (not service) client.
+    const history = fs.readFileSync(path.join(root, 'app/api/payouts/history/route.ts'), 'utf-8');
+    expect(history).toContain("from '@/lib/supabase/server'");
+    const columns = history.match(/const ACCOUNT_COLUMNS = '([^']*)'/)?.[1].split(',').map(c => c.trim());
+    expect(columns).toContain('account_number_last4');
+    expect(columns).not.toContain('account_number');
   });
 });

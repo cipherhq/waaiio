@@ -278,18 +278,21 @@ describe('M549 admin access tightening (real PostgreSQL)', () => {
         }
       });
 
-      it('server routes (service_role) keep the full number; the last four follow a change', async () => {
+      it('server routes (service_role) keep the full number; the last four follow a change and never expose a short number', async () => {
         await clients[state].query('BEGIN');
         try {
           await q('SET LOCAL ROLE service_role');
           expect((await q(`SELECT account_number FROM public.payout_accounts`)).rows).toEqual([{ account_number: '0123456789' }]);
           expect((await q(`SELECT account_number FROM public.business_bank_accounts`)).rows).toEqual([{ account_number: '9876543210' }]);
           await q(`UPDATE public.payout_accounts SET account_number = '5550001111' WHERE id = '${PAYOUT}'`);
+          // Four characters or fewer: '' so a short number is never shown whole.
           await q(`INSERT INTO public.business_bank_accounts (business_id, bank_name, account_number, account_name)
-            VALUES ('${BIZ}', 'Second Bank', '4444', 'Synthetic Merchant')`);
+            VALUES ('${BIZ}', 'Second Bank', '4444', 'Synthetic Merchant'), ('${BIZ}', 'Third Bank', '54321', 'Synthetic Merchant')`);
           expect((await q(`SELECT account_number_last4 FROM public.payout_accounts`)).rows).toEqual([{ account_number_last4: '1111' }]);
           expect((await q(`SELECT account_number_last4 FROM public.business_bank_accounts ORDER BY bank_name`)).rows)
-            .toEqual([{ account_number_last4: '4444' }, { account_number_last4: '3210' }]);
+            .toEqual([{ account_number_last4: '' }, { account_number_last4: '3210' }, { account_number_last4: '4321' }]);
+          await q(`UPDATE public.payout_accounts SET account_number = NULL WHERE id = '${PAYOUT}'`);
+          expect((await q(`SELECT account_number_last4 FROM public.payout_accounts`)).rows).toEqual([{ account_number_last4: null }]);
         } finally { await q('ROLLBACK'); }
       });
 
