@@ -6,7 +6,7 @@
  *
  * CRON schedule (add to supabase/config.toml):
  *   [functions.process-sequences]
- *   schedule = "*/5 * * * *"
+ *   schedule = "0-59/5 * * * *"  (every 5 minutes; a star-slash here would end this comment)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -23,6 +23,7 @@ const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { customerSendBlocked } from '../_shared/customer-suspension.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -186,6 +187,17 @@ Deno.serve(async () => {
       // Fill template variables
       const message = fillVariables(currentStep.message_content, enrollment.context || {});
       const phone = enrollment.customer_phone.replace(/^\+/, '');
+
+      // #1103: hold a suspended customer's step without sending (fails closed).
+      // Pushing next_send_at an hour on keeps these rows from filling every
+      // 50-row batch; the step sends once the number is unsuspended.
+      if (await customerSendBlocked(supabase, phone)) {
+        await supabase
+          .from('bot_sequence_enrollments')
+          .update({ next_send_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() })
+          .eq('id', enrollment.id);
+        continue;
+      }
 
       // Send message
       const sent = await sendWhatsApp(phone, message, supabase, enrollment.business_id);

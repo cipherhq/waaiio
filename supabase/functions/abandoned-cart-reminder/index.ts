@@ -7,7 +7,7 @@
  *
  * CRON schedule (add to supabase/config.toml):
  *   [functions.abandoned-cart-reminder]
- *   schedule = "*/30 * * * *"
+ *   schedule = "0,30 * * * *"  (every 30 minutes; a star-slash here would end this comment)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -24,6 +24,7 @@ const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { customerSendBlocked } from '../_shared/customer-suspension.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -102,6 +103,8 @@ Deno.serve(async () => {
 
     // Only remind if there are items in cart
     if (!cart || cart.length === 0) continue;
+    // #1103: never message a suspended customer (fails closed).
+    if (await customerSendBlocked(supabase, session.whatsapp_number)) continue;
 
     // Get business name
     const { data: biz } = await supabase

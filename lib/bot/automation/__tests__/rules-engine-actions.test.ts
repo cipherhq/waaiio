@@ -39,6 +39,11 @@ function actionSupabase() {
       return chain;
     }
     if (table === 'notifications') return { insert: notificationInsert };
+    if (table === 'customer_suspensions') {
+      // #1103: no customer is suspended in these scenarios.
+      const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
+      return chain;
+    }
     if (table === 'bookings' || table === 'orders') {
       const chain = {
         update: vi.fn((value: unknown) => { statusUpdate(table, value); return chain; }),

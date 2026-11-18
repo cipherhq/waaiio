@@ -24,6 +24,7 @@ const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { customerSendBlocked } from '../_shared/customer-suspension.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -102,6 +103,8 @@ Deno.serve(async () => {
 
     // Skip if already wished this year
     if (customer.birthday_wished_year === currentYear) continue;
+    // #1103: never message a suspended customer (fails closed).
+    if (await customerSendBlocked(supabase, customer.phone)) continue;
 
     const biz = customer.businesses as unknown as { name: string; category: string; metadata: Record<string, unknown> } | null;
     if (!biz) continue;

@@ -8,6 +8,7 @@ import { buildPaymentNextStepsButtons } from '@/lib/payments/next-steps-menu';
 import { prepareRecurringOffer } from '@/lib/payments/recurring-offer';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { logger } from '@/lib/logger';
+import { proactiveSuspensionStatus } from '@/lib/customer-suspension';
 import { fillFlowCopy, getFlowCopy } from './flows/flow-localization';
 import { recordUpdatesOptIn, transactionUpdatesOptInEligibility, updatesOptInIncludesWaaiio } from './customer-updates-optin';
 
@@ -49,7 +50,7 @@ export interface StartTransactionFollowup {
   awaitingConfirmation?: boolean;
 }
 
-async function transition(db: SupabaseClient, row: TransactionFollowupRow, state: State,
+async function transition(db: SupabaseClient, row: Pick<TransactionFollowupRow, 'id' | 'state'>, state: State,
   extra: Partial<TransactionFollowupRow> = {}): Promise<TransactionFollowupRow | null> {
   const { data, error } = await db.from(TABLE)
     .update({ ...extra, state, updated_at: new Date().toISOString() })
@@ -63,6 +64,21 @@ async function transition(db: SupabaseClient, row: TransactionFollowupRow, state
   }
   if (error) throw new Error(`transaction_followup_transition:${error.code}`);
   return data as TransactionFollowupRow | null;
+}
+
+/**
+ * #1103: a suspended customer gets no after-payment follow-up (saved-card or
+ * recurring offer, updates opt-in, next-steps menu). The payment confirmation
+ * is sent before any follow-up and is untouched. Returns true when the caller
+ * must stop: a suspended customer's follow-up is retired; an unreadable status
+ * leaves it for the recovery cron (fails closed).
+ */
+async function stopFollowupForSuspendedCustomer(db: SupabaseClient,
+  row: Pick<TransactionFollowupRow, 'id' | 'state' | 'phone'>): Promise<boolean> {
+  const status = await proactiveSuspensionStatus(db, row.phone);
+  if (status === 'clear') return false;
+  if (status === 'suspended' && row.state !== 'done') await transition(db, row, 'done');
+  return true;
 }
 
 async function hasActivePin(db: SupabaseClient, row: TransactionFollowupRow): Promise<boolean> {
@@ -141,6 +157,7 @@ export async function paymentHasTransactionFollowup(db: SupabaseClient, paymentI
 
 async function progress(db: SupabaseClient, input: TransactionFollowupRow): Promise<void> {
   let row = input;
+  if (await stopFollowupForSuspendedCustomer(db, row)) return;
   if (row.state === 'consent_pending' || row.state === 'consent_recording') {
     await recordDecision(db, row);
     return;

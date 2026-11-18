@@ -1,14 +1,26 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { reportFailure } from '@/lib/observability/report-failure';
+import { proactiveSuspensionStatus } from '@/lib/customer-suspension';
 
 /** Resume only the follow-up enrolled by successful Stage 3, on its original channel. */
 export async function resumePaidTransactionFollowup(supabase: SupabaseClient, paymentId: string): Promise<void> {
   const { resumeTransactionFollowupForPayment, claimTransactionCardStep } = await import('@/lib/bot/transaction-followups');
   const { checkAndOfferSavedCard, checkSavedCardOfferEligibility, checkStripeConsentAndOffer, retryPendingSavedCardOffer } = await import('./saved-card-offer');
   const { data: followup, error } = await supabase.from('transaction_followups')
-    .select('business_id,phone,channel_id,state').eq('payment_id', paymentId).maybeSingle();
+    .select('id,business_id,phone,channel_id,state').eq('payment_id', paymentId).maybeSingle();
   if (error) reportFailure(error, { area: 'followup', op: 'resume_paid.followup_read', paymentId });
   if (error || !followup) return;
+  // #1103: a suspended customer gets no saved-card or recurring offer, opt-in or
+  // menu, so the follow-up is retired. An unreadable status leaves it for the
+  // recovery cron (fails closed). The payment confirmation was already sent.
+  const suspension = await proactiveSuspensionStatus(supabase, followup.phone);
+  if (suspension !== 'clear') {
+    if (suspension === 'suspended') {
+      await supabase.from('transaction_followups').update({ state: 'done', updated_at: new Date().toISOString() })
+        .eq('id', followup.id).eq('state', followup.state);
+    }
+    return;
+  }
   if (!['waiting_card', 'card_active'].includes(followup.state)) {
     await resumeTransactionFollowupForPayment(supabase, paymentId);
     return;

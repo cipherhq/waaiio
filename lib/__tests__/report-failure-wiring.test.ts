@@ -81,10 +81,12 @@ describe('resumePaidTransactionFollowup', () => {
     const payErr = { message: 'timeout', code: '57014' };
     const { db, calls } = stubDb({
       transaction_followups: { data: { business_id: BIZ, phone: '+2348012345678', channel_id: 'c', state: 'waiting_card' }, error: null },
+      customer_suspensions: { data: null, error: null },
       payments: { data: null, error: payErr },
     });
     await resumePaidTransactionFollowup(db as never, PAY);
-    expect(calls).toEqual(['transaction_followups', 'payments']);
+    // #1103: the suspension status is read before the payment (no row = clear).
+    expect(calls).toEqual(['transaction_followups', 'customer_suspensions', 'payments']);
     expect(resumeFollowup).not.toHaveBeenCalled();
     expect(reportFailure).toHaveBeenCalledWith(payErr, { area: 'followup', op: 'resume_paid.payment_read', paymentId: PAY, businessId: BIZ });
   });

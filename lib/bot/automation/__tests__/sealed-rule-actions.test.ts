@@ -57,6 +57,11 @@ function raceStore() {
       throw new Error(`unexpected rpc ${name}`);
     }),
     from: vi.fn((table: string) => {
+      if (table === 'customer_suspensions') {
+        // #1103: no customer is suspended in these scenarios.
+        const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
+        return chain;
+      }
       if (table === 'payment_rule_action_manifests') {
         const chain = {
           select: vi.fn(() => chain),

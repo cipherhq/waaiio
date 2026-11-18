@@ -421,6 +421,22 @@ describe('sendIntakeReminder', () => {
     env.tier = 'free';
     expect(await sendIntakeReminder(due() as never, 'i1', { resolver: sender().resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'not_entitled' });
   });
+  it('#1103: a suspended client gets no reminder, and the claim stays free', async () => {
+    const db = due(); db.tables.customer_suspensions = [{ id: 'sus-1', phone: '2348012345678' }]; const s = sender();
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'suspended' });
+    expect(s.sent).toHaveLength(0);
+    expect(db.tables.booking_intakes[0].reminder_sent_at).toBeNull();
+    // Unsuspended: the same reminder goes out on the next run.
+    db.tables.customer_suspensions = [];
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'sent' });
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('#1103: an unreadable suspension status sends nothing (fails closed)', async () => {
+    const db = failReads(due(), 'customer_suspensions'); const s = sender();
+    expect(await sendIntakeReminder(db as never, 'i1', { resolver: s.resolver, now: NOW })).toEqual({ status: 'skipped', reason: 'suspended' });
+    expect(s.sent).toHaveLength(0);
+  });
 });
 
 // ── Public booking page (Owner decisions 2026-11-10) ──

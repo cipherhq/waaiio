@@ -80,6 +80,8 @@ const BOOKING = {
   services: null,
 };
 
+let customerSuspended = false;
+
 /** In-memory database. Statuses of awaited WAMIDs are delivered by the time they are read. */
 function fakeDb(gateway: string, origin: string, amount = 5000) {
   const waits = new Map<string, string>();
@@ -101,6 +103,8 @@ function fakeDb(gateway: string, origin: string, amount = 5000) {
       case 'payment_loyalty_applications': return { points_awarded: 10 };
       case 'loyalty_points': return { points_balance: 10 };
       case 'payment_confirmation_deliveries': return [{ delivery_status: 'accepted' }];
+      // #1103: the customer may be suspended from every bot; money paths never read this.
+      case 'customer_suspensions': return customerSuspended ? { id: 'sus-1', phone: '2348000001070' } : null;
       default: return null;
     }
   };
@@ -181,6 +185,7 @@ beforeEach(() => {
   effects.length = 0;
   rpcNames.length = 0;
   wamidSeq = 0;
+  customerSuspended = false;
   vi.clearAllMocks();
 });
 
@@ -247,4 +252,16 @@ describe('#1070 paid confirmation copy — receipt hint only when no receipt is 
     expect(confirmationText()).toContain('Type *receipt* to get your receipt');
     expect(events.some(e => e.startsWith('document:receipt-'))).toBe(false);
   });
+});
+
+describe('#1103 a suspended customer still gets what they paid for', () => {
+  it.each([['paystack', 'platform'], ['paystack', 'connect'], ['stripe', 'platform']] as const)(
+    '%s/%s: confirmation, ticket and receipt are sent unchanged', async (gateway, origin) => {
+      customerSuspended = true;
+      const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+      const result = await sendProactiveConfirmation(fakeDb(gateway, origin) as never, { id: 'pay-1070', amount: 5000, booking_id: 'bk-1070' } as never);
+      expect(result).toEqual({ status: 'completed' });
+      expect(events.filter(e => e !== 'owner:notified').slice(0, EXPECTED_ORDER.length)).toEqual(EXPECTED_ORDER);
+      expect(rpcNames.filter(n => n === 'finalize_payment_confirmation')).toHaveLength(1);
+    });
 });
