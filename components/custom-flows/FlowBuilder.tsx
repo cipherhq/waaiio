@@ -287,7 +287,11 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
       onDirty={value => setEntryDirty(current => current[node.id] === value ? current : { ...current, [node.id]: value })}
       onSaved={() => { setMessages([]); setInputs([]); setListsVersion(v => v + 1); }}
       onRows={rows => setEntryRows(current => ({ ...current, [node.table]: rows }))}
-      onDraftEntry={data => setDraftEntry(current => data ? { nodeId: node.id, data } : current?.nodeId === node.id ? null : current)} />;
+      onDraftEntry={data => {
+        // Typing an entry replaces an earlier test word in the phone.
+        if (data) setLiveQuery('');
+        setDraftEntry(current => data ? { nodeId: node.id, data } : current?.nodeId === node.id ? null : current);
+      }} />;
   }
   // Same fields and draft operations as before; plain labels, help and examples (#1079).
   function stepEditor(node: CustomFlowNode) {
@@ -337,7 +341,7 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
         </div>}
         {node.options.map((option, optionIndex) => <div key={optionIndex} data-testid="button-row" className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50">
           <Field label="Button text" help="The words on the button. WhatsApp shows up to 20 letters.">
-            {props => <input {...props} className={inputClass} placeholder="Example: Program" value={option.label} onChange={event => edit(renameButton(draft, node.id, optionIndex, event.target.value))} />}
+            {props => <input {...props} className={inputClass} maxLength={20} placeholder="Example: Program" value={option.label} onChange={event => edit(renameButton(draft, node.id, optionIndex, event.target.value))} />}
           </Field>
           {structural ? <>
             <Field label="Goes to" help="The step people reach when they tap this button.">

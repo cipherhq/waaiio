@@ -58,6 +58,9 @@ export function ListEntries({ businessId, flowId, table, node, title, item, busi
   const [labels, setLabels] = useState<string[] | null>(null);
   const [refresh, setRefresh] = useState(0);
   const focusId = useRef<string | null>(null);
+  // Codes saved here before the list is read again, so the next new entry never repeats one.
+  const savedCodes = useRef<string[]>([]);
+  const known = () => [...rows, ...savedCodes.current.map(code => ({ id: `saved-${code}`, row_code: code, data: {}, position: 0, hidden: false }))];
   const columns = table.columns;
   const editableList = table.editor_schema_version === 1;
   const base = `entries-${node.id}`;
@@ -92,7 +95,7 @@ export function ListEntries({ businessId, flowId, table, node, title, item, busi
   function close(focus = `add-entry-${node.id}`) { setForm(null); focusId.current = focus; }
   function change(data: Record<string, unknown>) {
     if (!form) return;
-    const rowCode = form.codeEdited || form.mode === 'edit' ? form.row.row_code : entryCode(data, columns, rows, form.row.id, item);
+    const rowCode = form.codeEdited || form.mode === 'edit' ? form.row.row_code : entryCode(data, columns, known(), form.row.id, item);
     setForm({ ...form, row: { ...form.row, data, row_code: rowCode }, changed: true });
   }
 
@@ -106,11 +109,12 @@ export function ListEntries({ businessId, flowId, table, node, title, item, busi
   async function save(another: boolean) {
     if (!form || busy) return;
     const row = form.row;
-    const rowCode = row.row_code.trim() || entryCode(row.data, columns, rows, row.id, item);
+    const rowCode = row.row_code.trim() || entryCode(row.data, columns, known(), row.id, item);
     setBusy(true); setNotice('');
     try {
       const { ok, error } = await post({ action: form.mode === 'add' ? 'create_row' : 'save_row', id: row.id, tableId: table.id, rowCode, data: row.data, position: row.position, hidden: row.hidden, updatedAt: row.updated_at });
       if (!ok) { setNotice(failure(error)); return; }
+      savedCodes.current.push(rowCode);
       const name = primaryText(row, columns) || `This ${item}`;
       setNotice(`${name} saved.`);
       setRefresh(v => v + 1); onSaved();
@@ -186,7 +190,8 @@ export function ListEntries({ businessId, flowId, table, node, title, item, busi
       </div>
       {editableList && !labels && <button type="button" id={`${base}-labels`} className={`${buttonClass} text-xs`} disabled={locked || formOpen} onClick={() => { setLabels(columns.map(c => c.label || c.name)); focusId.current = `${base}-label-0`; }}>Rename fields</button>}
     </div>
-    {notice && <p role="status" className="rounded-lg bg-white px-3 py-2 text-sm text-gray-800 dark:bg-gray-800 dark:text-gray-200">{notice}</p>}
+    {/* Always in the page, so screen readers announce each new notice. */}
+    <p aria-live="polite" aria-atomic="true" className={notice ? 'rounded-lg bg-white px-3 py-2 text-sm text-gray-800 dark:bg-gray-800 dark:text-gray-200' : 'sr-only'}>{notice}</p>
     {labels && <fieldset disabled={busy} className="space-y-3 rounded-xl border border-brand-200 bg-white p-3 dark:border-brand-800 dark:bg-gray-800">
       <legend className="px-1 text-sm font-semibold text-gray-900 dark:text-gray-100">Field names for {title}</legend>
       <p className="text-xs text-gray-600 dark:text-gray-400">Only the names you see change. Your entries keep their details.</p>

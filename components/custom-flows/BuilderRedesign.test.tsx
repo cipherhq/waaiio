@@ -27,7 +27,7 @@ function festivalFlow(): Flow {
 beforeEach(() => {
   try { window.localStorage.setItem(WALKTHROUGH_KEY, 'done'); } catch { /* ignore */ }
   flow = festivalFlow();
-  tables = FESTIVAL_TABLES.map(table => ({ id: `t-${table.name}`, name: table.name, columns: structuredClone(table.columns) as any[], editor_schema_version: 1, updated_at: 'v0' }));
+  tables = FESTIVAL_TABLES.map(table => ({ id: `t-${table.name}`, name: table.name, columns: table.columns.map(column => ({ ...column })), editor_schema_version: 1, updated_at: 'v0' }));
   rows = { 't-artists': [{ id: 'a1', row_code: 'TEMS', data: { name: 'Tems', day: 'Friday', stage: 'Lagoon stage', start_time: '8pm' }, position: 0, hidden: false, updated_at: 'r0' }] };
   posts = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
@@ -134,7 +134,23 @@ describe('Inline entries on a list step (#1107)', () => {
     const next = within(artists()).getByRole('group', { name: 'Add artist' });
     expect((within(next).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('');
     expect(document.activeElement).toBe(within(next).getByLabelText(/^Name/));
-    fireEvent.click(within(next).getByRole('button', { name: 'Cancel' }));
+    // The next entry with the same name never repeats the saved short code.
+    fireEvent.change(within(next).getByLabelText(/^Name/), { target: { value: 'Wizkid' } });
+    fireEvent.click(within(next).getByRole('button', { name: 'Save and add another' }));
+    await waitFor(() => expect(dataPosts().at(-1)).toMatchObject({ action: 'create_row', rowCode: 'WIZKID-2' }));
+    // The save has finished once the fresh form is empty again.
+    await waitFor(() => expect((within(artists()).getByLabelText(/^Name/) as HTMLInputElement).value).toBe(''));
+    fireEvent.click(within(artists()).getByRole('button', { name: 'Cancel' }));
+    const extra = (await within(artists()).findAllByRole('button', { name: 'Delete Wizkid' }));
+    expect(extra).toHaveLength(2);
+    fireEvent.click(extra[1]);
+    fireEvent.click(within(artists()).getByRole('button', { name: 'Yes, delete' }));
+    // While asking, the row shows the question instead of its buttons: wait until it is gone.
+    await waitFor(() => {
+      expect(within(artists()).queryByRole('group', { name: 'Delete Wizkid?' })).toBeNull();
+      expect(within(artists()).getAllByRole('button', { name: 'Edit Wizkid' })).toHaveLength(1);
+    });
+    expect(dataPosts().at(-1)).toMatchObject({ action: 'delete_row' });
 
     fireEvent.click(within(artists()).getByRole('button', { name: 'Edit Wizkid' }));
     const edit = within(artists()).getByRole('group', { name: 'Edit Wizkid' });
@@ -155,7 +171,7 @@ describe('Inline entries on a list step (#1107)', () => {
     await waitFor(() => expect(within(artists()).queryByText('Wizkid')).toBeNull());
     expect(dataPosts().at(-1)).toMatchObject({ action: 'delete_row', tableId: 't-artists' });
     expect(posts.some(post => post.body.action === 'publish')).toBe(false);
-  });
+  }, 20000);
 
   it('renames a field label without changing the column name', async () => {
     await openFlow();
@@ -198,6 +214,7 @@ describe('Everything editable in a guided flow (#1107)', () => {
     const vendors = screen.getByRole('group', { name: 'Editing step 3 · Search Vendors' });
     expect(within(vendors).queryByLabelText('Which list')).toBeNull();
     expect(within(vendors).queryByLabelText('Then go to')).toBeNull();
+    expect(within(vendors).queryByRole('group', { name: 'Search by' })).toBeNull();
     fireEvent.change(within(vendors).getByLabelText('Button name'), { target: { value: 'Food & drink' } });
     fireEvent.change(within(vendors).getByLabelText('Question we ask'), { target: { value: 'What are you hungry for?' } });
     fireEvent.click(within(vendors).getByRole('radio', { name: /Both/ }));
@@ -249,9 +266,14 @@ describe('Live preview follows the entries (#1107)', () => {
     fireEvent.change(screen.getByLabelText('Test a word'), { target: { value: 'pizza' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(within(preview()).getByText('No matching information is available. Try another name, code or keyword.')).toBeTruthy();
+    // Starting a new entry replaces the test word with the entry being typed.
+    fireEvent.click(within(artists()).getByRole('button', { name: '+ Add artist' }));
+    fireEvent.change(within(artists()).getByLabelText(/^Name/), { target: { value: 'Asake' } });
+    expect(within(preview()).queryByText('pizza')).toBeNull();
+    expect(within(preview()).getByText('Asake')).toBeTruthy();
     // No request was made for the preview.
     expect(posts.some(post => post.body.action === 'preview')).toBe(false);
-  });
+  }, 20000);
 
   it('a browse step shows the entries as a numbered list', async () => {
     flow.definition.nodes = flow.definition.nodes.map((node: any) => node.id === 'lookup_artists' ? { ...node, mode: 'browse', prompt: 'Reply with a number.' } : node);

@@ -79,7 +79,8 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
         <datalist id={listId}>{lists.map(item => <option key={item.id} value={item.name} />)}</datalist>
       </>}
     </Field>}
-    {columns.length > 0
+    {/* Which columns are searched is part of the step's setup: advanced editor only in a guided flow (#1107). */}
+    {destination && (columns.length > 0
       ? <fieldset className="min-w-0">
         <legend className="text-sm font-medium text-gray-800 dark:text-gray-200">Search by</legend>
         <p className="text-xs text-gray-600 dark:text-gray-400">We look for the typed word in these columns. Example: Session and Day.</p>
@@ -93,7 +94,7 @@ export function LookupSettings({ businessId, flowId, node, lists, business, busy
       </fieldset>
       : <Field label="Search by" help="The columns we look in for the typed word. Separate them with commas.">
         {props => <input {...props} className={inputClass} placeholder="Example: name, day" value={node.search_fields.join(',')} onChange={event => onChange({ ...node, search_fields: event.target.value.split(',').map(field => field.trim()) })} />}
-      </Field>}
+      </Field>)}
     <Field label="Question we ask" help="What we send when people reach this step, so they know what to type.">
       {props => <textarea {...props} className={inputClass} rows={2} placeholder="Example: Type a day or session name." value={node.prompt ?? ''} onChange={event => onChange({ ...node, prompt: event.target.value })} />}
     </Field>
