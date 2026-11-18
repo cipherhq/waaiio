@@ -154,6 +154,7 @@ export async function middleware(request: NextRequest) {
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': origin,
+        Vary: 'Origin',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Max-Age': '86400',
@@ -375,6 +376,8 @@ export async function middleware(request: NextRequest) {
       'https://admin-staging.waaiio.com',
       'http://localhost:8083', // dev
     ];
+    // The CORS answer depends on Origin, so caches must key on it (allowed or not).
+    supabaseResponse.headers.append('Vary', 'Origin');
     if (allowedOrigins.includes(origin)) {
       supabaseResponse.headers.set('Access-Control-Allow-Origin', origin);
       supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');

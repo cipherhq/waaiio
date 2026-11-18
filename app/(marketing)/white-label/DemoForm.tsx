@@ -341,7 +341,7 @@ export default function DemoForm() {
       {TURNSTILE_SITE_KEY && <div ref={turnstileRef} className="mt-2" />}
 
       {status === 'error' && (
-        <p className="text-sm text-red-600">{errorMsg || 'Something went wrong. Please try again.'}</p>
+        <p role="alert" className="text-sm text-red-600">{errorMsg || 'Something went wrong. Please try again.'}</p>
       )}
 
       <button

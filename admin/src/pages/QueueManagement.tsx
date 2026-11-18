@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime, maskPhone } from '@/lib/formatters';
@@ -24,6 +24,7 @@ interface QueueRecord {
 export default function QueueManagement() {
   const [entries, setEntries] = useState<QueueRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState(new Date().toISOString().split('T')[0]);
@@ -34,35 +35,16 @@ export default function QueueManagement() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
+    setLoadError(null);
 
     try {
-      let query = adminDb
-        .from('queue_entries')
-        .select('*')
-        .eq('queue_date', dateFilter)
-        .order('queue_number', { ascending: true });
-
-      if (statusFilter !== 'all') {
-        query = query.eq('status', statusFilter);
-      }
-
-      const { data } = await query;
-
-      // Enrich with business names
-      const bizIds = [...new Set((data || []).map(r => r.business_id))];
-      const { data: businesses } = await adminDb
-        .from('businesses')
-        .select('id, name')
-        .in('id', bizIds.length > 0 ? bizIds : ['__none__']);
-
-      const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
-
-      const enriched = (data || []).map(r => ({
-        ...r,
-        business_name: bizMap.get(r.business_id) || 'Unknown',
-      }));
-
-      setEntries(enriched as QueueRecord[]);
+      const params = new URLSearchParams({ date: dateFilter });
+      if (statusFilter !== 'all') params.set('status', statusFilter);
+      const { entries: rows } = await adminJson<{ entries: QueueRecord[] }>(await adminApiGet(`/api/admin/queue-entries?${params}`));
+      setEntries(rows);
+    } catch (err) {
+      setEntries([]);
+      setLoadError(`Could not load queue entries: ${err instanceof Error ? err.message : 'request failed'}`);
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -161,6 +143,8 @@ export default function QueueManagement() {
           <tbody className="divide-y divide-gray-50">
             {loading ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
+            ) : loadError ? (
+              <tr><td colSpan={7} role="alert" className="px-4 py-8 text-center text-red-600">{loadError}</td></tr>
             ) : paginated.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No queue entries found.</td></tr>
             ) : paginated.map(e => (

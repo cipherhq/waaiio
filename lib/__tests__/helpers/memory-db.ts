@@ -14,7 +14,7 @@ export interface MemoryDb {
   tables: Record<string, Row[]>;
   /** Tables whose reads should fail, to prove fail-closed behaviour. */
   failReads: Set<string>;
-  writes: Array<{ table: string; kind: 'insert' | 'update'; row: Row }>;
+  writes: Array<{ table: string; kind: 'insert' | 'update' | 'delete'; row: Row }>;
   from(table: string): any;
 }
 
@@ -47,7 +47,7 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
       let limitN: number | null = null;
       let rangeFrom = 0; let rangeTo: number | null = null;
       let head = false; let countMode = false;
-      let mode: 'select' | 'insert' | 'update' = 'select';
+      let mode: 'select' | 'insert' | 'update' | 'delete' = 'select';
       let payload: Row | Row[] | null = null;
       let returning = false;
       const rows = () => (db.tables[table] ||= []);
@@ -67,6 +67,12 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
           for (const r of hit) { Object.assign(r, payload); db.writes.push({ table, kind: 'update', row: { ...r } }); }
           return { data: returning ? hit : null, error: null, count: hit.length };
         }
+        if (mode === 'delete') {
+          const hit = rows().filter(r => preds.every(p => p(r)));
+          db.tables[table] = rows().filter(r => !hit.includes(r));
+          for (const r of hit) db.writes.push({ table, kind: 'delete', row: { ...r } });
+          return { data: returning ? hit : null, error: null, count: hit.length };
+        }
         if (db.failReads.has(table)) return { data: null, error: { message: `read failed: ${table}` }, count: null };
         let out = rows().filter(r => preds.every(p => p(r)));
         for (const o of [...orders].reverse()) out = [...out].sort((a, b) => (o.asc ? 1 : -1) * cmp(a[o.col], b[o.col]));
@@ -83,6 +89,7 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
         },
         insert(row: Row | Row[]) { mode = 'insert'; payload = row; return q; },
         update(row: Row) { mode = 'update'; payload = row; return q; },
+        delete() { mode = 'delete'; return q; },
         eq(c: string, v: unknown) {
           // `json_col->>key` compares one key of a JSON column as text, like PostgREST.
           const [col, key] = c.split('->>');

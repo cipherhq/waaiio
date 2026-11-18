@@ -43,5 +43,7 @@ export function adminCorsHeaders(
     'Access-Control-Allow-Methods': methods,
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400',
+    // The allow-origin value depends on the request's Origin, so caches must key on it.
+    Vary: 'Origin',
   };
 }

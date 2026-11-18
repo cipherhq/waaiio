@@ -74,6 +74,8 @@ describe('DemoForm — bot check widget', () => {
 
     submit();
     expect(await screen.findByText('Please complete the verification check.')).toBeTruthy();
+    // Announced to screen readers (#1109 follow-up).
+    expect(screen.getByRole('alert').textContent).toBe('Please complete the verification check.');
     expect(demoCalls()).toHaveLength(0);
 
     act(() => widget.opts!.callback('tok-123'));

@@ -1,7 +1,6 @@
 import { KeywordPayloadEditor } from '@/components/SettingFields';
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
-import { logAudit } from '@/lib/auditLog';
+import { adminApiDelete, adminApiFetch, adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal } from '@/components/DetailModal';
@@ -65,6 +64,7 @@ const MATCH_COLORS: Record<string, string> = {
 export default function BotKeywords() {
   const [keywords, setKeywords] = useState<BotKeywordRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [scopeFilter, setScopeFilter] = useState('all');
@@ -93,15 +93,13 @@ export default function BotKeywords() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
+    setLoadError(null);
     try {
-      const { data } = await adminDb
-        .from('bot_keywords')
-        .select('*')
-        .order('scope', { ascending: true })
-        .order('priority', { ascending: false });
-      setKeywords((data as BotKeywordRow[]) || []);
+      const { keywords: rows } = await adminJson<{ keywords: BotKeywordRow[] }>(await adminApiGet('/api/admin/bot-keywords'));
+      setKeywords(rows);
     } catch (error) {
-      console.warn('Failed to load bot keywords:', error);
+      setKeywords([]);
+      setLoadError(`Unable to load bot keywords: ${error instanceof Error ? error.message : 'request failed'}`);
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -187,43 +185,18 @@ export default function BotKeywords() {
         description: formDescription.trim() || null,
         is_active: formActive,
         priority: formPriority,
-        business_id: null, // system/category keywords have no business
       };
 
-      if (editing) {
-        const { error } = await adminDb
-          .from('bot_keywords')
-          .update(payload)
-          .eq('id', editing.id);
-        if (error) throw error;
-
-        await logAudit({
-          action: 'update_bot_keyword',
-          entity_type: 'bot_keyword',
-          entity_id: editing.id,
-          details: { keyword: payload.keyword, scope: payload.scope },
-        });
-      } else {
-        const { data, error } = await adminDb
-          .from('bot_keywords')
-          .insert(payload)
-          .select('id')
-          .single();
-        if (error) throw error;
-
-        await logAudit({
-          action: 'create_bot_keyword',
-          entity_type: 'bot_keyword',
-          entity_id: data.id,
-          details: { keyword: payload.keyword, scope: payload.scope },
-        });
-      }
+      // The API records the audit entry and refuses business-scope keywords.
+      await adminJson(editing
+        ? await adminApiFetch('/api/admin/bot-keywords', { id: editing.id, ...payload }, 'PATCH')
+        : await adminApiFetch('/api/admin/bot-keywords', payload));
 
       setModalOpen(false);
       await loadData();
     } catch (error) {
       console.error('Save bot keyword error:', error);
-      alert('Failed to save keyword');
+      alert(`Failed to save keyword: ${error instanceof Error ? error.message : 'request failed'}`);
     } finally {
       setSaving(false);
     }
@@ -231,43 +204,22 @@ export default function BotKeywords() {
 
   async function handleToggle(kw: BotKeywordRow) {
     try {
-      const { error } = await adminDb
-        .from('bot_keywords')
-        .update({ is_active: !kw.is_active })
-        .eq('id', kw.id);
-      if (error) throw error;
-
-      await logAudit({
-        action: kw.is_active ? 'deactivate_bot_keyword' : 'activate_bot_keyword',
-        entity_type: 'bot_keyword',
-        entity_id: kw.id,
-        details: { keyword: kw.keyword, is_active: !kw.is_active },
-      });
+      await adminJson(await adminApiFetch('/api/admin/bot-keywords', { id: kw.id, is_active: !kw.is_active }, 'PATCH'));
       await loadData();
     } catch (error) {
       console.error('Toggle keyword error:', error);
+      alert(`Failed to change keyword: ${error instanceof Error ? error.message : 'request failed'}`);
     }
   }
 
   async function handleDelete(kw: BotKeywordRow) {
     if (!confirm(`Delete keyword "${kw.keyword}"? This cannot be undone.`)) return;
     try {
-      const { error } = await adminDb
-        .from('bot_keywords')
-        .delete()
-        .eq('id', kw.id);
-      if (error) throw error;
-
-      await logAudit({
-        action: 'delete_bot_keyword',
-        entity_type: 'bot_keyword',
-        entity_id: kw.id,
-        details: { keyword: kw.keyword, scope: kw.scope },
-      });
+      await adminJson(await adminApiDelete('/api/admin/bot-keywords', { id: kw.id }));
       await loadData();
     } catch (error) {
       console.error('Delete keyword error:', error);
-      alert('Failed to delete keyword');
+      alert(`Failed to delete keyword: ${error instanceof Error ? error.message : 'request failed'}`);
     }
   }
 
@@ -357,7 +309,9 @@ export default function BotKeywords() {
 
       {/* Table */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        {pageItems.length === 0 ? (
+        {loadError ? (
+          <p role="alert" className="py-16 text-center text-sm text-red-600">{loadError}</p>
+        ) : pageItems.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-500">No keywords found</div>
         ) : (
           <table className="w-full text-sm">

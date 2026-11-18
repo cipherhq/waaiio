@@ -122,10 +122,17 @@ export default function Broadcasts() {
         return;
       }
       const acknowledgement = await response.json();
-      if (acknowledgement?.success !== true) {
+      // The API sends each recipient a separate email and reports how many the
+      // provider accepted; a single-recipient send replies with success only.
+      const acceptedCount = typeof acknowledgement?.accepted === 'number'
+        ? acknowledgement.accepted
+        : acknowledgement?.success === true ? recipientCount : 0;
+      if (!(acceptedCount > 0)) {
         setResult('The API did not acknowledge this submission. No history record was saved. Check its outcome before sending again; resubmission is blocked on this page.');
         return;
       }
+      const failedCount = recipientCount - acceptedCount;
+      recipientCount = acceptedCount;
       accepted = true;
       const { error } = await adminDb.from('admin_broadcasts').insert({
         sender_id: senderId,
@@ -139,7 +146,9 @@ export default function Broadcasts() {
       });
       if (error) throw error;
       recorded = true;
-      setResult(`API acknowledged submission for ${recipientCount} recipient(s); history recorded. This is not confirmation of recipient delivery.`);
+      setResult(failedCount > 0
+        ? `API accepted ${recipientCount} of ${recipientCount + failedCount} separate emails; ${failedCount} were not accepted. History recorded for ${recipientCount}. This is not confirmation of recipient delivery. Do not resend to everyone.`
+        : `API acknowledged submission for ${recipientCount} recipient(s); history recorded. This is not confirmation of recipient delivery.`);
       await logAudit({
         action: 'send_broadcast',
         entity_type: 'admin_broadcast',

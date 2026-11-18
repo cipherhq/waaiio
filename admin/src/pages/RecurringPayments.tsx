@@ -39,6 +39,11 @@ interface RecurringRecord {
   created_at: string;
 }
 
+// #1108: these buttons wrote customer_subscriptions with the browser client, matched 0 rows and
+// still looked successful. Pause/resume/cancel/retry must also reach the payment gateway server-side,
+// which is a money decision, so they stay off until a server route exists.
+const RECURRING_ACTIONS_AVAILABLE = false;
+
 export default function RecurringPayments() {
   const adminSession = useAdminSession();
   const canMutate = isFullAdmin(adminSession);
@@ -390,11 +395,17 @@ export default function RecurringPayments() {
               <>
                 <div className="my-4 border-t-2 border-gray-200" />
                 <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Admin Actions</p>
+                {!RECURRING_ACTIONS_AVAILABLE && (
+                  <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    These actions are not available yet: they need to update the payment provider as well
+                    as this record, and that part has not been built.
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {selected.status === 'active' && (
                     <button
                       onClick={handlePause}
-                      disabled={actionSaving}
+                      disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
                       className="rounded-lg bg-yellow-100 px-4 py-2 text-sm font-medium text-yellow-700 hover:bg-yellow-200 disabled:opacity-50"
                     >
                       {actionSaving ? 'Saving...' : 'Pause'}
@@ -403,7 +414,7 @@ export default function RecurringPayments() {
                   {selected.status === 'paused' && (
                     <button
                       onClick={handleResume}
-                      disabled={actionSaving}
+                      disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
                       className="rounded-lg bg-green-100 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-200 disabled:opacity-50"
                     >
                       {actionSaving ? 'Saving...' : 'Resume'}
@@ -412,7 +423,7 @@ export default function RecurringPayments() {
                   {selected.status === 'past_due' && (
                     <button
                       onClick={handleRetry}
-                      disabled={actionSaving}
+                      disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
                       className="rounded-lg bg-blue-100 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-200 disabled:opacity-50"
                     >
                       {actionSaving ? 'Saving...' : 'Retry (Reset Failures)'}
@@ -420,7 +431,7 @@ export default function RecurringPayments() {
                   )}
                   <button
                     onClick={handleCancel}
-                    disabled={actionSaving}
+                    disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
                     className="rounded-lg bg-red-100 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
                   >
                     {actionSaving ? 'Saving...' : 'Cancel Subscription'}

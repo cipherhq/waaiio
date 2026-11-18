@@ -23,6 +23,7 @@ interface PlatformFee {
 
 interface BusinessPayout {
   business_id: string;
+  currency: string | null;
   net_amount: number;
   platform_fee: number;
   gateway_fee: number;
@@ -80,8 +81,8 @@ export default function Finance() {
         const results = await Promise.allSettled([
           adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
           adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at, is_direct_transfer').is('refunded_at', null),
-          // business_payouts has no currency column — infer from business country_code
-          adminDb.from('business_payouts').select('business_id, net_amount, platform_fee, gateway_fee, status, created_at'),
+          // business_payouts.currency (M466); legacy rows without one fall back to the business country.
+          adminDb.from('business_payouts').select('business_id, currency, net_amount, platform_fee, gateway_fee, status, created_at'),
           adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
           adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
           adminDb.from('subscriptions').select('id, business_id, plan, amount, currency, status, created_at').eq('status', 'active'),
@@ -162,6 +163,11 @@ export default function Finance() {
     return p.currency || bizCurrencyMap.get(p.business_id) || 'UNKNOWN';
   }
 
+  function getPayoutCurrency(p: BusinessPayout): string {
+    // The payout's own currency; only legacy rows without one use the business country.
+    return p.currency || bizCurrencyMap.get(p.business_id) || 'UNKNOWN';
+  }
+
   /** Format a per-currency record as "₦5,000 · $500" */
   function formatMultiCurrency(amounts: Record<string, number>): string {
     const entries = Object.entries(amounts).filter(([, a]) => a > 0);
@@ -199,22 +205,22 @@ export default function Finance() {
       }
     }
 
-    // Payout amounts by currency — inferred from business country (no currency column on table)
+    // Payout amounts by the payout's own currency
     const payoutsOwedByCurrency: Record<string, number> = {};
     for (const p of filteredPayouts.filter(p => ['pending', 'approved'].includes(p.status))) {
-      const cur = bizCurrencyMap.get(p.business_id) || 'UNKNOWN';
+      const cur = getPayoutCurrency(p);
       payoutsOwedByCurrency[cur] = (payoutsOwedByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 
     const paidOutByCurrency: Record<string, number> = {};
     for (const p of filteredPayouts.filter(p => p.status === 'paid')) {
-      const cur = bizCurrencyMap.get(p.business_id) || 'UNKNOWN';
+      const cur = getPayoutCurrency(p);
       paidOutByCurrency[cur] = (paidOutByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 
     const outstandingByCurrency: Record<string, number> = {};
     for (const p of filteredPayouts.filter(p => ['pending', 'approved', 'processing'].includes(p.status))) {
-      const cur = bizCurrencyMap.get(p.business_id) || 'UNKNOWN';
+      const cur = getPayoutCurrency(p);
       outstandingByCurrency[cur] = (outstandingByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 
@@ -227,12 +233,12 @@ export default function Finance() {
       paymentBuckets[p.status].amounts[cur] = (paymentBuckets[p.status].amounts[cur] || 0) + Number(p.amount || 0);
     }
 
-    // Payout status breakdown (per business-inferred currency)
+    // Payout status breakdown (per payout currency)
     const payoutBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
     for (const p of filteredPayouts) {
       if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0, amounts: {} };
       payoutBuckets[p.status].count++;
-      const cur = bizCurrencyMap.get(p.business_id) || 'UNKNOWN';
+      const cur = getPayoutCurrency(p);
       payoutBuckets[p.status].amounts[cur] = (payoutBuckets[p.status].amounts[cur] || 0) + Number(p.net_amount || 0);
     }
 
@@ -403,7 +409,7 @@ export default function Finance() {
 
       {/* Partial data notice */}
       <div className="mt-3 text-xs text-gray-400">
-        Filtered client-loaded rows only: not complete or reconciled. Payout amounts have no verified currency. CSV export is disabled pending coverage verification.
+        Filtered client-loaded rows only: not complete or reconciled. Payouts use their recorded currency; older payouts without one use the business country. CSV export is disabled pending coverage verification.
       </div>
 
       {/* Metric Cards */}
@@ -427,7 +433,7 @@ export default function Finance() {
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-3">Platform</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard label="Platform Fees Earned" value={formatMultiCurrency(metrics.platformFeesByCurrency)} color="green" />
-          <MetricCard label="Direct Transfer Revenue" value={formatMultiCurrency(metrics.directTransferFeesByCurrency)} color="indigo" />
+          <MetricCard label="Fees on merchant-held payments (billed by monthly invoice)" value={formatMultiCurrency(metrics.directTransferFeesByCurrency)} color="indigo" />
           <MetricCard label="Gateway Revenue" value={formatMultiCurrency(metrics.gatewayFeesByCurrency)} color="blue" />
           <MetricCard label="Payouts Owed" value={formatMultiCurrency(metrics.payoutsOwedByCurrency)} color="yellow" />
           <MetricCard label="Paid Out" value={formatMultiCurrency(metrics.paidOutByCurrency)} color="green" />
@@ -461,7 +467,7 @@ export default function Finance() {
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Payout Status Breakdown (currency inferred from business country)</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Payout Status Breakdown</h3>
           <div className="mt-4 space-y-3">
             {Object.entries(metrics.payoutBuckets).map(([status, data]) => (
               <div key={status} className="flex items-center justify-between text-sm">
@@ -663,8 +669,10 @@ export default function Finance() {
 
       {/* Subscription MRR Summary */}
       {subscriptions.length > 0 && (() => {
+        // Free (amount 0) plans are active subscriptions but not paying ones (#1108).
+        const paidSubscriptions = subscriptions.filter(s => Number(s.amount || 0) > 0);
         const mrrByCur: Record<string, number> = {};
-        for (const sub of subscriptions) {
+        for (const sub of paidSubscriptions) {
           const cur = sub.currency || 'NGN';
           mrrByCur[cur] = (mrrByCur[cur] || 0) + Number(sub.amount || 0);
         }
@@ -677,14 +685,14 @@ export default function Finance() {
             />
             <MetricCard
               label="Active Paid Subscribers"
-              value={String(subscriptions.length)}
+              value={String(paidSubscriptions.length)}
               color="blue"
             />
             <MetricCard
               label="Avg Revenue Per Subscriber"
               value={formatMultiCurrency(Object.fromEntries(
                 Object.entries(mrrByCur).map(([cur, amt]) => {
-                  const count = subscriptions.filter(s => (s.currency || 'NGN') === cur).length;
+                  const count = paidSubscriptions.filter(s => (s.currency || 'NGN') === cur).length;
                   return [cur, count > 0 ? amt / count : 0];
                 })
               ))}

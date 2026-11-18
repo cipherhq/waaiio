@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
+import { adminApiFetch, adminApiGet, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -7,7 +8,6 @@ import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { maskPhone } from '@/lib/formatters';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
-import { logAudit } from '@/lib/auditLog';
 import { Users as UsersIcon, UserCheck, UserX, Shield } from 'lucide-react';
 
 interface Profile {
@@ -17,15 +17,22 @@ interface Profile {
   last_name: string | null;
   phone: string | null;
   role: string;
-  // Not columns on public.profiles; kept optional so existing UI reads stay type-safe.
+  // Not a column on public.profiles; kept optional so existing UI reads stay type-safe.
   country_code?: string | null;
-  metadata?: Record<string, unknown> | null;
   created_at: string;
 }
 
-type RoleOption = 'customer' | 'provider' | 'business_owner' | 'admin';
+// The user_role enum (M001, M011, M069, M161). Only the two account roles can be set here;
+// platform roles live in Auth app_metadata and are managed on the Admin Team page.
+const ROLE_FILTER_OPTIONS = ['restaurant_owner', 'restaurant_staff', 'admin', 'support', 'finance', 'operations'];
+const ACCOUNT_ROLES = ['restaurant_owner', 'restaurant_staff'];
+const ROLE_LABELS: Record<string, string> = { restaurant_owner: 'account owner', restaurant_staff: 'account staff' };
+const roleLabel = (role: string) => ROLE_LABELS[role] || role.replace(/_/g, ' ');
 
-const ROLE_OPTIONS: RoleOption[] = ['customer', 'provider', 'business_owner', 'admin'];
+interface AccountStatus {
+  suspendedIds: Set<string>;
+  platformRoles: Record<string, string>;
+}
 
 export default function UserManagement() {
   const adminSession = useAdminSession();
@@ -48,6 +55,9 @@ export default function UserManagement() {
   // Actions
   const [saving, setSaving] = useState(false);
   const [selectedRole, setSelectedRole] = useState<string>('');
+  // Suspension and platform roles come from Supabase Auth via /api/admin/users.
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   async function loadData() {
     setLoading(true);
@@ -64,6 +74,18 @@ export default function UserManagement() {
       console.warn('Failed to load users:', error);
     } finally {
       setLoading(false);
+    }
+    await loadAccountStatus();
+  }
+
+  async function loadAccountStatus() {
+    setStatusError(null);
+    try {
+      const body = await adminJson<{ suspendedIds: string[]; platformRoles: Record<string, string> }>(await adminApiGet('/api/admin/users'));
+      setAccountStatus({ suspendedIds: new Set(body.suspendedIds), platformRoles: body.platformRoles });
+    } catch (error) {
+      setAccountStatus(null);
+      setStatusError(`Account status unavailable: ${error instanceof Error ? error.message : 'request failed'}`);
     }
   }
 
@@ -96,8 +118,8 @@ export default function UserManagement() {
       .eq('customer_id', selected.id)
       .then(({ count }) => setPaymentCount(count ?? 0));
 
-    // Linked account (for business_owner / account_owner)
-    if (selected.role === 'business_owner') {
+    // Linked account (for account owners)
+    if (selected.role === 'restaurant_owner') {
       adminDb
         .from('businesses')
         .select('id, name')
@@ -111,82 +133,50 @@ export default function UserManagement() {
 
   // Status helpers
   function getUserStatus(user: Profile): string {
-    const meta = user.metadata as Record<string, unknown> | null;
-    return (meta?.status as string) || 'active';
+    if (!accountStatus) return 'unknown';
+    return accountStatus.suspendedIds.has(user.id) ? 'suspended' : 'active';
   }
+  const platformRoleOf = (user: Profile) => accountStatus?.platformRoles[user.id] ?? null;
 
-  // Toggle user status
+  // Suspend or reactivate (Supabase Auth ban, applied by the admin API)
   async function handleToggleStatus() {
-    if (!selected || !isFullAdmin) return;
+    if (!selected || !isFullAdmin || !accountStatus) return;
     const currentStatus = getUserStatus(selected);
-    const newStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
+    const action = currentStatus === 'suspended' ? 'reactivate' : 'suspend';
 
-    if (!confirm(`Are you sure you want to ${newStatus === 'suspended' ? 'suspend' : 'reactivate'} this user?`)) return;
+    if (!confirm(action === 'suspend'
+      ? 'Suspend this user? They will not be able to sign in until reactivated.'
+      : 'Reactivate this user?')) return;
 
     setSaving(true);
     try {
-      const currentMeta = (selected.metadata as Record<string, unknown>) || {};
-      const { error } = await adminDb
-        .from('profiles')
-        .update({
-          metadata: { ...currentMeta, status: newStatus },
-        })
-        .eq('id', selected.id);
-
-      if (error) throw error;
-
-      await logAudit({
-        action: newStatus === 'suspended' ? 'suspend_user' : 'reactivate_user',
-        entity_type: 'profile',
-        entity_id: selected.id,
-        details: {
-          email: selected.email,
-          previous_status: currentStatus,
-          new_status: newStatus,
-        },
-      });
-
+      await adminJson(await adminApiFetch(`/api/admin/users/${selected.id}`, { action }));
       setSelected(null);
       await loadData();
     } catch (error) {
       console.error('Toggle status error:', error);
-      alert('Failed to update user status');
+      alert(`Failed to update user status: ${error instanceof Error ? error.message : 'request failed'}`);
     } finally {
       setSaving(false);
     }
   }
 
-  // Change role
+  // Change account role (profiles.role)
   async function handleChangeRole() {
     if (!selected || selectedRole === selected.role || !isFullAdmin) return;
 
-    if (!confirm(`Change role from "${selected.role}" to "${selectedRole}"?`)) return;
+    if (!confirm(`Change role from "${roleLabel(selected.role)}" to "${roleLabel(selectedRole)}"?`)) return;
 
     setSaving(true);
     try {
-      const { error } = await adminDb
-        .from('profiles')
-        .update({ role: selectedRole })
-        .eq('id', selected.id);
-
-      if (error) throw error;
-
-      await logAudit({
-        action: 'change_user_role',
-        entity_type: 'profile',
-        entity_id: selected.id,
-        details: {
-          email: selected.email,
-          previous_role: selected.role,
-          new_role: selectedRole,
-        },
-      });
-
+      await adminJson(await adminApiFetch(`/api/admin/users/${selected.id}`, {
+        action: 'set_role', role: selectedRole, previous_role: selected.role,
+      }));
       setSelected(null);
       await loadData();
     } catch (error) {
       console.error('Change role error:', error);
-      alert('Failed to change user role');
+      alert(`Failed to change user role: ${error instanceof Error ? error.message : 'request failed'}`);
     } finally {
       setSaving(false);
     }
@@ -211,9 +201,9 @@ export default function UserManagement() {
 
   // Summary stats
   const totalUsers = profiles.length;
-  const activeUsers = profiles.filter(p => getUserStatus(p) === 'active').length;
-  const suspendedUsers = profiles.filter(p => getUserStatus(p) === 'suspended').length;
-  const adminUsers = profiles.filter(p => p.role === 'admin').length;
+  const activeUsers = accountStatus ? profiles.filter(p => getUserStatus(p) === 'active').length : '—';
+  const suspendedUsers = accountStatus ? profiles.filter(p => getUserStatus(p) === 'suspended').length : '—';
+  const adminUsers = accountStatus ? Object.keys(accountStatus.platformRoles).length : '—';
 
   if (loading) {
     return (
@@ -251,8 +241,8 @@ export default function UserManagement() {
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
           <option value="all">All Roles</option>
-          {ROLE_OPTIONS.map(r => (
-            <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+          {ROLE_FILTER_OPTIONS.map(r => (
+            <option key={r} value={r}>{roleLabel(r)}</option>
           ))}
         </select>
         <select
@@ -266,6 +256,12 @@ export default function UserManagement() {
           ))}
         </select>
       </div>
+
+      {statusError && (
+        <p role="alert" className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {statusError}. Suspend and role actions are unavailable until it loads.
+        </p>
+      )}
 
       {/* Table */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -299,11 +295,9 @@ export default function UserManagement() {
                   <td className="px-4 py-3 text-gray-600">{user.email}</td>
                   <td className="px-4 py-3 text-gray-600">{maskPhone(user.phone)}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={user.role === 'business_owner' ? 'account owner' : user.role} colorMap={{
-                      customer: 'bg-blue-100 text-blue-700',
-                      provider: 'bg-green-100 text-green-700',
+                    <StatusBadge status={roleLabel(user.role)} colorMap={{
                       'account owner': 'bg-purple-100 text-purple-700',
-                      business_owner: 'bg-purple-100 text-purple-700',
+                      'account staff': 'bg-green-100 text-green-700',
                       admin: 'bg-indigo-100 text-indigo-700',
                     }} />
                   </td>
@@ -334,7 +328,8 @@ export default function UserManagement() {
               <DetailRow label="ID" value={selected.id} />
               <DetailRow label="Email" value={selected.email} />
               <DetailRow label="Phone" value={maskPhone(selected.phone)} />
-              <DetailRow label="Role" value={selected.role.replace(/_/g, ' ')} />
+              <DetailRow label="Role" value={roleLabel(selected.role)} />
+              {platformRoleOf(selected) && <DetailRow label="Platform role" value={platformRoleOf(selected)} />}
               <DetailRow label="Country" value={selected.country_code} />
               <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
               <DetailRow label="Joined" value={fmtRelative(selected.created_at)} />
@@ -358,45 +353,59 @@ export default function UserManagement() {
             <div className="mt-6 space-y-4 border-t border-gray-100 pt-4">
               <p className="text-xs font-semibold text-gray-500 uppercase">Actions</p>
 
-              {/* Change Role */}
-              <div className="flex items-end gap-3">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700">Role</label>
-                  <select
-                    value={selectedRole}
-                    onChange={e => setSelectedRole(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
-                  >
-                    {ROLE_OPTIONS.map(r => (
-                      <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  onClick={handleChangeRole}
-                  disabled={saving || selectedRole === selected.role}
-                  className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                >
-                  {saving ? 'Saving...' : 'Update Role'}
-                </button>
-              </div>
+              {!accountStatus ? (
+                <p className="text-sm text-gray-500">Actions are unavailable until account status loads.</p>
+              ) : platformRoleOf(selected) || selected.id === adminSession?.userId ? (
+                <p className="text-sm text-gray-500">
+                  {selected.id === adminSession?.userId
+                    ? 'You cannot change your own account here.'
+                    : 'This person is on the platform team. Manage their access on the Admin Team page.'}
+                </p>
+              ) : (
+                <>
+                  {/* Change Role */}
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <label htmlFor="user-role" className="block text-sm font-medium text-gray-700">Account role</label>
+                      <select
+                        id="user-role"
+                        value={selectedRole}
+                        onChange={e => setSelectedRole(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
+                      >
+                        {!ACCOUNT_ROLES.includes(selected.role) && <option value={selected.role}>{roleLabel(selected.role)}</option>}
+                        {ACCOUNT_ROLES.map(r => (
+                          <option key={r} value={r}>{roleLabel(r)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={handleChangeRole}
+                      disabled={saving || selectedRole === selected.role}
+                      className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {saving ? 'Saving...' : 'Update Role'}
+                    </button>
+                  </div>
 
-              {/* Toggle Status */}
-              <button
-                onClick={handleToggleStatus}
-                disabled={saving}
-                className={`w-full rounded-xl px-4 py-2.5 text-sm font-bold text-white transition disabled:opacity-50 ${
-                  getUserStatus(selected) === 'suspended'
-                    ? 'bg-green-600 hover:bg-green-700'
-                    : 'bg-red-600 hover:bg-red-700'
-                }`}
-              >
-                {saving
-                  ? 'Saving...'
-                  : getUserStatus(selected) === 'suspended'
-                    ? 'Reactivate User'
-                    : 'Suspend User'}
-              </button>
+                  {/* Toggle Status */}
+                  <button
+                    onClick={handleToggleStatus}
+                    disabled={saving}
+                    className={`w-full rounded-xl px-4 py-2.5 text-sm font-bold text-white transition disabled:opacity-50 ${
+                      getUserStatus(selected) === 'suspended'
+                        ? 'bg-green-600 hover:bg-green-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                  >
+                    {saving
+                      ? 'Saving...'
+                      : getUserStatus(selected) === 'suspended'
+                        ? 'Reactivate User'
+                        : 'Suspend User'}
+                  </button>
+                </>
+              )}
             </div>
           </>
         )}

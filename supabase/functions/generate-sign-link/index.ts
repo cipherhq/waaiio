@@ -23,6 +23,7 @@ const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { edgeAllowedOrigins, resolveEdgeOrigin } from '../_shared/cors-origins.ts';
 
 function generateToken(length = 24): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -77,16 +78,10 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
   return result.ok;
 }
 
-const allowedOrigins = [
-  Deno.env.get('APP_URL') || 'https://www.waaiio.com',
-  'https://www.waaiio.com',
-  'https://waaiio.com',
-  'https://admin.waaiio.com',
-];
+const allowedOrigins = edgeAllowedOrigins(Deno.env.get('APP_URL'));
 
 function getCorsOrigin(req: Request): string {
-  const origin = req.headers.get('origin') || '';
-  return allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  return resolveEdgeOrigin(req.headers.get('origin'), allowedOrigins);
 }
 
 Deno.serve(async (req) => {
@@ -94,6 +89,7 @@ Deno.serve(async (req) => {
     return new Response(null, {
       headers: {
         'Access-Control-Allow-Origin': getCorsOrigin(req),
+        'Vary': 'Origin',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
@@ -194,6 +190,7 @@ Deno.serve(async (req) => {
         headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': getCorsOrigin(req),
+          'Vary': 'Origin',
         },
       },
     );

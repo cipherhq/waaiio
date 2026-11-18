@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
-import { isFullAdmin } from '@/lib/adminAuth';
 import { hasAccess } from '@/lib/permissions';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -48,7 +47,6 @@ interface BusinessOption {
 
 export default function WhatsAppChannels() {
   const adminSession = useAdminSession();
-  const canMutate = isFullAdmin(adminSession);
   const [tab, setTab] = useState<'channels' | 'configs'>('channels');
 
   // Channels state
@@ -63,9 +61,6 @@ export default function WhatsAppChannels() {
   const [selectedConfig, setSelectedConfig] = useState<WhatsAppConfig | null>(null);
 
   // Config modal actions
-  const [editWebhook, setEditWebhook] = useState('');
-  const [savingWebhook, setSavingWebhook] = useState(false);
-  const [togglingStatus, setTogglingStatus] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const perPage = 20;
@@ -131,59 +126,6 @@ export default function WhatsAppChannels() {
   // Config pagination
   const configTotal = Math.max(1, Math.ceil(configs.length / perPage));
   const configItems = configs.slice((configPage - 1) * perPage, configPage * perPage);
-
-  // Toggle config status
-  async function handleToggleStatus() {
-    if (!selectedConfig || !canMutate) return;
-    setTogglingStatus(true);
-
-    try {
-      const newStatus = selectedConfig.status === 'active' ? 'inactive' : 'active';
-      const { error } = await adminDb
-        .from('whatsapp_config')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq('id', selectedConfig.id);
-
-      if (error) throw error;
-
-      setSelectedConfig({ ...selectedConfig, status: newStatus });
-      await loadData();
-    } catch (error) {
-      console.error('Toggle status error:', error);
-      alert('Failed to update status');
-    } finally {
-      setTogglingStatus(false);
-    }
-  }
-
-  // Save webhook URL
-  async function handleSaveWebhook() {
-    if (!selectedConfig || !canMutate) return;
-    setSavingWebhook(true);
-
-    try {
-      const { error } = await adminDb
-        .from('whatsapp_config')
-        .update({ webhook_url: editWebhook || null, updated_at: new Date().toISOString() })
-        .eq('id', selectedConfig.id);
-
-      if (error) throw error;
-
-      setSelectedConfig({ ...selectedConfig, webhook_url: editWebhook || null });
-      await loadData();
-    } catch (error) {
-      console.error('Save webhook error:', error);
-      alert('Failed to save webhook URL');
-    } finally {
-      setSavingWebhook(false);
-    }
-  }
-
-  // Open config modal and seed webhook field
-  function openConfigModal(config: WhatsAppConfig) {
-    setSelectedConfig(config);
-    setEditWebhook(config.webhook_url || '');
-  }
 
   if (loading) {
     return (
@@ -307,7 +249,7 @@ export default function WhatsAppChannels() {
                   {configItems.map(cfg => (
                     <tr
                       key={cfg.id}
-                      onClick={() => openConfigModal(cfg)}
+                      onClick={() => setSelectedConfig(cfg)}
                       className="cursor-pointer transition hover:bg-gray-50"
                     >
                       <td className="px-4 py-3 font-medium text-gray-900">{cfg.business_name}</td>
@@ -383,7 +325,7 @@ export default function WhatsAppChannels() {
       {/* ─── Config Detail Modal (with Actions) ─── */}
       <DetailModal
         open={!!selectedConfig}
-        onClose={() => { setSelectedConfig(null); setEditWebhook(''); }}
+        onClose={() => setSelectedConfig(null)}
         title="Configuration Details"
         wide
       >
@@ -414,58 +356,12 @@ export default function WhatsAppChannels() {
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="my-3 border-t border-gray-100" />
-
-            <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
-              <p className="text-xs font-semibold uppercase text-gray-500">Actions</p>
-
-              {/* Toggle Status */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Status</p>
-                  <p className="text-xs text-gray-500">
-                    Currently <span className="font-medium">{selectedConfig.status}</span>
-                  </p>
-                </div>
-                <button
-                  onClick={handleToggleStatus}
-                  disabled={togglingStatus}
-                  className={`rounded-lg px-4 py-2 text-xs font-medium transition disabled:opacity-50 ${
-                    selectedConfig.status === 'active'
-                      ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                      : 'bg-green-100 text-green-700 hover:bg-green-200'
-                  }`}
-                >
-                  {togglingStatus
-                    ? 'Updating...'
-                    : selectedConfig.status === 'active'
-                      ? 'Deactivate'
-                      : 'Activate'}
-                </button>
-              </div>
-
-              {/* Update Webhook URL */}
-              <div>
-                <p className="text-sm font-medium text-gray-900 mb-2">Webhook URL</p>
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={editWebhook}
-                    onChange={e => setEditWebhook(e.target.value)}
-                    placeholder="https://example.com/webhook"
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-                  />
-                  <button
-                    onClick={handleSaveWebhook}
-                    disabled={savingWebhook}
-                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50"
-                  >
-                    {savingWebhook ? 'Saving...' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            {/* The old Activate/Deactivate and webhook controls wrote whatsapp_config.status and
+                .webhook_url, which do not exist, so they could never save (#1108 X2). */}
+            <p className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-500">
+              Status and webhook URL can't be changed here: bot settings don't store them. Manage the
+              business's number on the Channels tab.
+            </p>
 
             {/* Render any extra fields from the row */}
             {(() => {
