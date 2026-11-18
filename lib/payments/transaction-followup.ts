@@ -52,12 +52,12 @@ export async function resumePaidTransactionFollowup(supabase: SupabaseClient, pa
     return;
   }
 
-  const { data: pins, error: pinError } = await supabase.from('bot_sessions').select('id')
+  const { data: pins, error: pinError } = await supabase.from('bot_sessions').select('id,expires_at')
     .in('whatsapp_number', [followup.phone, followup.phone.replace(/^\+/, '')])
-    .eq('is_active', true).in('current_step', ['save_card_pin', 'replace_card_pin'])
-    .limit(1);
+    .eq('is_active', true).in('current_step', ['save_card_pin', 'replace_card_pin']);
   if (pinError) reportFailure(pinError, { area: 'followup', op: 'resume_paid.pin_session_read', paymentId, businessId: followup.business_id });
-  if (pinError || pins?.length) return;
+  const { isUnexpiredSession } = await import('./abandoned-card-step');
+  if (pinError || (pins || []).some(session => isUnexpiredSession(session))) return;
   const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
   const resolved = await new ChannelResolver(supabase)
     .resolveByChannelIdForBusiness(followup.channel_id, followup.business_id);
