@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
       .in('status', ['active', 'cancelled', 'completed'])
       .order('created_at', { ascending: false })
       .limit(100),
-    service.from('countries').select('code, name, dialing_code').eq('is_active', true).order('sort_order'),
+    service.from('countries').select('code, name, dialing_code, phone_digits').eq('is_active', true).order('sort_order'),
     service.from('category_templates').select('key, name:label').eq('is_active', true).order('label'),
   ]);
   if (actionableError || terminalResult.error || countriesResult.error || categoriesResult.error) {
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
   const service = createServiceClient({ noStore: true });
   let input: AdminOnboardingInput;
   try {
-    input = await validateAdminOnboardingInput(service, await request.json());
+    input = await validateAdminOnboardingInput(service, await request.json(), { newRequest: true });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid request' }, { status: 400 });
   }

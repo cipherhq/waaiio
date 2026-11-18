@@ -3,6 +3,7 @@ import type { CountryCode } from '@/lib/constants';
 import { validateBusinessAuthorityInputs } from '@/lib/onboarding/validation';
 import { OnboardingProvisionError, provisionPendingBusiness } from '@/lib/onboarding/provision-business';
 import { CAPABILITY_IDS, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
+import { FEATURES_REQUIRED, WHATSAPP_NAME_TOO_SHORT, fullPhoneNumberMessage, normalizeFullPhoneNumber, normalizeWhatsAppName } from '@/shared/onboarding-fields';
 
 export interface AdminOnboardingInput {
   request_key: string;
@@ -30,7 +31,13 @@ function required(value: unknown, label: string): string {
   return normalized;
 }
 
-export async function validateAdminOnboardingInput(service: SupabaseClient, raw: Partial<AdminOnboardingInput>) {
+/**
+ * `newRequest` applies the Get Started required fields (Owner request 2026-11-18):
+ * WhatsApp Name, at least one feature and the full business phone number. It is
+ * set by create only. Retry re-validates the stored input of an earlier request,
+ * which may predate these rules, so retry keeps the original checks.
+ */
+export async function validateAdminOnboardingInput(service: SupabaseClient, raw: Partial<AdminOnboardingInput>, { newRequest = false }: { newRequest?: boolean } = {}) {
   const input: AdminOnboardingInput = {
     request_key: required(raw.request_key, 'Request key'),
     owner_first_name: required(raw.owner_first_name, 'Owner first name'),
@@ -57,9 +64,34 @@ export async function validateAdminOnboardingInput(service: SupabaseClient, raw:
   if (!['shared', 'dedicated', 'coexistence'].includes(input.whatsapp_method)) throw new Error('WhatsApp method is invalid');
   if (input.capabilities.some(capability => !CAPABILITY_IDS.includes(capability))) throw new Error('A capability is invalid');
 
+  if (newRequest) await applyGetStartedRequiredFields(service, input, raw);
+
   await validateBusinessAuthorityInputs(service, { country: input.country, category: input.category, phone: input.business_phone });
   if (input.owner_phone) await validateBusinessAuthorityInputs(service, { country: input.country, category: input.category, phone: input.owner_phone });
   return input;
+}
+
+async function applyGetStartedRequiredFields(service: SupabaseClient, input: AdminOnboardingInput, raw: Partial<AdminOnboardingInput>) {
+  required(raw.bot_code, 'WhatsApp Name');
+  const botCode = normalizeWhatsAppName(raw.bot_code);
+  if (botCode.length < 2) throw new Error(WHATSAPP_NAME_TOO_SHORT);
+  input.bot_code = botCode;
+  if (!input.capabilities.length) throw new Error(FEATURES_REQUIRED);
+
+  const { data: country, error } = await service.from('countries').select('dialing_code, phone_digits')
+    .eq('code', input.country).eq('is_active', true).maybeSingle();
+  if (error) throw new Error('Country configuration unavailable. Please try again later.');
+  if (!country) throw new Error('Invalid or unsupported country. Please select a valid country.');
+  const dialingCode = String(country.dialing_code || '');
+  const phoneDigits = Number(country.phone_digits) || 10;
+  const phone = normalizeFullPhoneNumber(input.business_phone, dialingCode, phoneDigits);
+  if (!phone) throw new Error(fullPhoneNumberMessage(dialingCode, phoneDigits));
+  input.business_phone = phone;
+
+  // Checked before the invite is created, so a taken name never leaves a failed record.
+  const { data: taken, error: takenError } = await service.from('businesses').select('id').eq('bot_code', botCode).maybeSingle();
+  if (takenError) throw new Error('Unable to check the WhatsApp Name. Please try again.');
+  if (taken) throw new Error('Bot code is already taken. Please choose a different one.');
 }
 
 export async function provisionAdminBusiness(service: SupabaseClient, input: AdminOnboardingInput, userId: string, onboardingId: string) {
