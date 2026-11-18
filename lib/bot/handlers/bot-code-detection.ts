@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isAcronymOf, matchScore, phoneticMatch, phoneToCountry, detectCategoryIntent } from '../fuzzy-match';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { parseGivingCategoryPrefill } from '@/lib/giving-category-link';
 
 /** All valid capability IDs for deep-link validation */
 const VALID_CAPABILITIES: ReadonlySet<string> = new Set<string>([
@@ -17,8 +18,13 @@ const VALID_CAPABILITIES: ReadonlySet<string> = new Set<string>([
  * "SALON-LOLA:payment" → { botCode: "SALON-LOLA", capability: "payment" }
  * "SALON-LOLA" → { botCode: "SALON-LOLA", capability: undefined }
  * "Hi" → { botCode: "Hi", capability: undefined }
+ * "GRACE:giving:3f2a9c1d" → { botCode: "GRACE", capability: "giving" } (giving-category link;
+ *   bot.service.ts reads the category ref from the text itself)
  */
 function parseDeepLink(text: string): { botCode: string; capability?: CapabilityId } {
+  const givingLink = parseGivingCategoryPrefill(text);
+  if (givingLink) return { botCode: givingLink.botCode, capability: 'giving' };
+
   const lastColon = text.lastIndexOf(':');
   if (lastColon <= 0 || lastColon === text.length - 1) return { botCode: text };
 

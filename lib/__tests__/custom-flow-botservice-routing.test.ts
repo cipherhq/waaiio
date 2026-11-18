@@ -414,6 +414,23 @@ describe('Custom Flow BotService wiring — active session yields to existing ha
     expect(bodies.some((b) => b.includes('AfroPlus Fest'))).toBe(false);
   });
 
+  it('2b. giving-category link (CODE:giving:ref): closes the custom session and switches business like a bare code', async () => {
+    mockDetectionResult = { businessId: 'biz-B', suggestions: [], authority: 'exact', deepLinkCapability: 'giving' };
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
+    const { supabase, recorder, db } = createRoutingSupabase('select_capability');
+    const bot = new BotService(supabase, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    await bot.handleMessage(PHONE, 'SPAB:giving:3f2a9c1d', 'text', 'pnid-1');
+
+    // The engine yielded and closed its session instead of reading the link as a custom answer…
+    expect(db.custom_flow_sessions[0]?.is_active).toBe(false);
+    // …and the business-code path ran for biz-B.
+    expect(recorder.inserts.some((i) => i.table === 'bot_sessions' && i.row.business_id === 'biz-B')).toBe(true);
+    expect(sender.boundBusinessId).toBe('biz-B');
+    expect(sentTexts(cloud).some((t) => t.includes("Sorry, I didn't catch that"))).toBe(false);
+  });
+
   it('3. foreign button postback (i_paid): the "I\'ve Paid" handler runs (no recent payment reply)', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());

@@ -34,6 +34,7 @@ import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { parseGivingCategoryPrefill, resolveGivingCategoryRef } from '@/lib/giving-category-link';
 import { ensurePlus } from '@/lib/utils/phone';
 import { getPoweredByFooter, getPoweredByHtml, getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
@@ -1367,7 +1368,8 @@ export class BotService {
         // Exact business-code match (same query as the restart logic below):
         // a code that is also an entry keyword belongs to the platform.
         const isBusinessCode = async (candidate: string): Promise<boolean> => {
-          const trimmed = candidate.trim();
+          // A scanned giving-category link ("CODE:giving:ref") counts as its business code.
+          const trimmed = (parseGivingCategoryPrefill(candidate)?.botCode ?? candidate).trim();
           if (!/^[a-z0-9-]{2,30}$/i.test(trimmed)) return false;
           const { data } = await this.supabase
             .from('businesses')
@@ -1571,8 +1573,12 @@ export class BotService {
     // Also treat bot codes as restarts so users can switch businesses mid-session
     let isBotCodeRestart = false;
     let explicitRestartBusinessId: string | null = null;
-    if (!isFreeTextStep && session && /^[a-z0-9-]{2,30}$/i.test(text.trim())) {
-      const potentialCode = text.trim().toLowerCase();
+    // A scanned giving-category link ("CODE:giving:ref") restarts like its bot code,
+    // also from a free-text step such as the amount prompt (not from live chat).
+    const givingLinkText = parseGivingCategoryPrefill(text);
+    const restartCodeText = givingLinkText ? givingLinkText.botCode : text.trim();
+    if ((!isFreeTextStep || (givingLinkText && !isChatStep)) && session && /^[a-z0-9-]{2,30}$/i.test(restartCodeText)) {
+      const potentialCode = restartCodeText.toLowerCase();
       const { data: codeMatch } = await this.supabase
         .from('businesses')
         .select('id')
@@ -1605,7 +1611,7 @@ export class BotService {
       isBotCodeRestart
     )
     // Allow greetings to trigger restart even at free-text steps (not chat) — prevents "Hi" being saved as a name
-    || (isFreeTextStep && !isChatStep && isGreetingText);
+    || (isFreeTextStep && !isChatStep && (isGreetingText || (!!givingLinkText && isBotCodeRestart)));
 
     // Mid-flow greeting: ask for confirmation before resetting
     if (session && isMidFlow && isRestart && isGreetingText && !isBotCodeRestart) {
@@ -2062,7 +2068,7 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status, messaging_suspended')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status, messaging_suspended, bot_code')
           .eq('id', businessId)
           .single();
         // Reject suspended/deactivated businesses
@@ -2159,6 +2165,21 @@ export class BotService {
         tierInfo = tier;
       }
 
+      // Giving-category link ("CODE:giving:ref") for THIS business — the code must be
+      // this business's own bot code, so a link never selects another business's
+      // category. A valid active category is preselected below; an unknown, inactive
+      // or deleted one leaves the normal giving menu.
+      let givingLinkApplies = false;
+      let givingLinkCategory: { id: string; name: string } | null = null;
+      const businessBotCode = String((business as unknown as { bot_code?: string | null } | null)?.bot_code || '');
+      if (business && givingLinkText && businessBotCode
+          && givingLinkText.botCode.toLowerCase() === businessBotCode.toLowerCase()
+          && capabilities.includes('giving')) {
+        givingLinkApplies = true;
+        if (!deepLinkCapability) deepLinkCapability = 'giving';
+        givingLinkCategory = await resolveGivingCategoryRef(this.supabase, business.id, givingLinkText.ref);
+      }
+
       // #524: A customer-wide response preference is presentation state only.
       // Read it after #266 has authoritatively bound the business, then re-check it
       // against this business's live entitlement and the production certification
@@ -2249,7 +2270,7 @@ export class BotService {
       let directCanonicalCap: string | null = null; // High-confidence direct routing target
       let canonicalActivatedLanguage: string | null = null; // Seamlessly activated language
       let forceCapabilityMenu = false; // CAS-004: confidence/semantic forces menu
-      if (business && text && text.length > 2 && !isRestart && !promoHandledFirstMessage) {
+      if (business && text && text.length > 2 && !isRestart && !promoHandledFirstMessage && !givingLinkApplies) {
         try {
           const { understandCanonicalMessage } = await import('./canonical-understanding');
           canonicalResult = await understandCanonicalMessage({
@@ -2392,6 +2413,8 @@ export class BotService {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
             ...(directCanonicalCap ? { active_capability: directCanonicalCap } : {}),
             ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability, ...(!directCanonicalCap && capabilities.includes(deepLinkCapability as CapabilityId) ? { active_capability: deepLinkCapability } : {}) } : {}),
+            // select_category re-checks this id is still an active giving category of this business.
+            ...(givingLinkCategory ? { _repeat_selection_id: givingLinkCategory.id } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
@@ -2954,7 +2977,7 @@ export class BotService {
             profileNamePromise,
           ]);
 
-          if (custHistory.isReturning && !directCanonicalCap) {
+          if (custHistory.isReturning && !directCanonicalCap && !givingLinkApplies) {
             session.session_data._customer_history = {
               totalVisits: custHistory.totalVisits,
               ltvTier: custHistory.ltvTier,
@@ -3090,7 +3113,7 @@ export class BotService {
           const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
           if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
           const ufCount = capabilities.filter(c => !nonUF.has(c)).length;
-          if (waConfig.welcome_buttons.length > 0 && ufCount <= 1) {
+          if (waConfig.welcome_buttons.length > 0 && ufCount <= 1 && !givingLinkApplies) {
             const buttons = waConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
               id: `wb_${i}`,
               title: truncTitle(btn.label),
@@ -3226,8 +3249,10 @@ export class BotService {
         // Delegate to flow executor for the first step prompt
         // CAS-004: pass canonical result ephemerally — NOT persisted to session
         const _newSessionOv = business ? await getOverrides(business.id) : emptyOverrides;
+        // A preselected giving category is answered as the select_category choice,
+        // so the donor goes straight to the amount (as a quick rebook does).
         await runWithTranslationOverrides(_newSessionOv, () =>
-          this.flowExecutor.execute(from, '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined)
+          this.flowExecutor.execute(from, givingLinkCategory?.id ?? '', session as unknown as BotSession, business, undefined, undefined, canonicalResult || undefined)
         );
         return;
       }
