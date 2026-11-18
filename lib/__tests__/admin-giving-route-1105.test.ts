@@ -109,6 +109,45 @@ describe('GET /api/admin/giving', () => {
     expect(byId['d-refunded']).toMatchObject({ status: 'refunded' });
   });
 
+  it('pages past the 1000-row server cap instead of silently returning a partial list', async () => {
+    m.role = 'admin';
+    m.db.tables.campaign_donations = Array.from({ length: 2500 }, (_, i) => ({
+      id: `d-${String(i).padStart(5, '0')}`, campaign_id: 'c1', business_id: SHOP, payment_id: null, donor_phone: `p${i}`,
+      donor_name: null, amount: 1, currency: 'NGN', status: 'success', reference_code: null, created_at: '2026-10-01T00:00:00Z',
+    }));
+    // Simulate PostgREST max_rows: a request can never return more than 1000 rows.
+    const from = m.db.from.bind(m.db);
+    m.db.from = (t: string) => {
+      const q = from(t);
+      const range = q.range.bind(q);
+      q.range = (a: number, b: number) => range(a, Math.min(b, a + 999));
+      return q;
+    };
+    const body = await (await get()).json();
+    expect(body.records.filter((r: { source: string }) => r.source === 'crowdfunding')).toHaveLength(2500);
+    expect(new Set(body.records.map((r: { id: string }) => r.id)).size).toBe(body.records.length);
+    expect(body.truncated).toBe(false);
+  });
+
+  it('says truncated when more donations exist than it will read', async () => {
+    m.role = 'admin';
+    m.db.tables.campaign_donations = Array.from({ length: 20001 }, (_, i) => ({
+      id: `d-${String(i).padStart(5, '0')}`, campaign_id: 'c1', business_id: SHOP, payment_id: null, donor_phone: 'p',
+      donor_name: null, amount: 1, currency: 'NGN', status: 'success', reference_code: null, created_at: '2026-10-01T00:00:00Z',
+    }));
+    const body = await (await get()).json();
+    expect(body.truncated).toBe(true);
+    expect(body.records.filter((r: { source: string }) => r.source === 'crowdfunding')).toHaveLength(20000);
+  });
+
+  it('reports a partial refund on a successful payment', async () => {
+    m.role = 'admin';
+    m.db.tables.payments.find(p => p.id === 'p-paid')!.refund_amount = 1500;
+    const { records } = await (await get()).json();
+    expect(records.find((r: { id: string }) => r.id === 'bk-paid')).toMatchObject({ status: 'success', amount: 5000, refunded_amount: 1500 });
+    expect(records.find((r: { id: string }) => r.id === 'bk-gbp')).toMatchObject({ refunded_amount: 0 });
+  });
+
   it.each(['services', 'bookings', 'campaign_donations', 'payments', 'businesses', 'countries', 'profiles', 'campaigns'])(
     'a failed %s read is an error, not an empty list',
     async table => {

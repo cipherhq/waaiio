@@ -18,7 +18,7 @@ import Giving from '../pages/Giving';
 
 const base = {
   business_category: 'shop', country_code: 'NG', giver_id: null, giver_email: null, notes: null,
-  payment_method: null, gateway: null, gateway_ref: null, reference_code: null,
+  payment_method: null, gateway: null, gateway_ref: null, reference_code: null, refunded_amount: 0,
 };
 // Shaped like staging TestBiz (category 'shop'), which the old page filtered out.
 const RECORDS = [
@@ -57,6 +57,21 @@ it('shows giving at a non-faith business and counts only successful money, per c
   const donation = screen.getByText('Bola').closest('tr') as HTMLElement;
   expect(within(donation).getByText('Crowdfunding')).toBeInTheDocument();
   expect(within(donation).getByText('Roof Fund')).toBeInTheDocument();
+});
+
+it('nets partial refunds out of the total and never folds an unknown currency into NGN', async () => {
+  mocks.response = { status: 200, body: { records: [
+    { ...RECORDS[0], refunded_amount: 1500 },
+    { ...RECORDS[2], currency: null },
+  ] } };
+  render(<Giving />);
+  await screen.findByText('Ada');
+  const total = card('Total Given (successful)').textContent!;
+  expect(total).toMatch(/₦3,500/);
+  expect(total).toMatch(/1444 \(currency unknown\)/);
+  fireEvent.click(screen.getByText('Ada'));
+  const refundRow = screen.getAllByText('Refunded').find(el => el.tagName !== 'OPTION')!.parentElement!;
+  expect(refundRow).toHaveTextContent('₦1,500');
 });
 
 it('filters by type and status', async () => {

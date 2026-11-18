@@ -24,6 +24,8 @@ interface GivingRecord {
   giver_phone: string | null;
   purpose: string | null;
   amount: number;
+  /** Partial refund on a successful payment; excluded from totals. */
+  refunded_amount: number;
   status: string;
   reference_code: string | null;
   notes: string | null;
@@ -109,16 +111,17 @@ export default function Giving() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
 
-  // Stats — only successful payments count as money given; each in its own currency.
+  // Stats — only successful payments count as money given, net of partial refunds; each in its own currency.
   const successful = filtered.filter(r => r.status === 'success');
   const totalByCurrency: Record<string, number> = {};
   for (const r of successful) {
-    const cur = r.currency || 'NGN';
-    totalByCurrency[cur] = (totalByCurrency[cur] || 0) + r.amount;
+    // A record with no known currency is shown on its own, never folded into NGN.
+    const cur = r.currency || '';
+    totalByCurrency[cur] = (totalByCurrency[cur] || 0) + r.amount - (r.refunded_amount || 0);
   }
   const totalDisplay = Object.entries(totalByCurrency)
     .filter(([, a]) => a > 0)
-    .map(([cur, amt]) => fmtCurrency(amt, cur))
+    .map(([cur, amt]) => (cur ? fmtCurrency(amt, cur) : `${amt} (currency unknown)`))
     .join(' · ') || '0';
   // Phone first: a giver's bookings and campaign donations share it, while only bookings carry a user id.
   const uniqueGivers = new Set(successful.map(r => r.giver_phone || r.giver_id || r.giver_email || r.id)).size;
@@ -176,7 +179,7 @@ export default function Giving() {
       ) : (
       <>
       {truncated && (
-        <p className="mt-4 text-xs text-amber-700">Showing the most recent 5,000 records of each kind.</p>
+        <p className="mt-4 text-xs text-amber-700">Showing the most recent 20,000 records of each kind; older records and their amounts are not included.</p>
       )}
 
       {/* Summary Cards */}
@@ -376,6 +379,9 @@ export default function Giving() {
                   <DetailRow label="Purpose" value={purposeLabel(selected)} />
                   <DetailRow label="Amount" value={selected.amount > 0 && cur ? fmtCurrency(selected.amount, cur) : selected.amount > 0 ? String(selected.amount) : '—'} />
                   <DetailRow label="Currency" value={cur || '—'} />
+                  {selected.refunded_amount > 0 && (
+                    <DetailRow label="Refunded" value={cur ? fmtCurrency(selected.refunded_amount, cur) : String(selected.refunded_amount)} />
+                  )}
                   {selected.payment_method && <DetailRow label="Payment Method" value={selected.payment_method} />}
                   {selected.gateway && <DetailRow label="Gateway" value={selected.gateway} />}
                   {selected.gateway_ref && <DetailRow label="Gateway Ref" value={selected.gateway_ref} />}

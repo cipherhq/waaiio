@@ -12,8 +12,13 @@
  *
  * Each record carries one payment status: 'success' (deposit paid / donation
  * success), 'refunded', 'failed', 'cancelled' or 'pending'. Only 'success'
- * counts towards totals on the page. Currency is the record's own payment or
- * donation currency, else the business's country currency.
+ * counts towards totals on the page, net of any partial refund
+ * (`refunded_amount`, from payments.refund_amount). Currency is the record's
+ * own payment or donation currency, else the business's country currency.
+ *
+ * PostgREST returns at most 1000 rows per request (max_rows), so every read is
+ * paged; past MAX_ROWS per kind the response says `truncated` instead of
+ * silently returning a partial total.
  */
 import type { NextRequest } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
@@ -21,22 +26,40 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { adminPreflight, adminResponder } from '@/lib/admin-route';
 
 const METHODS = 'GET, OPTIONS';
-const MAX_ROWS = 5000;
+const PAGE = 1000;
+const MAX_ROWS = 20000;
 const CHUNK = 200;
+const PAYMENT_COLUMNS = 'id, booking_id, status, currency, gateway, gateway_reference, payment_method, refund_amount';
 
 type Row = Record<string, any>;
 type Service = { from: (table: string) => any };
 
 class ReadError extends Error {}
 
+/**
+ * Read every row of a query page by page. `build` must return a freshly built,
+ * stably ordered query. Stops after `cap` rows and reports whether more remain.
+ */
+async function readPaged(table: string, build: () => any, cap = Infinity): Promise<{ rows: Row[]; truncated: boolean }> {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await build().range(from, from + PAGE - 1);
+    if (error) throw new ReadError(table);
+    const page: Row[] = data || [];
+    rows.push(...page);
+    if (page.length < PAGE) return { rows, truncated: false };
+    if (rows.length >= cap) return { rows: rows.slice(0, cap), truncated: true };
+  }
+}
+
 /** Read rows whose `column` is in `ids`, in chunks so the URL stays short. */
 async function readIn(service: Service, table: string, columns: string, column: string, ids: Array<string | null | undefined>): Promise<Row[]> {
   const unique = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
   const out: Row[] = [];
   for (let i = 0; i < unique.length; i += CHUNK) {
-    const { data, error } = await service.from(table).select(columns).in(column, unique.slice(i, i + CHUNK));
-    if (error) throw new ReadError(table);
-    out.push(...(data || []));
+    const chunk = unique.slice(i, i + CHUNK);
+    const { rows } = await readPaged(table, () => service.from(table).select(columns).in(column, chunk).order('id', { ascending: true }));
+    out.push(...rows);
   }
   return out;
 }
@@ -53,6 +76,11 @@ function bookingStatus(b: Row, payment: Row | undefined): string {
   if (b.status === 'cancelled') return 'cancelled';
   if (payment?.status === 'failed') return 'failed';
   return 'pending';
+}
+
+/** Partial refund on a still-successful payment; a full refund is status 'refunded'. */
+function refundedAmount(payment: Row | undefined): number {
+  return Number(payment?.refund_amount || 0);
 }
 
 function donationStatus(d: Row, payment: Row | undefined): string {
@@ -72,31 +100,33 @@ export async function GET(request: NextRequest) {
   const service = createServiceClient();
 
   try {
-    const { data: givingServices, error: svcErr } = await service.from('services')
-      .select('id, name').eq('service_type', 'giving');
-    if (svcErr) throw new ReadError('services');
-    const serviceNames = new Map((givingServices || []).map((s: Row) => [s.id, s.name as string]));
+    const { rows: givingServices } = await readPaged('services', () => service.from('services')
+      .select('id, name').eq('service_type', 'giving').order('id', { ascending: true }));
+    const serviceNames = new Map(givingServices.map(s => [s.id, s.name as string]));
 
+    // Giving bookings across all giving services, newest first, up to MAX_ROWS.
     const bookings: Row[] = [];
+    let bookingsTruncated = false;
     const serviceIds = [...serviceNames.keys()];
     for (let i = 0; i < serviceIds.length; i += CHUNK) {
-      const { data, error } = await service.from('bookings')
+      const chunk = serviceIds.slice(i, i + CHUNK);
+      const read = await readPaged('bookings', () => service.from('bookings')
         .select('id, business_id, user_id, service_id, total_amount, deposit_status, status, guest_name, guest_phone, reference_code, notes, created_at')
-        .eq('flow_type', 'payment').in('service_id', serviceIds.slice(i, i + CHUNK))
-        .order('created_at', { ascending: false }).limit(MAX_ROWS);
-      if (error) throw new ReadError('bookings');
-      bookings.push(...(data || []));
+        .eq('flow_type', 'payment').in('service_id', chunk)
+        .order('created_at', { ascending: false }).order('id', { ascending: true }), MAX_ROWS);
+      bookings.push(...read.rows);
+      bookingsTruncated ||= read.truncated;
     }
+    bookings.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    if (bookings.length > MAX_ROWS) { bookings.length = MAX_ROWS; bookingsTruncated = true; }
 
-    const { data: donationData, error: donErr } = await service.from('campaign_donations')
+    const { rows: donations, truncated: donationsTruncated } = await readPaged('campaign_donations', () => service.from('campaign_donations')
       .select('id, campaign_id, business_id, payment_id, donor_phone, donor_name, amount, currency, status, reference_code, created_at')
-      .order('created_at', { ascending: false }).limit(MAX_ROWS);
-    if (donErr) throw new ReadError('campaign_donations');
-    const donations: Row[] = donationData || [];
+      .order('created_at', { ascending: false }).order('id', { ascending: true }), MAX_ROWS);
 
     const [bookingPayments, donationPayments, campaigns, profiles] = await Promise.all([
-      readIn(service, 'payments', 'id, booking_id, status, currency, gateway, gateway_reference, payment_method', 'booking_id', bookings.map(b => b.id)),
-      readIn(service, 'payments', 'id, booking_id, status, currency, gateway, gateway_reference, payment_method', 'id', donations.map(d => d.payment_id)),
+      readIn(service, 'payments', PAYMENT_COLUMNS, 'booking_id', bookings.map(b => b.id)),
+      readIn(service, 'payments', PAYMENT_COLUMNS, 'id', donations.map(d => d.payment_id)),
       readIn(service, 'campaigns', 'id, title', 'id', donations.map(d => d.campaign_id)),
       readIn(service, 'profiles', 'id, first_name, last_name, email', 'id', bookings.map(b => b.user_id)),
     ]);
@@ -131,6 +161,7 @@ export async function GET(request: NextRequest) {
           giver_phone: b.guest_phone || null,
           purpose: serviceNames.get(b.service_id) || null,
           amount: Number(b.total_amount || 0),
+          refunded_amount: refundedAmount(payment),
           status: bookingStatus(b, payment),
           reference_code: b.reference_code || null,
           notes: b.notes || null,
@@ -157,6 +188,7 @@ export async function GET(request: NextRequest) {
           giver_phone: d.donor_phone || null,
           purpose: campaignTitles.get(d.campaign_id) || null,
           amount: Number(d.amount || 0),
+          refunded_amount: refundedAmount(payment),
           status: donationStatus(d, payment),
           reference_code: d.reference_code || null,
           notes: null,
@@ -168,7 +200,7 @@ export async function GET(request: NextRequest) {
       }),
     ].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
-    const truncated = donations.length >= MAX_ROWS || bookings.length >= MAX_ROWS;
+    const truncated = bookingsTruncated || donationsTruncated;
     return reply({ records, truncated });
   } catch (err) {
     if (err instanceof ReadError) return reply({ error: 'Could not load giving records' }, 500);
