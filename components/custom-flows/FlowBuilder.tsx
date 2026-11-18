@@ -445,7 +445,14 @@ export function FlowBuilder({ businessId,businessDetails={},country }: Props) {
         </div>
       </section>}
       {editing && <fieldset disabled={busy} aria-label="Add a step" className={`${lavenderClass} order-2 min-w-0 space-y-5 lg:sticky lg:top-4 lg:order-none lg:col-start-1 lg:row-span-3 lg:row-start-1 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto`}>
-        <StepPalette enabled={editable} busy={busy} onAdd={type => add(type)} onDragChange={step => setPaletteDragging(!!step)} />
+        {editable ? <StepPalette enabled busy={busy} onAdd={type => add(type)} onDragChange={step => setPaletteDragging(!!step)} />
+          // A guided flow outside the advanced editor: one short note instead of a column of locked steps (#1107).
+          : <div className="space-y-3">
+            <h2 id="palette-heading" tabIndex={-1} className="text-sm font-semibold text-gray-900 outline-none dark:text-gray-100">Add a step</h2>
+            <p className="text-sm text-gray-700 dark:text-gray-300">This flow is built from your sections. You can change any words and fill your lists right on each step.</p>
+            <p className="text-sm text-gray-700 dark:text-gray-300">To add, remove or move steps, open the advanced editor.</p>
+            <button type="button" className={buttonClass} aria-expanded={advanced} onClick={() => setAdvanced(true)}>Open advanced editor</button>
+          </div>}
         {editable && <div className="space-y-2 border-t border-brand-100 pt-4 dark:border-brand-900">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Step order</h2>
           <p id="flow-reorder-help" className="text-xs text-gray-700 dark:text-gray-300">Drag a step, or focus it and press Space, arrow keys, then Space. Escape cancels.</p>

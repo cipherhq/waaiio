@@ -129,7 +129,7 @@ export function planFlow(template: SetupTemplate, chosen: Ability[]): FlowPlan {
   }
 
   function build(base: EditableFlow): EditableFlow {
-    if (unchanged && template !== 'festival_info' && isStarter(template)) return applyStarter(base, template);
+    if (unchanged && isStarter(template)) return applyStarter(base, template);
     const { editor_order: _ignored, ...rest } = base;
     let flow: EditableFlow = rest;
     const menuId = flow.guided?.menu_id ?? 'main_menu';
