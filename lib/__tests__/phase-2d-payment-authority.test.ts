@@ -92,8 +92,9 @@ describe('send-confirmation.ts structural', () => {
     expect(followupSource).toContain("else if (payment.gateway === 'paystack')");
     expect(followupSource).not.toContain("payment.gateway === 'direct'");
   });
-  it('transfer_confirmed in owner_notif_inapp', () => {
-    expect(sendConfirmSource).toContain("type: 'transfer_confirmed'");
+  it('direct transfer owner_notif_inapp uses the payment notification helper (valid enum values)', () => {
+    expect(sendConfirmSource).toContain("await import('@/lib/payments/payment-notification')");
+    expect(sendConfirmSource).not.toContain("type: 'transfer_confirmed'");
   });
 });
 

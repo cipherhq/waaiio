@@ -181,8 +181,7 @@ export default function Notifications() {
   // Filtering
   const filtered = notifications.filter(n => {
     if (typeFilter !== 'all' && n.type !== typeFilter) return false;
-    if (readFilter === 'sent' && n.status !== 'sent') return false;
-    if (readFilter === 'failed' && n.status !== 'failed') return false;
+    if (readFilter !== 'all' && n.status !== readFilter) return false;
     return true;
   });
 
@@ -230,7 +229,10 @@ export default function Notifications() {
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
           <option value="all">All Statuses</option>
+          {/* notification_status enum values (001_initial_schema.sql) */}
+          <option value="queued">Queued</option>
           <option value="sent">Sent</option>
+          <option value="delivered">Delivered</option>
           <option value="failed">Failed</option>
         </select>
         {(typeFilter !== 'all' || readFilter !== 'all') && (

@@ -1328,10 +1328,11 @@ export async function sendProactiveConfirmation(
             const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
             await createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${ct}${don?.donor_name ? ` from ${don.donor_name}` : ''}. Ref: ${don?.reference_code || referenceCode}` });
           } else if (isDirectOrderTransfer && payment.order_id) {
-            // M394/Phase 2D: Direct order bank transfer → transfer_confirmed dashboard notification
-            const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
-            await createNotification(supabase, {
-              businessId, type: 'transfer_confirmed', channel: 'dashboard',
+            // M394/Phase 2D: Direct order bank transfer → dashboard notification.
+            // 'transfer_confirmed'/'dashboard' are not notification_type/channel enum values, so that insert never landed.
+            const { createPaymentNotification } = await import('@/lib/payments/payment-notification');
+            await createPaymentNotification(supabase, {
+              businessId, paymentId: payment.id,
               body: `Bank transfer of ${formatCurrency(payment.amount, countryCode)} confirmed. Ref: ${referenceCode}`,
             });
           }
@@ -1487,6 +1488,23 @@ export async function sendProactiveConfirmation(
           }
         } catch (emailErr) { logSafeError(logPrefix, 'owner-email', emailErr); }
       } catch (notifyErr) { logSafeError(logPrefix, 'owner-notification', notifyErr); }
+    }
+
+    // ── 7d. In-app notification for paid families the section above does not cover ──
+    // Orders (card, saved card, bank transfer), invoices and non-payment-flow bookings
+    // (appointments, scheduling, tickets, classes). Outside the manifest so the manifest
+    // contents stay unchanged; idempotent per payment, never throws.
+    const inappCoveredAbove = (payment.booking_id && bookingFlowType === 'payment')
+      || (payment.reservation_id && !payment.booking_id)
+      || payment.campaign_id
+      || isDirectOrderTransfer;
+    if (!inappCoveredAbove && businessId && (payment.order_id || payment.invoice_id || payment.booking_id)) {
+      const { createPaymentNotification } = await import('@/lib/payments/payment-notification');
+      const label = payment.order_id ? 'Order' : payment.invoice_id ? 'Invoice' : serviceName;
+      await createPaymentNotification(supabase, {
+        businessId, paymentId: payment.id, bookingId: payment.booking_id,
+        body: `Payment received: ${label} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
+      });
     }
 
     // ── CHECKPOINT 4: Renew before customer emails, donation receipt (tickets: 4a above) ──

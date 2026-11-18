@@ -66,7 +66,7 @@ vi.mock('@/lib/observability', () => ({ observe: (_n: string, fn: () => unknown)
 // ── Supabase mock builder ──
 function chain(data: any = null): any {
   const c: any = {};
-  for (const m of ['select','eq','in','neq','not','is','update','insert','delete','order','limit','or','gte','lte','gt','lt']) { c[m] = () => c; }
+  for (const m of ['select','eq','in','neq','not','is','update','insert','delete','order','limit','or','gte','lte','gt','lt','contains']) { c[m] = () => c; }
   c.single = vi.fn().mockResolvedValue({ data, error: null });
   c.maybeSingle = vi.fn().mockResolvedValue({ data, error: null });
   c.then = (resolve: any) => resolve({ data: data ? [data] : [], error: null });
@@ -339,9 +339,11 @@ describe('Stage3 direct transfer effect suppression', () => {
     // Customer WhatsApp sent
     expect(sharedSender.sendText).toHaveBeenCalledTimes(1);
 
-    // Dashboard transfer_confirmed
-    const dn = effects.notifications.find((n: any) => n.type === 'transfer_confirmed');
-    expect(dn).toBeDefined();
+    // Dashboard notification: one row, valid notification_type/channel enum values, keyed to the payment
+    const dn = effects.notifications.filter((n: any) => n.metadata?.payment_id === 'p-sup');
+    expect(dn).toHaveLength(1);
+    expect(dn[0]).toMatchObject({ business_id: 'b1', type: 'payment', channel: 'whatsapp', status: 'delivered' });
+    expect(dn[0].body).toContain('Bank transfer of');
 
     // ZERO owner WA
     expect(effects.ownerWaSent).toBe(false);
