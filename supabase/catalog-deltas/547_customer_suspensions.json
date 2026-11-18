@@ -1,0 +1,328 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.customer_suspensions.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.customer_suspensions.last_notified_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.customer_suspensions.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.customer_suspensions.reason",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.customer_suspensions.suspended_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.customer_suspensions.suspended_by",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text, 'channel_change_execute'::text, 'passkey_approve'::text, 'passkey_remove'::text, 'customer_suspension'::text]))",
+    "validated": true
+   },
+   "after_sha256": "9de7ffc983c1d27d208a392697df0b4faa49b479a87900d68ddfc47656ee0483",
+   "identity": "constraint:public.admin_step_up_authorizations.admin_step_up_authorizations_action_type_check",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone ~ '^[1-9][0-9]{6,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "bd1afe20a16d93e9983a7d330aba5b9521bf280ade31c1f8a5dd4fd6a8190539",
+   "identity": "constraint:public.customer_suspensions.customer_suspensions_phone_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (phone)",
+    "validated": true
+   },
+   "after_sha256": "ed6af073d6d874d5da90eba3b08fe6390c20e8a8a69ea6fc19114b9f2b916c95",
+   "identity": "constraint:public.customer_suspensions.customer_suspensions_phone_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.customer_suspensions.customer_suspensions_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (char_length(btrim(reason)) >= 3 AND char_length(btrim(reason)) <= 500)",
+    "validated": true
+   },
+   "after_sha256": "0e192c20d6603a9b01ad1602440cbb965f918ba212e6f90a4c0f599fdea4f960",
+   "identity": "constraint:public.customer_suspensions.customer_suspensions_reason_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_actor_id uuid, p_phone text, p_suspend boolean, p_reason text, p_ip text DEFAULT NULL::text",
+    "body_sha256": "d0a0dc334722c1a2831b34a481716d76afc1ae3b935b445c45e433c31c18a1dd",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "59f83e8f9e8bd13358e3f7beec214c31cdcd4deee53abb7f36fda93427b0490d",
+   "identity": "function:public.svc_set_customer_suspension(p_actor_id uuid, p_phone text, p_suspend boolean, p_reason text, p_ip text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX customer_suspensions_phone_key ON public.customer_suspensions USING btree (phone)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "e45ef49d42817cdfcc0f40f21cd453f6716eaff170b33b258364d168400040bd",
+   "identity": "index:public.customer_suspensions.customer_suspensions_phone_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX customer_suspensions_pkey ON public.customer_suspensions USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "d6c1e7e515dc11f6306c892d09c2daa63970191948724085d5e01de354517125",
+   "identity": "index:public.customer_suspensions.customer_suspensions_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "public"
+    ],
+    "using": "false",
+    "with_check": "false"
+   },
+   "after_sha256": "6462477c6c36ac19d46569c6f7297bf8d3e7556c39b46dcb0fb5b0749b5f42a1",
+   "identity": "policy:public.customer_suspensions.customer_suspensions_deny_all",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.customer_suspensions",
+   "operation": "add"
+  }
+ ],
+ "migration": "547_customer_suspensions.sql",
+ "migration_sha256": "0ba05e43f6fde6f01f4fb2b0a9e8c5ed31d1e566a2e951299a2d00b6bb7008f5",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

@@ -257,18 +257,23 @@ export default function Customers() {
           .order('created_at', { ascending: false });
         if (bookingsError) throw new Error('Unable to load bookings');
 
-        const [paymentsRes, ordersRes] = customer.user_id
-          ? await Promise.all([
-            adminDb.from('payments')
-              .select('id, business_id, amount, currency, status, gateway_reference, created_at')
-              .eq('user_id', customer.user_id)
-              .order('created_at', { ascending: false }),
-            adminDb.from('orders')
+        // A guest's payments are the ones linked to their bookings, as in the totals.
+        const guestBookingIds = (bookings || []).map(b => b.id);
+        const paymentsQuery = adminDb.from('payments')
+          .select('id, business_id, amount, currency, status, gateway_reference, created_at');
+        const [paymentsRes, ordersRes] = await Promise.all([
+          customer.user_id
+            ? paymentsQuery.eq('user_id', customer.user_id).order('created_at', { ascending: false })
+            : guestBookingIds.length > 0
+              ? paymentsQuery.in('booking_id', guestBookingIds).order('created_at', { ascending: false })
+              : Promise.resolve({ data: [], error: null }),
+          customer.user_id
+            ? adminDb.from('orders')
               .select('id, business_id, status, total_amount, reference_code, created_at')
               .eq('user_id', customer.user_id)
-              .order('created_at', { ascending: false }),
-          ])
-          : [{ data: [], error: null }, { data: [], error: null }];
+              .order('created_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
+        ]);
         if (paymentsRes.error) throw new Error('Unable to load payments');
         if (ordersRes.error) throw new Error('Unable to load orders');
         const payments = paymentsRes.data || [];
@@ -593,6 +598,7 @@ export default function Customers() {
                       <td className="px-4 py-3 text-right">
                         <button
                           onClick={() => openSuspend(s.phone, 'this number', false)}
+                          aria-label={`Unsuspend ${maskPhone(s.phone)}`}
                           className="text-sm font-medium text-brand hover:underline"
                         >
                           Unsuspend
@@ -736,8 +742,8 @@ export default function Customers() {
           <div className="space-y-4 text-sm">
             <p className="text-gray-700">
               {suspendTarget.suspend
-                ? <>The number {maskPhone(suspendTarget.phone)} will be blocked from every Waaiio bot at every business. It gets one short reply, with no reason given. Marketing will skip it. Payments, refunds and payouts are not changed.</>
-                : <>The number {maskPhone(suspendTarget.phone)} will be able to use Waaiio bots again.</>}
+                ? <>The number <strong>+{suspendTarget.phone}</strong> will be blocked from every Waaiio bot at every business. It gets one short reply, with no reason given. Marketing will skip it. Payments, refunds and payouts are not changed.</>
+                : <>The number <strong>+{suspendTarget.phone}</strong> will be able to use Waaiio bots again.</>}
             </p>
             <label className="block">
               <span className="text-xs font-semibold uppercase text-gray-500">

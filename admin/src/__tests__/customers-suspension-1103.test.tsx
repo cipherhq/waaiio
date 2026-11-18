@@ -16,9 +16,11 @@ const m = vi.hoisted(() => ({
 vi.mock('@/lib/supabase', () => {
   const chain = (table: string) => {
     const q: Record<string, unknown> = {};
-    for (const k of ['select', 'order', 'in']) q[k] = () => q;
+    for (const k of ['select', 'order']) q[k] = () => q;
+    q.in = (c: string, v: unknown) => { m.dbCalls.push([table, `in:${c}`, v]); return q; };
     q.eq = (c: string, v: unknown) => { m.dbCalls.push([table, c, v]); return q; };
-    q.then = (r: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(r);
+    const rows = table === 'bookings' ? [{ id: 'bk-1', business_id: 'biz-a', status: 'confirmed', total_amount: 5000, date: '2026-11-10', created_at: '2026-11-10T10:00:00Z' }] : [];
+    q.then = (r: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(r);
     return q;
   };
   return {
@@ -114,6 +116,8 @@ describe('Customers: totals (#1108)', () => {
     render(<Customers />);
     await openAda();
     await waitFor(() => expect(m.dbCalls).toContainEqual(['bookings', 'guest_phone', '08012345678']));
+    // Their payments are the ones linked to those bookings, as in the totals.
+    await waitFor(() => expect(m.dbCalls).toContainEqual(['payments', 'in:booking_id', ['bk-1']]));
   });
 });
 
@@ -126,6 +130,8 @@ describe('Customers: platform-wide suspension (#1103)', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Enter a reason');
     expect(calls('/step-up/prepare')).toHaveLength(0);
 
+    // The admin confirms the full number, not a masked one.
+    expect(screen.getByText(`+${PHONE}`)).toBeTruthy();
     fireEvent.change(screen.getByLabelText(/^Reason/), { target: { value: 'Abusive messages' } });
     fireEvent.click(screen.getByRole('button', { name: 'Suspend' }));
     await screen.findByText('Confirm operation');
@@ -163,8 +169,8 @@ describe('Customers: platform-wide suspension (#1103)', () => {
     render(<Customers />);
     const ada = (await screen.findByText('Ada')).closest('tr')!;
     expect(within(ada).getByText('suspended')).toBeTruthy();
-    fireEvent.click(await screen.findByRole('button', { name: 'Unsuspend' }));
-    fireEvent.click(screen.getAllByRole('button', { name: 'Unsuspend' }).at(-1)!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Unsuspend •••• 5678' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unsuspend' }));
     await screen.findByText('Confirm operation');
     expect(JSON.parse(String(calls('/step-up/prepare')[0][1].body)).params).toEqual({ phone: PHONE, suspended: false, reason: null });
     authorize();
@@ -178,7 +184,7 @@ describe('Customers: platform-wide suspension (#1103)', () => {
     render(<Customers />);
     await openAda();
     expect(screen.getByText('Reason: Abusive messages')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Unsuspend' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Unsuspend/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Suspend from all bots' })).toBeNull();
   });
 

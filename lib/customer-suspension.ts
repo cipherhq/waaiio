@@ -24,26 +24,41 @@ export const SUSPENDED_NOTICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CANONICAL = /^[1-9]\d{6,14}$/;
 
 /**
- * Canonical phone for suspension: E.164 digits, no '+'. International input
- * ('+234…', '00234…', '234…') is kept as is; a local number ('080…') needs the
- * business country. Returns null when the number cannot be made canonical.
+ * Canonical phone for suspension: E.164 digits, no '+'. The number must be a
+ * valid international number; a local number ('080…', or national digits
+ * without the trunk 0) is read in the business country when one is given.
+ * Returns null when the number cannot be made canonical, so an admin can never
+ * suspend a key that no WhatsApp sender would match.
  */
 export function canonicalCustomerPhone(raw: unknown, countryCode?: string | null): string | null {
   if (typeof raw !== 'string') return null;
   let value = raw.trim().replace(/[\s().-]/g, '');
   if (!value) return null;
   if (value.startsWith('00')) value = `+${value.slice(2)}`;
-  if (value.startsWith('0')) {
-    if (!countryCode) return null;
+  const country = countryCode ? countryCode.toUpperCase() as CountryCode : undefined;
+  const attempts = value.startsWith('+') ? [value]
+    : value.startsWith('0') ? (country ? [value] : [])
+    : [`+${value}`, ...(country ? [value] : [])];
+  for (const attempt of attempts) {
     try {
-      const parsed = parsePhoneNumber(value, countryCode.toUpperCase() as CountryCode);
-      if (!parsed?.isValid()) return null;
-      value = parsed.format('E.164');
+      const parsed = parsePhoneNumber(attempt, attempt.startsWith('+') ? undefined : country);
+      if (!parsed?.isValid()) continue;
+      const digits = parsed.format('E.164').slice(1);
+      if (CANONICAL.test(digits)) return digits;
     } catch {
-      return null;
+      // try the next reading
     }
   }
-  const digits = value.startsWith('+') ? value.slice(1) : value;
+  return null;
+}
+
+/**
+ * Lookup key for a number we are about to message or that messaged us: digits
+ * only. Deliberately not the strict parser, so an out-of-date number plan can
+ * never let a suspended sender through.
+ */
+function lookupKey(phone: string): string | null {
+  const digits = typeof phone === 'string' ? phone.replace(/\D/g, '') : '';
   return CANONICAL.test(digits) ? digits : null;
 }
 
@@ -51,7 +66,7 @@ export type SuspensionStatus = 'suspended' | 'clear' | 'unknown';
 
 /** 'unknown' when the number is not canonical or the read failed. */
 export async function customerSuspensionStatus(db: SupabaseClient, phone: string): Promise<SuspensionStatus> {
-  const canonical = canonicalCustomerPhone(phone);
+  const canonical = lookupKey(phone);
   if (!canonical) return 'unknown';
   try {
     const { data, error } = await db.from('customer_suspensions')
@@ -72,8 +87,9 @@ export async function blocksMarketing(db: SupabaseClient, phone: string): Promis
 }
 
 interface NeutralReplySender {
-  sendText(msg: { to: string; text: string }): Promise<unknown>;
+  sendText(msg: { to: string; text: string; messageCategory?: 'service' }): Promise<unknown>;
   sendPlatformText?(msg: { to: string; text: string }): Promise<unknown>;
+  readonly boundBusinessId?: string;
 }
 
 /**
@@ -87,7 +103,7 @@ interface NeutralReplySender {
 export async function gateSuspendedCustomer(
   db: SupabaseClient, from: string, sender: NeutralReplySender,
 ): Promise<boolean> {
-  const canonical = canonicalCustomerPhone(from);
+  const canonical = lookupKey(from);
   if (!canonical) return false;
 
   let row: { id: string; last_notified_at: string | null } | null;
@@ -108,17 +124,29 @@ export async function gateSuspendedCustomer(
 
   // Claim this window's reply: compare-and-set on the value just read, so two
   // concurrent messages send one reply.
+  const claimedAt = new Date().toISOString();
   try {
-    let claim = db.from('customer_suspensions')
-      .update({ last_notified_at: new Date().toISOString() }).eq('id', row.id);
+    let claim = db.from('customer_suspensions').update({ last_notified_at: claimedAt }).eq('id', row.id);
     claim = row.last_notified_at ? claim.eq('last_notified_at', row.last_notified_at) : claim.is('last_notified_at', null);
     const { data: claimed, error } = await claim.select('id');
     if (error || !claimed?.length) return true;
-    const msg = { to: from, text: SUSPENDED_CUSTOMER_TEXT };
-    if (sender.sendPlatformText) await sender.sendPlatformText(msg);
-    else await sender.sendText(msg);
+  } catch {
+    return true;
+  }
+
+  // On a business's own number the reply is a service message from that
+  // business; on a shared number it is a Waaiio platform message.
+  const msg = { to: from, text: SUSPENDED_CUSTOMER_TEXT };
+  try {
+    if (sender.boundBusinessId || !sender.sendPlatformText) await sender.sendText({ ...msg, messageCategory: 'service' });
+    else await sender.sendPlatformText(msg);
   } catch (err) {
     logger.warn('[SUSPENSION] Neutral reply not sent:', err instanceof Error ? err.message : 'unknown');
+    // Give the window back so the next message can try again.
+    try {
+      await db.from('customer_suspensions').update({ last_notified_at: row.last_notified_at })
+        .eq('id', row.id).eq('last_notified_at', claimedAt);
+    } catch { /* the next window will retry */ }
   }
   return true;
 }

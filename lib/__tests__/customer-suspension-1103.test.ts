@@ -91,6 +91,10 @@ describe('canonicalCustomerPhone', () => {
     ['00234-801-234-5678', undefined, '2348012345678'],
     ['(+1) 202.555.0123', undefined, '12025550123'],
     ['08012345678', 'NG', '2348012345678'],
+    // National digits without the trunk 0 must not become a wrong "international" key (#1112 review).
+    ['8012345678', 'NG', '2348012345678'],
+    ['8012345678', undefined, null],
+    ['+234123', undefined, null],
     ['08012345678', undefined, null],
     ['0801', 'NG', null],
     ['abc', undefined, null],
@@ -137,10 +141,21 @@ describe('gateSuspendedCustomer', () => {
     expect(sent).toEqual([SUSPENDED_CUSTOMER_TEXT]);
   });
 
-  it('still blocks when the neutral reply cannot be sent', async () => {
-    const { db, sender } = setup();
+  it('still blocks when the neutral reply cannot be sent, and the next message tries again', async () => {
+    const { db, sender, sent } = setup();
     sender.sendPlatformText.mockRejectedValueOnce(new Error('provider down'));
     expect(await gateSuspendedCustomer(db, PHONE, sender)).toBe(true);
+    expect(db.tables.customer_suspensions[0].last_notified_at).toBeNull();
+    expect(await gateSuspendedCustomer(db, PHONE, sender)).toBe(true);
+    expect(sent).toEqual([SUSPENDED_CUSTOMER_TEXT]);
+  });
+
+  it("on a business's own number the reply is that business's service message", async () => {
+    const { db } = setup();
+    const sender = { sendText: vi.fn(async () => ({})), sendPlatformText: vi.fn(async () => ({})), boundBusinessId: BIZ_A };
+    expect(await gateSuspendedCustomer(db, PHONE, sender)).toBe(true);
+    expect(sender.sendText).toHaveBeenCalledWith({ to: PHONE, text: SUSPENDED_CUSTOMER_TEXT, messageCategory: 'service' });
+    expect(sender.sendPlatformText).not.toHaveBeenCalled();
   });
 
   it('lets a clear number through without a reply', async () => {
