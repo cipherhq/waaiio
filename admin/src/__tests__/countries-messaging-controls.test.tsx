@@ -12,11 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   role: 'admin', fetch: vi.fn(), getSession: vi.fn(), setSession: vi.fn(),
-  countries: [] as any[], rpc: vi.fn(), writes: vi.fn(),
+  countries: [] as any[], config: vi.fn(), writes: vi.fn(),
 }));
 vi.mock('@/lib/supabase', () => ({
   supabase: { auth: { getSession: h.getSession, setSession: h.setSession } },
-  adminDb: { rpc: h.rpc, from: h.writes },
+  adminDb: { from: h.writes },
 }));
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn(async () => h.countries), invalidateCache: vi.fn() }));
 vi.mock('@/lib/auditLog', () => ({ logAudit: vi.fn() }));
@@ -35,6 +35,7 @@ const SNAPSHOT = {
 
 function json(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status }); }
 function requests(path: string) { return h.fetch.mock.calls.filter(([url]) => String(url).endsWith(path)); }
+function configSaves() { return requests('/messaging-config').filter(([, init]) => init?.method === 'POST'); }
 function body(call: any[]) { return JSON.parse(call[1].body); }
 function country(code: string, currency_code: string, currency_locale: string, payment_gateway: string) {
   return {
@@ -44,7 +45,13 @@ function country(code: string, currency_code: string, currency_locale: string, p
     pricing: { free: { price: 0, feeFlat: 0 }, growth: { price: 49, feeFlat: 0 }, business: { price: 89.99, feeFlat: 0 } },
   };
 }
-async function transport(url: string) {
+async function transport(url: string, init?: RequestInit) {
+  // M549: the effective config loads from the admin-only route (GET), not a browser RPC.
+  // h.config supplies what the route would read: { data: [version], error }.
+  if (url.endsWith('/api/admin/countries/messaging-config') && init?.method === 'GET') {
+    const { data, error } = await h.config();
+    return error ? json({ error: error.message }, 500) : json({ version: data?.[0] ?? null });
+  }
   if (url.endsWith('/prepare')) return json({ stepUpId: 'synthetic-step', factorId: 'synthetic-factor', challengeId: 'synthetic-challenge' });
   if (url.endsWith('/verify')) return json({ session: { access_token: 'synthetic-current-token', refresh_token: 'synthetic-refresh' } });
   if (url.endsWith('/messaging-config')) return json({ versionId: 'synthetic-version-2' });
@@ -60,7 +67,7 @@ beforeEach(() => {
   h.fetch.mockReset().mockImplementation(transport);
   h.getSession.mockReset().mockResolvedValue({ data: { session: { access_token: 'synthetic-token' } }, error: null });
   h.setSession.mockReset().mockResolvedValue({ error: null });
-  h.rpc.mockReset().mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: SNAPSHOT }], error: null });
+  h.config.mockReset().mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: SNAPSHOT }], error: null });
   h.writes.mockReset();
   vi.mocked(loadCountries).mockReset().mockImplementation(async () => h.countries);
   vi.stubEnv('VITE_API_URL', 'https://synthetic.example.test'); vi.stubGlobal('fetch', h.fetch);
@@ -87,7 +94,9 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     expect(within(cell('NG all other messages rate')).getByText(/= ₦\s?21\.00/)).toBeTruthy();
     expect(input('US all other messages rate').value).toBe('1');
     expect(within(cell('US all other messages rate')).getByText('= $0.01')).toBeTruthy();
-    expect(h.rpc.mock.calls.every(([name]) => name === 'get_effective_commercial_config')).toBe(true);
+    const loads = requests('/api/admin/countries/messaging-config');
+    expect(loads).toHaveLength(1);
+    expect(loads[0][1]).toMatchObject({ method: 'GET', headers: { Authorization: 'Bearer synthetic-token' } });
   });
 
   it('hint follows the typed value, and shows nothing for a non-whole number', async () => {
@@ -120,12 +129,12 @@ describe('Countries page — Messaging Financial Controls restored', () => {
         paystack_plan_codes: null, expected_version_id: 'synthetic-version-1', description: null,
       },
     });
-    expect(requests('/messaging-config')).toHaveLength(0);
+    expect(configSaves()).toHaveLength(0);
     fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Authorize' }));
     await screen.findByText('Messaging configuration saved successfully');
-    expect(requests('/messaging-config')).toHaveLength(1);
-    expect(body(requests('/messaging-config')[0])).toEqual({
+    expect(configSaves()).toHaveLength(1);
+    expect(body(configSaves()[0])).toEqual({
       messagingPricing: expectedPricing, trialCreditMinorByCurrency: expectedTrial,
       subscriptionIncludedMinorByTierCurrency: expectedIncluded, paystackPlanCodes: null,
       expectedVersionId: 'synthetic-version-1', stepUpId: 'synthetic-step',
@@ -141,7 +150,7 @@ describe('Countries page — Messaging Financial Controls restored', () => {
         NGN: { ...SNAPSHOT.messaging_pricing.NGN, rates: { NG: { '*': 2100, service: 0, utility: 5, marketing: 9 } } },
       },
     };
-    h.rpc.mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: snapshot }], error: null });
+    h.config.mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: snapshot }], error: null });
     render(<Countries />); await loaded();
     expect(screen.getByRole('columnheader', { name: 'Service Replies Rate' })).toBeTruthy();
     expect(input('NG service replies rate').value).toBe('0');
@@ -174,7 +183,7 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
     await screen.findByText('NG: Utility rate is required for active markets');
     expect(requests('/prepare')).toHaveLength(0);
-    expect(requests('/messaging-config')).toHaveLength(0);
+    expect(configSaves()).toHaveLength(0);
   });
 
   // A save fully replaces the messaging maps, so a blank form must never be saveable.
@@ -183,7 +192,7 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     ['no config version', { data: [], error: null }],
     ['a thrown request', null],
   ])('a failed load (%s) shows an error and keeps Save disabled', async (_label, result) => {
-    if (result) h.rpc.mockResolvedValue(result); else h.rpc.mockRejectedValue(new Error('synthetic network'));
+    if (result) h.config.mockResolvedValue(result); else h.config.mockRejectedValue(new Error('synthetic network'));
     render(<Countries />);
     await screen.findByText('Could not load the current messaging configuration. Reload the page before editing.');
     expect(input('NGN trial credit').value).toBe('');
@@ -203,12 +212,12 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
     await screen.findByText("USD: Spend Cap is required. Saving without it would remove that currency's message prices and credit.");
     expect(requests('/prepare')).toHaveLength(0);
-    expect(requests('/messaging-config')).toHaveLength(0);
+    expect(configSaves()).toHaveLength(0);
   });
 
   it('does not load before the country list arrives, and loads once for it', async () => {
     render(<Countries />); await loaded();
-    expect(h.rpc).toHaveBeenCalledTimes(1);
+    expect(h.config).toHaveBeenCalledTimes(1);
   });
 
   it('a reload after saving that fails leaves Save disabled instead of a blank saveable form', async () => {
@@ -219,13 +228,13 @@ describe('Countries page — Messaging Financial Controls restored', () => {
       fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
       fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
     }
-    h.rpc.mockResolvedValue({ data: null, error: { message: 'synthetic failure' } });
+    h.config.mockResolvedValue({ data: null, error: { message: 'synthetic failure' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
     await screen.findByText('Confirm operation');
     fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Authorize' }));
     await screen.findByText('Could not load the current messaging configuration. Reload the page before editing.');
-    expect(h.rpc).toHaveBeenCalledTimes(2);
+    expect(h.config).toHaveBeenCalledTimes(2);
     expect((screen.getByRole('button', { name: /Save Messaging Config/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 

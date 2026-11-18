@@ -21,7 +21,7 @@ interface PayoutAccount {
   id: string;
   gateway: string;
   bank_name: string | null;
-  account_number: string | null;
+  account_number_last4: string | null;
   account_name: string | null;
   square_merchant_id: string | null;
   verified_at: string | null;
@@ -134,7 +134,7 @@ export default function PayoutsPage() {
       // Check for existing payout account
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
-        .select('id, gateway, bank_name, account_number, account_name, square_merchant_id, verified_at')
+        .select('id, gateway, bank_name, account_number_last4, account_name, square_merchant_id, verified_at')
         .eq('business_id', business.id)
         .eq('is_active', true)
         .maybeSingle();
@@ -209,7 +209,7 @@ export default function PayoutsPage() {
       const supabase = createClient();
       supabase
         .from('payout_accounts')
-        .select('id, gateway, bank_name, account_number, account_name, square_merchant_id, verified_at')
+        .select('id, gateway, bank_name, account_number_last4, account_name, square_merchant_id, verified_at')
         .eq('business_id', business.id)
         .eq('is_active', true)
         .maybeSingle()
@@ -308,7 +308,7 @@ export default function PayoutsPage() {
         id: data.payout_account_id,
         gateway,
         bank_name: selectedBank?.name || '',
-        account_number: accountNumber,
+        account_number_last4: accountNumber.slice(-4),
         account_name: data.account_name || resolvedName,
         square_merchant_id: null,
         verified_at: data.verified ? new Date().toISOString() : null,
@@ -651,11 +651,11 @@ export default function PayoutsPage() {
                 <span className="font-medium text-green-900">{existing.bank_name}</span>
               </div>
             )}
-            {existing.account_number && (
+            {existing.account_number_last4 && (
               <div className="flex justify-between">
                 <span className="text-green-700">Account</span>
                 <span className="font-medium text-green-900">
-                  ****{existing.account_number.slice(-4)}
+                  ****{existing.account_number_last4}
                 </span>
               </div>
             )}

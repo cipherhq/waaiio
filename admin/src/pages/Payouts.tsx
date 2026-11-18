@@ -96,7 +96,7 @@ export default function Payouts() {
   const [approveAccountInfo, setApproveAccountInfo] = useState<{
     bank_name: string | null;
     account_name: string | null;
-    account_number: string | null;
+    account_number_last4: string | null;
     is_active: boolean;
     verified_at: string | null;
   } | null>(null);
@@ -198,7 +198,7 @@ export default function Payouts() {
     try {
       const { data } = await adminDb
         .from('payout_accounts')
-        .select('bank_name, account_name, account_number, is_active, verified_at')
+        .select('bank_name, account_name, account_number_last4, is_active, verified_at')
         .eq('id', payoutAccountId)
         .eq('business_id', businessId)
         .maybeSingle();
@@ -722,8 +722,8 @@ export default function Payouts() {
                   {approveAccountInfo.account_name && (
                     <p className="text-gray-700">Name: <span className="font-medium">{approveAccountInfo.account_name}</span></p>
                   )}
-                  {approveAccountInfo.account_number && (
-                    <p className="text-gray-700">Account: <span className="font-mono font-medium">****{approveAccountInfo.account_number.slice(-4)}</span></p>
+                  {approveAccountInfo.account_number_last4 && (
+                    <p className="text-gray-700">Account: <span className="font-mono font-medium">****{approveAccountInfo.account_number_last4}</span></p>
                   )}
                   {!approveAccountInfo.is_active && (
                     <p className="font-medium text-red-600">Account is inactive</p>
