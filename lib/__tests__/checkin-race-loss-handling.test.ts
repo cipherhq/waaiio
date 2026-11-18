@@ -27,6 +27,13 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
   getRateLimitKey: vi.fn().mockReturnValue('test'),
 }));
+// The verify route only checks in for signed-in business staff; these tests
+// are about race handling, so the caller is treated as staff.
+// (Staff auth itself is covered in ticket-checkin-staff-auth.test.ts.)
+vi.mock('@/lib/api-auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api-auth')>()),
+  isSignedInBusinessMember: vi.fn().mockResolvedValue(true),
+}));
 
 // ---------------------------------------------------------------------------
 // Supabase mock builder

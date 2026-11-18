@@ -887,7 +887,7 @@ export default function EventsPage() {
             <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
               <div className="mr-3">
                 <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Self Check-in</p>
-                <p className="text-xs text-gray-400 dark:text-gray-500">Attendees can check in via QR code or WhatsApp</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">Attendees can check themselves in on WhatsApp</p>
               </div>
               <button type="button" onClick={() => setForm({ ...form, self_checkin_enabled: !form.self_checkin_enabled })}
                 className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.self_checkin_enabled ? 'bg-brand' : 'bg-gray-200'}`}>

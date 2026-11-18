@@ -22,7 +22,8 @@ interface TicketData {
   image_url: string | null;
 }
 
-type PageState = 'loading' | 'ready' | 'marking' | 'verified' | 'error';
+// Read-only: check-in happens on the business's scanner, not on this page.
+type PageState = 'loading' | 'ready' | 'error';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '';
@@ -94,36 +95,6 @@ export default function TicketVerifyPage() {
     if (code) fetchTicket();
   }, [code]);
 
-  async function handleMarkUsed() {
-    setState('marking');
-    try {
-      const res = await fetch(`/api/tickets/verify/${code}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        // Already used or cancelled
-        if (res.status === 409 && ticket) {
-          setTicket({ ...ticket, status: 'used', scanned_at: data.scanned_at });
-        }
-        setErrorMsg(data.error || 'Failed to verify ticket');
-        setState('ready');
-        return;
-      }
-
-      if (ticket) {
-        setTicket({ ...ticket, status: 'used', scanned_at: new Date().toISOString() });
-      }
-      setState('verified');
-    } catch {
-      setErrorMsg('Network error. Please try again.');
-      setState('ready');
-    }
-  }
-
   // ── Loading ──
   if (state === 'loading') {
     return (
@@ -158,7 +129,6 @@ export default function TicketVerifyPage() {
   const isValid = ticket.status === 'valid';
   const isUsed = ticket.status === 'used';
   const isCancelled = ticket.status === 'cancelled';
-  const selfCheckin = (ticket as any).self_checkin_enabled;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -172,21 +142,7 @@ export default function TicketVerifyPage() {
 
       <main className="mx-auto max-w-lg px-4 py-6">
         {/* Status badge */}
-        {state === 'verified' && (
-          <div className="mb-4 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
-              <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-bold text-green-700">Ticket Verified</p>
-              <p className="text-xs text-green-600">Entry confirmed</p>
-            </div>
-          </div>
-        )}
-
-        {isUsed && state !== 'verified' && (
+        {isUsed && (
           <div className="mb-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100">
               <svg className="h-5 w-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -280,24 +236,14 @@ export default function TicketVerifyPage() {
 
         {/* Action button */}
         <div className="mt-6 space-y-3">
-          {isValid && state !== 'verified' && (
-            <button
-              onClick={handleMarkUsed}
-              disabled={state === 'marking'}
-              className="w-full rounded-xl bg-violet-600 px-6 py-4 text-center text-base font-bold text-white shadow-md transition hover:bg-violet-700 disabled:opacity-50"
-            >
-              {state === 'marking' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Checking in...
-                </span>
-              ) : (
-                '✅ Check In'
-              )}
-            </button>
+          {isValid && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-center">
+              <p className="text-sm font-bold text-violet-700">Valid ticket</p>
+              <p className="mt-1 text-xs text-violet-600">Show this page at the entrance to check in.</p>
+            </div>
           )}
 
-          {isUsed && state !== 'verified' && (
+          {isUsed && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center">
               <p className="text-sm font-bold text-amber-700">Already Checked In</p>
               {ticket.scanned_at && (
@@ -309,9 +255,6 @@ export default function TicketVerifyPage() {
             </div>
           )}
 
-          {errorMsg && state === 'ready' && (
-            <p className="text-center text-sm text-red-600">{errorMsg}</p>
-          )}
         </div>
 
         <div className="mt-6 text-center">
