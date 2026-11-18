@@ -256,7 +256,7 @@ describe('Entitlement — getEffectiveLanguages with pcm certified', () => {
 
   it('business tier: all certified languages are available', () => {
     const ent = getEffectiveLanguages('business', null);
-    expect(ent.allowedLanguages).toEqual(['en', 'pcm']);
+    expect(ent.allowedLanguages).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 
   it('unknown tier: fails closed to free', () => {
@@ -272,8 +272,8 @@ describe('Entitlement — getEffectiveLanguages with pcm certified', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('Certification boundary — post Gate 2', () => {
-  it('CERTIFIED_LANGUAGES contains only English and Nigerian Pidgin', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('CERTIFIED_LANGUAGES contains English, Nigerian Pidgin, Yoruba and Igbo', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 
   it('pcm is supported and certified', () => {
@@ -282,7 +282,7 @@ describe('Certification boundary — post Gate 2', () => {
   });
 
   it('other supported non-English languages remain uncertified', () => {
-    for (const lang of ['yo', 'ig', 'ha', 'tw', 'fr', 'es']) {
+    for (const lang of ['ha', 'tw', 'fr', 'es']) {
       expect(SUPPORTED_LANGUAGES).toContain(lang);
       expect(CERTIFIED_LANGUAGES).not.toContain(lang);
     }

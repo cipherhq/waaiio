@@ -147,12 +147,12 @@ describe('translation resolution order', () => {
   });
 
   it('uncertified language falls back to English', () => {
-    // 'yo' (Yoruba) is not in CERTIFIED_LANGUAGES
+    // 'ha' (Hausa) is not in CERTIFIED_LANGUAGES
     const overrides = makeOverrides();
     const result = runWithTranslationOverrides(overrides, () =>
-      getFlowCopy('yo', 'invalidSelection'),
+      getFlowCopy('ha', 'invalidSelection'),
     );
-    // Since 'yo' is not certified, getFlowCopy normalizes to 'en'
+    // Since 'ha' is not certified, getFlowCopy normalizes to 'en'
     expect(result).toBe('That option is not available. Tap one of the choices above.');
   });
 

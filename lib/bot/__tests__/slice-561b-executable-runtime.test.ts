@@ -124,15 +124,15 @@ describe('561-B: canonical response-language authority', () => {
     expect(result.source).toBe('fallback');
   });
 
-  it('uncertified yo => English even when entitled', () => {
+  it('uncertified ha => English even when entitled', () => {
     const yoEntitlement: LanguageEntitlement = {
-      allowedLanguages: ['en', 'yo'],
+      allowedLanguages: ['en', 'ha'],
       llmAllowed: true,
       translationAllowed: true,
     };
     const result = resolveEffectiveResponseLanguage({
       explicitLanguage: null,
-      sessionLanguage: 'yo',
+      sessionLanguage: 'ha',
       rememberedLanguage: null,
       entitlement: yoEntitlement,
       certifiedLanguages: CERTIFIED_LANGUAGES,
@@ -141,7 +141,7 @@ describe('561-B: canonical response-language authority', () => {
     expect(result.source).toBe('fallback');
   });
 
-  for (const lang of ['ig', 'ha', 'tw', 'fr', 'es'] as const) {
+  for (const lang of ['tw', 'fr', 'es'] as const) {
     it(`uncertified ${lang} => English`, () => {
       const result = resolveEffectiveResponseLanguage({
         explicitLanguage: null,

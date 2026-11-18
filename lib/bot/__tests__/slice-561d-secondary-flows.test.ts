@@ -635,7 +635,7 @@ describe('561-D: production language-authority fallback', () => {
     'crowdfunding.no_campaigns', 'recurring.title', 'loyalty.no_points',
     'invoice.all_caught_up', 'chat.start',
   ];
-  const uncertifiedLangs = ['yo', 'ig', 'ha', 'tw', 'fr', 'es'];
+  const uncertifiedLangs = ['ha', 'tw', 'fr', 'es'];
 
   for (const lang of uncertifiedLangs) {
     it(`${lang} (uncertified) falls back to English for all secondary keys`, () => {
@@ -675,7 +675,7 @@ describe('561-D: production language-authority fallback', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-D: CERTIFIED_LANGUAGES unchanged', () => {
-  it('only en and pcm are certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('only en, pcm, yo and ig are certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 });

@@ -297,7 +297,7 @@ describe('561-E: production language-authority fallback for notifications', () =
     'notification.booking_cancelled', 'notification.catalog_order_received',
     'handoff.session_closed', 'notification.receipt_caption',
   ];
-  const uncertifiedLangs = ['yo', 'ig', 'ha', 'tw', 'fr', 'es'];
+  const uncertifiedLangs = ['ha', 'tw', 'fr', 'es'];
 
   for (const lang of uncertifiedLangs) {
     it(`${lang} (uncertified) falls back to English for notification keys`, () => {
@@ -327,7 +327,7 @@ describe('561-E: production language-authority fallback for notifications', () =
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-E: CERTIFIED_LANGUAGES unchanged', () => {
-  it('only en and pcm are certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('only en, pcm, yo and ig are certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 });

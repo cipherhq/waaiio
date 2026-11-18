@@ -43,8 +43,8 @@ describe('#559 — deterministic flow localization', () => {
 
   it('falls back to English for unentitled language', async () => {
     const { getFlowCopy } = await import('../flows/flow-localization');
-    // Even if we pass 'yo' (uncertified), should get English
-    expect(getFlowCopy('yo', 'invalidSelection')).toBe('That option is not available. Tap one of the choices above.');
+    // Even if we pass 'ha' (uncertified), should get English
+    expect(getFlowCopy('ha', 'invalidSelection')).toBe('That option is not available. Tap one of the choices above.');
   });
 
   it('getRerouteKey maps intents to prompt keys', async () => {
@@ -334,14 +334,14 @@ describe('#559 — forged input protection', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('#559 — certification boundary preserved', () => {
-  it('CERTIFIED_LANGUAGES includes only en and pcm', async () => {
+  it('CERTIFIED_LANGUAGES includes only en, pcm, yo and ig', async () => {
     const { CERTIFIED_LANGUAGES } = await import('../languages');
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 
   it('no other language activated by this change', async () => {
     const { LANGUAGE_CATALOG } = await import('../languages');
     const uncertified = LANGUAGE_CATALOG.filter(l => !l.certified);
-    expect(uncertified.map(l => l.code)).toEqual(['yo', 'ig', 'ha', 'tw', 'fr', 'es']);
+    expect(uncertified.map(l => l.code)).toEqual(['ha', 'tw', 'fr', 'es']);
   });
 });

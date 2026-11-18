@@ -74,8 +74,8 @@ describe('isPhraseBookText', () => {
     expect(isPhraseBookText('pcm', 'Welcome to our lovely salon, we open at nine.')).toBe(false);
     expect(isPhraseBookText('pcm', `Our merchant greeting here\n\n${getFlowCopy('pcm', 'menu.what_to_do')}`)).toBe(false);
     expect(isPhraseBookText('en', getFlowCopy('en', 'menu.what_to_do'))).toBe(false);
-    // Yoruba is not certified: its copy falls back to English, which still needs the AI.
-    expect(isPhraseBookText('yo', COPY.yo['menu.what_to_do'])).toBe(false);
+    // Hausa is not certified: its copy falls back to English, which still needs the AI.
+    expect(isPhraseBookText('ha', COPY.ha['menu.what_to_do'])).toBe(false);
     expect(isPhraseBookText('pcm', '')).toBe(false);
   });
 });
@@ -104,7 +104,7 @@ describe('translateBotResponse', () => {
   });
 
   it('still translates for uncertified languages, even phrase-book wording (unchanged)', async () => {
-    await translateBotResponse(getFlowCopy('yo', 'menu.what_to_do'), 'yo', tCtx('yo'));
+    await translateBotResponse(getFlowCopy('ha', 'menu.what_to_do'), 'ha', tCtx('ha'));
     expect(aiCreate).toHaveBeenCalledTimes(1);
   });
 });

@@ -198,9 +198,9 @@ describe('Slice 5B — email localization helper', () => {
 });
 
 describe('Slice 5B — scope containment', () => {
-  it('CERTIFIED_LANGUAGES includes only English and Pidgin', () => {
+  it('CERTIFIED_LANGUAGES includes only English, Pidgin, Yoruba and Igbo', () => {
     const catalog = readFileSync(resolve(ROOT, 'lib/bot/languages.ts'), 'utf-8');
-    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(2);
+    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(4);
   });
 
   it('contract/legal PDF generators not modified', () => {

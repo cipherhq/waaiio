@@ -77,9 +77,9 @@ beforeEach(() => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('Layer 1 — production certification policy', () => {
-  it('CERTIFIED_LANGUAGES includes English and Pidgin', () => {
+  it('CERTIFIED_LANGUAGES includes English, Pidgin, Yoruba and Igbo', () => {
     const catalog = readFileSync(resolve(ROOT, 'lib/bot/languages.ts'), 'utf-8');
-    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(2);
+    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(4);
     expect(catalog).toMatch(/code:\s*'en'[^}]*certified:\s*true/);
     expect(catalog).toMatch(/code:\s*'pcm'[^}]*certified:\s*true/);
   });
@@ -539,10 +539,10 @@ describe('B3 — stale-payment recovery (supplementary structural)', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('Slice 5A — scope containment', () => {
-  it('CERTIFIED_LANGUAGES includes only English and Pidgin', () => {
+  it('CERTIFIED_LANGUAGES includes only English, Pidgin, Yoruba and Igbo', () => {
     const catalog = readFileSync(resolve(ROOT, 'lib/bot/languages.ts'), 'utf-8');
     const certifiedCount = (catalog.match(/certified:\s*true/g) || []).length;
-    expect(certifiedCount).toBe(2);
+    expect(certifiedCount).toBe(4);
   });
 
   it('no migration files in diff', async () => {

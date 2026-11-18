@@ -11,7 +11,7 @@ describe('friendly dates', () => {
 
   it('uses the existing language policy: certified Pidgin reads as English, uncertified falls back to English', () => {
     expect(formatFullDate('2026-11-21', { language: 'pcm', country: 'GB' })).toBe('Saturday, 21 November 2026');
-    expect(formatFullDate('2026-11-21', { language: 'yo', country: 'GB' })).toBe('Saturday, 21 November 2026');
+    expect(formatFullDate('2026-11-21', { language: 'ha', country: 'GB' })).toBe('Saturday, 21 November 2026');
     expect(formatFullDate('2026-11-21', { language: 'en', country: 'US' })).toBe('Saturday, November 21, 2026');
   });
 

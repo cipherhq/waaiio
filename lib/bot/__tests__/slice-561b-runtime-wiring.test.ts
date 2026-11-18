@@ -45,7 +45,7 @@ describe('561-B: NAV_FOOTER deterministic localization', () => {
 
   it('uncertified language footer falls back to English', () => {
     expect(getFlowCopy('fr', 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
-    expect(getFlowCopy('yo', 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
+    expect(getFlowCopy('ha', 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
   });
 });
 
@@ -340,12 +340,12 @@ describe('561-B: new keys have full locale coverage', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-B: CERTIFIED_LANGUAGES unchanged', () => {
-  it('only en and pcm are certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('only en, pcm, yo and ig are certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 
   it('uncertified languages all fall back to English', () => {
-    for (const lang of ['yo', 'ig', 'ha', 'tw', 'fr', 'es']) {
+    for (const lang of ['ha', 'tw', 'fr', 'es']) {
       expect(getFlowCopy(lang, 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
       expect(getFlowCopy(lang, 'error.generic')).toBe(getFlowCopy('en', 'error.generic'));
     }
@@ -421,11 +421,11 @@ describe('561-B: entitlement boundary — resolveCopyLang equivalent', () => {
     expect(getFlowCopy(lang, 'payment.ive_paid')).toBe('I Don Pay');
   });
 
-  it('detected yo (uncertified) + entitled => English fallback', () => {
-    // Even if business entitled to yo, it is NOT certified
-    const lang = resolveCopyLangSimulated('yo', ['en', 'yo']);
-    expect(lang).toBe('yo');
-    // getFlowCopy gates on certification — yo is NOT certified, falls back to English
+  it('detected ha (uncertified) + entitled => English fallback', () => {
+    // Even if business entitled to ha, it is NOT certified
+    const lang = resolveCopyLangSimulated('ha', ['en', 'ha']);
+    expect(lang).toBe('ha');
+    // getFlowCopy gates on certification — ha is NOT certified, falls back to English
     expect(getFlowCopy(lang, 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
     expect(getFlowCopy(lang, 'error.generic')).toBe(getFlowCopy('en', 'error.generic'));
   });

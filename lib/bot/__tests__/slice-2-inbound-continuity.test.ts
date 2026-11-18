@@ -109,8 +109,8 @@ describe('Slice 2 deterministic commerce continuity', () => {
     expect(detectLanguageDeterministic('Quiero reservar por favor')).toBe('es');
   });
 
-  it('production certification includes English and Pidgin', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('production certification includes English, Pidgin, Yoruba and Igbo', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 });
 
