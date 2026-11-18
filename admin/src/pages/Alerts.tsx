@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
+import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { Pagination } from '@/components/Pagination';
@@ -26,6 +27,7 @@ export default function Alerts() {
   const canMutate = isFullAdmin(adminSession);
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   // Filters
@@ -90,8 +92,21 @@ export default function Alerts() {
 
   useEffect(() => { loadData(); }, []);
 
+  // Each action goes through /api/admin/alerts, which confirms the rows changed.
+  // Local state only changes after the API says so.
+  async function runAction<T>(body: Record<string, unknown>): Promise<T | null> {
+    setActionError(null);
+    try {
+      return await adminJson<T>(await adminApiFetch('/api/admin/alerts', body));
+    } catch (err) {
+      setActionError(`Alert not updated: ${err instanceof Error ? err.message : 'request failed'}`);
+      return null;
+    }
+  }
+
   async function toggleRead(id: string, currentlyRead: boolean) {
-    await adminDb.from('alerts').update({ is_read: !currentlyRead }).eq('id', id);
+    const done = await runAction({ action: currentlyRead ? 'mark_unread' : 'mark_read', id });
+    if (!done) return;
     setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_read: !currentlyRead } : a));
     if (currentlyRead) setUnreadCount(c => c + 1); else setUnreadCount(c => Math.max(0, c - 1));
   }
@@ -100,14 +115,17 @@ export default function Alerts() {
     if (!canMutate) return;
     const unreadIds = alerts.filter(a => !a.is_read).map(a => a.id);
     if (unreadIds.length === 0) return;
-    await adminDb.from('alerts').update({ is_read: true }).in('id', unreadIds);
-    setAlerts(prev => prev.map(a => ({ ...a, is_read: true })));
-    setUnreadCount(0);
+    const done = await runAction<{ ids: string[] }>({ action: 'mark_all_read', ids: unreadIds });
+    if (!done) return;
+    const updated = new Set(done.ids);
+    setAlerts(prev => prev.map(a => updated.has(a.id) ? { ...a, is_read: true } : a));
+    setUnreadCount(c => Math.max(0, c - updated.size));
   }
 
   async function dismissAlert(id: string) {
     if (!canMutate || !confirm('Dismiss this alert?')) return;
-    await adminDb.from('alerts').delete().eq('id', id);
+    const done = await runAction({ action: 'dismiss', id });
+    if (!done) return;
     setAlerts(prev => prev.filter(a => a.id !== id));
     setTotalCount(c => c - 1);
   }
@@ -146,6 +164,8 @@ export default function Alerts() {
           </button>
         )}
       </div>
+
+      {actionError && <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</p>}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

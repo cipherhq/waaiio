@@ -239,12 +239,13 @@ export default function Payments() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
 
-  // Summary stats — per currency
+  // Summary stats — per currency. The headline counts successful payments only;
+  // failed and pending attempts never collected money (#1108).
   const totalByCurrency: Record<string, number> = {};
   const refundByCurrency: Record<string, number> = {};
   for (const p of filtered) {
     const cur = p.currency || 'UNKNOWN';
-    totalByCurrency[cur] = (totalByCurrency[cur] || 0) + Number(p.amount || 0);
+    if (p.status === 'success') totalByCurrency[cur] = (totalByCurrency[cur] || 0) + Number(p.amount || 0);
     if (Number(p.refund_amount || 0) > 0) {
       refundByCurrency[cur] = (refundByCurrency[cur] || 0) + Number(p.refund_amount || 0);
     }
@@ -493,11 +494,11 @@ export default function Payments() {
       {/* Summary cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-          <p className="text-xs font-medium text-gray-500">Total ({filtered.length})</p>
+          <p className="text-xs font-medium text-gray-500">Collected: successful payments only</p>
           <p className="mt-1 text-xl font-bold text-gray-900">{totalDisplay}</p>
         </div>
         <div className="rounded-xl border border-green-100 bg-green-50 p-4">
-          <p className="text-xs font-medium text-gray-500">Successful</p>
+          <p className="text-xs font-medium text-gray-500">Successful (of {filtered.length})</p>
           <p className="mt-1 text-xl font-bold text-gray-900">{successCount}</p>
         </div>
         <div className="rounded-xl border border-red-100 bg-red-50 p-4">

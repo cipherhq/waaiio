@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
+import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
-import { logAudit } from '@/lib/auditLog';
 
 interface Campaign {
   id: string;
@@ -51,6 +51,7 @@ export default function Campaigns() {
   const [editEndDate, setEditEndDate] = useState('');
   const [editCampaignStatus, setEditCampaignStatus] = useState('');
   const [savingCampaign, setSavingCampaign] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   async function loadData() {
     try {
@@ -104,18 +105,21 @@ export default function Campaigns() {
   async function handleSaveCampaign() {
     if (!selected || !canMutate) return;
     setSavingCampaign(true);
+    setSaveError(null);
     try {
-      await adminDb.from('campaigns').update({
+      // The API confirms the row changed and records the audit entry.
+      await adminJson(await adminApiFetch(`/api/admin/campaigns/${selected.id}`, {
         title: editTitle,
-        goal_amount: editGoalAmount,
+        goal_amount: Number(editGoalAmount),
         start_date: editStartDate || null,
         end_date: editEndDate || null,
         status: editCampaignStatus,
-      }).eq('id', selected.id);
-      await logAudit({ action: 'edit_campaign', entity_type: 'campaigns', entity_id: selected.id, details: { title: editTitle } });
+      }));
       loadData();
       setSelected(null);
-    } catch { alert('Failed to save'); }
+    } catch (err) {
+      setSaveError(`Not saved: ${err instanceof Error ? err.message : 'request failed'}`);
+    }
     setSavingCampaign(false);
   }
 
@@ -381,6 +385,7 @@ export default function Campaigns() {
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
                     >
                       <option value="active">Active</option>
+                      <option value="paused">Paused</option>
                       <option value="completed">Completed</option>
                       <option value="cancelled">Cancelled</option>
                       <option value="draft">Draft</option>
@@ -388,6 +393,7 @@ export default function Campaigns() {
                   </div>
                 </div>
                 <div className="mt-4">
+                  {saveError && <p role="alert" className="mb-2 text-sm text-red-600">{saveError}</p>}
                   <button
                     onClick={handleSaveCampaign}
                     disabled={savingCampaign}

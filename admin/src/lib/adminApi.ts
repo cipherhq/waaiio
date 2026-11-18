@@ -31,14 +31,15 @@ export function getAdminApiBase(
 /**
  * Authenticated fetch to main-app Admin API. Attaches Bearer access_token.
  * Fails visibly if not authenticated or API base is missing.
+ * Sends POST unless another JSON-body method (e.g. PATCH) is given.
  */
-export async function adminApiFetch(path: string, body: Record<string, unknown>): Promise<Response> {
+export async function adminApiFetch(path: string, body: Record<string, unknown>, method = 'POST'): Promise<Response> {
   const base = getAdminApiBase();
   const { data: session } = await supabase.auth.getSession();
   const token = session?.session?.access_token;
   if (!token) throw new Error('Not authenticated — please sign in again.');
   return fetch(`${base}${path}`, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
@@ -86,4 +87,14 @@ export async function adminApiDelete(path: string, body: Record<string, unknown>
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Read a JSON Admin API response. Throws an Error carrying the API's own
+ * message when the request failed, so pages never mistake a refusal for success.
+ */
+export async function adminJson<T = Record<string, unknown>>(res: Response): Promise<T> {
+  const body = await res.json().catch(() => null) as (T & { error?: string }) | null;
+  if (!res.ok || !body) throw new Error(body?.error || `Request failed (${res.status})`);
+  return body;
 }

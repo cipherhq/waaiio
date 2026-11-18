@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
+import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -15,7 +16,6 @@ interface Conversation {
   customer_phone: string | null;
   customer_name: string | null;
   status: string;
-  last_message: string | null;
   last_message_at: string | null;
   created_at: string;
 }
@@ -23,8 +23,9 @@ interface Conversation {
 interface ChatMessage {
   id: string;
   conversation_id: string;
-  sender_type: string;
-  body: string | null;
+  direction: 'inbound' | 'outbound';
+  message_text: string | null;
+  media_type: string | null;
   created_at: string;
 }
 
@@ -49,12 +50,14 @@ export default function ChatHistory() {
   // Chat state
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [chatLoading, setChatLoading] = useState(true);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [chatPage, setChatPage] = useState(1);
   const [chatStatusFilter, setChatStatusFilter] = useState('all');
   const [chatSearch, setChatSearch] = useState('');
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Bot session state
@@ -70,22 +73,14 @@ export default function ChatHistory() {
   /* ── Load chat conversations ── */
   async function loadChat() {
     setChatLoading(true);
+    setChatError(null);
     try {
-      const { data: convData } = await adminDb
-        .from('chat_conversations')
-        .select('*')
-        .order('last_message_at', { ascending: false })
-        .limit(500);
-
-      const rows = convData || [];
-      const bizIds = [...new Set(rows.map(c => c.business_id).filter(Boolean))];
-      const { data: businesses } = bizIds.length
-        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
-        : { data: [] };
-      const bizMap = new Map((businesses || []).map(b => [b.id, b.name || 'Unknown']));
-
-      setConversations(rows.map(c => ({ ...c, business_name: bizMap.get(c.business_id) || 'Unknown' })));
-    } catch { /* ignore */ } finally { setChatLoading(false); }
+      const { conversations: rows } = await adminJson<{ conversations: Conversation[] }>(await adminApiGet('/api/admin/chat-history'));
+      setConversations(rows);
+    } catch (err) {
+      setConversations([]);
+      setChatError(`Unable to load live chats: ${err instanceof Error ? err.message : 'request failed'}`);
+    } finally { setChatLoading(false); }
   }
 
   /* ── Load bot sessions ── */
@@ -122,10 +117,16 @@ export default function ChatHistory() {
 
   async function loadMessages(conversationId: string) {
     setMessagesLoading(true);
+    setMessagesError(null);
     try {
-      const { data } = await adminDb.from('chat_messages').select('*').eq('conversation_id', conversationId).order('created_at').limit(200);
-      setMessages(data || []);
-    } catch { /* ignore */ } finally { setMessagesLoading(false); }
+      const { messages: rows } = await adminJson<{ messages: ChatMessage[] }>(
+        await adminApiGet(`/api/admin/chat-history?conversationId=${encodeURIComponent(conversationId)}`),
+      );
+      setMessages(rows);
+    } catch (err) {
+      setMessages([]);
+      setMessagesError(`Unable to load messages: ${err instanceof Error ? err.message : 'request failed'}`);
+    } finally { setMessagesLoading(false); }
   }
 
   useEffect(() => { loadChat(); loadBot(); }, []);
@@ -181,7 +182,7 @@ export default function ChatHistory() {
           className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${tab === 'chat' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
           <MessageCircle className="h-4 w-4" />
-          Live Chats ({conversations.length})
+          Live Chats ({chatError ? 'unavailable' : conversations.length})
         </button>
       </div>
 
@@ -256,7 +257,9 @@ export default function ChatHistory() {
           </div>
 
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-            {chatItems.length === 0 ? (
+            {chatError ? (
+              <p role="alert" className="py-16 text-center text-sm text-red-600">{chatError}</p>
+            ) : chatItems.length === 0 ? (
               <div className="py-16 text-center">
                 <MessageCircle className="mx-auto h-10 w-10 text-gray-300" />
                 <p className="mt-3 text-sm text-gray-500">No live chat conversations yet</p>
@@ -270,7 +273,6 @@ export default function ChatHistory() {
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Last Message</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Last Activity</th>
                   </tr>
                 </thead>
@@ -281,7 +283,6 @@ export default function ChatHistory() {
                       <td className="px-4 py-3 text-gray-600">{c.customer_name || <span className="text-gray-400">Unknown</span>}</td>
                       <td className="px-4 py-3 text-gray-600 font-mono text-xs">{c.customer_phone || '---'}</td>
                       <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
-                      <td className="px-4 py-3 text-gray-500 max-w-[240px] truncate">{c.last_message || <span className="text-gray-400">No messages</span>}</td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{c.last_message_at ? fmtRelative(c.last_message_at) : fmtDate(c.created_at)}</td>
                     </tr>
                   ))}
@@ -308,17 +309,19 @@ export default function ChatHistory() {
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Messages</p>
               {messagesLoading ? (
                 <div className="flex justify-center py-8"><div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" /></div>
+              ) : messagesError ? (
+                <p role="alert" className="text-sm text-red-600 py-4 text-center">{messagesError}</p>
               ) : messages.length === 0 ? (
                 <p className="text-sm text-gray-400 py-4 text-center">No messages</p>
               ) : (
                 <div className="max-h-[400px] overflow-y-auto space-y-2 rounded-lg border border-gray-200 p-3">
                   {messages.map(m => (
-                    <div key={m.id} className={`rounded-lg p-3 text-sm ${m.sender_type === 'business' || m.sender_type === 'bot' ? 'bg-brand-50 border border-brand-100 ml-8' : 'bg-gray-50 mr-8'}`}>
+                    <div key={m.id} className={`rounded-lg p-3 text-sm ${m.direction === 'outbound' ? 'bg-brand-50 border border-brand-100 ml-8' : 'bg-gray-50 mr-8'}`}>
                       <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs font-semibold capitalize ${m.sender_type === 'business' || m.sender_type === 'bot' ? 'text-brand-700' : 'text-gray-600'}`}>{m.sender_type}</span>
+                        <span className={`text-xs font-semibold ${m.direction === 'outbound' ? 'text-brand-700' : 'text-gray-600'}`}>{m.direction === 'outbound' ? 'Business' : 'Customer'}</span>
                         <span className="text-xs text-gray-400">{fmtRelative(m.created_at)}</span>
                       </div>
-                      <p className="text-gray-700 whitespace-pre-wrap">{m.body || ''}</p>
+                      <p className="text-gray-700 whitespace-pre-wrap">{m.message_text || (m.media_type ? `[${m.media_type}]` : '')}</p>
                     </div>
                   ))}
                   <div ref={messagesEndRef} />

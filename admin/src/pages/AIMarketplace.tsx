@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
+import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { fmtDateTime } from '@/lib/formatters';
 
@@ -85,6 +86,7 @@ function calculateCompleteness(biz: MarketplaceBusiness): number {
 export default function AIMarketplace() {
   const [tab, setTab] = useState<Tab>('analytics');
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const perPage = 20;
 
   // Summary cards
@@ -278,25 +280,28 @@ export default function AIMarketplace() {
   }, [tab]);
 
   // Admin actions
+  // The API confirms the row changed and records the audit entry; the table only
+  // shows the new value the API returned.
+  async function updateMarketplaceFlags(bizId: string, flags: { is_verified?: boolean; discovery_enabled?: boolean }) {
+    setActionError(null);
+    try {
+      const { business } = await adminJson<{ business: { id: string; is_verified: boolean; discovery_enabled: boolean | null } }>(
+        await adminApiFetch(`/api/admin/businesses/${bizId}/marketplace`, flags),
+      );
+      setBusinesses(prev => prev.map(b => b.id === bizId
+        ? { ...b, is_verified: business.is_verified, discovery_enabled: business.discovery_enabled }
+        : b));
+    } catch (err) {
+      setActionError(`Business not updated: ${err instanceof Error ? err.message : 'request failed'}`);
+    }
+  }
+
   async function handleToggleVerified(bizId: string, currentlyVerified: boolean) {
-    await adminDb
-      .from('businesses')
-      .update({ is_verified: !currentlyVerified })
-      .eq('id', bizId);
-    setBusinesses(prev =>
-      prev.map(b => b.id === bizId ? { ...b, is_verified: !currentlyVerified } : b)
-    );
+    await updateMarketplaceFlags(bizId, { is_verified: !currentlyVerified });
   }
 
   async function handleToggleDiscovery(bizId: string, currentlyEnabled: boolean | null) {
-    const newVal = !(currentlyEnabled ?? false);
-    await adminDb
-      .from('businesses')
-      .update({ discovery_enabled: newVal })
-      .eq('id', bizId);
-    setBusinesses(prev =>
-      prev.map(b => b.id === bizId ? { ...b, discovery_enabled: newVal } : b)
-    );
+    await updateMarketplaceFlags(bizId, { discovery_enabled: !(currentlyEnabled ?? false) });
   }
 
   // Filter marketplace businesses
@@ -565,6 +570,8 @@ export default function AIMarketplace() {
               </button>
             ))}
           </div>
+
+          {actionError && <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</p>}
 
           <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="w-full text-left text-sm">

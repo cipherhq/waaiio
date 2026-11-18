@@ -136,7 +136,7 @@ describe('#596 Finance: query failure → degraded state', () => {
 // 2. Multi-currency: never combined, always separated
 // ═══════════════════════════════════════════════════════════
 describe('#596 Finance: multi-currency separation', () => {
-  it('requests real payout columns with amounts — no currency column', async () => {
+  it('requests real payout columns with amounts and the payout currency (M466, #1108)', async () => {
     setSource('business_payouts', { data: payouts, error: null });
     render(<Finance />);
     await screen.findByText('Platform Fees Earned');
@@ -144,7 +144,7 @@ describe('#596 Finance: multi-currency separation', () => {
     expect(cols).toContain('business_id');
     expect(cols).toContain('net_amount');
     expect(cols).toContain('status');
-    expect(cols).not.toContain('currency');
+    expect(cols).toContain('currency');
   });
 
   it('payout metric cards show business-inferred currency amounts', async () => {
@@ -168,12 +168,20 @@ describe('#596 Finance: multi-currency separation', () => {
     expect(amounts).toBeInTheDocument();
   });
 
-  it('payout status breakdown uses business-inferred currency', async () => {
-    setSource('business_payouts', { data: payouts, error: null });
+  it('payouts use their recorded currency; only legacy rows fall back to the business country (#1108)', async () => {
+    setSource('business_payouts', { data: [
+      // A USD payout for a Nigerian business must show in USD, not the country's NGN.
+      { business_id: NG, currency: 'USD', net_amount: 40, platform_fee: 1, gateway_fee: 1, status: 'paid', created_at: '2026-09-25T10:00:00Z' },
+      // Legacy row with no recorded currency: business country (US → USD).
+      { business_id: US, currency: null, net_amount: 18, platform_fee: 1, gateway_fee: 1, status: 'pending', created_at: '2026-10-05T10:00:00Z' },
+    ], error: null });
     setSource('businesses', { data: businesses, error: null });
     render(<Finance />);
-    const heading = await screen.findByText(/Payout Status Breakdown/);
-    expect(heading).toHaveTextContent('currency inferred from business country');
+    const paidCard = (await screen.findByText('Paid Out')).parentElement!;
+    expect(paidCard).toHaveTextContent('$40');
+    expect(paidCard).not.toHaveTextContent('₦');
+    expect(screen.getByText('Payouts Owed').parentElement!).toHaveTextContent('$18');
+    expect(screen.getByText('Payout Status Breakdown')).toBeInTheDocument();
   });
 });
 
@@ -317,6 +325,28 @@ describe('#682 Finance: subscriptions query selects plan column', () => {
     // MRR section renders when subscriptions have plan data — label is "Total MRR (Subscriptions)"
     expect(screen.getByText('Total MRR (Subscriptions)')).toBeInTheDocument();
     expect(screen.getByText('Active Paid Subscribers')).toBeInTheDocument();
+  });
+
+  it('counts only paid plans as paid subscribers and in ARPU (#1108)', async () => {
+    // Staging shape: twelve active free plans (amount 0) and three paid Premium plans.
+    const subscriptions = [
+      ...Array.from({ length: 12 }, (_, i) => ({ id: `free-${i}`, business_id: NG, plan: 'free', amount: 0, currency: 'NGN', status: 'active', created_at: '2026-09-29T18:53:03Z' })),
+      ...Array.from({ length: 3 }, (_, i) => ({ id: `paid-${i}`, business_id: NG, plan: 'business', amount: 39999, currency: 'NGN', status: 'active', created_at: '2026-09-29T18:53:03Z' })),
+    ];
+    setSource('subscriptions', { data: subscriptions, error: null });
+    setSource('businesses', { data: businesses, error: null });
+    render(<Finance />);
+    const count = (await screen.findByText('Active Paid Subscribers')).parentElement!;
+    expect(count).toHaveTextContent(/^Active Paid Subscribers3$/);
+    // ARPU is 39,999 (paid plans only), not 8,000 (spread over all fifteen).
+    expect(screen.getByText('Avg Revenue Per Subscriber').parentElement!).toHaveTextContent('39,999');
+  });
+
+  it('labels merchant-held fees as not deducted from payouts, not revenue (#1108)', async () => {
+    setSource('businesses', { data: businesses, error: null });
+    render(<Finance />);
+    expect(await screen.findByText('Fees on merchant-held payments (not deducted from payouts)')).toBeInTheDocument();
+    expect(screen.queryByText('Direct Transfer Revenue')).not.toBeInTheDocument();
   });
 
   it('subscription source failure still produces error banner', async () => {

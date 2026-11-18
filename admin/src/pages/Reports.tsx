@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
@@ -11,7 +11,6 @@ interface ReportRecord {
   customer_phone: string;
   customer_name: string | null;
   title: string;
-  file_path: string;
   status: string;
   sent_at: string | null;
   created_at: string;
@@ -20,6 +19,7 @@ interface ReportRecord {
 export default function Reports() {
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
   const perPage = 20;
@@ -29,28 +29,14 @@ export default function Reports() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
+    setLoadError(null);
 
     try {
-      const { data } = await adminDb
-        .from('customer_reports')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      // Enrich with business names
-      const bizIds = [...new Set((data || []).map(r => r.business_id))];
-      const { data: businesses } = await adminDb
-        .from('businesses')
-        .select('id, name')
-        .in('id', bizIds);
-
-      const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
-
-      const enriched = (data || []).map(r => ({
-        ...r,
-        business_name: bizMap.get(r.business_id) || 'Unknown',
-      }));
-
-      setReports(enriched as ReportRecord[]);
+      const { reports: rows } = await adminJson<{ reports: ReportRecord[] }>(await adminApiGet('/api/admin/customer-reports'));
+      setReports(rows);
+    } catch (err) {
+      setReports([]);
+      setLoadError(`Could not load reports: ${err instanceof Error ? err.message : 'request failed'}`);
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -104,6 +90,8 @@ export default function Reports() {
           <tbody className="divide-y divide-gray-50">
             {loading ? (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
+            ) : loadError ? (
+              <tr><td colSpan={6} role="alert" className="px-4 py-8 text-center text-red-600">{loadError}</td></tr>
             ) : paginated.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No reports found.</td></tr>
             ) : paginated.map(r => (

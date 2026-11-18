@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
+import { adminApiFetch, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
-import { logAudit } from '@/lib/auditLog';
 
 interface Ticket {
   id: string;
@@ -55,6 +55,7 @@ export default function Tickets() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const perPage = 20;
 
   useEffect(() => {
@@ -114,24 +115,17 @@ export default function Tickets() {
   async function handleCancel(ticket: Ticket) {
     if (!confirm('Cancel this ticket? This cannot be undone.')) return;
     setCancelling(true);
+    setCancelError(null);
     try {
-      await adminDb
-        .from('event_tickets')
-        .update({ status: 'cancelled' })
-        .eq('id', ticket.id);
-
-      await logAudit({
-        action: 'cancel_ticket',
-        entity_type: 'event_ticket',
-        entity_id: ticket.id,
-        details: { ticket_code: ticket.ticket_code, event_id: ticket.event_id, business_id: ticket.business_id },
-      });
+      // Status change only; the API confirms the ticket was valid and records the audit entry.
+      await adminJson(await adminApiFetch(`/api/admin/tickets/${ticket.id}/cancel`, {}));
 
       // Update local state
       setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: 'cancelled' } : t));
       setSelected(prev => prev?.id === ticket.id ? { ...prev, status: 'cancelled' } : prev);
     } catch (err) {
       console.warn('Failed to cancel ticket:', err);
+      setCancelError(`Ticket not cancelled: ${err instanceof Error ? err.message : 'request failed'}`);
     } finally {
       setCancelling(false);
     }
@@ -252,7 +246,7 @@ export default function Tickets() {
               {pageItems.map(ticket => (
                 <tr
                   key={ticket.id}
-                  onClick={() => setSelected(ticket)}
+                  onClick={() => { setSelected(ticket); setCancelError(null); }}
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">{ticket.ticket_code}</td>
@@ -334,6 +328,7 @@ export default function Tickets() {
             {/* Admin Actions */}
             {selected.status === 'valid' && (
               <div className="pt-2">
+                {cancelError && <p role="alert" className="mb-2 text-sm text-red-600">{cancelError}</p>}
                 <button
                   onClick={() => handleCancel(selected)}
                   disabled={cancelling}

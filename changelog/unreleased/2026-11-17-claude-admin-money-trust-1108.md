@@ -1,0 +1,38 @@
+## 2026-11-17 — Admin money and trust fixes from the admin audit (#1108)
+
+- **Payments** (`admin/src/pages/Payments.tsx`): the headline now adds successful payments only, per currency, labelled "Collected: successful payments only". Failed and pending amounts are no longer counted.
+- **Finance** (`admin/src/pages/Finance.tsx`):
+  - "Active Paid Subscribers" and ARPU count paid plans only (`amount > 0`).
+  - Payouts use their own `business_payouts.currency`; legacy rows without one still use the business country.
+  - "Direct Transfer Revenue" is relabelled "Fees on merchant-held payments (not deducted from payouts)". These are fees on payments the merchant received directly (own gateway, Connect, bank transfer); depending on the route they are collected by the split or by the monthly invoice.
+- **Audit log (X1)**: new `POST /api/admin/audit` (service role, any platform role, actor is always the verified admin, rows marked `source: 'admin_panel'`). `admin/src/lib/auditLog.ts` calls it, returns `{ ok, error }`, and on failure shows `AuditFailureNotice` (in `AdminLayout`) instead of dropping the entry.
+- **Admin writes (X2)**: these now go through role-checked `/api/admin/*` routes that use the service client, report 404/409 when no row changed, and audit:
+  - Campaigns save: `campaigns/[id]` (admin).
+  - AI Marketplace verify/discovery: `businesses/[id]/marketplace` (admin).
+  - Tickets cancel: `tickets/[id]/cancel` (admin, support, operations). Status `valid → cancelled` only; no refund or booking change.
+  - Alerts read/unread, mark all read, dismiss: `alerts` (mark one: admin, support, operations; mark all and dismiss: admin).
+  - Bot Keywords list/create/edit/toggle/delete: `bot-keywords` (admin, operations). Create, edit and delete cover system and category keywords only; toggle works on any scope.
+  - Users: `users` (list status) and `users/[id]` (admin). Suspend/reactivate is a Supabase Auth ban. The account role is limited to `restaurant_owner`/`restaurant_staff`. Platform team members and the signed-in admin are refused here and sent to Admin Team.
+  - Each page shows the API's error and only updates its display after the API confirms.
+- **WhatsApp Channels Configs tab**: the Activate/Deactivate and webhook controls are removed, with an honest note. They wrote `whatsapp_config.status` and `.webhook_url`, which don't exist.
+- **Recurring Payments** (`admin/src/pages/RecurringPayments.tsx`): Pause, Resume, Retry and Cancel are disabled with an honest note. They matched 0 rows and looked successful, and doing them properly needs the payment gateway (out of scope, a money decision). Subscriptions extend/cancel already show their failure and are unchanged.
+- **Hidden reads (X3)**: Chat History (`chat-history`), Reports (`customer-reports`, no access token or file path) and Queue (`queue-entries`) read through admin routes. Failures show as errors, not empty lists. Chat History uses the real `direction` and `message_text` columns.
+- **Broadcast email**: `/api/email/send` with more than one recipient now sends each recipient a separate email (`sendEmailToEach` in `lib/email/client.ts`: Resend batch API, 100 per call, no retry). It returns accepted and failed counts. Broadcasts records the accepted count and reports a partial send. A single recipient is unchanged.
+- **#1109 follow-ups**:
+  - `Vary: Origin` on `adminCorsHeaders` and on the middleware admin CORS answers.
+  - `generate-sign-link` uses the new `supabase/functions/_shared/cors-origins.ts`, which adds admin-staging and fails closed for unknown origins.
+  - The demo and contact form errors have `role="alert"`.
+- **Helpers**: `lib/admin-route.ts` (responder, preflight, IP, JSON body, business names); `adminApiFetch` takes an optional method; `adminJson`; `delete()` in the test `memory-db`.
+- **Tests**:
+  - `lib/__tests__/admin-truthful-routes-1108.test.ts`
+  - `admin/src/__tests__/admin-truthful-actions-1108.test.tsx`
+  - `lib/__tests__/email-send-separate-recipients-1108.test.ts`
+  - `lib/__tests__/cors-vary-edge-origins-1109.test.ts`
+  - `app/(marketing)/contact/__tests__/contact-form-error-alert.test.tsx`
+  - Finance and Payments additions. The two #596 Finance tests that asserted "no payout currency column" now assert the column is used.
+- **No migration, and no RLS or grant change.**
+- **Could break:**
+  - Admin pages that relied on optimistic success now show errors when the server refuses.
+  - The Users page needs `/api/admin/users`, which lists Auth users (up to 20,000).
+  - Broadcast email now makes one provider call per 100 recipients.
+  - `generate-sign-link` no longer answers unknown origins with the main site's origin.

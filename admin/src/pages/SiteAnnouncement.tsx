@@ -229,10 +229,9 @@ export default function SiteAnnouncementPage() {
       setConfig(result.config);
       setVersion(result.updatedAt);
       setSaved(true);
-      await logAudit('site_announcement_updated', {
-        enabled: result.config.enabled,
-        type: result.config.type,
-        headline: result.config.headline,
+      await logAudit({
+        action: 'site_announcement_updated', entity_type: 'site_announcement', entity_id: 'site_announcement',
+        details: { enabled: result.config.enabled, type: result.config.type, headline: result.config.headline },
       });
       window.setTimeout(() => setSaved(false), 3000);
     }
@@ -261,9 +260,10 @@ export default function SiteAnnouncementPage() {
 
     setConfig(result.config);
     setVersion(result.updatedAt);
-    await logAudit(result.config.enabled ? 'site_announcement_enabled' : 'site_announcement_disabled', {
-      type: result.config.type,
-      headline: result.config.headline,
+    await logAudit({
+      action: result.config.enabled ? 'site_announcement_enabled' : 'site_announcement_disabled',
+      entity_type: 'site_announcement', entity_id: 'site_announcement',
+      details: { type: result.config.type, headline: result.config.headline },
     });
     setToggling(false);
   }

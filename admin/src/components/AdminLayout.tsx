@@ -6,6 +6,7 @@ import { loadCountries } from '@/lib/countries';
 import { AdminSidebar } from './AdminSidebar';
 import { IdleTimeout } from './IdleTimeout';
 import { EnvironmentIdentityBar } from './EnvironmentIdentityBar';
+import { AuditFailureNotice } from './AuditFailureNotice';
 
 const AdminSessionContext = createContext<AdminSession | null>(null);
 
@@ -97,6 +98,7 @@ export function AdminLayout() {
           </div>
           <EnvironmentIdentityBar />
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+            <AuditFailureNotice />
             <Outlet />
           </div>
         </div>

@@ -193,10 +193,10 @@ describe('#420 Site Announcement Admin safety UX', () => {
     expect(body.enabled).toBe(true);
     expect(body.target_date).toBe('2099-10-11T16:00:00.000Z');
     expect(body.expected_updated_at).toEqual(expect.any(String));
-    expect(logAuditMock).toHaveBeenCalledWith(
-      'site_announcement_enabled',
-      expect.objectContaining({ headline: 'Waaiio launches soon' }),
-    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'site_announcement_enabled',
+      details: expect.objectContaining({ headline: 'Waaiio launches soon' }),
+    }));
   });
 
   it('Save uses authenticated PUT /api/admin/site-announcement', async () => {

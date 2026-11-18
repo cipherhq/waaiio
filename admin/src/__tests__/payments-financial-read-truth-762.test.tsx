@@ -422,3 +422,24 @@ describe('#980 tax refund selection and admin step-up',()=>{
   expect(calls('/step-up/prepare')).toHaveLength(0);expect(calls('/payments/refund')).toHaveLength(0);
  });
 });
+
+describe('Payments headline counts successful payments only (#1108)', () => {
+  it('excludes failed and pending amounts from the collected total, per currency', async () => {
+    rows('payments', [
+      { ...original, id: 'ngn-success', currency: 'NGN', amount: 7_689_741, status: 'success' },
+      { ...original, id: 'ngn-failed', currency: 'NGN', amount: 2_750_000, status: 'failed' },
+      { ...original, id: 'ngn-pending', currency: 'NGN', amount: 97_000, status: 'pending' },
+      { ...original, id: 'usd-success', currency: 'USD', amount: 100, status: 'success' },
+      { ...original, id: 'usd-failed', currency: 'USD', amount: 900, status: 'failed' },
+    ]);
+    render(<Payments />);
+    await ready();
+    const card = screen.getByText('Collected: successful payments only').parentElement!;
+    expect(card).toHaveTextContent('7,689,741');
+    expect(card).toHaveTextContent('$100');
+    // The old card added every status: NGN 10,536,741 and USD 1,000.
+    expect(card).not.toHaveTextContent('10,536,741');
+    expect(card).not.toHaveTextContent('1,000');
+    expect(screen.getByText('Successful (of 5)').parentElement!).toHaveTextContent('2');
+  });
+});

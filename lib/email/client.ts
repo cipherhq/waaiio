@@ -65,3 +65,52 @@ export async function sendEmail({ to, subject, html, from, replyTo, noRetry = fa
   logger.error('[EMAIL] All retries exhausted:', lastError);
   return { success: false, error: lastError instanceof Error ? lastError.message : lastError };
 }
+
+const BATCH_SIZE = 100; // Resend batch API limit per request
+
+export interface SendToEachResult {
+  accepted: number;
+  failed: number;
+}
+
+/**
+ * Send the same message as a separate email to each recipient, so no
+ * recipient ever sees another's address (#1108). Uses the provider batch API,
+ * up to 100 emails per request. A batch is never retried, so an unclear
+ * provider failure cannot send anyone the message twice; its recipients are
+ * counted as failed.
+ */
+export async function sendEmailToEach(
+  { to, subject, html, from, replyTo }: { to: string[]; subject: string; html: string; from?: string; replyTo?: string },
+): Promise<SendToEachResult> {
+  if (!resend) {
+    logger.debug(`[EMAIL-DEV] ${to.length} separate emails | Subject: ${subject}`);
+    return { accepted: to.length, failed: 0 };
+  }
+  let accepted = 0;
+  let failed = 0;
+  for (let i = 0; i < to.length; i += BATCH_SIZE) {
+    const chunk = to.slice(i, i + BATCH_SIZE);
+    try {
+      const { data, error } = await resend.batch.send(
+        chunk.map(address => ({
+          from: from || DEFAULT_FROM, to: [address], subject, html,
+          ...(replyTo ? { reply_to: replyTo } : {}),
+        })),
+        { batchValidation: 'permissive' },
+      );
+      if (error || !data) {
+        logger.error('[EMAIL] Batch send failed:', error);
+        failed += chunk.length;
+        continue;
+      }
+      const sent = Array.isArray(data.data) ? data.data.length : 0;
+      accepted += sent;
+      failed += chunk.length - sent;
+    } catch (err) {
+      logger.error('[EMAIL] Batch send exception:', (err as Error).message);
+      failed += chunk.length;
+    }
+  }
+  return { accepted, failed };
+}
