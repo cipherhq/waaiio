@@ -303,10 +303,10 @@ export default function EngagementActivity() {
       const eventIds = [...new Set((data || []).map(r => r.event_id).filter(Boolean))];
       const { data: events } = await adminDb
         .from('events')
-        .select('id, title')
+        .select('id, name') // events has `name`, not `title` (#1108 X4)
         .in('id', eventIds.length > 0 ? eventIds : ['__none__']);
 
-      const eventMap = new Map((events || []).map(e => [e.id, e.title]));
+      const eventMap = new Map((events || []).map(e => [e.id, e.name]));
       setScans(
         (data || []).map(r => ({
           id: r.id,

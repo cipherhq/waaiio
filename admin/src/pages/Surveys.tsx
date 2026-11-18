@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { SortableTh } from '@/components/SortableTh';
 import { sortTime, useTableSort } from '@/lib/tableSort';
@@ -42,41 +42,40 @@ export default function Surveys() {
   const [selected, setSelected] = useState<Survey | null>(null);
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [responsesLoading, setResponsesLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [responsesError, setResponsesError] = useState('');
   const perPage = 20;
 
   useEffect(() => {
     loadData();
   }, []);
 
+  // Read through /api/admin/surveys: the browser client has no admin read right on
+  // surveys or survey_responses, so these lists were always empty (#1108 X3).
   async function loadData() {
     setLoading(true);
-    const { data } = await adminDb
-      .from('surveys')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    const rows = data || [];
-
-    // Enrich with business names
-    const bizIds = [...new Set(rows.map(s => s.business_id).filter(Boolean))];
-    const { data: bizData } = bizIds.length > 0
-      ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
-      : { data: [] };
-    const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
-
-    setSurveys(rows.map(s => ({ ...s, business_name: bizMap.get(s.business_id) || 'Unknown' })));
+    try {
+      const { surveys: rows } = await adminJson<{ surveys: Survey[] }>(await adminApiGet('/api/admin/surveys'));
+      setSurveys(rows);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Could not load surveys');
+    }
     setLoading(false);
   }
 
   async function loadResponses(surveyId: string) {
     setResponsesLoading(true);
-    const { data } = await adminDb
-      .from('survey_responses')
-      .select('*')
-      .eq('survey_id', surveyId)
-      .order('started_at', { ascending: false })
-      .limit(100);
-    setResponses(data || []);
+    setResponses([]);
+    try {
+      const { responses: rows } = await adminJson<{ responses: SurveyResponse[] }>(
+        await adminApiGet(`/api/admin/surveys?survey_id=${encodeURIComponent(surveyId)}`),
+      );
+      setResponses(rows);
+      setResponsesError('');
+    } catch (err) {
+      setResponsesError(err instanceof Error ? err.message : 'Could not load responses');
+    }
     setResponsesLoading(false);
   }
 
@@ -161,6 +160,8 @@ export default function Surveys() {
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
+            ) : loadError ? (
+              <tr><td colSpan={6} role="alert" className="px-4 py-8 text-center text-red-600">{loadError}</td></tr>
             ) : paged.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No surveys found</td></tr>
             ) : paged.map(s => (
@@ -211,7 +212,9 @@ export default function Surveys() {
             <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
               Responses {responsesLoading ? '(loading...)' : `(${responses.length})`}
             </p>
-            {responses.length === 0 && !responsesLoading ? (
+            {responsesError ? (
+              <p role="alert" className="text-sm text-red-600">{responsesError}</p>
+            ) : responses.length === 0 && !responsesLoading ? (
               <p className="text-sm text-gray-400">No responses yet</p>
             ) : (
               <div className="max-h-60 overflow-y-auto space-y-2">

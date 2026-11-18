@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { adminApiFetch, adminJson } from '@/lib/adminApi';
+import { adminQuery } from '@/lib/adminQuery';
 import { Pagination } from '@/components/Pagination';
 import { fmtDateTime } from '@/lib/formatters';
 import { SortableTh } from '@/components/SortableTh';
@@ -70,6 +71,43 @@ function rangeStart(range: DateRange): string {
   }
 }
 
+// The bot logs every classification to llm_classifications (lib/bot/classification-logger.ts).
+// The page used to read ai_classification_log, which nothing writes, so it was always empty (#1108).
+interface LlmClassificationRow {
+  id: string;
+  business_id: string | null;
+  detected_intent: string | null;
+  detected_flow: string | null;
+  confidence: number | null;
+  llm_used: boolean | null;
+  regex_matched: boolean | null;
+  created_at: string;
+}
+const CLASSIFICATION_COLUMNS = 'id, business_id, detected_intent, detected_flow, confidence, llm_used, regex_matched, created_at';
+
+function toClassification(r: LlmClassificationRow): ClassificationRecord {
+  return {
+    id: r.id,
+    business_id: r.business_id || '',
+    intent: r.detected_intent || 'unknown',
+    confidence: r.confidence || 0,
+    source: r.llm_used ? 'llm' : r.regex_matched ? 'regex' : 'none',
+    action: r.detected_flow,
+    created_at: r.created_at,
+  };
+}
+
+async function loadClassificationRows(since: string | null, limit: number): Promise<ClassificationRecord[]> {
+  const res = await adminQuery<LlmClassificationRow>('llm_classifications', {
+    select: CLASSIFICATION_COLUMNS,
+    filters: since ? [{ column: 'created_at', op: 'gte', value: since }] : [],
+    order: { column: 'created_at', ascending: false },
+    limit,
+  });
+  if (res.error) throw new Error(res.error);
+  return (res.data || []).map(toClassification);
+}
+
 function calculateCompleteness(biz: MarketplaceBusiness): number {
   let filled = 0;
   const total = 7;
@@ -123,19 +161,14 @@ export default function AIMarketplace() {
   async function loadSummary() {
     setSummaryLoading(true);
     try {
-      const { data, error: qErr } = await adminDb
-        .from('ai_classification_log')
-        .select('id, confidence, source, intent')
-        .gte('created_at', daysAgoISO(30))
-        .limit(1000);
-
-      if (qErr) {
-        setError(`Failed to load summary: ${qErr.message}`);
-        setSummaryLoading(false);
+      let rows: ClassificationRecord[];
+      try {
+        rows = await loadClassificationRows(daysAgoISO(30), 1000);
+      } catch (qErr) {
+        setError(`Failed to load summary: ${(qErr as Error).message}`);
         return;
       }
 
-      const rows = data || [];
       const total = rows.length;
       setTotalClassifications(total);
 
@@ -166,15 +199,11 @@ export default function AIMarketplace() {
     setClassLoading(true);
     try {
       const start = rangeStart(classRange);
-      const { data, error: qErr } = await adminDb
-        .from('ai_classification_log')
-        .select('*')
-        .gte('created_at', start)
-        .order('created_at', { ascending: false })
-        .range(0, 99);
-
-      if (qErr) {
-        setError(`Failed to load classifications: ${qErr.message}`);
+      let data: ClassificationRecord[];
+      try {
+        data = await loadClassificationRows(start, 100);
+      } catch (qErr) {
+        setError(`Failed to load classifications: ${(qErr as Error).message}`);
         return;
       }
 
@@ -208,15 +237,14 @@ export default function AIMarketplace() {
     reviewRef.current = true;
     setReviewLoading(true);
     try {
-      const { data, error: qErr } = await adminDb
-        .from('ai_classification_log')
-        .select('id, intent, confidence, business_id, created_at')
-        .or('confidence.lt.0.60,intent.eq.unknown')
-        .order('created_at', { ascending: false })
-        .range(0, 99);
-
-      if (qErr) {
-        setError(`Failed to load review queue: ${qErr.message}`);
+      let data: ClassificationRecord[];
+      try {
+        // Low confidence or no intent, from the latest 500 classifications.
+        data = (await loadClassificationRows(null, 500))
+          .filter(r => r.confidence < 0.6 || r.intent === 'unknown')
+          .slice(0, 100);
+      } catch (qErr) {
+        setError(`Failed to load review queue: ${(qErr as Error).message}`);
         return;
       }
 

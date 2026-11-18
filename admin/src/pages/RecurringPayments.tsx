@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
+import { adminApiGet, adminJson } from '@/lib/adminApi';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
@@ -57,6 +58,7 @@ export default function RecurringPayments() {
   const [frequencyFilter, setFrequencyFilter] = useState('all');
   const [selected, setSelected] = useState<RecurringRecord | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const perPage = 20;
   const loadingRef = useRef(false);
 
@@ -66,39 +68,13 @@ export default function RecurringPayments() {
     setLoading(true);
 
     try {
-      const { data } = await adminDb
-        .from('customer_subscriptions')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      // Enrich with business and service names
-      const bizIds = [...new Set((data || []).map(r => r.business_id))];
-      const svcIds = [...new Set((data || []).map(r => r.service_id).filter(Boolean))];
-
-      const { data: businesses } = bizIds.length > 0
-        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
-        : { data: [] };
-
-      const { data: services } = svcIds.length > 0
-        ? await adminDb.from('services').select('id, name, billing_type').in('id', svcIds)
-        : { data: [] };
-
-      const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
-      const svcMap = new Map((services || []).map(s => [s.id, { name: s.name, billing_type: s.billing_type }]));
-
-      setRecords(
-        (data || []).map(r => {
-          const svc = svcMap.get(r.service_id);
-          return {
-            ...r,
-            business_name: bizMap.get(r.business_id) || 'Unknown',
-            service_name: svc?.name || 'Payment',
-            service_billing_type: svc?.billing_type || 'one_time',
-          };
-        }),
-      );
+      // Read through /api/admin/recurring: customer_subscriptions has no admin read
+      // policy, so the browser read showed nothing (#1108 X3).
+      const { records: rows } = await adminJson<{ records: RecurringRecord[] }>(await adminApiGet('/api/admin/recurring'));
+      setRecords(rows);
+      setLoadError('');
     } catch (error) {
-      console.warn('Failed to load recurring payments:', error);
+      setLoadError(error instanceof Error ? error.message : 'Could not load recurring payments');
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -307,7 +283,9 @@ export default function RecurringPayments() {
 
       {/* Table */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        {pageItems.length === 0 ? (
+        {loadError ? (
+          <div role="alert" className="py-16 text-center text-sm text-red-600">{loadError}</div>
+        ) : pageItems.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-500">No recurring payments found</div>
         ) : (
           <table className="w-full text-sm">

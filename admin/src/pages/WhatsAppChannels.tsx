@@ -27,14 +27,14 @@ interface WhatsAppChannel {
   [key: string]: unknown;
 }
 
+// whatsapp_config is a business's bot settings (M001 and later). It has no status,
+// channel_id, phone or webhook_url columns, so the tab now shows the real ones (#1108 X4).
 interface WhatsAppConfig {
   id: string;
   business_id: string;
   business_name?: string;
-  channel_id: string | null;
-  phone: string | null;
-  webhook_url: string | null;
-  status: string;
+  bot_alias: string | null;
+  auto_confirm: boolean | null;
   created_at: string;
   updated_at: string | null;
   [key: string]: unknown;
@@ -118,7 +118,7 @@ export default function WhatsAppChannels() {
   // Stats
   const activeChannels = channels.filter(c => c.connection_status === 'active').length;
   const totalChannels = channels.length;
-  const activeConfigs = configs.filter(c => c.status === 'active').length;
+  const autoConfirmConfigs = configs.filter(c => c.auto_confirm === true).length;
   const totalConfigs = configs.length;
 
   // Channel pagination
@@ -137,10 +137,9 @@ export default function WhatsAppChannels() {
   const configTotal = Math.max(1, Math.ceil(configs.length / perPage));
   const configSort = useTableSort(configs, {
     business: cfg => cfg.business_name,
-    channel: cfg => (cfg.channel_id ? cfg.channel_id.slice(0, 8) + '...' : cfg.phone),
-    webhook: cfg => cfg.webhook_url,
-    status: cfg => cfg.status,
-    created: cfg => sortTime(cfg.created_at),
+    alias: cfg => cfg.bot_alias,
+    autoConfirm: cfg => (cfg.auto_confirm ? 1 : 0),
+    updated: cfg => sortTime(cfg.updated_at || cfg.created_at),
   }, { onSortChange: () => setConfigPage(1) });
   const configItems = configSort.sorted.slice((configPage - 1) * perPage, configPage * perPage);
 
@@ -174,7 +173,7 @@ export default function WhatsAppChannels() {
         <SummaryCard label="Total Channels" value={totalChannels} icon={Phone} color="green" />
         <SummaryCard label="Active Channels" value={activeChannels} icon={Radio} color="blue" />
         <SummaryCard label="Total Configs" value={totalConfigs} icon={Settings} color="purple" />
-        <SummaryCard label="Active Configs" value={activeConfigs} icon={Globe} color="yellow" />
+        <SummaryCard label="Auto-confirm on" value={autoConfirmConfigs} icon={Globe} color="yellow" />
       </div>
 
       {/* Tabs */}
@@ -256,10 +255,9 @@ export default function WhatsAppChannels() {
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
                     <SortableTh {...configSort.sortProps('business')} className="px-4 py-3 text-left font-medium text-gray-500">Business</SortableTh>
-                    <SortableTh {...configSort.sortProps('channel')} className="px-4 py-3 text-left font-medium text-gray-500">Channel / Phone</SortableTh>
-                    <SortableTh {...configSort.sortProps('webhook')} className="px-4 py-3 text-left font-medium text-gray-500">Webhook URL</SortableTh>
-                    <SortableTh {...configSort.sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Status</SortableTh>
-                    <SortableTh {...configSort.sortProps('created')} className="px-4 py-3 text-left font-medium text-gray-500">Created</SortableTh>
+                    <SortableTh {...configSort.sortProps('alias')} className="px-4 py-3 text-left font-medium text-gray-500">Bot alias</SortableTh>
+                    <SortableTh {...configSort.sortProps('autoConfirm')} className="px-4 py-3 text-left font-medium text-gray-500">Auto-confirm</SortableTh>
+                    <SortableTh {...configSort.sortProps('updated')} className="px-4 py-3 text-left font-medium text-gray-500">Updated</SortableTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -270,16 +268,9 @@ export default function WhatsAppChannels() {
                       className="cursor-pointer transition hover:bg-gray-50"
                     >
                       <td className="px-4 py-3 font-medium text-gray-900">{cfg.business_name}</td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {cfg.channel_id ? cfg.channel_id.slice(0, 8) + '...' : cfg.phone || '—'}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600 max-w-[200px] truncate">
-                        {cfg.webhook_url || '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={cfg.status} />
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(cfg.created_at)}</td>
+                      <td className="px-4 py-3 text-gray-600">{cfg.bot_alias || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{cfg.auto_confirm ? 'On' : 'Off'}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(cfg.updated_at || cfg.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -349,7 +340,6 @@ export default function WhatsAppChannels() {
         {selectedConfig && (
           <div className="space-y-3 text-sm">
             <DetailRow label="Config ID" value={selectedConfig.id} />
-            <DetailRow label="Status" value={selectedConfig.status} />
             <DetailRow label="Created" value={fmtDateTime(selectedConfig.created_at)} />
             {selectedConfig.updated_at && (
               <DetailRow label="Updated" value={fmtDateTime(selectedConfig.updated_at)} />
@@ -365,14 +355,6 @@ export default function WhatsAppChannels() {
               </div>
             </div>
 
-            <div className="rounded-lg bg-gray-50 p-4">
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Channel Info</p>
-              <div className="space-y-2">
-                <DetailRow label="Channel ID" value={selectedConfig.channel_id} />
-                <DetailRow label="Phone" value={selectedConfig.phone} />
-              </div>
-            </div>
-
             {/* The old Activate/Deactivate and webhook controls wrote whatsapp_config.status and
                 .webhook_url, which do not exist, so they could never save (#1108 X2). */}
             <p className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-500">
@@ -383,8 +365,7 @@ export default function WhatsAppChannels() {
             {/* Render any extra fields from the row */}
             {(() => {
               const knownKeys = new Set([
-                'id', 'business_id', 'business_name', 'channel_id', 'phone',
-                'webhook_url', 'status', 'created_at', 'updated_at',
+                'id', 'business_id', 'business_name', 'created_at', 'updated_at',
               ]);
               const extras = Object.entries(selectedConfig).filter(([k]) => !knownKeys.has(k));
               if (extras.length === 0) return null;

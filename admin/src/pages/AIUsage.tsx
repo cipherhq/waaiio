@@ -15,6 +15,14 @@ interface AIUsageRow {
   intent_calls: number;
   translate_calls: number;
   detect_lang_calls: number;
+  // Feature counters written by incrementAIUsage (M091). The page used to ignore them,
+  // so translations, voice notes and AI setup never showed (#1108).
+  translation_count: number | null;
+  voice_transcription_count: number | null;
+  ai_fallback_count: number | null;
+  ace_setup_count: number | null;
+  /** translate_calls (legacy, M084) + translation_count (current) */
+  translation_total: number;
   total_calls: number;
 }
 
@@ -29,6 +37,7 @@ export default function AIUsage() {
   const [totalIntent, setTotalIntent] = useState(0);
   const [totalTranslate, setTotalTranslate] = useState(0);
   const [totalDetect, setTotalDetect] = useState(0);
+  const [totalOther, setTotalOther] = useState(0);
 
   useEffect(() => {
     async function load() {
@@ -50,30 +59,38 @@ export default function AIUsage() {
 
       const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
 
-      const enriched: AIUsageRow[] = usageRows.map(r => ({
-        ...r,
-        business_name: r.business_id ? bizMap.get(r.business_id) || 'Unknown' : 'Global',
-        total_calls: (r.intent_calls || 0) + (r.translate_calls || 0) + (r.detect_lang_calls || 0),
-      }));
+      const enriched: AIUsageRow[] = usageRows.map(r => {
+        const translationTotal = (r.translate_calls || 0) + (r.translation_count || 0);
+        return {
+          ...r,
+          business_name: r.business_id ? bizMap.get(r.business_id) || 'Unknown' : 'Global',
+          translation_total: translationTotal,
+          total_calls: (r.intent_calls || 0) + translationTotal + (r.detect_lang_calls || 0)
+            + (r.voice_transcription_count || 0) + (r.ai_fallback_count || 0) + (r.ace_setup_count || 0),
+        };
+      });
 
       setRows(enriched);
       setTotalIntent(enriched.reduce((s, r) => s + (r.intent_calls || 0), 0));
-      setTotalTranslate(enriched.reduce((s, r) => s + (r.translate_calls || 0), 0));
+      setTotalTranslate(enriched.reduce((s, r) => s + r.translation_total, 0));
       setTotalDetect(enriched.reduce((s, r) => s + (r.detect_lang_calls || 0), 0));
+      setTotalOther(enriched.reduce((s, r) => s + (r.voice_transcription_count || 0) + (r.ai_fallback_count || 0) + (r.ace_setup_count || 0), 0));
       setLoading(false);
     }
     load();
   }, [monthKey]);
 
-  const totalCalls = totalIntent + totalTranslate + totalDetect;
+  const totalCalls = totalIntent + totalTranslate + totalDetect + totalOther;
   const estimatedCost = (totalCalls * 0.001).toFixed(2); // ~$0.001 per Haiku call
 
   const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
   const { sorted, sortProps } = useTableSort(rows, {
     business: r => r.business_name,
     intent: r => r.intent_calls,
-    translate: r => r.translate_calls,
+    translate: r => r.translation_total,
     detect: r => r.detect_lang_calls,
+    voice: r => r.voice_transcription_count || 0,
+    setup: r => r.ace_setup_count || 0,
     total: r => r.total_calls,
     cost: r => r.total_calls,
   }, { onSortChange: () => setPage(1) });
@@ -109,21 +126,25 @@ export default function AIUsage() {
               <SortableTh {...sortProps('intent')} className="text-right px-4 py-3 font-medium text-gray-600">Intent</SortableTh>
               <SortableTh {...sortProps('translate')} className="text-right px-4 py-3 font-medium text-gray-600">Translation</SortableTh>
               <SortableTh {...sortProps('detect')} className="text-right px-4 py-3 font-medium text-gray-600">Lang Detect</SortableTh>
+              <SortableTh {...sortProps('voice')} className="text-right px-4 py-3 font-medium text-gray-600">Voice</SortableTh>
+              <SortableTh {...sortProps('setup')} className="text-right px-4 py-3 font-medium text-gray-600">AI Setup</SortableTh>
               <SortableTh {...sortProps('total')} className="text-right px-4 py-3 font-medium text-gray-600">Total</SortableTh>
               <SortableTh {...sortProps('cost')} className="text-right px-4 py-3 font-medium text-gray-600">Est. Cost</SortableTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading...</td></tr>
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading...</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">No AI usage data for {monthKey}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">No AI usage data for {monthKey}</td></tr>
             ) : items.map(r => (
               <tr key={r.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium text-gray-900">{r.business_name}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{r.intent_calls}</td>
-                <td className="px-4 py-3 text-right text-gray-600">{r.translate_calls}</td>
+                <td className="px-4 py-3 text-right text-gray-600">{r.translation_total}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{r.detect_lang_calls}</td>
+                <td className="px-4 py-3 text-right text-gray-600">{r.voice_transcription_count || 0}</td>
+                <td className="px-4 py-3 text-right text-gray-600">{r.ace_setup_count || 0}</td>
                 <td className="px-4 py-3 text-right font-semibold text-gray-900">{r.total_calls}</td>
                 <td className="px-4 py-3 text-right text-gray-600">${(r.total_calls * 0.001).toFixed(3)}</td>
               </tr>

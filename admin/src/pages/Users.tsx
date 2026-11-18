@@ -110,14 +110,14 @@ export default function UserManagement() {
     adminDb
       .from('bookings')
       .select('*', { count: 'exact', head: true })
-      .eq('customer_id', selected.id)
+      .eq('user_id', selected.id) // the column is user_id; customer_id does not exist (#1108 X4)
       .then(({ count }) => setBookingCount(count ?? 0));
 
     // Payment count
     adminDb
       .from('payments')
       .select('*', { count: 'exact', head: true })
-      .eq('customer_id', selected.id)
+      .eq('user_id', selected.id) // the column is user_id; customer_id does not exist (#1108 X4)
       .then(({ count }) => setPaymentCount(count ?? 0));
 
     // Linked account (for account owners)

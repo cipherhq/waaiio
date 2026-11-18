@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
+import { adminApiGet, adminJson } from '@/lib/adminApi';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -40,8 +41,6 @@ interface TicketMessage {
 
 interface AdminProfile {
   id: string;
-  first_name: string | null;
-  last_name: string | null;
   full_name: string;
 }
 
@@ -79,6 +78,7 @@ export default function Support() {
 
   /* ---- admin list for assigning ---- */
   const [admins, setAdmins] = useState<AdminProfile[]>([]);
+  const [adminsError, setAdminsError] = useState('');
 
   /* ---- modal action state ---- */
   const [editStatus, setEditStatus] = useState('');
@@ -145,23 +145,20 @@ export default function Support() {
     }
   }
 
+  // Platform roles live in Auth app_metadata, not profiles.role, so the old
+  // profiles read always returned nobody (#1108).
   async function loadAdmins() {
     try {
-      const { data } = await adminDb
-        .from('profiles')
-        .select('id, first_name, last_name')
-        .in('role', ['admin', 'support']);
-
-      setAdmins((data || []).map((p) => ({
-        id: p.id,
-        first_name: p.first_name,
-        last_name: p.last_name,
-        full_name: `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Admin',
-      })));
-    } catch {
-      // best-effort
+      const { assignees } = await adminJson<{ assignees: Array<{ id: string; name: string }> }>(
+        await adminApiGet('/api/admin/team/assignees'),
+      );
+      setAdmins(assignees.map(a => ({ id: a.id, full_name: a.name })));
+      setAdminsError('');
+    } catch (err) {
+      setAdminsError(err instanceof Error ? err.message : 'Could not load the support team');
     }
   }
+
 
   async function loadMessages(ticketId: string) {
     setMessagesLoading(true);
@@ -580,6 +577,7 @@ export default function Support() {
                       </option>
                     ))}
                   </select>
+                  {adminsError && <p role="alert" className="mt-1 text-xs text-red-600">{adminsError}</p>}
                 </div>
               </div>
 

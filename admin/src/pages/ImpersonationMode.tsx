@@ -9,6 +9,7 @@ import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
 import { SortableTh } from '@/components/SortableTh';
 import { sortTime, useTableSort } from '@/lib/tableSort';
+import { adminApiFetch, adminJson } from '@/lib/adminApi';
 
 interface Business {
   id: string;
@@ -30,11 +31,14 @@ interface PayoutAccount {
   is_active: boolean;
 }
 
+// The business's assigned WhatsApp channel. whatsapp_config holds bot settings and has
+// no phone_number_id/waba_id/status columns, so the old read always failed (#1108 X4).
 interface WhatsAppConfig {
   id: string;
-  phone_number_id: string | null;
-  waba_id: string | null;
-  status: string | null;
+  phone_number: string | null;
+  display_name: string | null;
+  channel_type: string | null;
+  connection_status: string | null;
 }
 
 interface Booking {
@@ -138,7 +142,7 @@ export default function ImpersonationMode() {
       // Load full business data
       const { data: fullBiz } = await adminDb
         .from('businesses')
-        .select('id, name, category, country_code, status, created_at, phone, email')
+        .select('id, name, category, country_code, status, created_at, phone, email, assigned_channel_id')
         .eq('id', business.id)
         .single();
 
@@ -169,22 +173,38 @@ export default function ImpersonationMode() {
         .maybeSingle();
       setPayoutAccount(payout);
 
-      // Load WhatsApp config
-      const { data: waConfig } = await adminDb
-        .from('whatsapp_config')
-        .select('id, phone_number_id, waba_id, status')
-        .eq('business_id', business.id)
-        .maybeSingle();
+      // Load the assigned WhatsApp channel
+      const channelId = (fullBiz as { assigned_channel_id?: string | null } | null)?.assigned_channel_id;
+      const { data: waConfig } = channelId
+        ? await adminDb
+          .from('whatsapp_channels')
+          .select('id, phone_number, display_name, channel_type, connection_status')
+          .eq('id', channelId)
+          .maybeSingle()
+        : { data: null };
       setWhatsappConfig(waConfig);
 
-      // Load recent bookings
+      // Load recent bookings. bookings has guest_name and service_id, not
+      // customer_name/service_name (#1108 X4).
       const { data: bookings } = await adminDb
         .from('bookings')
-        .select('id, service_name, customer_name, status, total_amount, created_at')
+        .select('id, service_id, guest_name, status, total_amount, created_at')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false })
         .limit(10);
-      setRecentBookings(bookings || []);
+      const serviceIds = [...new Set((bookings || []).map(b => b.service_id).filter(Boolean))];
+      const { data: services } = serviceIds.length > 0
+        ? await adminDb.from('services').select('id, name').in('id', serviceIds)
+        : { data: [] };
+      const serviceNames = new Map((services || []).map(s => [s.id, s.name as string]));
+      setRecentBookings((bookings || []).map(b => ({
+        id: b.id,
+        service_name: (b.service_id && serviceNames.get(b.service_id)) || null,
+        customer_name: b.guest_name,
+        status: b.status,
+        total_amount: b.total_amount,
+        created_at: b.created_at,
+      })));
     } catch (error) {
       console.warn('Failed to load business details:', error);
     } finally {
@@ -287,7 +307,9 @@ export default function ImpersonationMode() {
   }
 
   // Save inline edit — only allow safe fields
-  const EDITABLE_FIELDS = ['name', 'description', 'address', 'phone', 'email', 'slug', 'category', 'flow_type'];
+  // Saved through the admin profile route: the browser client has no admin UPDATE
+  // right on businesses, so the old direct write matched 0 rows and still said saved (#1108 X2).
+  const EDITABLE_FIELDS = ['name', 'phone', 'email', 'category'];
 
   async function saveEdit() {
     if (!selected || !editingField || !sessionId) return;
@@ -301,16 +323,9 @@ export default function ImpersonationMode() {
       const oldValue = selected[editingField as keyof Business] as string | null;
       const newValue = editValue.trim();
 
-      const updatePayload: Record<string, string> = {
-        [editingField]: newValue,
-      };
-
-      const { error } = await adminDb
-        .from('businesses')
-        .update(updatePayload)
-        .eq('id', selected.id);
-
-      if (error) throw error;
+      const res = await adminApiFetch(`/api/admin/businesses/${selected.id}/profile`, { field: editingField, value: newValue });
+      const result = await adminJson<{ business?: Record<string, string | null> }>(res);
+      const savedValue = result.business?.[editingField] ?? newValue;
 
       // Log the change
       await adminDb.from('impersonation_logs').insert({
@@ -323,18 +338,18 @@ export default function ImpersonationMode() {
         changes: {
           field: editingField,
           old_value: oldValue || null,
-          new_value: newValue,
+          new_value: savedValue,
         },
         created_at: new Date().toISOString(),
       });
 
       // Update local state
-      setSelected({ ...selected, [editingField]: newValue });
+      setSelected({ ...selected, [editingField]: savedValue });
       setEditingField(null);
       setEditValue('');
     } catch (error) {
       console.error('Save edit error:', error);
-      alert('Failed to save change');
+      alert(error instanceof Error ? error.message : 'Failed to save change');
     } finally {
       setSaving(false);
     }
@@ -588,27 +603,31 @@ export default function ImpersonationMode() {
             <div className="px-5 py-4">
               {whatsappConfig ? (
                 <div className="space-y-2 text-sm">
-                  {whatsappConfig.phone_number_id && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Number</span>
+                    <span className="font-mono text-xs font-medium text-gray-900">{whatsappConfig.phone_number || '—'}</span>
+                  </div>
+                  {whatsappConfig.display_name && (
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Phone Number ID</span>
-                      <span className="font-mono text-xs font-medium text-gray-900">{whatsappConfig.phone_number_id}</span>
+                      <span className="text-gray-500">Display name</span>
+                      <span className="text-xs font-medium text-gray-900">{whatsappConfig.display_name}</span>
                     </div>
                   )}
-                  {whatsappConfig.waba_id && (
+                  {whatsappConfig.channel_type && (
                     <div className="flex justify-between">
-                      <span className="text-gray-500">WABA ID</span>
-                      <span className="font-mono text-xs font-medium text-gray-900">{whatsappConfig.waba_id}</span>
+                      <span className="text-gray-500">Type</span>
+                      <span className="text-xs font-medium text-gray-900">{whatsappConfig.channel_type}</span>
                     </div>
                   )}
-                  {whatsappConfig.status && (
+                  {whatsappConfig.connection_status && (
                     <div className="flex justify-between">
                       <span className="text-gray-500">Status</span>
-                      <StatusBadge status={whatsappConfig.status} />
+                      <StatusBadge status={whatsappConfig.connection_status} />
                     </div>
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-gray-500">No WhatsApp configuration found</p>
+                <p className="text-sm text-gray-500">No WhatsApp channel assigned</p>
               )}
             </div>
           </div>
