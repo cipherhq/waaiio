@@ -27,7 +27,7 @@ interface PayoutAccount {
   gateway: string;
   bank_name: string | null;
   account_name: string | null;
-  account_number: string | null;
+  account_number_last4: string | null;
   is_active: boolean;
 }
 
@@ -167,7 +167,7 @@ export default function ImpersonationMode() {
       // Load payout account
       const { data: payout } = await adminDb
         .from('payout_accounts')
-        .select('id, gateway, bank_name, account_name, account_number, is_active')
+        .select('id, gateway, bank_name, account_name, account_number_last4, is_active')
         .eq('business_id', business.id)
         .eq('is_active', true)
         .maybeSingle();
@@ -578,10 +578,10 @@ export default function ImpersonationMode() {
                       <span className="font-medium text-gray-900">{payoutAccount.account_name}</span>
                     </div>
                   )}
-                  {payoutAccount.account_number && (
+                  {payoutAccount.account_number_last4 && (
                     <div className="flex justify-between">
                       <span className="text-gray-500">Account Number</span>
-                      <span className="font-mono font-medium text-gray-900">****{payoutAccount.account_number.slice(-4)}</span>
+                      <span className="font-mono font-medium text-gray-900">****{payoutAccount.account_number_last4}</span>
                     </div>
                   )}
                   <div className="flex justify-between">

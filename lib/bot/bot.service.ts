@@ -414,8 +414,9 @@ export class BotService {
       return;
     }
 
-    // Handle ticket check-in (TK-XXXXXX code sent via WhatsApp)
-    const ticketMatch = text.match(/^TK-([A-Z0-9]{6})$/i);
+    // Handle ticket check-in (ticket code sent via WhatsApp). Older tickets use TK- plus 6
+    // characters; tickets issued since migration 481 use TK- plus 9 (converge_event_ticket_booking).
+    const ticketMatch = text.match(/^TK-([A-Z0-9]{6,9})$/i);
     if (ticketMatch) {
       const ticketCode = `TK-${ticketMatch[1].toUpperCase()}`;
       await this.handleTicketCheckin(from, ticketCode);

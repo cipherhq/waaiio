@@ -6,12 +6,39 @@ import { adminCorsHeaders } from '@/lib/admin-cors';
 
 export const dynamic = 'force-dynamic';
 
+const METHODS = 'GET, POST, OPTIONS';
+
 export async function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
+  return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin'), METHODS) });
+}
+
+/**
+ * GET — the effective commercial config for the admin Countries page (M549 dropped
+ * the browser RPC). The version is picked by DB clock_timestamp()
+ * (get_effective_config_version_id, service_role only), then read by id.
+ */
+export async function GET(request: NextRequest) {
+  const cors = adminCorsHeaders(request.headers.get('origin'), METHODS);
+  try {
+    const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+    if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: cors });
+
+    const service = createServiceClient();
+    const { data: versionId, error: idError } = await service.rpc('get_effective_config_version_id');
+    if (idError) return NextResponse.json({ error: 'Could not load the messaging configuration' }, { status: 500, headers: cors });
+    if (!versionId) return NextResponse.json({ version: null }, { headers: cors });
+
+    const { data, error } = await service.from('platform_config_versions')
+      .select('id, config_snapshot').eq('id', versionId).maybeSingle();
+    if (error) return NextResponse.json({ error: 'Could not load the messaging configuration' }, { status: 500, headers: cors });
+    return NextResponse.json({ version: data ?? null }, { headers: cors });
+  } catch {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
+  }
 }
 
 export async function POST(request: NextRequest) {
-  const cors = adminCorsHeaders(request.headers.get('origin'));
+  const cors = adminCorsHeaders(request.headers.get('origin'), METHODS);
   try {
     const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
     if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: cors });

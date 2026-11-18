@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { toInviteGuestPhone } from '@/lib/parties/invite-phone';
 
 /**
  * Handle a ticket check-in via WhatsApp (TK-XXXXXX code).
@@ -13,7 +14,7 @@ export async function handleTicketCheckin(
   try {
     const { data: ticket } = await supabase
       .from('event_tickets')
-      .select('id, status, scanned_at, scanned_by, guest_name, guest_phone, event:events!event_id(name, date, time, self_checkin_enabled, business_id)')
+      .select('id, status, scanned_at, scanned_by, guest_name, guest_phone, event:events!event_id(name, date, time, self_checkin_enabled, business_id, businesses(country_code))')
       .eq('ticket_code', ticketCode)
       .single();
 
@@ -27,6 +28,18 @@ export async function handleTicketCheckin(
     // Check self check-in is enabled
     if (!event?.self_checkin_enabled) {
       await sendText(from, `🎟️ Ticket *${ticketCode}* for *${event?.name || 'event'}* is valid.\n\nSelf check-in is not enabled for this event. Please check in at the entrance.`);
+      return;
+    }
+
+    // Self check-in only from the ticket's own WhatsApp number (Owner decision 2026-11-18).
+    // Both numbers are normalised to international digits; a local-format guest phone uses
+    // the business's country. A ticket with no guest phone cannot be self-checked-in.
+    // This runs before the used/cancelled messages, so another number cannot see who checked it in.
+    const countryCode = (event?.businesses as { country_code?: string | null } | null)?.country_code;
+    const sender = toInviteGuestPhone(`+${from.replace(/\D/g, '')}`);
+    const owner = ticket.guest_phone ? toInviteGuestPhone(ticket.guest_phone, countryCode) : '';
+    if (!owner || owner !== sender) {
+      await sendText(from, `🎟️ Self check-in only works from the WhatsApp number the ticket was bought with. Please check in at the entrance.`);
       return;
     }
 
@@ -71,12 +84,6 @@ export async function handleTicketCheckin(
       }
     }
 
-    // Verify phone matches ticket owner (fraud prevention)
-    const phone = from.startsWith('+') ? from : `+${from}`;
-    const ticketPhone = ticket.guest_phone || '';
-    const phoneMismatch = ticketPhone && !ticketPhone.includes(from) && !phone.includes(ticketPhone.replace('+', ''));
-    const scanner = phoneMismatch ? `whatsapp:${from}` : 'self';
-
     // Atomic conditional update: only succeeds if ticket is still 'valid'.
     // Prevents race condition where two concurrent check-ins both read 'valid'.
     const { data: updated, error: updateError } = await supabase
@@ -84,7 +91,7 @@ export async function handleTicketCheckin(
       .update({
         status: 'used',
         scanned_at: new Date().toISOString(),
-        scanned_by: scanner,
+        scanned_by: 'self',
       })
       .eq('id', ticket.id)
       .eq('status', 'valid')

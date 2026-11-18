@@ -57,7 +57,7 @@ interface PayoutAccount {
   gateway: string;
   bank_name: string | null;
   account_name: string | null;
-  account_number: string | null;
+  account_number_last4: string | null;
   is_active: boolean;
 }
 
@@ -193,7 +193,7 @@ export default function Businesses() {
 
   const payoutResource = useBusinessResource<PayoutAccount | null>(selectedId, async id => {
     const { data, error } = await adminDb.from('payout_accounts')
-      .select('id, gateway, bank_name, account_name, account_number, is_active')
+      .select('id, gateway, bank_name, account_name, account_number_last4, is_active')
       .eq('business_id', id).eq('is_active', true).maybeSingle();
     if (error) throw error;
     return data;
@@ -215,9 +215,9 @@ export default function Businesses() {
     if (error || !Array.isArray(data)) throw new Error('Products unavailable');
     return data;
   });
-  const bankResource = useBusinessResource<{ bank_name: string | null; account_number: string | null; is_active: boolean | null; is_default: boolean | null } | null>(selectedId, async id => {
+  const bankResource = useBusinessResource<{ bank_name: string | null; account_number_last4: string | null; is_active: boolean | null; is_default: boolean | null } | null>(selectedId, async id => {
     // business_bank_accounts has is_active/is_default, not status; selecting status failed the whole read (#1108 X4).
-    const { data, error } = await adminDb.from('business_bank_accounts').select('bank_name, account_number, is_active, is_default')
+    const { data, error } = await adminDb.from('business_bank_accounts').select('bank_name, account_number_last4, is_active, is_default')
       .eq('business_id', id).order('is_default', { ascending: false }).limit(1).maybeSingle();
     if (error) throw error;
     return data;
@@ -1105,8 +1105,8 @@ export default function Businesses() {
                   <DetailRow label="Gateway" value={selectedPayout.gateway} />
                   {selectedPayout.bank_name && <DetailRow label="Bank" value={selectedPayout.bank_name} />}
                   {selectedPayout.account_name && <DetailRow label="Account Name" value={selectedPayout.account_name} />}
-                  {selectedPayout.account_number && (
-                    <DetailRow label="Account" value={`****${selectedPayout.account_number.slice(-4)}`} />
+                  {selectedPayout.account_number_last4 && (
+                    <DetailRow label="Account" value={`****${selectedPayout.account_number_last4}`} />
                   )}
                 </div>}
               </div>
@@ -1130,7 +1130,7 @@ export default function Businesses() {
                     <DetailRow label="Bank" value={selectedBankAccount.bank_name || '—'} />
                     <DetailRow
                       label="Account"
-                      value={selectedBankAccount.account_number ? `****${selectedBankAccount.account_number.slice(-4)}` : '—'}
+                      value={selectedBankAccount.account_number_last4 ? `****${selectedBankAccount.account_number_last4}` : '—'}
                     />
                     <DetailRow label="Bank Account Status" value={`${selectedBankAccount.is_active ? 'Active' : 'Inactive'}${selectedBankAccount.is_default ? ' · Default' : ''}`} />
                   </>
