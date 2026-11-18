@@ -31,13 +31,13 @@
       "privilege": "SELECT"
      }
     ],
-    "default": "\"right\"((account_number)::text, 4)",
+    "default": "\nCASE\n    WHEN (length((account_number)::text) > 4) THEN \"right\"((account_number)::text, 4)\n    WHEN (account_number IS NOT NULL) THEN ''::text\n    ELSE NULL::text\nEND",
     "generated": "s",
     "identity": "",
     "notnull": false,
     "type": "text"
    },
-   "after_sha256": "540ea11f63cc8c182492953a88d69c0e2e6966985427d4a507a66dd799ed6a52",
+   "after_sha256": "f4926ee2ac33654d14828387a70745b5a6f832fa85fa38af85cf928426732061",
    "identity": "column:public.business_bank_accounts.account_number_last4",
    "operation": "add"
   },
@@ -224,13 +224,13 @@
       "privilege": "SELECT"
      }
     ],
-    "default": "\"right\"((account_number)::text, 4)",
+    "default": "\nCASE\n    WHEN (length((account_number)::text) > 4) THEN \"right\"((account_number)::text, 4)\n    WHEN (account_number IS NOT NULL) THEN ''::text\n    ELSE NULL::text\nEND",
     "generated": "s",
     "identity": "",
     "notnull": false,
     "type": "text"
    },
-   "after_sha256": "540ea11f63cc8c182492953a88d69c0e2e6966985427d4a507a66dd799ed6a52",
+   "after_sha256": "f4926ee2ac33654d14828387a70745b5a6f832fa85fa38af85cf928426732061",
    "identity": "column:public.payout_accounts.account_number_last4",
    "operation": "add"
   },
@@ -372,7 +372,7 @@
   }
  ],
  "migration": "549_admin_access_tightening.sql",
- "migration_sha256": "001690b8d55501a0563318b56d939c88cb527ef76ca1b4da90eba488ab7d84d8",
+ "migration_sha256": "fa99b995ac49b21e7f2e04cff78d99307567a2c9b28cb46556f9c23f3a0772f8",
  "postgres_major": 17,
  "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
  "schema_version": 1
