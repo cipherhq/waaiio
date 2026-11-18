@@ -17,6 +17,8 @@ const m = vi.hoisted(() => ({
   // Consent fixture, keyed by digits-only phone.
   granted: new Set<string>(),
   optedOut: new Set<string>(),
+  // #1103: platform-suspended numbers, digits only.
+  suspended: new Set<string>(),
   serviceTables: [] as string[],
   sessionWrites: [] as Array<{ op: string; phone?: string }>,
 }));
@@ -36,6 +38,10 @@ function serviceFrom(table: string) {
   if (table === 'messaging_opt_outs') {
     chain.then = (resolve: (v: unknown) => void) =>
       resolve({ count: m.optedOut.has(digits()) ? 1 : 0, error: null });
+  } else if (table === 'customer_suspensions') {
+    let phone = '';
+    chain.eq = vi.fn((col: string, value: string) => { if (col === 'phone') phone = value; return chain; });
+    chain.maybeSingle = vi.fn(() => Promise.resolve({ data: m.suspended.has(phone) ? { id: 'sus-1' } : null, error: null }));
   } else if (table === 'customer_consents') {
     chain.maybeSingle = vi.fn(() => Promise.resolve({
       data: m.granted.has(digits()) ? { status: 'granted', expires_at: null } : null, error: null,
@@ -115,7 +121,7 @@ function post(path: string, body: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  m.granted.clear(); m.optedOut.clear();
+  m.granted.clear(); m.optedOut.clear(); m.suspended.clear();
   m.serviceTables.length = 0; m.sessionWrites.length = 0;
   m.getUser.mockResolvedValue({ data: { user: USER } });
   m.requireCapability.mockResolvedValue({ allowed: true });
@@ -151,6 +157,19 @@ describe.each(routes)('POST $path (broadcast recipient rules)', ({ handler, reco
     expect(m.sendWithTemplate).not.toHaveBeenCalled();
     expect(m.sessionWrites).toEqual([]);
     expect(m.serviceTables).toContain('messaging_opt_outs');
+  });
+
+  // #1103: a platform-suspended customer is skipped even with a granted consent.
+  it('skips a platform-suspended phone that has granted marketing consent', async () => {
+    setupUserClient(record, BIZ);
+    m.suspended.add(digits(PERMITTED));
+    const res = await handler(post(path, { phones: [PERMITTED] }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 0, failed: 0, skipped_no_permission: 1, total: 1 });
+    expect(m.sendWithTemplate).not.toHaveBeenCalled();
+    expect(m.sessionWrites).toEqual([]);
+    expect(m.serviceTables).toContain('customer_suspensions');
   });
 
   it('rejects more than 500 recipients with 400, exactly like broadcasts, before any lookup or send', async () => {

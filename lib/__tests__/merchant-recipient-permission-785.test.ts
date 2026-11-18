@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 
-function fixture({ consent = { status: 'granted', expires_at: null } as Record<string, unknown> | null, count = 0 as number | null, error = null as unknown } = {}) {
+function fixture({ consent = { status: 'granted', expires_at: null } as Record<string, unknown> | null, count = 0 as number | null, error = null as unknown,
+  suspension = null as Record<string, unknown> | null, suspensionError = null as unknown } = {}) {
   const calls: unknown[][] = [];
   const db = { from: vi.fn((table: string) => {
-    const result = table === 'messaging_opt_outs' ? { count, error } : { data: consent, error };
+    const result = table === 'messaging_opt_outs' ? { count, error }
+      : table === 'customer_suspensions' ? { data: suspension, error: suspensionError } : { data: consent, error };
     const chain: Record<string, unknown> = {};
     for (const method of ['select', 'eq', 'in', 'or', 'is', 'order', 'limit']) chain[method] = (...args: unknown[]) => { calls.push([table, method, ...args]); return chain; };
     chain.maybeSingle = async () => result;
@@ -41,5 +43,15 @@ describe('merchant recipient permission', () => {
     const { db } = fixture();
     expect(await hasRecipientPermission(db, 'biz', 'bad', 'utility')).toBe(false);
     expect(db.from).not.toHaveBeenCalled();
+  });
+  // #1103: marketing skips a platform-suspended customer; utility sends are unchanged.
+  it('denies marketing to a suspended number and keeps utility unchanged', async () => {
+    const { db, calls } = fixture({ suspension: { id: 's1' } });
+    expect(await hasRecipientPermission(db, 'biz', '+1 (202) 555-0123', 'marketing')).toBe(false);
+    expect(calls).toContainEqual(['customer_suspensions', 'eq', 'phone', '12025550123']);
+    expect(await hasRecipientPermission(fixture({ suspension: { id: 's1' } }).db, 'biz', '12025550123', 'utility')).toBe(true);
+  });
+  it('fails closed for marketing when the suspension read fails', async () => {
+    expect(await hasRecipientPermission(fixture({ suspensionError: new Error('offline') }).db, 'biz', '12025550123', 'marketing')).toBe(false);
   });
 });
