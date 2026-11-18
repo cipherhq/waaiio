@@ -24,6 +24,7 @@ const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { customerSendBlocked } from '../_shared/customer-suspension.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    const results = { reminders: { processed: 0, reminded: 0, errors: 0 }, recovery: { processed: 0, messaged: 0 } };
+    const results = { reminders: { processed: 0, reminded: 0, errors: 0, suspended: 0 }, recovery: { processed: 0, messaged: 0, suspended: 0 } };
 
     // ── Process due reminders (no card auth) ──
     const { data: dueSubs } = await supabase
@@ -112,8 +113,10 @@ Deno.serve(async (req) => {
       const appUrl = Deno.env.get('NEXT_PUBLIC_APP_URL') || 'https://waaiio.com';
       const msg = `Hi ${sub.customer_name || 'there'},\n\nYour ${sub.frequency} *${serviceName}* of *${currencySymbol}${sub.amount.toLocaleString()}* for *${biz?.name || 'Business'}* is due.\n\nTap below to pay:\n${appUrl}/recurring/${biz?.slug || 'pay'}?amount=${sub.amount}&service=${sub.service_id || ''}`;
 
-      const sent = await sendWhatsApp(phone, msg, supabase, sub.business_id);
-      if (sent) results.reminders.reminded++;
+      // #1103: no payment reminder to a suspended customer (fails closed); the
+      // schedule still advances, as it does after a failed send.
+      if (await customerSendBlocked(supabase, phone)) results.reminders.suspended++;
+      else if (await sendWhatsApp(phone, msg, supabase, sub.business_id)) results.reminders.reminded++;
       else results.reminders.errors++;
 
       // Advance next_charge_at
@@ -138,6 +141,10 @@ Deno.serve(async (req) => {
       results.recovery.processed++;
       const phone = sub.customer_phone;
       if (!phone) continue;
+      // #1103: a suspended customer gets no recovery or cancellation message;
+      // the auto-cancel itself still runs (fails closed).
+      const suspended = await customerSendBlocked(supabase, phone);
+      if (suspended) results.recovery.suspended++;
 
       const biz = sub.businesses as unknown as { name: string; country_code: string } | null;
       const cc = biz?.country_code || 'NG';
@@ -157,14 +164,17 @@ Deno.serve(async (req) => {
 
           const cancelMsg = `Hi ${sub.customer_name || 'there'},\n\nYour recurring payment of *${currencySymbol}${sub.amount.toLocaleString()}* for *${biz?.name || 'Business'}* has been automatically cancelled after ${sub.failure_count} failed payment attempts.\n\nIf you'd like to resubscribe, type *subscriptions* to set up a new payment.\n\nWe're sorry for the inconvenience.`;
 
-          await sendWhatsApp(phone, cancelMsg, supabase, sub.business_id);
-          results.recovery.messaged++;
+          if (!suspended) {
+            await sendWhatsApp(phone, cancelMsg, supabase, sub.business_id);
+            results.recovery.messaged++;
+          }
         }
         continue;
       }
 
       const msg = `Hi ${sub.customer_name || 'there'},\n\nYour recurring payment of *${currencySymbol}${sub.amount.toLocaleString()}* for *${biz?.name || 'Business'}* has failed (attempt ${sub.failure_count}/3).\n\nPlease update your payment method or make a manual payment to keep your subscription active. After 3 failed attempts, it will be automatically cancelled.\n\nType *subscriptions* to manage your recurring payments.`;
 
+      if (suspended) continue;
       const sent = await sendWhatsApp(phone, msg, supabase, sub.business_id);
       if (sent) results.recovery.messaged++;
     }

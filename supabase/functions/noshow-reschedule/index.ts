@@ -24,6 +24,7 @@ const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { customerSendBlocked } from '../_shared/customer-suspension.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -100,6 +101,8 @@ Deno.serve(async () => {
 
   for (const booking of noShows || []) {
     if (!booking.guest_phone) continue;
+    // #1103: never message a suspended customer (fails closed).
+    if (await customerSendBlocked(supabase, booking.guest_phone)) continue;
 
     const biz = booking.businesses as unknown as { name: string; slug: string } | null;
     const service = booking.services as unknown as { name: string } | null;

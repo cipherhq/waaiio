@@ -10,7 +10,7 @@
  *
  * CRON schedule (add to supabase/config.toml):
  *   [functions.booking-reminders]
- *   schedule = "*/30 * * * *"
+ *   schedule = "0,30 * * * *"  (every 30 minutes; a star-slash here would end this comment)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -30,6 +30,7 @@ const DEFAULT_REMINDER_HOURS = [24, 2];
 
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 import { resolveRecipientCountry } from '../_shared/phone-country.ts';
+import { customerSendBlocked } from '../_shared/customer-suspension.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -136,6 +137,8 @@ Deno.serve(async () => {
 
     for (const booking of bookings || []) {
       if (!booking.guest_phone) continue;
+      // #1103: never message a suspended customer (fails closed).
+      if (await customerSendBlocked(supabase, booking.guest_phone)) continue;
 
       // Check if this business actually wants this reminder hour
       const bizInfo = bizMap.get(booking.business_id);
@@ -180,6 +183,7 @@ Deno.serve(async () => {
 
   for (const res of tomorrowCheckins || []) {
     if (!res.guest_phone) continue;
+    if (await customerSendBlocked(supabase, res.guest_phone)) continue;
     const bizInfo = bizMap.get(res.business_id);
     if (!bizInfo) continue;
 
@@ -218,6 +222,7 @@ Deno.serve(async () => {
 
     for (const res of todayCheckouts || []) {
       if (!res.guest_phone) continue;
+      if (await customerSendBlocked(supabase, res.guest_phone)) continue;
       const bizInfo = bizMap.get(res.business_id);
       if (!bizInfo) continue;
 
@@ -268,6 +273,7 @@ Deno.serve(async () => {
 
   for (const booking of completedBookings || []) {
     if (!booking.guest_phone) continue;
+    if (await customerSendBlocked(supabase, booking.guest_phone)) continue;
     const biz = (booking as Record<string, unknown>).businesses as Record<string, unknown>;
     const bizName = (biz?.name as string) || 'us';
     const svc = (booking as Record<string, unknown>).services as Record<string, string> | null;

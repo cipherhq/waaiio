@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver, type ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
+import { blocksReminder } from '@/lib/customer-suspension';
 import { findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
@@ -101,21 +102,23 @@ export async function loadReminderPreview(db:SupabaseClient,partyId:string,purpo
   const greeting=invite.guest_name?`Hi ${invite.guest_name}! `:'';
   const lead=purpose==='chase'?(invite.status==='maybe'?`You said *maybe* to *${party.name}*. Have you decided?`:`You haven't responded to the invite for *${party.name}* yet.`):party.followup_message;
   const text=['⏰ *Reminder*',`${greeting}${lead}`,purpose==='followup'?`📅 ${party.name}`:'',`📅 ${dateLabel}${purpose==='followup'?timeLabel:''}`,party.venue?`📍 ${party.venue}`:'',seating,...(purpose==='chase'?['RSVP here 👇',link,'Reply: *yes*, *no*, or *maybe*']:[])].filter(Boolean).join('\n');
-  const [utility,marketing,window]=await Promise.all([hasRecipientPermission(db,party.business_id,recipient.phone,'utility'),purpose==='chase'?hasRecipientPermission(db,party.business_id,recipient.phone,'marketing'):false,hasWindow(db,resolved?.channel.id,recipient.phone)]);
+  const [utilityConsent,marketing,window,suspended]=await Promise.all([hasRecipientPermission(db,party.business_id,recipient.phone,'utility'),purpose==='chase'?hasRecipientPermission(db,party.business_id,recipient.phone,'marketing'):false,hasWindow(db,resolved?.channel.id,recipient.phone),blocksReminder(db,recipient.phone)]);
+  // #1103: a suspended number reads as no consent on every channel, so the preview gives no reason.
+  const utility=utilityConsent && !suspended;
   const textAllowed=!!resolved && utility && window;
   recipient.variants.push({channel:'whatsapp_text',available:textAllowed,reason:textAllowed?'Within the customer service window':!utility?'Utility consent unavailable':!window?'No verified open customer service window':'WhatsApp unavailable',text,category:'service'});
   if(purpose==='chase') {
    const params=[`${business.name} invites you to ${party.name}${dateLabel?` on ${dateLabel}`:''}${party.venue?` at ${party.venue}`:''}${seating?` — ${seating}`:''}`,link];
-   const available=!!template && marketing && params[0].length<=1024;
+   const available=!!template && marketing && !suspended && params[0].length<=1024;
    recipient.variants.push({channel:'whatsapp_template',available,reason:available?'Marketing template fallback':!marketing?'Marketing consent unavailable':'Approved compatible template unavailable',text:template?template.body.replace('{{1}}',params[0]).replace('{{2}}',params[1])+(template.footer?'\n'+template.footer:''):'Template approval unavailable',templateParams:params,category:'marketing'});
   } else {
    const address=await findCustomerEmail(db,recipient.phone.replace(/\D/g,''),party.business_id);
-   const permitted=await hasRecipientPermission(db,party.business_id,recipient.phone,'utility','email');
+   const permitted=!suspended && await hasRecipientPermission(db,party.business_id,recipient.phone,'utility','email');
    const email=businessNotificationEmail({businessName:party.name,title:'Event Reminder',message:party.followup_message,details:{Date:dateLabel,...(party.venue?{Venue:party.venue}:{}),...(seating?{Seating:seating}:{})}});
    const emailAllowed=!!resolved && !!process.env.RESEND_API_KEY && !!address && permitted;
    recipient.variants.push({channel:'email',available:emailAllowed,reason:emailAllowed?'Scheduled dual delivery':'Email address, configured channel or utility consent unavailable',text:email.html,address:address||undefined,subject:email.subject,html:email.html,category:'service'});
    const sms=text.replace(/\*/g,'').replace(/_/g,'').slice(0,160);
-   const smsAllowed=!!resolved && !!process.env.BULKSMS_NG_API_TOKEN && isSmsEligible(recipient.phone) && await smsPermission(db,party.business_id,recipient.phone) && (!seating||sms.includes(seating));
+   const smsAllowed=!suspended && !!resolved && !!process.env.BULKSMS_NG_API_TOKEN && isSmsEligible(recipient.phone) && await smsPermission(db,party.business_id,recipient.phone) && (!seating||sms.includes(seating));
    recipient.variants.push({channel:'sms',available:smsAllowed,reason:smsAllowed?'Fallback after definitive WhatsApp/email failure':'SMS channel/consent unavailable or table content exceeds 160 characters',text:sms,category:'service'});
   }
  }

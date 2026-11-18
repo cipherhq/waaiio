@@ -2,8 +2,9 @@
  * Platform-wide customer suspension (#1103, Owner decision 2026-11-17).
  *
  * A suspended customer's WhatsApp number is blocked from every Waaiio bot at
- * every business, and marketing sends skip it. Money is untouched: payments,
- * refunds, payouts and settlement do not read this.
+ * every business, and marketing, reminder, automation and after-payment
+ * follow-up sends skip it. Money is untouched: payments, refunds, payouts,
+ * settlement and payment confirmations do not read this.
  *
  * Storage: public.customer_suspensions (M547), service role only. The key is
  * the canonical phone: E.164 digits without '+', the form Meta sends as
@@ -84,6 +85,24 @@ export async function customerSuspensionStatus(db: SupabaseClient, phone: string
  */
 export async function blocksMarketing(db: SupabaseClient, phone: string): Promise<boolean> {
   return (await customerSuspensionStatus(db, phone)) !== 'clear';
+}
+
+/**
+ * Status for reminders and after-payment follow-ups (#1103 follow-up): like
+ * customerSuspensionStatus, but a number that is not E.164 digits is 'clear',
+ * because it can never match a suspension key ('unknown' then means only that
+ * the read failed).
+ */
+export async function proactiveSuspensionStatus(db: SupabaseClient, phone: string): Promise<SuspensionStatus> {
+  return lookupKey(phone) ? customerSuspensionStatus(db, phone) : 'clear';
+}
+
+/**
+ * Reminders skip a suspended number (#1103 follow-up). Fails closed like
+ * marketing: an unreadable status blocks the send.
+ */
+export async function blocksReminder(db: SupabaseClient, phone: string): Promise<boolean> {
+  return (await proactiveSuspensionStatus(db, phone)) !== 'clear';
 }
 
 interface NeutralReplySender {

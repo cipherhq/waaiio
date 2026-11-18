@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { blocksMarketing } from '@/lib/customer-suspension';
 import { enrollInSequence } from './sequence-service';
 
 export interface BotRule {
@@ -96,6 +97,9 @@ export function evaluateConditions(
   });
 }
 
+/** Rule actions that message the customer (notify_owner messages the business). */
+export const CUSTOMER_MESSAGE_ACTIONS = new Set(['send_message', 'send_template']);
+
 export async function executeRuleAction(
   supabase: SupabaseClient,
   businessId: string,
@@ -106,6 +110,10 @@ export async function executeRuleAction(
 ): Promise<void> {
   const payload = rule.action_payload;
   const phone = context.customer_phone?.replace(/^\+/, '');
+  // #1103: automation messages never reach a suspended customer (fails closed).
+  if (phone && CUSTOMER_MESSAGE_ACTIONS.has(rule.action_type) && await blocksMarketing(supabase, phone)) {
+    throw new Error('customer_suspended');
+  }
 
   switch (rule.action_type) {
     case 'send_message': {

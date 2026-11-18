@@ -6,6 +6,7 @@ import { hasRequiredFileQuestion } from '@/lib/intake/answers';
 import { resolveLimitTier } from '@/lib/trial-status';
 import { canonicalPublicOrigin } from '@/lib/url';
 import { logger } from '@/lib/logger';
+import { blocksReminder } from '@/lib/customer-suspension';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { sendEmail } from '@/lib/email/client';
 import { btn, businessFrom, esc, h, p, wrap } from '@/lib/email/templates';
@@ -497,6 +498,8 @@ export async function sendIntakeReminder(db: Db, intakeId: string, opts: {
       return { status: 'skipped', reason: 'window_closed' };
     }
     if (await hasOptedOut(db, businessId, phone)) return { status: 'skipped', reason: 'opted_out' };
+    // #1103: a suspended customer gets no reminder (fails closed).
+    if (await blocksReminder(db, phone)) return { status: 'skipped', reason: 'suspended' };
 
     const { token, hash } = newIntakeToken();
     const { data: claimed, error: claimError } = await db.from('booking_intakes')

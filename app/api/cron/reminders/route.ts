@@ -10,6 +10,7 @@ import { formatDisplayDate } from '@/lib/bot/format-date';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { logger } from '@/lib/logger';
+import { blocksReminder } from '@/lib/customer-suspension';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -93,6 +94,9 @@ export async function GET(request: NextRequest) {
         if (Math.abs(diffHours - hoursAhead) > 0.5) continue;
       }
 
+      // #1103: no reminder of any kind to a suspended customer (fails closed).
+      if (booking.guest_phone && await blocksReminder(supabase, booking.guest_phone)) continue;
+
       const limit = await checkConversationLimit(supabase, booking.business_id);
       if (!limit.allowed) continue;
 
@@ -167,6 +171,7 @@ export async function GET(request: NextRequest) {
     .in('status', ['confirmed', 'pending']);
 
   for (const res of reservations || []) {
+    if (res.guest_phone && await blocksReminder(supabase, res.guest_phone)) continue;
     let email = (res as any).guest_email;
     const bizName = (res as any).businesses?.name || 'Your stay';
     const guestName = res.guest_name || 'Guest';
@@ -233,6 +238,7 @@ export async function GET(request: NextRequest) {
 
     for (const ticket of tickets || []) {
       if (!ticket.guest_phone) continue;
+      if (await blocksReminder(supabase, ticket.guest_phone)) continue;
 
       const limit = await checkConversationLimit(supabase, event.business_id);
       if (!limit.allowed) continue;

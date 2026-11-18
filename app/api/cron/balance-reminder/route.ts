@@ -7,6 +7,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { logger } from '@/lib/logger';
+import { blocksReminder } from '@/lib/customer-suspension';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,8 @@ export async function GET(request: NextRequest) {
       const deposit = Number(r.deposit_amount || 0);
       const balance = total - deposit;
       if (balance <= 0 || !r.guest_phone) continue;
+      // #1103: no payment reminder to a suspended customer (fails closed).
+      if (await blocksReminder(supabase, r.guest_phone)) continue;
 
       const biz = r.businesses as unknown as { name: string; country_code: string; payment_gateway?: string } | null;
       const cc = (biz?.country_code || 'NG') as CountryCode;
@@ -158,6 +161,7 @@ export async function GET(request: NextRequest) {
       const deposit = Number(b.deposit_amount || 0);
       const balance = total - deposit;
       if (balance <= 0 || !b.guest_phone) continue;
+      if (await blocksReminder(supabase, b.guest_phone)) continue;
 
       const biz = b.businesses as unknown as { name: string; country_code: string; payment_gateway?: string } | null;
       const cc = (biz?.country_code || 'NG') as CountryCode;
