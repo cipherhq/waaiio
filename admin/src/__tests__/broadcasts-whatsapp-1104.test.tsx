@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 const m = vi.hoisted(() => ({
   role: 'admin', fetch: vi.fn(), setSession: vi.fn(), history: vi.fn(),
-  sendStatus: 200, sendFails: false,
+  sendStatus: 200, sendFails: false, statusBody: {} as Record<string, unknown>,
 }));
 
 vi.mock('@/lib/supabase', () => ({
@@ -42,18 +42,19 @@ const calls = (suffix: string, method = 'POST') => m.fetch.mock.calls.filter(([u
 const wa = () => calls('/api/admin/broadcasts/whatsapp');
 
 beforeEach(() => {
-  m.role = 'admin'; m.sendStatus = 200; m.sendFails = false;
+  m.role = 'admin'; m.sendStatus = 200; m.sendFails = false; m.statusBody = { ...SENT, replayed: true };
   m.history.mockReset();
   m.history.mockResolvedValue({ data: [], error: null });
   m.setSession.mockResolvedValue({ error: null });
   m.fetch.mockReset();
   m.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/admin/broadcasts/whatsapp') && m.role !== 'admin') return Response.json({ error: 'Unauthorized' }, { status: 403 });
     if (url.endsWith('/api/admin/broadcasts/whatsapp') && (init?.method || 'GET') === 'GET') return Response.json({ templates: [TEMPLATE] });
     if (url.endsWith('/api/admin/broadcasts/whatsapp')) {
       const body = JSON.parse(String(init!.body));
       if (body.mode === 'preview') return Response.json(PREVIEW);
+      if (body.mode === 'status') return Response.json(m.statusBody);
       if (m.sendFails) throw new TypeError('Failed to fetch');
-      if (!body.stepUpId) return Response.json({ ...SENT, replayed: true });
       return m.sendStatus === 200 ? Response.json(SENT) : Response.json({ error: 'Template is paused' }, { status: m.sendStatus });
     }
     if (url.endsWith('/step-up/prepare')) return Response.json({ stepUpId: 'grant-1', factorId: 'factor', challengeId: '' });
@@ -92,13 +93,13 @@ describe('Admin Broadcasts: WhatsApp (#1104)', () => {
   it('previews recipients, skips and the Waaiio cost before anything is sent', async () => {
     await composeAndPreview();
     expect(bodyOf(wa()[0])).toEqual({ mode: 'preview', ...DESCRIPTOR });
-    const preview = screen.getByLabelText('WhatsApp broadcast preview');
+    const preview = screen.getByRole('region', { name: 'WhatsApp broadcast preview' });
     expect(preview).toHaveTextContent('Hi from Waaiio: New feature');
     expect(preview).toHaveTextContent('3 will be sent (marketing)');
     expect(preview).toHaveTextContent('1 skipped: opted out of Waaiio messages');
     expect(preview).toHaveTextContent('1 skipped: suspended');
     expect(preview).toHaveTextContent('1 have no valid WhatsApp number');
-    expect(preview).toHaveTextContent(/Estimated cost to Waaiio: .*60.*No merchant credit is used/);
+    expect(preview).toHaveTextContent(/Estimate at Waaiio's per-message rates: .*60.*No merchant credit is used/);
     expect(wa().filter(c => bodyOf(c).mode === 'send')).toHaveLength(0);
   });
 
@@ -124,7 +125,7 @@ describe('Admin Broadcasts: WhatsApp (#1104)', () => {
     expect(screen.getByRole('button', { name: 'Send WhatsApp Broadcast' })).toBeDisabled();
   });
 
-  it('after a lost response, Check result returns the first result with the same request id and no step-up', async () => {
+  it('after a lost response, Check result reads the recorded result for the same request id and never sends', async () => {
     await composeAndPreview();
     m.sendFails = true;
     fireEvent.click(screen.getByRole('button', { name: 'Send WhatsApp Broadcast' }));
@@ -133,15 +134,33 @@ describe('Admin Broadcasts: WhatsApp (#1104)', () => {
     await screen.findByRole('button', { name: 'Check result' });
     expect(screen.getByRole('status')).toHaveTextContent('never sends twice');
     expect(screen.getByLabelText('Template')).toBeDisabled();
+    const sendId = bodyOf(wa().find(c => bodyOf(c).mode === 'send')!).requestId;
 
-    m.sendFails = false;
+    // Still running (or cut off): the page stays in the unknown state.
+    m.statusBody = { replayed: true, status: 'sending', sent: 1, failed: 0, unknown: 1, notProcessed: 1, skipped: { optedOut: 0, suspended: 0, unverified: 0 } };
+    fireEvent.click(screen.getByRole('button', { name: 'Check result' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('still sending, or was cut off'));
+    expect(screen.getByRole('status')).toHaveTextContent('1 not reached yet');
+    expect(screen.getByRole('button', { name: 'Check result' })).toBeInTheDocument();
+
+    m.statusBody = { ...SENT, replayed: true };
     fireEvent.click(screen.getByRole('button', { name: 'Check result' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('This broadcast was already sent'));
-    const sends = wa().filter(c => bodyOf(c).mode === 'send');
-    expect(sends).toHaveLength(2);
-    expect(bodyOf(sends[1]).requestId).toBe(bodyOf(sends[0]).requestId);
-    expect(bodyOf(sends[1]).stepUpId).toBeUndefined();
+    const statusCalls = wa().filter(c => bodyOf(c).mode === 'status');
+    expect(statusCalls.map(c => bodyOf(c))).toEqual([{ mode: 'status', requestId: sendId }, { mode: 'status', requestId: sendId }]);
+    expect(wa().filter(c => bodyOf(c).mode === 'send')).toHaveLength(1);
     expect(calls('/step-up/prepare')).toHaveLength(1);
+  });
+
+  it('a refusal before anything was sent clears the unknown state', async () => {
+    await composeAndPreview();
+    m.sendStatus = 403;
+    fireEvent.click(screen.getByRole('button', { name: 'Send WhatsApp Broadcast' }));
+    await screen.findByPlaceholderText('000000');
+    authorize();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Template is paused'));
+    expect(screen.queryByRole('button', { name: 'Check result' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send WhatsApp Broadcast' })).toBeEnabled();
   });
 
   it('changing the draft discards the preview', async () => {
@@ -151,9 +170,12 @@ describe('Admin Broadcasts: WhatsApp (#1104)', () => {
     expect(screen.getByRole('button', { name: 'Send WhatsApp Broadcast' })).toBeDisabled();
   });
 
-  it('a support admin can preview but not send', async () => {
+  it('a support admin cannot load templates or send (the server refuses)', async () => {
     m.role = 'support';
-    await composeAndPreview();
+    render(<Broadcasts />);
+    fireEvent.click(screen.getByRole('button', { name: 'WhatsApp' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unauthorized');
+    expect(screen.getByRole('button', { name: 'Preview recipients and cost' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Send WhatsApp Broadcast' })).toBeDisabled();
   });
 

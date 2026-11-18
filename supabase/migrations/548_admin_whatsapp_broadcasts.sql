@@ -41,7 +41,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS admin_broadcasts_request_id_key
 -- §3
 CREATE TABLE IF NOT EXISTS public.admin_broadcast_recipients (
   id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  broadcast_id    uuid        NOT NULL REFERENCES public.admin_broadcasts(id) ON DELETE CASCADE,
+  -- RESTRICT: a broadcast with delivery records cannot be deleted (M012 lets a
+  -- legacy admin browser session delete admin_broadcasts rows).
+  broadcast_id    uuid        NOT NULL REFERENCES public.admin_broadcasts(id) ON DELETE RESTRICT,
   -- Canonical phone: E.164 digits without '+'.
   phone           text        NOT NULL CHECK (phone ~ '^[1-9][0-9]{6,14}$'),
   status          text        NOT NULL CHECK (status IN (
@@ -64,7 +66,7 @@ CREATE POLICY "admin_broadcast_recipients_deny_all"
   USING (false)
   WITH CHECK (false);
 
--- Delivery records are never deleted by the app; they go only with their broadcast.
+-- Delivery records are never deleted by the app.
 REVOKE ALL ON TABLE public.admin_broadcast_recipients FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.admin_broadcast_recipients TO service_role;
 

@@ -23,6 +23,7 @@ import {
  *
  * GET                  — sendable templates on the Waaiio WhatsApp account.
  * POST mode='preview'  — recipient counts, skips and cost estimate. Sends nothing.
+ * POST mode='status'   — the recorded result for a requestId, if any. Sends nothing.
  * POST mode='send'     — admin role, operation-bound step-up ('admin_broadcast',
  *                        target = requestId). One broadcast per requestId:
  *                        a repeated request returns the first result.
@@ -75,9 +76,10 @@ async function plan(db: SupabaseClient, input: BroadcastInput) {
   const eligible = phones.filter(p => checks.get(p) === 'ok');
   const senderFor = sharedSenders(db);
   const choices = await Promise.all(eligible.map(p => senderFor(p).catch(() => null)));
-  const noSender = choices.filter(c => !c).length;
+  const reachable = eligible.filter((_, i) => choices[i]);
+  const noSender = eligible.length - reachable.length;
   const template = await assertTemplateOnSenders(choices, input, new MetaCloudService());
-  return { phones, withoutNumber, checks, eligible, noSender, senderFor, template };
+  return { phones, withoutNumber, checks, eligible, reachable, noSender, senderFor, template };
 }
 
 function count(checks: Map<string, string>, value: string) {
@@ -86,17 +88,27 @@ function count(checks: Map<string, string>, value: string) {
   return n;
 }
 
-async function replay(db: SupabaseClient, broadcast: { id: string; status: string }) {
+type BroadcastRow = { id: string; status: string; audience_filter: { recipients?: number } | null };
+const BROADCAST_COLUMNS = 'id, status, audience_filter';
+
+/** The recorded result. While status is 'sending' the send is running or was cut off. */
+async function replay(db: SupabaseClient, broadcast: BroadcastRow) {
   const { data } = await db.from('admin_broadcast_recipients').select('status').eq('broadcast_id', broadcast.id);
   const rows = (data ?? []) as Array<{ status: string }>;
   const n = (s: string) => rows.filter(r => r.status === s).length;
+  const total = broadcast.audience_filter?.recipients ?? rows.length;
   return {
     replayed: true,
     broadcastId: broadcast.id,
     status: broadcast.status,
     sent: n('sent'), failed: n('failed'), unknown: n('unknown') + n('sending'),
+    notProcessed: Math.max(0, total - rows.length),
     skipped: { optedOut: n('skipped_opted_out'), suspended: n('skipped_suspended'), unverified: n('skipped_unverified') },
   };
+}
+
+function requestIdOf(body: Record<string, unknown>) {
+  return typeof body.requestId === 'string' && UUID.test(body.requestId) ? body.requestId.toLowerCase() : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -107,11 +119,20 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const mode = body?.mode;
-    if (mode !== 'preview' && mode !== 'send') {
-      return NextResponse.json({ error: "mode must be 'preview' or 'send'" }, { status: 400, headers: cors });
+    if (mode !== 'preview' && mode !== 'send' && mode !== 'status') {
+      return NextResponse.json({ error: "mode must be 'preview', 'send' or 'status'" }, { status: 400, headers: cors });
     }
-    const input = parseBroadcastInput(body);
     const db = createServiceClient();
+
+    if (mode === 'status') {
+      const requestId = requestIdOf(body!);
+      if (!requestId) return NextResponse.json({ error: 'requestId (uuid) is required' }, { status: 400, headers: cors });
+      const { data, error } = await db.from('admin_broadcasts').select(BROADCAST_COLUMNS).eq('request_id', requestId).maybeSingle();
+      if (error) return NextResponse.json({ error: 'Unable to check this broadcast' }, { status: 500, headers: cors });
+      return NextResponse.json(data ? await replay(db, data as BroadcastRow) : { recorded: false }, { headers: cors });
+    }
+
+    const input = parseBroadcastInput(body);
 
     if (mode === 'preview') {
       const p = await plan(db, input);
@@ -120,13 +141,13 @@ export async function POST(request: NextRequest) {
         counts: {
           matched: p.phones.length,
           withoutNumber: p.withoutNumber,
-          eligible: p.eligible.length - p.noSender,
+          eligible: p.reachable.length,
           noSender: p.noSender,
           optedOut: count(p.checks, 'opted_out'),
           suspended: count(p.checks, 'suspended'),
           unverified: count(p.checks, 'unverified'),
         },
-        estimate: await estimateCost(db, p.eligible, p.template.category),
+        estimate: await estimateCost(db, p.reachable, p.template.category),
         maxRecipients: MAX_RECIPIENTS,
         descriptor: input,
       }, { headers: cors });
@@ -146,14 +167,14 @@ async function send(
   request: NextRequest, db: SupabaseClient, admin: PlatformAdmin, input: BroadcastInput,
   body: Record<string, unknown>, cors: Record<string, string>,
 ) {
-  const requestId = typeof body.requestId === 'string' && UUID.test(body.requestId) ? body.requestId.toLowerCase() : null;
+  const requestId = requestIdOf(body);
   if (!requestId) return NextResponse.json({ error: 'requestId (uuid) is required' }, { status: 400, headers: cors });
 
   // A repeated request (network retry, double click) gets the first result.
   const { data: existing, error: existingError } = await db.from('admin_broadcasts')
-    .select('id, status').eq('request_id', requestId).maybeSingle();
+    .select(BROADCAST_COLUMNS).eq('request_id', requestId).maybeSingle();
   if (existingError) return NextResponse.json({ error: 'Unable to check this broadcast' }, { status: 500, headers: cors });
-  if (existing) return NextResponse.json(await replay(db, existing), { headers: cors });
+  if (existing) return NextResponse.json(await replay(db, existing as BroadcastRow), { headers: cors });
 
   if (await rateLimitResponseAsync(`admin-wa-broadcast:${admin.userId}`, 5, 3600_000)) {
     return NextResponse.json({ error: 'Too many WhatsApp broadcasts. Try again later.' }, { status: 429, headers: cors });
@@ -161,7 +182,7 @@ async function send(
 
   // Everything checkable is checked before the step-up is used up.
   const p = await plan(db, input);
-  if (p.eligible.length - p.noSender === 0) {
+  if (!p.reachable.length) {
     return NextResponse.json({ error: 'Nobody in this audience can be sent to. Preview again for the reasons.' }, { status: 422, headers: cors });
   }
 
@@ -177,17 +198,32 @@ async function send(
     sender_id: admin.userId,
     channel: 'whatsapp',
     audience: input.audience,
-    audience_filter: { country: input.country, plan: input.plan, template: input.templateName, language: input.language, category: p.template.category },
+    audience_filter: {
+      country: input.country, plan: input.plan, template: input.templateName, language: input.language,
+      category: p.template.category, recipients: p.phones.length,
+    },
     subject: `${input.templateName} (${input.language})`.slice(0, 200),
     message: renderTemplate(p.template.bodyText, input.params),
     status: 'sending',
     recipient_count: 0,
-  }).select('id, status').single();
+  }).select('id').single();
   if (createError?.code === '23505') {
-    const { data: winner } = await db.from('admin_broadcasts').select('id, status').eq('request_id', requestId).maybeSingle();
-    if (winner) return NextResponse.json(await replay(db, winner), { headers: cors });
+    const { data: winner } = await db.from('admin_broadcasts').select(BROADCAST_COLUMNS).eq('request_id', requestId).maybeSingle();
+    if (winner) return NextResponse.json(await replay(db, winner as BroadcastRow), { headers: cors });
   }
   if (createError || !created) return NextResponse.json({ error: 'Unable to record the broadcast. Nothing was sent.' }, { status: 500, headers: cors });
+
+  const ipAddress = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+  const auditDetails = {
+    template: input.templateName, language: input.language, category: p.template.category,
+    audience: input.audience, country: input.country, plan: input.plan,
+    recipients: p.phones.length, merchant_credit_charged: false,
+  };
+  // Audited before the first send, so a run that is cut off still has a record.
+  await logAdminAudit({
+    actorId: admin.userId, action: 'start_whatsapp_broadcast', entityType: 'admin_broadcast', entityId: created.id,
+    details: auditDetails, ipAddress,
+  });
 
   const summary = await deliverBroadcast(db, {
     broadcastId: created.id,
@@ -210,12 +246,8 @@ async function send(
     action: 'send_whatsapp_broadcast',
     entityType: 'admin_broadcast',
     entityId: created.id,
-    details: {
-      template: input.templateName, language: input.language, category: p.template.category,
-      audience: input.audience, country: input.country, plan: input.plan,
-      recipients: p.phones.length, ...summary, merchant_credit_charged: false,
-    },
-    ipAddress: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
+    details: { ...auditDetails, ...summary },
+    ipAddress,
   });
 
   return NextResponse.json({

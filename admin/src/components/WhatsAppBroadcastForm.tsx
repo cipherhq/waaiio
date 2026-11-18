@@ -26,7 +26,7 @@ interface Preview {
 }
 
 interface SendResult {
-  replayed: boolean; status: string; sent: number; failed: number; unknown: number;
+  replayed: boolean; status: string; sent: number; failed: number; unknown: number; notProcessed?: number;
   skipped: { optedOut: number; suspended: number; unverified: number };
 }
 
@@ -120,29 +120,38 @@ export function WhatsAppBroadcastForm({ canMutate, onSent }: { canMutate: boolea
     }
   }
 
+  /** Show a result. A broadcast still marked 'sending' keeps the page in the unknown state. */
   function report(data: SendResult) {
     const skipped = data.skipped.optedOut + data.skipped.suspended + data.skipped.unverified;
     const parts = [`${data.sent} accepted by WhatsApp`];
     if (data.failed) parts.push(`${data.failed} not sent`);
     if (data.unknown) parts.push(`${data.unknown} with an unknown outcome (do not resend to them)`);
     if (skipped) parts.push(`${skipped} skipped (opted out, suspended or unverifiable)`);
-    setMessage(`${data.replayed ? 'This broadcast was already sent: ' : ''}${parts.join(', ')}. Accepted is not confirmation of delivery. No merchant credit was used.`);
-  }
-
-  async function postSend(stepUpId: string | null) {
-    const res = await adminApiFetch('/api/admin/broadcasts/whatsapp', {
-      mode: 'send', requestId: requestIdRef.current, ...preview!.descriptor, ...(stepUpId ? { stepUpId } : {}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setMessage(data.error || 'The broadcast was not sent.');
-      return data.code as string | undefined;
+    if (data.notProcessed) parts.push(`${data.notProcessed} not reached yet`);
+    if (data.status === 'sending') {
+      setMessage(`This broadcast is still sending, or was cut off: ${parts.join(', ')} so far. Check again in a minute. Do not send it again.`);
+      return;
     }
-    report(data as SendResult);
+    setMessage(`${data.replayed ? 'This broadcast was already sent: ' : ''}${parts.join(', ')}. Accepted is not confirmation of delivery. No merchant credit was used.`);
     setOutcomeUnknown(false);
     setPreview(null);
     requestIdRef.current = '';
     onSent();
+  }
+
+  async function postSend(stepUpId: string) {
+    const res = await adminApiFetch('/api/admin/broadcasts/whatsapp', {
+      mode: 'send', requestId: requestIdRef.current, ...preview!.descriptor, stepUpId,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { report(data as SendResult); return; }
+    if (res.status < 500) {
+      // Refused before anything was sent (step-up, limits, validation).
+      setOutcomeUnknown(false);
+      setMessage(data.error || 'The broadcast was not sent.');
+      return;
+    }
+    setMessage('The send result is unknown. Use "Check result" — it never sends twice.');
   }
 
   async function handleSend() {
@@ -179,10 +188,13 @@ export function WhatsAppBroadcastForm({ canMutate, onSent }: { canMutate: boolea
   async function handleCheckResult() {
     setSending(true);
     try {
-      // Without a step-up this can only return a recorded result; it never sends.
-      if (await postSend(null) === 'step_up_required') {
+      // Read-only: returns the recorded result for this request id; it never sends.
+      const res = await adminApiFetch('/api/admin/broadcasts/whatsapp', { mode: 'status', requestId: requestIdRef.current });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setMessage(data.error || 'Still no result. Try again in a moment.');
+      else if (data.recorded === false) {
         setMessage('No broadcast has been recorded for this request yet. Check again shortly. Start over only if you are sure it did not go out.');
-      }
+      } else report(data as SendResult);
     } catch {
       setMessage('Still no result. Try again in a moment.');
     } finally {
@@ -278,7 +290,7 @@ export function WhatsAppBroadcastForm({ canMutate, onSent }: { canMutate: boolea
       </button>
 
       {preview && c && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700" aria-label="WhatsApp broadcast preview">
+        <div role="region" className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700" aria-label="WhatsApp broadcast preview">
           <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Preview</p>
           <p className="whitespace-pre-wrap">{preview.template.rendered}</p>
           <ul className="mt-3 space-y-1">
@@ -290,7 +302,7 @@ export function WhatsAppBroadcastForm({ canMutate, onSent }: { canMutate: boolea
             {c.withoutNumber > 0 && <li>{c.withoutNumber} have no valid WhatsApp number</li>}
           </ul>
           <p className="mt-3">
-            Estimated cost to Waaiio:{' '}
+            Estimate at Waaiio's per-message rates:{' '}
             {preview.estimate
               ? (preview.estimate.byCurrency.length
                 ? preview.estimate.byCurrency.map(e => formatMinor(e.currency, e.amountMinor)).join(' + ')

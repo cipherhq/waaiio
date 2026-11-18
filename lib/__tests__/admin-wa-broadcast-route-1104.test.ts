@@ -18,6 +18,7 @@ const f = vi.hoisted(() => ({
   sendError: null as Error | null,
   businessTemplateSends: 0,
   limited: false,
+  lookupFails: new Set<string>(),
 }));
 
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({
@@ -33,6 +34,18 @@ vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({
   },
   from: (table: string) => f.db.from(table),
 }) }));
+// The audit writer's own dynamic import of the service client races with the
+// step-up's background audit in vitest and can load the real client. Write the
+// same row (lib/admin-audit.ts) into the in-memory table instead.
+vi.mock('@/lib/admin-audit', () => ({
+  logAdminAudit: async (e: any) => {
+    await f.db.from('admin_audit_logs').insert({
+      actor_id: e.actorId, action: e.action, entity_type: e.entityType ?? null, entity_id: e.entityId ?? null,
+      details: e.details ?? null, ip_address: e.ipAddress ?? null,
+    });
+    return {};
+  },
+}));
 vi.mock('@/lib/supabase/server', () => ({ createClient: () => { throw new Error('cookie client not expected'); } }));
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: async () => (f.limited ? new Response(JSON.stringify({ error: 'Too many requests' }), { status: 429 }) : null),
@@ -45,6 +58,7 @@ vi.mock('@/lib/channels/meta-cloud', () => ({ MetaCloudService: class { getTempl
 vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class {
     async getSharedChannelForCountry(country: string) {
+      if (f.lookupFails.has(country)) throw new Error('Shared channel lookup unavailable.');
       // Waaiio has shared numbers in NG and GB only in this fixture.
       if (country !== 'NG' && country !== 'GB') return null;
       return {
@@ -105,7 +119,7 @@ const recipients = () => Object.fromEntries(f.db.tables.admin_broadcast_recipien
 
 beforeEach(() => {
   f.role = 'admin'; f.aal = 'aal2'; f.rpcCalls = []; f.sent = []; f.sendError = null;
-  f.businessTemplateSends = 0; f.limited = false; f.templates = [TEMPLATE];
+  f.businessTemplateSends = 0; f.limited = false; f.templates = [TEMPLATE]; f.lookupFails = new Set();
   f.db = createMemoryDb({
     admin_step_up_authorizations: [], admin_audit_logs: [], admin_broadcasts: [], admin_broadcast_recipients: [],
     customer_suspensions: [{ id: 's-1', phone: NG_SUSPENDED }],
@@ -177,10 +191,11 @@ describe('templates and preview', () => {
     const body = await res.json();
     expect(body.template.rendered).toBe('Hi from Waaiio: New feature');
     expect(body.counts).toEqual({ matched: 5, withoutNumber: 0, eligible: 2, noSender: 1, optedOut: 1, suspended: 1, unverified: 0 });
-    // NG marketing 2000 kobo + GB marketing 9 pence; the US number has no Waaiio sender and no rate.
+    // NG marketing 2000 kobo + GB marketing 9 pence.
+    // Only numbers that will be sent are priced; the US number has no Waaiio sender.
     expect(body.estimate).toEqual({
       byCurrency: [{ currency: 'GBP', amountMinor: 9, recipients: 1 }, { currency: 'NGN', amountMinor: 2000, recipients: 1 }],
-      unpriced: 1,
+      unpriced: 0,
     });
     expect(body.descriptor).toEqual({ ...descriptor, phones: [...descriptor.phones, US_USER].sort() });
     expect(f.sent).toEqual([]);
@@ -199,10 +214,10 @@ describe('templates and preview', () => {
   });
 
   it('refuses an audience over the per-send limit', async () => {
-    f.db.tables.profiles = Array.from({ length: 501 }, (_, i) => ({ id: `p-${i}`, phone: `+23480${String(10000000 + i)}` }));
+    f.db.tables.profiles = Array.from({ length: 251 }, (_, i) => ({ id: `p-${i}`, phone: `+23480${String(10000000 + i)}` }));
     const res = await POST(req('POST', { mode: 'preview', templateName: 'waaiio_news', language: 'en_US', audience: 'all_users', params: ['x'] }));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/at most 500/);
+    expect((await res.json()).error).toMatch(/at most 250/);
   });
 });
 
@@ -231,6 +246,11 @@ describe('send', () => {
     });
     expect(f.db.tables.admin_step_up_authorizations[0].consumed_at).toEqual(expect.any(String));
     await vi.waitFor(() => expect(f.db.tables.admin_audit_logs.map((r: any) => r.action)).toContain('send_whatsapp_broadcast'));
+    // The start is audited before the first send, so a run that is cut off still has a record.
+    const actions = f.db.tables.admin_audit_logs.map((r: any) => r.action);
+    expect(actions.indexOf('start_whatsapp_broadcast')).toBeGreaterThan(-1);
+    expect(actions.indexOf('start_whatsapp_broadcast')).toBeLessThan(actions.indexOf('send_whatsapp_broadcast'));
+    expect(broadcast.audience_filter).toMatchObject({ recipients: 4, category: 'marketing' });
     const audit = f.db.tables.admin_audit_logs.find((r: any) => r.action === 'send_whatsapp_broadcast');
     expect(audit).toMatchObject({ actor_id: 'admin-1', entity_type: 'admin_broadcast', entity_id: broadcast.id });
     expect(audit.details).toMatchObject({ template: 'waaiio_news', category: 'marketing', sent: 2, merchant_credit_charged: false });
@@ -281,6 +301,34 @@ describe('send', () => {
     expect(summary).toMatchObject({ sent: 1, skippedUnverified: 1 });
     expect(sender.sendPlatformTemplate).toHaveBeenCalledTimes(1);
     expect(recipients()).toEqual({ [NG_OWNER]: 'sent', [GB_USER]: 'skipped_unverified' });
+  });
+
+  it('a failed number lookup fails only those recipients; the rest are sent and the broadcast is finished', async () => {
+    f.lookupFails.add('GB');
+    grant();
+    const res = await POST(req('POST', sendBody()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'partial', sent: 1, failed: 1 });
+    expect(f.sent.map(s => s.to)).toEqual([NG_OWNER]);
+    expect(recipients()[GB_USER]).toBe('failed');
+    expect(f.db.tables.admin_broadcasts[0]).toMatchObject({ status: 'partial', recipient_count: 1 });
+  });
+
+  it('status mode reads a recorded result and never sends or uses a step-up', async () => {
+    const none = await POST(req('POST', { mode: 'status', requestId: REQUEST_ID }));
+    expect(await none.json()).toEqual({ recorded: false });
+    // A broadcast cut off mid-send: still 'sending', one claimed, two never reached.
+    f.db.tables.admin_broadcasts.push({ id: 'b-cut', request_id: REQUEST_ID, status: 'sending', audience_filter: { recipients: 4 } });
+    f.db.tables.admin_broadcast_recipients.push(
+      { id: 'r1', broadcast_id: 'b-cut', phone: NG_OWNER, status: 'sent' },
+      { id: 'r2', broadcast_id: 'b-cut', phone: GB_USER, status: 'sending' },
+    );
+    const cut = await (await POST(req('POST', { mode: 'status', requestId: REQUEST_ID }))).json();
+    expect(cut).toMatchObject({ replayed: true, status: 'sending', sent: 1, unknown: 1, notProcessed: 2 });
+    expect((await POST(req('POST', { mode: 'status' }))).status).toBe(400);
+    f.role = 'support';
+    expect((await POST(req('POST', { mode: 'status', requestId: REQUEST_ID }))).status).toBe(403);
+    expect(f.sent).toEqual([]);
   });
 
   it('skips a Waaiio launch-alert opt-out as well', async () => {

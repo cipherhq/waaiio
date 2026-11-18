@@ -18,12 +18,15 @@ import { canonicalCustomerPhone } from '@/lib/customer-suspension';
 import { resolveRecipientCountry } from '@/lib/channels/phone-country';
 import { billingCurrencyAndRate } from '@/lib/messaging/low-balance-alerts';
 import { SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
-import { AmbiguousSendError } from '@/lib/channels/attempt-recording';
+import { AmbiguousSendError, WamidPersistenceError } from '@/lib/channels/attempt-recording';
 import type { MessageTemplate, MetaCloudService } from '@/lib/channels/meta-cloud';
 import type { MessageSender } from '@/lib/channels/message-sender';
 
-/** One synchronous send; larger audiences must be narrowed with filters. */
-export const MAX_RECIPIENTS = 500;
+/**
+ * One synchronous send (about 0.5 s per recipient against the route's 300 s
+ * limit); larger audiences must be narrowed with filters.
+ */
+export const MAX_RECIPIENTS = 250;
 /** Spacing between provider calls (about 10 messages a second). */
 export const SEND_INTERVAL_MS = 100;
 
@@ -409,7 +412,8 @@ export async function deliverBroadcast(db: SupabaseClient, opts: {
       .select('id');
     if (claimError || !claimed?.length) { summary.failed++; continue; }
 
-    const choice = await opts.senderFor(phone);
+    // A failed number lookup is that recipient's failure, never the whole send's.
+    const choice = await opts.senderFor(phone).catch(() => null);
     if (!choice?.sender.sendPlatformTemplate) {
       await finish(phone, { status: 'failed', error: 'no_sender' });
       summary.noSender++;
@@ -429,7 +433,8 @@ export async function deliverBroadcast(db: SupabaseClient, opts: {
       await finish(phone, { status: 'sent', meta_message_id: result.messageId ?? null });
       summary.sent++;
     } catch (err) {
-      const ambiguous = err instanceof AmbiguousSendError;
+      // Ambiguous transport, or accepted by Meta but the id was not saved: may have gone out.
+      const ambiguous = err instanceof AmbiguousSendError || err instanceof WamidPersistenceError;
       await finish(phone, {
         status: ambiguous ? 'unknown' : 'failed',
         error: (err instanceof Error ? err.message : 'send failed').slice(0, 500),

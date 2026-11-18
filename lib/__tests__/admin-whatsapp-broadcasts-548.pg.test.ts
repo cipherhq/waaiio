@@ -137,9 +137,10 @@ describe('M548 admin WhatsApp broadcasts (real PostgreSQL)', () => {
     const claim = await q(`INSERT INTO public.admin_broadcast_recipients(broadcast_id, phone, status) VALUES ($1, $2, 'sending')
       ON CONFLICT (broadcast_id, phone) DO NOTHING RETURNING id`, [a, PHONE]);
     expect(claim.rowCount).toBe(0);
-    // Deleting a broadcast removes its recipient rows.
-    await q('DELETE FROM public.admin_broadcasts WHERE id=$1', [b]);
-    expect((await q('SELECT count(*)::int AS n FROM public.admin_broadcast_recipients WHERE broadcast_id=$1', [b])).rows[0].n).toBe(0);
+    // A broadcast with delivery records cannot be deleted; one without can.
+    await expect(q('DELETE FROM public.admin_broadcasts WHERE id=$1', [b])).rejects.toMatchObject({ code: '23503' });
+    const empty = await broadcast();
+    expect((await q('DELETE FROM public.admin_broadcasts WHERE id=$1', [empty])).rowCount).toBe(1);
   });
 
   it('recipient CHECKs: canonical phone, known status, bounded error', async () => {
@@ -169,7 +170,7 @@ describe('M548 admin WhatsApp broadcasts (real PostgreSQL)', () => {
       await expect(as(role, () => q('SELECT * FROM public.admin_broadcast_recipients'))).rejects.toMatchObject({ code: '42501' });
     }
     for (const p of ['SELECT', 'INSERT', 'UPDATE']) expect(await priv('service_role', p)).toBe(true);
-    // Delivery records are not deleted by the app; they go only with their broadcast.
+    // Delivery records are never deleted by the app.
     expect(await priv('service_role', 'DELETE')).toBe(false);
   });
 });
