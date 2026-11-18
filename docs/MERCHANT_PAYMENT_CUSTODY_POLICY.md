@@ -54,6 +54,7 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
 ## Rules
 
 1. **Waaiio fee per paid transaction.** Starter 3%, Pro 1.5%, Premium 1%. The live rates are in `platform_settings.pricing_tiers` and the config snapshot. `calculateFee` also applies a business's `custom_fee_percentage` / `custom_fee_flat` and any `category_fee_rates` ahead of the plan rate. Changing a plan rate, or setting a custom or category rate, is itself an Owner decision.
+   - **Rounding (Owner decision, 2026-11-18).** The fee is rounded to the cent/kobo (two decimals), never to whole units, for new payments. Rates are unchanged and historical `platform_fees` rows are not rewritten. Amounts sent to a provider stay whole minor units.
 2. **From sign-up.** The fee applies from the day a business signs up. The free trial never waives it.
 3. **The same fee on every route.** This includes Waaiio-collected payments, merchant-connected split payments, and businesses that connect their own Stripe or Paystack. Waaiio collects its fee on every route.
    - **One named exception: direct bank transfer** (Owner decision, 2026-11-10). It is available only on Pro and Premium. When a customer pays straight into the business's bank account, Waaiio's fee is 0% by design (`lib/payments/process-success.ts` records `fee_total` 0 with `is_direct_transfer`), and there is no gateway fee. Waaiio earns from those plans' monthly subscription instead. Charging a fee on direct bank transfers, or opening them to Starter, needs a new Owner decision.
