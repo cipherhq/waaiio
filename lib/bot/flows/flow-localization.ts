@@ -2711,7 +2711,7 @@ const FLOW_COPY: Record<string, Record<string, string>> = {
     'booking.book_for_who': 'Ndebi a bụ maka onye?',
     'booking.myself': 'Onwe m',
     'booking.someone_else': 'Onye ọzọ',
-    'booking.book_for_hint': 'Pịnye *onwe m* ma ọ bụ *onye ọzọ*, ma ọ bụ pịa bọtịnụ.',
+    'booking.book_for_hint': 'Pịnye *myself* ma ọ bụ *someone else*, ma ọ bụ pịa bọtịnụ.',
     'booking.guest_name_ask': 'Gịnị bụ aha onye ọbịa?',
     'booking.collect_email': '📧 Anyị ga-eziga nkwenye ndebi gị na email. Pịnye email gị ma ọ bụ *skip* ịwụfee:',
     'booking.invalid_email': 'Ọ yiri na email a ezighi ezi. Nwaa ọzọ ma ọ bụ pịnye *skip*:',

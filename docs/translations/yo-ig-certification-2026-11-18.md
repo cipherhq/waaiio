@@ -2,7 +2,7 @@
 
 Owner decision 2026-11-18: "Fix, test, then turn on". This lists every Yoruba (yo) and Igbo (ig) bot phrase changed or written new for certification. Placeholders in `{braces}` and words in `*stars*` that customers type (for example *Hi*, *cancel*, *menu*, *my orders*) stay as they are on purpose.
 
-Totals: 350 Yoruba phrases and 304 Igbo phrases changed, 424 phrases in all. "new" means it was English before; "fixed" means the earlier Yoruba/Igbo was replaced.
+Totals: 350 Yoruba phrases and 305 Igbo phrases changed, 425 phrases in all. "new" means it was English before; "fixed" means the earlier Yoruba/Igbo was replaced.
 
 ## Check these first
 
@@ -37,6 +37,7 @@ Buttons, menu labels and the payment confirmation the customer sees most. Button
 | `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn ọ́ lọ́wọ́ lónìí? | Nnọọ! Kedu ka m ga-esi nyere gị aka taa? |
 | `menu.title` | Menu | Àkójọ | Nhọrọ |
 | `recurring.weekly` | Weekly | Ní ọ̀sọ̀ọ̀sẹ̀ | Kwa izu |
+| `booking.book_for_hint` | Type *myself* or *someone else*, or tap a button. | Tẹ *myself* tàbí *someone else*, tàbí tẹ bọ́tìnì. _(unchanged)_ | Pịnye *myself* ma ọ bụ *someone else*, ma ọ bụ pịa bọtịnụ. _(fixed: the bot only accepts the English typed words)_ |
 
 ### Word choices to confirm
 

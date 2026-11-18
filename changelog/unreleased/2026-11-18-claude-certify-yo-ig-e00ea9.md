@@ -8,7 +8,7 @@
     - The open Owner review items are fixed: button and list-title lengths, the "updates" opt-in/confirm copy, `cap.table_reservation` ("Book Table / Section"), and date paging.
     - Clear meaning errors are fixed. Yoruba used "ìpèdè" (dialect) for "booking"; it is now "ìfipamọ́". Yoruba "ẹbọ" (ritual sacrifice) is now "ọrẹ", and "tọ̀" (urinate) is now "tọ́" (correct). Igbo used "Ekweghị" (refused) for "cancelled"; it now uses "kagbuo". Igbo "Anataghị" ("payment/order NOT received") was shown after paying; it now says "Anatala". Igbo "nọọsụ" (nurse) for a stay is now "ebe ịnọ".
     - Hints that say "tap" now quote the yo/ig button the customer sees, not the English label.
-    - In all, 350 yo and 304 ig values changed.
+    - In all, 350 yo and 305 ig values changed.
   - Owner menu labels from `docs/translations/waaiio_option_labels_final.csv` are kept. Three exceptions:
     - `cap.table_reservation` is a review item.
     - yo `cap.waitlist`, `cap.waiver` and `cap.class_booking`, and ig `cap.waitlist`, were over the 20-character button limit and were shortened.
@@ -16,7 +16,9 @@
   - `OWNER_REVIEW_ITEMS`: all yo/ig entries are removed (resolved).
   - Typed commands (*Hi*, *cancel*, *menu*, *my orders*…), STOP/START, YES/NO, `*20 Dec*`, all `{placeholders}` and English directory search examples are kept as they were.
 - **Native check:** `docs/translations/yo-ig-certification-2026-11-18.md` lists every changed phrase (English | Yoruba | Igbo), with a "check these first" table. The wording is best-effort, written by Claude, and has not been checked by a native speaker.
-- **Also changes:** yo/ig customers now get dates in their own language through the existing certified-language rule in `lib/bot/format-date.ts`. This is unchanged code; an example is "Àbámẹ́ta, 21 Oṣù Bélú". Short date rows are at most 23 characters.
+- **Also changes:** custom-flow date rows (`lib/bot/custom-flow/dates.ts`) now show yo/ig dates, e.g. "Àbámẹ́ta, 21 Oṣù Bélú", through the existing certified-language rule in `lib/bot/format-date.ts` (unchanged code); they are at most 23 characters. Booking date list rows (`scheduling.flow.ts`, country locale) and My Bookings (`my-bookings.ts`, hard-coded English) still show English dates, as before; localizing them would be a separate Owner decision.
+- **Typed-word hints:** ig `booking.book_for_hint` asked customers to type Igbo words the bot does not accept (`scheduling.flow.ts` book_for validate accepts *myself* / *someone else*). It now keeps those English words, like yo. The test pins this.
+- **Before deploy:** any stored yo/ig business or platform translation overrides (`bot_translation_overrides`, `bot_translation_platform_overrides`) start being served once yo/ig are certified; check staging and production for such rows first.
 - **Tests:**
   - New `lib/bot/__tests__/certification-yo-ig.test.ts` checks:
     - no English left in yo/ig;

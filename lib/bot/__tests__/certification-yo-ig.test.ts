@@ -136,6 +136,11 @@ for (const lang of LANGS) {
       expect(t('payment.transfer_hint')).toContain(t('payment.ive_sent_transfer'));
       expect(t('payment.transfer_hint')).not.toContain("I've Sent");
     });
+    it('typed-word hints keep the English words the parser accepts', () => {
+      // scheduling.flow.ts book_for validate() accepts only myself / someone else (or the buttons).
+      expect(t('booking.book_for_hint')).toContain('*myself*');
+      expect(t('booking.book_for_hint')).toContain('*someone else*');
+    });
     it('recurring hints quote the localized buttons', () => {
       expect(t('recurring.cancel_hint')).toContain(`*${t('recurring.yes_cancel')}*`);
       expect(t('recurring.cancel_hint')).toContain(`*${t('recurring.keep_it')}*`);
