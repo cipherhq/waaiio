@@ -9,7 +9,7 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 import { ConsentedCustomerPicker } from '@/components/dashboard/ConsentedCustomerPicker';
 import { RECIPIENT_POLICY } from '@/lib/merchants/recipient-permission';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 
 interface PaymentRequestRow {
@@ -297,7 +297,7 @@ export default function PaymentRequestPage() {
 
   const requestSort = useTableSort(requests, {
     customer: (row: PaymentRequestRow) => row.guest_name || 'Customer',
-    amount: row => Number(row.total_amount),
+    amount: row => sortNumber(row.total_amount),
     sent: row => sortTime(row.created_at),
     status: row => getPaymentStatus(row).label,
     source: row => getSource(row).label,

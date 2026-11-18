@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 const RESELLER_TIERS = {
   starter: {
@@ -190,7 +190,7 @@ export default function ResellerSubscriptionPage() {
     date: (i: Invoice) => sortTime(i.created_at),
     description: (i: Invoice) => i.description || 'Reseller subscription',
     period: (i: Invoice) => (i.period_start && i.period_end ? sortTime(i.period_start) : null),
-    amount: (i: Invoice) => Number(i.amount),
+    amount: (i: Invoice) => sortNumber(i.amount),
     status: (i: Invoice) => i.status,
   });
 

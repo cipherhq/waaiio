@@ -6,7 +6,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { formatCalendarDate } from '@/lib/utils/calendar-date';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { useTableSort } from '@/lib/table-sort';
+import { sortNumber, useTableSort } from '@/lib/table-sort';
 
 interface PayoutRecord {
   id: string;
@@ -183,10 +183,10 @@ export default function PayoutHistoryPage() {
 
   const monthlySort = useTableSort(monthlySummaryRows, {
     month: (m: MonthBucket) => m.key,
-    payouts: m => Number(m.count),
-    gross: m => Number(m.gross),
-    fees: m => Number(m.fees),
-    net: m => Number(m.net),
+    payouts: m => sortNumber(m.count),
+    gross: m => sortNumber(m.gross),
+    fees: m => sortNumber(m.fees),
+    net: m => sortNumber(m.net),
   });
 
   return (

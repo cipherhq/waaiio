@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { useTableSort } from '@/lib/table-sort';
+import { sortNumber, useTableSort } from '@/lib/table-sort';
 
 // ── Types ──
 interface BotKeyword {
@@ -254,7 +254,7 @@ export default function KeywordsPage() {
     match: kw => matchTypeLabel(kw.match_type),
     action: kw => actionTypeLabel(kw.action_type),
     payload: kw => kw.payload,
-    priority: kw => Number(kw.priority),
+    priority: kw => sortNumber(kw.priority),
     active: kw => kw.is_active,
   });
 

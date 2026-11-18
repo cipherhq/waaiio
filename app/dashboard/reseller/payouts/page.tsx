@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Payout {
   id: string;
@@ -84,10 +84,10 @@ export default function ResellerPayoutsPage() {
 
   const { sorted: sortedPayouts, sortProps } = useTableSort(payouts, {
     period: (p: Payout) => sortTime(p.period_start),
-    gross: (p: Payout) => Number(p.gross_commission),
-    holdback: (p: Payout) => Number(p.holdback),
-    deductions: (p: Payout) => Number(p.deductions),
-    net: (p: Payout) => Number(p.net_amount),
+    gross: (p: Payout) => sortNumber(p.gross_commission),
+    holdback: (p: Payout) => sortNumber(p.holdback),
+    deductions: (p: Payout) => sortNumber(p.deductions),
+    net: (p: Payout) => sortNumber(p.net_amount),
     status: (p: Payout) => (STATUS_STYLES[p.status] || STATUS_STYLES.pending).label,
     paid: (p: Payout) => sortTime(p.paid_at),
   });

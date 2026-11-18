@@ -6,7 +6,7 @@ import { useBusiness, useRequireCapability } from '@/components/dashboard/Dashbo
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface LoyaltyMember {
   id: string;
@@ -167,14 +167,14 @@ export default function LoyaltyPage() {
   const memberSort = useTableSort(members, {
     name: (m: LoyaltyMember) => m.customer_name || 'Unknown',
     phone: m => m.customer_phone,
-    points: m => Number(m.points_balance),
-    visits: m => Number(m.visit_count),
-    earned: m => Number(m.total_earned),
+    points: m => sortNumber(m.points_balance),
+    visits: m => sortNumber(m.visit_count),
+    earned: m => sortNumber(m.total_earned),
   });
   const transactionSort = useTableSort(transactions, {
     date: (tx: LoyaltyTransaction) => sortTime(tx.created_at),
     phone: tx => tx.customer_phone,
-    points: tx => Number(tx.points_change),
+    points: tx => sortNumber(tx.points_change),
     reason: tx => tx.reason || '\u2014',
   });
 

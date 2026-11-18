@@ -2,7 +2,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { compareSortValues, nextSortState, sortRows, sortTime, useTableSort } from '@/lib/table-sort';
+import { compareSortValues, nextSortState, sortNumber, sortRows, sortTime, useTableSort } from '@/lib/table-sort';
 import { SortableTh } from '../SortableTh';
 
 afterEach(cleanup);
@@ -34,6 +34,14 @@ describe('dashboard table sort helper', () => {
     expect(sortRows(['', 'b', '  ', 'a'], r => r, 'desc')).toEqual(['b', 'a', '', '  ']);
     expect(sortTime('not a date')).toBeNull();
     expect(compareSortValues(null, null, 'asc')).toBe(0);
+  });
+
+  it('treats missing or non-numeric amounts as empty, not zero', () => {
+    const rows = [{ v: null }, { v: '12.50' }, { v: 0 }, { v: undefined }, { v: '' }, { v: 'n/a' }];
+    expect(sortRows(rows, r => sortNumber(r.v), 'asc').map(r => r.v).slice(0, 2)).toEqual([0, '12.50']);
+    expect(sortRows(rows, r => sortNumber(r.v), 'desc').map(r => r.v).slice(0, 2)).toEqual(['12.50', 0]);
+    expect(sortNumber(null)).toBeNull();
+    expect(sortNumber('n/a')).toBeNull();
   });
 
   it('keeps equal rows in their loaded order and does not change the input', () => {

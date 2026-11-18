@@ -22,7 +22,7 @@ import { AISetupCard } from '@/components/dashboard/AISetupCard';
 import { DirectWhatsAppLink } from '@/components/dashboard/DirectWhatsAppLink';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
 import { getLocalNow, timezoneFitsCountry } from '@/lib/bot/flows/shared/table-same-day';
@@ -247,7 +247,7 @@ export default function DashboardOverview() {
   const orderSort = useTableSort(recentOrders, {
     ref: (o: RecentOrder) => o.reference_code,
     date: o => sortTime(o.created_at),
-    amount: o => Number(o.total_amount),
+    amount: o => sortNumber(o.total_amount),
     status: o => o.status.replace('_', ' '),
   });
   const recentSort = useTableSort(recent, {

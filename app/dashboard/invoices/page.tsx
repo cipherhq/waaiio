@@ -15,7 +15,7 @@ import { getCurrencyCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface InvoiceItem extends ItemTaxFieldsValue {
   id: string;
@@ -174,7 +174,7 @@ export default function InvoicesPage() {
   const { sorted, sortProps } = useTableSort(filtered, {
     invoice: (inv: Invoice) => inv.reference_code,
     customer: inv => inv.customer_name,
-    amount: inv => Number(inv.total_amount),
+    amount: inv => sortNumber(inv.total_amount),
     status: inv => inv.status,
     due: inv => sortTime(inv.due_date),
   }, { onSortChange: () => setPage(1) });

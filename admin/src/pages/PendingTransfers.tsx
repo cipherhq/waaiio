@@ -8,7 +8,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { SortableTh } from '@/components/SortableTh';
-import { sortTime, useTableSort } from '@/lib/tableSort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
 
 interface TransferRecord {
   id: string;
@@ -115,7 +115,7 @@ export default function PendingTransfers() {
     reference: t => t.reference_code,
     business: t => t.business_name,
     customer: t => t.customer_name || t.customer_phone,
-    amount: t => Number(t.expected_amount),
+    amount: t => sortNumber(t.expected_amount),
     status: t => t.status,
     proof: t => t.proof_type,
     ocr: t => t.verified_by_ocr,

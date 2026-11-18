@@ -5,7 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -230,7 +230,7 @@ export default function PendingTransfersPage() {
 
   const transferSort = useTableSort(transfers, {
     customer: (t: PendingTransfer) => t.customer_name || 'Unknown',
-    amount: t => Number(t.expected_amount),
+    amount: t => sortNumber(t.expected_amount),
     reference: t => t.reference_code,
     timeLeft: t => sortTime(t.expires_at),
     created: t => sortTime(t.created_at),

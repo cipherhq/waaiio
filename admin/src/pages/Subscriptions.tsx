@@ -3,7 +3,7 @@ import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 import { SortableTh } from '@/components/SortableTh';
-import { sortTime, useTableSort } from '@/lib/tableSort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -450,7 +450,7 @@ export default function Subscriptions() {
     business: s => s.business_name,
     plan: s => s.plan,
     status: s => s.status,
-    amount: s => Number(s.amount),
+    amount: s => sortNumber(s.amount),
     start: s => sortTime(s.current_period_start || s.created_at),
     end: s => sortTime(s.current_period_end),
     autoRenew: s => !!(s as { auto_renew?: boolean }).auto_renew,

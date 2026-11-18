@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface BillingSummary {
   billing_type: 'per_seat' | 'revenue_share' | 'flat_monthly';
@@ -80,7 +80,7 @@ export default function ResellerBillingPage() {
     date: (e: CommissionEntry) => sortTime(e.created_at),
     account: (e: CommissionEntry) => e.sub_account_name,
     description: (e: CommissionEntry) => e.description,
-    amount: (e: CommissionEntry) => Number(e.amount),
+    amount: (e: CommissionEntry) => sortNumber(e.amount),
   });
 
   if (loading) {

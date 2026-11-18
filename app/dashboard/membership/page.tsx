@@ -6,7 +6,7 @@ import { useBusiness, useRequireCapability } from '@/components/dashboard/Dashbo
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { useTableSort } from '@/lib/table-sort';
+import { sortNumber, useTableSort } from '@/lib/table-sort';
 
 interface MembershipTier {
   id: string;
@@ -206,9 +206,9 @@ export default function MembershipPage() {
 
   const tierSort = useTableSort(tiers, {
     tier: (t: MembershipTier) => t.name,
-    minSpend: t => Number(t.min_spend),
-    discount: t => Number(t.discount_percent),
-    multiplier: t => Number(t.points_multiplier),
+    minSpend: t => sortNumber(t.min_spend),
+    discount: t => sortNumber(t.discount_percent),
+    multiplier: t => sortNumber(t.points_multiplier),
     members: t => tierCounts.get(t.id) || 0,
     status: t => (t.is_active ? 'Active' : 'Inactive'),
   });
@@ -216,8 +216,8 @@ export default function MembershipPage() {
     customer: (m: TopMember) => m.name || 'Unknown',
     phone: m => m.phone,
     tier: m => getTierName(m.membership_tier_id),
-    spent: m => Number(m.total_spent),
-    visits: m => Number(m.total_visits),
+    spent: m => sortNumber(m.total_spent),
+    visits: m => sortNumber(m.total_visits),
   });
 
   return (

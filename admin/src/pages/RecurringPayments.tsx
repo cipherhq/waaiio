@@ -6,7 +6,7 @@ import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { SortableTh } from '@/components/SortableTh';
-import { sortTime, useTableSort } from '@/lib/tableSort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
@@ -120,7 +120,7 @@ export default function RecurringPayments() {
     customer: r => r.customer_name || 'Unknown',
     service: r => r.service_name,
     source: r => (r.service_billing_type === 'recurring' ? 'Service' : 'Opt-in'),
-    amount: r => Number(r.amount),
+    amount: r => sortNumber(r.amount),
     frequency: r => r.frequency,
     gateway: r => r.gateway,
     status: r => r.status,

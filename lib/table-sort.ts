@@ -19,6 +19,13 @@ export function sortTime(value: string | number | Date | null | undefined): numb
   return Number.isNaN(time) ? null : time;
 }
 
+/** Number for sorting, or null when missing, so empty amounts go last (Number(null) would be 0). */
+export function sortNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function normalize(value: SortValue): number | string | null {
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return sortTime(value);

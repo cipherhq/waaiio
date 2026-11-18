@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Account {
   id: string;
@@ -103,10 +103,10 @@ export default function ResellerAnalyticsPage() {
     name: (a: Account) => a.name,
     category: (a: Account) => formatCategory(a.category),
     status: (a: Account) => a.status,
-    revenue: (a: Account) => Number(a.total_revenue),
-    bookings: (a: Account) => Number(a.total_bookings),
-    orders: (a: Account) => Number(a.total_orders),
-    commission: (a: Account) => Number(a.commission_generated),
+    revenue: (a: Account) => sortNumber(a.total_revenue),
+    bookings: (a: Account) => sortNumber(a.total_bookings),
+    orders: (a: Account) => sortNumber(a.total_orders),
+    commission: (a: Account) => sortNumber(a.commission_generated),
     lastActivity: (a: Account) => sortTime(a.last_activity),
   });
 

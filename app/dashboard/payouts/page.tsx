@@ -8,7 +8,7 @@ import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 import { t } from '@/lib/dashboard-i18n';
 import { formatCalendarDate } from '@/lib/utils/calendar-date';
 
@@ -397,7 +397,7 @@ export default function PayoutsPage() {
   const payoutSort = useTableSort(recentPayouts, {
     date: (p: PayoutRecord) => sortTime(p.created_at),
     period: p => sortTime(p.period_start),
-    net: p => Number(p.net_amount),
+    net: p => sortNumber(p.net_amount),
     status: p => p.status,
   });
 

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
-import { sortTime, useTableSort } from '@/lib/table-sort';
+import { sortNumber, sortTime, useTableSort } from '@/lib/table-sort';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -196,10 +196,10 @@ export default function PromotionsPage() {
     name: (c: PromoCampaign) => c.name,
     status: c => c.status,
     dates: c => sortTime(c.start_at ?? c.end_at),
-    codes: c => Number(c.total_codes),
-    participants: c => Number(c.unique_participants),
-    winners: c => Number(c.total_winners),
-    redemption: c => Number(c.redemption_rate),
+    codes: c => sortNumber(c.total_codes),
+    participants: c => sortNumber(c.unique_participants),
+    winners: c => sortNumber(c.total_winners),
+    redemption: c => sortNumber(c.redemption_rate),
   });
 
   if (loading) {
