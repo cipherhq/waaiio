@@ -6,6 +6,7 @@ import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
+import { WhatsAppBroadcastForm } from '@/components/WhatsAppBroadcastForm';
 
 type Channel = 'email' | 'whatsapp' | 'sms';
 type Audience = 'all_users' | 'all_businesses' | 'specific';
@@ -25,7 +26,7 @@ interface Broadcast {
 
 const CHANNEL_OPTIONS: { value: Channel; label: string; disabled?: boolean }[] = [
   { value: 'email', label: 'Email' },
-  { value: 'whatsapp', label: 'WhatsApp — coming soon', disabled: true },
+  { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'sms', label: 'SMS — coming soon', disabled: true },
 ];
 
@@ -190,7 +191,7 @@ export default function Broadcasts() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Broadcasts</h1>
-      <p className="mt-1 text-sm text-gray-500">Submit email broadcasts and review recorded history</p>
+      <p className="mt-1 text-sm text-gray-500">Submit email and WhatsApp broadcasts and review recorded history</p>
 
       {/* Compose Form */}
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-6">
@@ -220,6 +221,9 @@ export default function Broadcasts() {
             </div>
           </div>
 
+          {channel === 'whatsapp' && <WhatsAppBroadcastForm canMutate={canMutate} onSent={loadData} />}
+
+          {channel === 'email' && (<>
           {/* Audience */}
           <div>
             <label className="block text-sm font-medium text-gray-700">Audience</label>
@@ -309,6 +313,7 @@ export default function Broadcasts() {
           >
             {sending ? 'Sending...' : 'Send Broadcast'}
           </button>
+          </>)}
         </div>
       </div>
 

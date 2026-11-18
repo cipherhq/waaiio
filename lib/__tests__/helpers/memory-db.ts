@@ -36,7 +36,12 @@ function parseOr(expr: string): Pred {
   return r => parts.some(p => p(r));
 }
 
-export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
+/**
+ * `uniques` declares unique keys per table (lists of column sets): an insert
+ * that would duplicate one returns PostgreSQL's 23505, and upsert() resolves
+ * conflicts on its onConflict columns.
+ */
+export function createMemoryDb(seed: Record<string, Row[]> = {}, uniques: Record<string, string[][]> = {}): MemoryDb {
   const db: MemoryDb = {
     tables: Object.fromEntries(Object.entries(seed).map(([k, v]) => [k, v.map(r => ({ ...r }))])),
     failReads: new Set(),
@@ -47,14 +52,35 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
       let limitN: number | null = null;
       let rangeFrom = 0; let rangeTo: number | null = null;
       let head = false; let countMode = false;
-      let mode: 'select' | 'insert' | 'update' | 'delete' = 'select';
+      let mode: 'select' | 'insert' | 'update' | 'delete' | 'upsert' = 'select';
+      let conflictCols: string[] = [];
+      let ignoreDuplicates = false;
       let payload: Row | Row[] | null = null;
       let returning = false;
       const rows = () => (db.tables[table] ||= []);
 
+      const same = (a: Row, b: Row, cols: string[]) => cols.every(c => a[c] !== null && a[c] !== undefined && a[c] === b[c]);
       const run = () => {
+        if (mode === 'upsert') {
+          const input = Array.isArray(payload) ? payload : [payload!];
+          const written: Row[] = [];
+          for (const r of input) {
+            const hit = rows().find(x => same(x, r, conflictCols));
+            if (hit && ignoreDuplicates) continue;
+            if (hit) { Object.assign(hit, r); db.writes.push({ table, kind: 'update', row: { ...hit } }); written.push(hit); continue; }
+            const row = { id: randomUUID(), created_at: new Date().toISOString(), ...r };
+            rows().push(row); db.writes.push({ table, kind: 'insert', row }); written.push(row);
+          }
+          return { data: returning ? written.map(r => ({ ...r })) : null, error: null };
+        }
         if (mode === 'insert') {
-          const list = (Array.isArray(payload) ? payload : [payload!]).map((r, i) => {
+          const incoming = Array.isArray(payload) ? payload : [payload!];
+          for (const cols of uniques[table] ?? []) {
+            if (incoming.some(r => rows().some(x => same(x, r, cols)))) {
+              return { data: null, error: { code: '23505', message: `duplicate key on ${table}(${cols.join(',')})` } };
+            }
+          }
+          const list = incoming.map((r, i) => {
             const stamp = new Date(Date.now() + rows().length + i).toISOString();
             return { id: randomUUID(), created_at: stamp, updated_at: stamp, ...r };
           });
@@ -88,6 +114,12 @@ export function createMemoryDb(seed: Record<string, Row[]> = {}): MemoryDb {
           if (opts?.count) countMode = true; if (opts?.head) head = true; return q;
         },
         insert(row: Row | Row[]) { mode = 'insert'; payload = row; return q; },
+        upsert(row: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+          mode = 'upsert'; payload = row;
+          conflictCols = (opts?.onConflict ?? 'id').split(',').map(c => c.trim());
+          ignoreDuplicates = opts?.ignoreDuplicates === true;
+          return q;
+        },
         update(row: Row) { mode = 'update'; payload = row; return q; },
         delete() { mode = 'delete'; return q; },
         eq(c: string, v: unknown) {
