@@ -19,6 +19,12 @@ export const maxDuration = 60;
  * Only Growth/Business tier businesses with direct transfer fees are invoiced.
  * Due date: 5th of the current month (5 days to pay).
  * After due date: overdue-reminder cron sends follow-up.
+ *
+ * SWITCHED OFF (Owner decision 2026-11-18): not scheduled in vercel.json.
+ * It selected merchant-connected (byo/connect) fees that the split already
+ * collected, and direct bank transfers carry a ₦0 fee, so nothing here is
+ * billable. See docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md "Known limits".
+ * Scheduling it again needs a new Owner decision.
  */
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);

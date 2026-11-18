@@ -81,6 +81,8 @@ When evidence is unavailable, document the limitation and stop for CTO review ra
 - **Flutterwave own-gateway reversed split.** Waaiio pays Flutterwave's fee. `lib/payments/flutterwave.ts` sets `transaction_charge` to what the merchant keeps, with no fee-bearer control. Flutterwave setup is disabled, and there are 0 production rows. Fix this before enabling it.
 - **Paystack Connect (`X-Connect-Account`).** `lib/payments/paystack.ts` sends no split parameters, so the code does not show who pays the fee. There are 0 production rows. Prove that the merchant bears the fee before using it.
 - **Monthly platform-fee invoice.** It must not bill own-gateway or Paystack Connect (`connect` routing) merchants for fees that a split has already collected. Stripe destination charges are recorded as `platform` routing and are not invoiced. Fix this before onboarding any such business.
+  - **Monthly platform-fee invoice — switched off (Owner decision, 2026-11-18).** The job (`app/api/cron/platform-fee-invoices`) is not scheduled in `vercel.json`. It selected `is_direct_transfer` fees, which the code sets for `byo`/`connect` routing, so it would have billed fees a split had already collected. It also never ran successfully: its date filter was malformed. The route code stays in place. Scheduling it again, or fixing its 100x display units, needs a new Owner decision. A test (`lib/__tests__/fee-invoice-cron-off.test.ts`) fails if it is scheduled.
+  - **Fee on direct bank transfer and cash — stays ₦0 (Owner decision, 2026-11-18).** The Owner chose "Not now" on charging a fee there. Rule 3's exception stands: direct transfers record `fee_total` 0, so there is nothing to invoice and the invoice stays off.
 
 ## Required evidence for fee-related changes
 
