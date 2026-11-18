@@ -10,6 +10,7 @@ import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { logger } from '@/lib/logger';
 import { proactiveSuspensionStatus } from '@/lib/customer-suspension';
 import { fillFlowCopy, getFlowCopy } from './flows/flow-localization';
+import { viewOptionsPostback } from './flows/shared/navigation';
 import { recordUpdatesOptIn, transactionUpdatesOptInEligibility, updatesOptInIncludesWaaiio } from './customer-updates-optin';
 
 const TABLE = 'transaction_followups';
@@ -211,8 +212,8 @@ async function progress(db: SupabaseClient, input: TransactionFollowupRow): Prom
   row = claimed;
   try {
     const buttons = ['queue', 'queue_checkin', 'waitlist'].includes(row.kind)
-      ? [{ id: 'menu', title: getFlowCopy(row.lang, 'nav.view_options') }]
-      : buildPaymentNextStepsButtons(row.kind, resolved.channel.channel_type === 'shared', row.lang);
+      ? [{ id: viewOptionsPostback('menu', row.business_id), title: getFlowCopy(row.lang, 'nav.view_options') }]
+      : buildPaymentNextStepsButtons(row.kind, resolved.channel.channel_type === 'shared', row.lang, row.business_id);
     const body = [row.acknowledgment, getFlowCopy(row.lang, 'menu.what_next')].filter(Boolean).join('\n\n');
     // Recurring setup remains an explicit option, not a second competing prompt
     // and not an implicit subscription or consent grant.

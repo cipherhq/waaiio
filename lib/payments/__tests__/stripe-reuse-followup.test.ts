@@ -60,7 +60,7 @@ describe('Stripe saved-method completion through real paid and consent coordinat
       text: `txupdates_no:${id}`, messageType: 'button' });
     expect(memory.tables.transaction_followups[0].state).toBe('done');
     expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.send.mock.calls[1][0].buttons.some((button: { id: string }) => button.id === 'menu')).toBe(true);
+    expect(mocks.send.mock.calls[1][0].buttons.some((button: { id: string }) => button.id === 'menu:biz')).toBe(true);
   });
 
   it.each([undefined, false, 'true'])('keeps real Checkout null evidence retryable for saved_method=%s', async savedMethod => {

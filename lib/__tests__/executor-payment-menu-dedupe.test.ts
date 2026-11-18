@@ -210,7 +210,7 @@ describe('Paid chat completion: one next-steps menu', () => {
     const { sender, casCalls } = await runCompletion({ payment_reference: 'PAY-1' });
     expect(sender.sendButtons).toHaveBeenCalledTimes(1);
     const menu = sender.sendButtons.mock.calls[0][0];
-    expect(menu.buttons.map((b: { id: string }) => b.id)).toContain('pc_options');
+    expect(menu.buttons.map((b: { id: string }) => b.id)).toContain('pc_options:biz-1');
     expect(menu.footer).toBe('Powered by Waaiio.com');
     expect(casCalls.some(c => c.p_current_step === 'post_completion')).toBe(true);
   });

@@ -205,7 +205,7 @@ describe('#1070 abandoned accepted card step', () => {
     m.paystackEligibility.mockResolvedValue({ eligible: false, reason: 'same_auth_already_saved' });
     await recoverTransactionFollowups(db);
     expect(m.buttons).toHaveBeenCalledTimes(1);
-    expect(m.buttons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my orders', 'menu']);
+    expect(m.buttons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my orders', `menu:${biz}`]);
     expect(tables.transaction_followups[0].state).not.toBe('waiting_card');
   });
 

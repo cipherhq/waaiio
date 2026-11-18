@@ -1,5 +1,5 @@
 import { isMenuSelectionToken } from './flows/capability-selection.flow';
-import { isSharedConversation, repeatSessionData, persistDirectoryEntry } from './flows/shared/navigation';
+import { isSharedConversation, repeatSessionData, persistDirectoryEntry, parseViewOptionsPostback, isNextStepsNavigation, viewOptionsPostback } from './flows/shared/navigation';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -156,6 +156,10 @@ export class BotService {
   ): Promise<void> {
     try {
     let text = messageText.trim();
+    // "menu:<businessId>" / "pc_options:<businessId>" behave exactly like the bare ids;
+    // the business is used only when no chat is open (see the stale next-steps branch).
+    const viewOptionsTap = parseViewOptionsPostback(text);
+    if (viewOptionsTap) text = viewOptionsTap.id;
     const _bt0 = Date.now();
     const _btimings: Record<string, number> = {};
     const _bmark = (l: string) => { _btimings[l] = Date.now() - _bt0; };
@@ -1957,6 +1961,15 @@ export class BotService {
             if (channel) sharedNumberCountry = channel.country_code;
           }
         }
+      }
+
+      // A next-steps button tapped after its chat expired (Owner bug 2026-11-18) is
+      // navigation, never a business search for its own label. Go back to the business
+      // the button names when it is one of this customer's businesses; otherwise offer
+      // the businesses they used before (the "home" picker).
+      if (!businessId && isNextStepsNavigation(text)) {
+        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, null, sharedConversation);
       }
 
       // Bot code routing + profile lookup in parallel (independent queries)
@@ -4109,6 +4122,13 @@ export class BotService {
         await this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance);
       };
 
+      // An old next-steps button (View Options, Book again, My orders…) is navigation,
+      // never a search for its own id.
+      if (isNextStepsNavigation(text)) {
+        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, session, sharedConversation);
+      }
+
       // Navigation commands → restart directory
       if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|directory|search)$/i.test(text)) {
         await this.deactivateSession(session.id);
@@ -5262,16 +5282,48 @@ export class BotService {
     pick: { businessId: string; botCode: string },
     session: BotSession | null,
     sharedConversation: { version: number } | null,
+    provenance: 'fuzzy' | 'returning_customer' = 'fuzzy',
   ): Promise<void> {
     if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
     if (sharedConversation) {
       return this.handleMessage(from, pick.botCode, messageType, destinationPhone,
-        undefined, undefined, undefined, 'fuzzy', {
+        undefined, undefined, undefined, provenance, {
           conversationVersion: sharedConversation.version, businessId: pick.businessId,
         });
     }
     if (session) await this.deactivateSession(session.id);
-    return this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, 'fuzzy', undefined, true);
+    return this.handleMessage(from, pick.botCode, messageType, destinationPhone, pick.businessId, undefined, undefined, provenance, undefined, true);
+  }
+
+  /**
+   * A next-steps button tapped with no business chat open (Owner bug 2026-11-18).
+   * Goes back to the business the button names when it is one of this customer's
+   * past businesses; otherwise to the past-business picker ("home"). Never searches.
+   */
+  private async resumeStaleNextSteps(
+    from: string, messageType: string, destinationPhone: string | undefined,
+    namedBusinessId: string | undefined, userId: string | null,
+    directorySession: BotSession | null,
+    sharedConversation: { version: number } | null,
+  ): Promise<void> {
+    if (namedBusinessId) {
+      const owner = (await this.findReturningCustomerBusinesses(from, userId, null)).find(b => b.id === namedBusinessId);
+      // An open directory session is closed with the selection, as a directory pick does.
+      if (owner && directorySession && sharedConversation) {
+        if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+        return this.handleMessage(from, owner.bot_code, messageType, destinationPhone,
+          undefined, undefined, undefined, 'returning_customer', {
+            id: directorySession.id, version: directorySession.version ?? 0,
+            conversationVersion: sharedConversation.version, businessId: owner.id,
+          });
+      }
+      if (owner) {
+        return this.enterExactDirectoryMatch(from, messageType, destinationPhone,
+          { businessId: owner.id, botCode: owner.bot_code }, directorySession, sharedConversation, 'returning_customer');
+      }
+    }
+    if (directorySession) await this.deactivateSession(directorySession.id);
+    return this.handleMessage(from, 'home', messageType, destinationPhone);
   }
 
   private async createDirectorySession(
@@ -5443,7 +5495,7 @@ export class BotService {
     const buttons = [
       // My Account needs a customer profile, which a session with a user has.
       ...(session.user_id ? [{ id: 'my account', title: getFlowCopy(lang, 'account.title') }] : []),
-      { id: 'menu', title: getFlowCopy(lang, 'nav.view_options') },
+      { id: viewOptionsPostback('menu', session.business_id), title: getFlowCopy(lang, 'nav.view_options') },
       ...(shared ? [{ id: 'directory', title: 'Search directory' }] : []),
     ];
     await this.messageSender.sendButtons({

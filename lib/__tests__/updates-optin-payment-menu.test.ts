@@ -172,7 +172,7 @@ describe('Stage 3 payment menu: updates opt-in', () => {
       from: '+234123', text: prompt.buttons[1].id, messageType: 'button', channelId: 'ch-1',
     });
     expect(mockButtons).toHaveBeenCalledTimes(2);
-    expect(mockButtons.mock.calls[1][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', 'menu']);
+    expect(mockButtons.mock.calls[1][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', `menu:${BIZ}`]);
     expect(consentDb.tables.customer_consents).toEqual([]);
   });
 
@@ -181,7 +181,7 @@ describe('Stage 3 payment menu: updates opt-in', () => {
     setupDb(); setupRpc([]);
     await confirm();
     expect(mockList).not.toHaveBeenCalled();
-    expect(mockButtons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', 'menu']);
+    expect(mockButtons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['my bookings', `menu:${BIZ}`]);
   });
 
   it('unsubscribed from the business → no opt-in', async () => {
