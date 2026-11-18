@@ -402,7 +402,9 @@ describe('#731: actual BookingsPage', () => {
     fireEvent.click(row('table-one'));
     await waitFor(() => expect(pageFixture.reads.some(r => r.table === 'payments')).toBe(true));
     expect(screen.queryByRole('button', { name: 'Reschedule' })).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
+    // The only request allowed is the drawer's confirmation-link check (#1121); no reschedule or availability call.
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(urls.filter(url => url !== '/api/customer-links/resend')).toEqual([]);
   });
 
   it('tab switch resets the existing client pagination without losing table rows', async () => {

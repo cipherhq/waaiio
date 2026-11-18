@@ -1,7 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const f = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock('@/lib/adminApi', () => ({ adminApiGet: f.get }));
+// adminApiFetch/adminJson serve the order's confirmation-link check (customer-link-actions.test.tsx covers it).
+vi.mock('@/lib/adminApi', () => ({
+  adminApiGet: f.get,
+  adminApiFetch: async () => new Response(JSON.stringify({ link: 'https://app.example.test/api/receipts/image?ref=X', canEmail: false, reason: 'No customer email on file.', emailHint: null })),
+  adminJson: async (res: Response) => res.json(),
+}));
 import Orders from '@/pages/Orders';
 const order = { id: '11111111-1111-4111-8111-111111111111', business_id: 'business', user_id: 'customer', business_name: 'Test store', customer_name: 'Test Customer', customer_email: 'test@example.invalid', status: 'confirmed', total_amount: 125, shipping_cost: 25, delivery_phone: '+12025550123', currency: 'USD', items_count: 1, created_at: '2026-11-11T12:00:00Z' };
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });

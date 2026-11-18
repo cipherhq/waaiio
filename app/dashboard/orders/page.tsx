@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
+import { CustomerLinkActions } from '@/components/dashboard/CustomerLinkActions';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -410,6 +411,11 @@ export default function OrdersPage() {
 
           {/* Status, Tracking & Actions */}
           <div className="space-y-4">
+            <div className="rounded-xl border border-gray-100 bg-white p-6">
+              <h2 className="text-sm font-semibold text-gray-900">Order confirmation link</h2>
+              <p className="mb-3 mt-1 text-xs text-gray-500">Email it to the customer, or copy it to share.</p>
+              <CustomerLinkActions kind="order" id={selectedOrder.id} />
+            </div>
             <div className="rounded-xl border border-gray-100 bg-white p-6">
               <h2 className="text-sm font-semibold text-gray-900">Status</h2>
               <div className="mt-3">

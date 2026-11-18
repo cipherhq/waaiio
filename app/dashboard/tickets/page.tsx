@@ -7,6 +7,7 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
 import { sortTime, useTableSort } from '@/lib/table-sort';
+import { CustomerLinkActions } from '@/components/dashboard/CustomerLinkActions';
 
 interface TicketRow {
   id: string;
@@ -322,6 +323,11 @@ export default function TicketsPage() {
                   : '—'}
               </span>
             </div>
+          </div>
+
+          <div className="mt-4 border-t border-gray-100 pt-4">
+            <p className="mb-2 text-xs font-medium text-gray-500">Send the customer their ticket link</p>
+            <CustomerLinkActions kind="ticket" id={selected.id} />
           </div>
 
           {selected.status === 'valid' && (

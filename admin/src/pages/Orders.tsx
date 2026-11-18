@@ -3,6 +3,7 @@ import { adminApiGet } from '@/lib/adminApi';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
+import { CustomerLinkActions } from '@/components/CustomerLinkActions';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { SortableTh } from '@/components/SortableTh';
 import { sortTime, useTableSort } from '@/lib/tableSort';
@@ -322,6 +323,11 @@ export default function Orders() {
                 </div>
               </div>
             )}
+
+            <div className="mt-4 rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Confirmation link</p>
+              <CustomerLinkActions kind="order" id={selected.id} />
+            </div>
 
             {selected.notes && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">

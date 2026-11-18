@@ -10,6 +10,7 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { BookingCancelConfirmation, type CancellationBooking } from '@/components/dashboard/BookingCancelConfirmation';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
+import { CustomerLinkActions } from '@/components/dashboard/CustomerLinkActions';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -1352,6 +1353,14 @@ export default function BookingsPage() {
                 {selected.guest_phone && <p className="text-sm text-gray-600">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-600">{selected.guest_email}</p>}
               </div>
+
+              {/* Confirmation link (bookings only; stays have no customer page yet) */}
+              {!selected._isReservation && (
+                <div className="rounded-lg border border-gray-100 p-4">
+                  <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Confirmation link</h3>
+                  <CustomerLinkActions kind="booking" id={selected.id} />
+                </div>
+              )}
 
               {/* Client intake (#963): service bookings only */}
               {!selected._isReservation && (
