@@ -1,0 +1,379 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "character varying(200)"
+   },
+   "after_sha256": "387ce80a562b69811dcbd1f81f0699338e33bd26002b10d2f6b1d89393dc266c",
+   "identity": "column:public.business_bank_accounts.account_name",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "\nCASE\n    WHEN (length((account_number)::text) > 4) THEN \"right\"((account_number)::text, 4)\n    WHEN (account_number IS NOT NULL) THEN ''::text\n    ELSE NULL::text\nEND",
+    "generated": "s",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "f4926ee2ac33654d14828387a70745b5a6f832fa85fa38af85cf928426732061",
+   "identity": "column:public.business_bank_accounts.account_number_last4",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "character varying(10)"
+   },
+   "after_sha256": "93d8a831e2f9439b53caadf51465dd6ab9317e9d97552deaa62323b10563d179",
+   "identity": "column:public.business_bank_accounts.bank_code",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "character varying(100)"
+   },
+   "after_sha256": "c01ad798125dcba280a183be276c92e5b3c2946aba50989fb2778b5caf272dcb",
+   "identity": "column:public.business_bank_accounts.bank_name",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "81117ee283bece21968ce90f6dc6989010bded43f72ae51337c4b6899dece971",
+   "identity": "column:public.business_bank_accounts.business_id",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "f6b20cdd05b479116d7c6319f47ed8bb91d988c1a56b7a8701d5a8831b4eda70",
+   "identity": "column:public.business_bank_accounts.created_at",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "a339e7ae31fc4c21800b5bb6d2d9ab4ecbfbafc70b1b51c78b3d14b4b8ccb1e4",
+   "identity": "column:public.business_bank_accounts.id",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "true",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "boolean"
+   },
+   "after_sha256": "ce59db82fb187647aaced571b483d46834fad88b64b2c290ed1e89a944a45ebc",
+   "identity": "column:public.business_bank_accounts.is_active",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "true",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "boolean"
+   },
+   "after_sha256": "ce59db82fb187647aaced571b483d46834fad88b64b2c290ed1e89a944a45ebc",
+   "identity": "column:public.business_bank_accounts.is_default",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "f6b20cdd05b479116d7c6319f47ed8bb91d988c1a56b7a8701d5a8831b4eda70",
+   "identity": "column:public.business_bank_accounts.updated_at",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "character varying(20)"
+   },
+   "after_sha256": "40d02cab6b8cb80fa351fd97c9ed594c9fb496b78200243f8141e5640a0e5394",
+   "identity": "column:public.payout_accounts.account_number",
+   "operation": "modify"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     }
+    ],
+    "default": "\nCASE\n    WHEN (length((account_number)::text) > 4) THEN \"right\"((account_number)::text, 4)\n    WHEN (account_number IS NOT NULL) THEN ''::text\n    ELSE NULL::text\nEND",
+    "generated": "s",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "f4926ee2ac33654d14828387a70745b5a6f832fa85fa38af85cf928426732061",
+   "identity": "column:public.payout_accounts.account_number_last4",
+   "operation": "add"
+  },
+  {
+   "identity": "function:public.get_effective_commercial_config()",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "command": "DELETE",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "is_admin()",
+    "with_check": null
+   },
+   "after_sha256": "88d8ad0f4eff45ad4d6723451deba1bb286925a6147c808e91e00b5ae37e81c5",
+   "identity": "policy:public.admin_role_permissions.Admin deletes permissions",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "INSERT",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": null,
+    "with_check": "is_admin()"
+   },
+   "after_sha256": "748a4c359d8abc7fe904adb75dd5df89d2fb91ccdcd09b92dfc431ce3cac33dc",
+   "identity": "policy:public.admin_role_permissions.Admin inserts permissions",
+   "operation": "add"
+  },
+  {
+   "identity": "policy:public.admin_role_permissions.Admin manages permissions",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "command": "UPDATE",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "authenticated"
+    ],
+    "using": "is_admin()",
+    "with_check": "is_admin()"
+   },
+   "after_sha256": "77fb9777f1bbd65fe9e8447bd84f7aba5b979439a2cbbd42f583ffc99eeaafc8",
+   "identity": "policy:public.admin_role_permissions.Admin updates permissions",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "authenticated",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "966ec71f9f6797091d60c493a07bd26d66cad1ab902aec68e4d6b18b64b9cf3c",
+   "identity": "table:public.admin_role_permissions",
+   "operation": "modify"
+  }
+ ],
+ "migration": "549_admin_access_tightening.sql",
+ "migration_sha256": "fa99b995ac49b21e7f2e04cff78d99307567a2c9b28cb46556f9c23f3a0772f8",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

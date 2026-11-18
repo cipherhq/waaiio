@@ -6,7 +6,7 @@ const PAYOUT_COLUMNS = 'id, period_start, period_end, gross_amount, platform_fee
 
 // M446 permits these authenticated columns; do not use a service client or
 // provider account identifiers to explain a merchant's linked destination.
-const ACCOUNT_COLUMNS = 'id, business_id, gateway, bank_name, account_number';
+const ACCOUNT_COLUMNS = 'id, business_id, gateway, bank_name, account_number_last4';
 const NO_CONTEXT = 'No further reason recorded.';
 const REASONS: Record<string, string> = {
   cooling_period: 'A business cooling-period review was recorded.',
@@ -58,7 +58,7 @@ function statusExplanation(status: string, method: string | null): string {
 }
 type LinkedAccount = {
   id: string; business_id: string; gateway: string | null;
-  bank_name: string | null; account_number: string | null;
+  bank_name: string | null; account_number_last4: string | null;
 };
 function linkedDestination(account: LinkedAccount | undefined): string {
   if (!account) return 'Unavailable — no linked payout account details recorded.';
@@ -66,9 +66,10 @@ function linkedDestination(account: LinkedAccount | undefined): string {
     paystack: 'Paystack', stripe: 'Stripe', flutterwave: 'Flutterwave', square: 'Square', paypal: 'PayPal',
   };
   const provider = account.gateway && Object.hasOwn(providers, account.gateway) ? providers[account.gateway] : 'Provider';
-  const number = typeof account.account_number === 'string' ? account.account_number.trim() : '';
-  // Very short values must not expose the complete stored account number.
-  const masked = number ? '****' + (number.length > 4 ? number.slice(-4) : '') : '';
+  // M549: signed-in sessions read only the last four ('' when the stored number is
+  // four characters or fewer, so a very short number is never shown whole).
+  const last4 = account.account_number_last4;
+  const masked = typeof last4 === 'string' ? '****' + last4.trim() : '';
   return [provider, account.bank_name, masked || 'Bank details not recorded'].filter(Boolean).join(' · ');
 }
 

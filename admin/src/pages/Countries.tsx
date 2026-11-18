@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { loadCountries, invalidateCache, type CountryRow } from '@/lib/countries';
 import { logAudit } from '@/lib/auditLog';
 import { useAdminSession } from '@/components/AdminLayout';
@@ -651,7 +651,7 @@ export default function Countries() {
 }
 
 // Admin API helpers imported from canonical lib
-import { adminApiFetch, getAdminApiBase } from '@/lib/adminApi';
+import { adminApiFetch, adminApiGet, getAdminApiBase } from '@/lib/adminApi';
 
 function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [selectedCode, setSelectedCode] = useState('');
@@ -1256,7 +1256,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     defaultCostMinor: string;
   }>>({});
 
-  // Load current config via DB-authoritative RPC.
+  // Load current config via the admin server route (DB-authoritative version).
   // The save fully replaces the three messaging maps, so Save must only be possible after a
   // successful load for the current country list: never from a blank form built from a failed,
   // empty or out-of-order response (otherwise one save could erase every currency's settings).
@@ -1266,10 +1266,11 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     if (countries.length === 0) return;
     (async () => {
       try {
-        // D: Use get_effective_commercial_config() RPC — DB clock_timestamp(), not browser Date
-        const { data: rows, error: rpcErr } = await adminDb.rpc('get_effective_commercial_config');
+        // D: the admin-only server route picks the version by DB clock_timestamp(), not browser Date
+        const res = await adminApiGet('/api/admin/countries/messaging-config');
+        const loaded = res.ok ? await res.json().catch(() => null) as { version?: { id: string; config_snapshot: Record<string, unknown> } | null } | null : null;
         if (cancelled) return;
-        const ver = rpcErr ? null : (rows as { id: string; config_snapshot: Record<string, unknown> }[] | null)?.[0];
+        const ver = loaded?.version;
         if (!ver?.id || !ver.config_snapshot) {
           setError('Could not load the current messaging configuration. Reload the page before editing.');
           return;

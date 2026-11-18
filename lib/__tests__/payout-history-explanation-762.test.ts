@@ -10,7 +10,8 @@ type Row = Record<string, unknown>;
 type Result = { data: Row[] | null; count: number | null; error: { message: string } | null };
 type Read = { table: string; columns: string; filters: Array<[string, unknown]>; ids?: unknown[]; range?: number[] };
 const PAYOUT_COLUMNS = 'id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status, transfer_method, transfer_reference, notes, paid_at, created_at, payout_account_id, flags';
-const ACCOUNT_COLUMNS = 'id, business_id, gateway, bank_name, account_number';
+// M549: signed-in sessions have no SELECT on the full account number, only account_number_last4.
+const ACCOUNT_COLUMNS = 'id, business_id, gateway, bank_name, account_number_last4';
 const NO_CONTEXT = 'No further reason recorded.';
 function payout(overrides: Row = {}): Row {
   return {
@@ -44,7 +45,11 @@ class Database {
   rows(table: string) {
     if (table === 'businesses') return this.businesses;
     if (table === 'business_payouts') return this.payouts;
-    if (table === 'payout_accounts') return this.accounts;
+    // account_number_last4 as M549's generated column computes it.
+    if (table === 'payout_accounts') return this.accounts.map(row => {
+      const n = row.account_number as string | null;
+      return { ...row, account_number_last4: n === null || n === undefined ? null : n.length > 4 ? n.slice(-4) : '' };
+    });
     this.unexpected.push(table);
     throw new Error('Unexpected table');
   }
