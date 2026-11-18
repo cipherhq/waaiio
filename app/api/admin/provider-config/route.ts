@@ -6,7 +6,7 @@
  *   - save_provider_plan_refs(p_country_code, p_plan_refs JSONB, p_expected_version_id UUID, p_actor_id UUID)
  *   - switch_country_provider(p_country_code, p_new_gateway TEXT, p_expected_version_id UUID, p_actor_id UUID)
  *
- * CAS via UUID version from platform_config_versions (get_effective_commercial_config RPC).
+ * CAS via UUID version from platform_config_versions (get_effective_config RPC).
  *
  * Server-side provider preflight is MANDATORY before every save/switch:
  * - Paystack: exists, not archived, monthly, exact DB currency, exact DB tier price in minor units

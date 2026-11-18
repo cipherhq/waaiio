@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   role: 'admin', token: 'synthetic-old-token', fetch: vi.fn(), getSession: vi.fn(), setSession: vi.fn(),
-  countries: [] as any[], rpc: vi.fn(), writes: vi.fn(), version: 'synthetic-version-1',
+  countries: [] as any[], writes: vi.fn(), version: 'synthetic-version-1',
 }));
 vi.mock('@/lib/supabase', () => ({
   supabase: { auth: { getSession: h.getSession, setSession: h.setSession } },
-  adminDb: { rpc: h.rpc, from: h.writes },
+  adminDb: { from: h.writes },
 }));
 vi.mock('@/lib/countries', () => ({ loadCountries: async () => h.countries, invalidateCache: vi.fn() }));
 vi.mock('@/lib/auditLog', () => ({ logAudit: vi.fn() }));
@@ -25,6 +25,8 @@ const verified = () => json({ session: { access_token: 'synthetic-current-token'
 async function transport(url: string, init: RequestInit) {
   if (url.endsWith('/prepare')) return json({ stepUpId: 'synthetic-step', factorId: 'synthetic-factor', challengeId: 'synthetic-challenge' });
   if (url.endsWith('/verify')) return verified();
+  // M549: the messaging config loads from the admin route, not a browser RPC. None loaded here.
+  if (url.endsWith('/api/admin/countries/messaging-config') && init.method === 'GET') return json({ version: null });
   if (url.endsWith('/provider-config')) {
     const data = JSON.parse(String(init.body));
     return json({ version_id: data.action === 'get_version' ? h.version : 'synthetic-version-2' });
@@ -43,7 +45,7 @@ beforeEach(() => {
   h.fetch.mockReset().mockImplementation(transport);
   h.getSession.mockReset().mockImplementation(async () => session());
   h.setSession.mockReset().mockImplementation(async (value: { access_token: string }) => { h.token = value.access_token; return { error: null }; });
-  h.rpc.mockReset().mockResolvedValue({ data: [], error: null }); h.writes.mockReset();
+  h.writes.mockReset();
   vi.stubEnv('VITE_API_URL', 'https://synthetic.example.test'); vi.stubGlobal('fetch', h.fetch);
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -82,7 +84,7 @@ describe('#762 mounted Countries Stripe reference flow', () => {
     expect(h.setSession).toHaveBeenCalledWith({ access_token: 'synthetic-current-token', refresh_token: 'synthetic-refresh' });
     await screen.findByText('Plan refs saved successfully');
     expect(JSON.stringify(h.countries.map(c => c.pricing))).toBe(originalPricing); expect(h.writes).not.toHaveBeenCalled();
-    expect(h.rpc.mock.calls.every(([name]) => name === 'get_effective_commercial_config')).toBe(true);
+    expect(requests('/api/admin/countries/messaging-config').every(([, init]) => init.method === 'GET')).toBe(true);
   });
   it('omits untouched absent Stripe refs while saving valid other-provider refs', async () => {
     h.countries[0].pricing.growth.provider_plan_refs = { paystack: 'PLN_syntheticPro' };

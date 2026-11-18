@@ -22,8 +22,8 @@ function resourceOf(q: Query) {
   return '';
 }
 function good(resource: string, label: string): Result {
-  const data = resource === 'payout account' ? { id: label, gateway: 'paystack', bank_name: label + ' payout bank', account_name: label + ' owner', account_number: '123456789012', is_active: true }
-    : resource === 'bank account' ? { bank_name: label + ' direct bank', account_number: '998877665544', status: 'verified' }
+  const data = resource === 'payout account' ? { id: label, gateway: 'paystack', bank_name: label + ' payout bank', account_name: label + ' owner', account_number_last4: '9012', is_active: true }
+    : resource === 'bank account' ? { bank_name: label + ' direct bank', account_number_last4: '5544', status: 'verified' }
     : resource === 'service statistics' ? Array.from({ length: label === 'old' ? 9 : label === 'b' ? 2 : 1 }, (_, i) => ({ id: i, billing_type: 'recurring', is_featured: true }))
     : resource === 'services' ? [{ id: label, name: label + ' service', price: 25, duration_minutes: 30, is_active: true, status: 'published' }]
     : [{ id: label, name: label + ' product', price: 20, stock_quantity: 7, is_active: true }];
@@ -38,6 +38,8 @@ vi.mock('@/lib/supabase', () => {
       const resource = resourceOf(q);
       if (resource) {
         if (table === 'products' && q.columns.split(',').map(s => s.trim()).includes('stock')) throw new Error('Obsolete stock projection');
+        // M549: browser sessions have no SELECT on the full account number (permission denied in the database).
+        if (q.columns.split(',').map(s => s.trim()).some(c => c === 'account_number' || c === '*')) throw new Error('permission denied for column account_number');
         const id = String(q.filters.find(([key]) => key === 'business_id')?.[1]);
         return f.plans.get(resource + ':' + id)?.() ?? good(resource, id);
       }
