@@ -141,7 +141,8 @@ export default function Dashboard() {
           // Growth metrics
           adminQuery('businesses', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
           adminQuery('profiles', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
-          adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'in', value: ['suspended', 'cancelled'] }], count: 'exact' }),
+          // restaurant_status is pending/active/suspended; 'cancelled' is not a value and made this count fail (#1108 X4).
+          adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'suspended' }], count: 'exact' }),
         ]);
 
         // Group fees by currency via business country

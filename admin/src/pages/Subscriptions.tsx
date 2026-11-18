@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
+import { adminQuery } from '@/lib/adminQuery';
 import { Pagination } from '@/components/Pagination';
 import { SortableTh } from '@/components/SortableTh';
 import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
@@ -19,6 +20,7 @@ interface SubscriptionRecord {
   amount: number;
   currency: string | null;
   billing_interval: string | null;
+  /** From businesses.feature_trial_ends_at (M525): subscriptions has no trial column or 'trial' status (#1108 X4). */
   trial_ends_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
@@ -30,6 +32,19 @@ interface SubscriptionRecord {
   metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string | null;
+}
+
+// The Pro/Premium feature trial belongs to the business: businesses.feature_trial_ends_at
+// (M525), active only on the free tier, as isTrialActive in lib/capabilities/policy.ts.
+// businesses.trial_ends_at is the free messaging credit's clock, not the trial.
+function inTrial(s: { trial_ends_at: string | null; business_tier?: string }): boolean {
+  return s.business_tier === 'free' && !!s.trial_ends_at && new Date(s.trial_ends_at).getTime() > Date.now();
+}
+
+// subscriptions.billing_interval CHECK allows 'month' and 'year' (M215); the older
+// 'yearly'/'annual' spellings are kept for any legacy rows.
+function isYearly(interval: string | null): boolean {
+  return interval === 'year' || interval === 'yearly' || interval === 'annual';
 }
 
 interface AuditLogEntry {
@@ -201,7 +216,7 @@ export default function Subscriptions() {
 
       const { data: subData, error } = await adminDb
         .from('subscriptions')
-        .select('*, businesses(name, category, subscription_tier)')
+        .select('*, businesses(name, category, subscription_tier, feature_trial_ends_at)')
         .order('created_at', { ascending: false });
 
       if (error || !subData) {
@@ -212,16 +227,17 @@ export default function Subscriptions() {
 
         const bizIds = [...new Set((rawSubs || []).map(s => s.business_id).filter(Boolean))];
         const { data: businesses } = bizIds.length > 0
-          ? await adminDb.from('businesses').select('id, name, category, subscription_tier').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name, category, subscription_tier, feature_trial_ends_at').in('id', bizIds)
           : { data: [] };
 
-        const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category, subscription_tier: b.subscription_tier }]));
+        const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category, subscription_tier: b.subscription_tier, trial_ends_at: b.feature_trial_ends_at as string | null }]));
 
         const enriched: SubscriptionRecord[] = (rawSubs || []).map(s => ({
           ...s,
           business_name: bizMap.get(s.business_id)?.name || 'Unknown',
           business_category: bizMap.get(s.business_id)?.category || '—',
           business_tier: bizMap.get(s.business_id)?.subscription_tier || 'free',
+          trial_ends_at: bizMap.get(s.business_id)?.trial_ends_at ?? null,
         }));
 
         setSubscriptions(enriched);
@@ -234,6 +250,7 @@ export default function Subscriptions() {
             business_name: biz?.name || 'Unknown',
             business_category: biz?.category || '—',
             business_tier: biz?.subscription_tier || 'free',
+            trial_ends_at: biz?.feature_trial_ends_at ?? null,
           };
         });
 
@@ -295,11 +312,12 @@ export default function Subscriptions() {
     setTrialDays(7);
     setCancelReason('');
     setShowCancelConfirm(false);
-    adminDb
-      .from('capability_overrides')
-      .select('id', { count: 'exact', head: true })
-      .eq('business_id', selected.business_id)
-      .then(({ count }) => setSelectedOverrideCount(count ?? 0));
+    // capability_overrides has no SELECT grant for the browser client, so the count
+    // always showed 0; count it server-side (#1108 X3). A refusal shows nothing.
+    adminQuery('capability_overrides', {
+      select: 'id', count: 'exact',
+      filters: [{ column: 'business_id', op: 'eq', value: selected.business_id }],
+    }).then(res => setSelectedOverrideCount(res.error ? null : res.count ?? 0));
   }, [selected]);
 
   // ── Admin Actions ──
@@ -440,7 +458,8 @@ export default function Subscriptions() {
   const uniqueTiers = [...new Set(subscriptions.map(s => s.plan).filter(Boolean))].sort();
 
   const filtered = subscriptions.filter(s => {
-    if (statusFilter !== 'all' && s.status !== statusFilter) return false;
+    if (statusFilter === 'trial') { if (!inTrial(s)) return false; }
+    else if (statusFilter !== 'all' && s.status !== statusFilter) return false;
     if (tierFilter !== 'all' && s.plan !== tierFilter) return false;
     return true;
   });
@@ -458,14 +477,14 @@ export default function Subscriptions() {
   const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   const activeCount = subscriptions.filter(s => s.status === 'active').length;
-  const trialCount = subscriptions.filter(s => s.status === 'trial').length;
+  const trialCount = subscriptions.filter(inTrial).length;
 
   // MRR grouped by currency
   const mrrByCurrency: Record<string, number> = {};
   for (const s of subscriptions.filter(s => s.status === 'active')) {
     const cur = s.currency || 'NGN';
     const amt = Number(s.amount || 0);
-    const monthly = (s.billing_interval === 'yearly' || s.billing_interval === 'annual') ? amt / 12 : amt;
+    const monthly = isYearly(s.billing_interval) ? amt / 12 : amt;
     mrrByCurrency[cur] = (mrrByCurrency[cur] || 0) + monthly;
   }
 
@@ -484,7 +503,7 @@ export default function Subscriptions() {
     for (const s of activeSubs) {
       const cur = s.currency || 'NGN';
       const amt = Number(s.amount || 0);
-      const monthly = (s.billing_interval === 'yearly' || s.billing_interval === 'annual') ? amt / 12 : amt;
+      const monthly = isYearly(s.billing_interval) ? amt / 12 : amt;
       tierMrrByCurrency[cur] = (tierMrrByCurrency[cur] || 0) + monthly;
     }
     return {
@@ -492,14 +511,16 @@ export default function Subscriptions() {
       label: tierCatalog[tier].marketingName,
       total: subs.length,
       active: activeSubs.length,
-      trial: subs.filter(s => s.status === 'trial').length,
+      trial: subs.filter(inTrial).length,
       mrrByCurrency: tierMrrByCurrency,
     };
   });
 
   const trialConversionRate = (() => {
-    const everTrial = subscriptions.filter(s => s.trial_ends_at).length;
-    const converted = subscriptions.filter(s => s.trial_ends_at && s.status === 'active').length;
+    // Businesses whose trial is over (date passed, or upgraded, which ends it), and how many now pay.
+    const ended = subscriptions.filter(s => s.trial_ends_at && !inTrial(s));
+    const everTrial = ended.length;
+    const converted = ended.filter(s => s.status === 'active' && Number(s.amount || 0) > 0).length;
     return everTrial > 0 ? Math.round((converted / everTrial) * 100) : 0;
   })();
 
@@ -636,7 +657,7 @@ export default function Subscriptions() {
                       <td className="px-4 py-3 text-right font-medium text-gray-900">
                         {fmtCurrency(s.amount, s.currency || undefined)}
                         {s.billing_interval && (
-                          <span className="ml-1 text-xs text-gray-400">/{s.billing_interval === 'yearly' || s.billing_interval === 'annual' ? 'yr' : 'mo'}</span>
+                          <span className="ml-1 text-xs text-gray-400">/{isYearly(s.billing_interval) ? 'yr' : 'mo'}</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">

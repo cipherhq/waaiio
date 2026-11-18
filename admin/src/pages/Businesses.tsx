@@ -215,9 +215,10 @@ export default function Businesses() {
     if (error || !Array.isArray(data)) throw new Error('Products unavailable');
     return data;
   });
-  const bankResource = useBusinessResource<{ bank_name: string | null; account_number: string | null; status: string } | null>(selectedId, async id => {
-    const { data, error } = await adminDb.from('business_bank_accounts').select('bank_name, account_number, status')
-      .eq('business_id', id).limit(1).maybeSingle();
+  const bankResource = useBusinessResource<{ bank_name: string | null; account_number: string | null; is_active: boolean | null; is_default: boolean | null } | null>(selectedId, async id => {
+    // business_bank_accounts has is_active/is_default, not status; selecting status failed the whole read (#1108 X4).
+    const { data, error } = await adminDb.from('business_bank_accounts').select('bank_name, account_number, is_active, is_default')
+      .eq('business_id', id).order('is_default', { ascending: false }).limit(1).maybeSingle();
     if (error) throw error;
     return data;
   });
@@ -1131,7 +1132,7 @@ export default function Businesses() {
                       label="Account"
                       value={selectedBankAccount.account_number ? `****${selectedBankAccount.account_number.slice(-4)}` : '—'}
                     />
-                    <DetailRow label="Bank Account Status" value={selectedBankAccount.status} />
+                    <DetailRow label="Bank Account Status" value={`${selectedBankAccount.is_active ? 'Active' : 'Inactive'}${selectedBankAccount.is_default ? ' · Default' : ''}`} />
                   </>
                 ) : (
                   <p className="text-xs text-gray-400">No bank account configured</p>

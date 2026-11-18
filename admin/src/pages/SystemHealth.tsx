@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
+import { adminQuery } from '@/lib/adminQuery';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDateTime } from '@/lib/formatters';
 import { Activity, Database, CreditCard, MessageSquare, Server, CheckCircle, XCircle, Clock } from 'lucide-react';
@@ -112,6 +113,14 @@ export default function SystemHealth() {
     const stats: { table: string; count: number | null }[] = [];
     for (const t of tables) {
       try {
+        // customer_subscriptions has no admin read policy, so a browser count only saw the
+        // admin's own rows; count it server-side instead (#1108 X3).
+        if (t === 'customer_subscriptions') {
+          const res = await adminQuery(t, { select: 'id', count: 'exact' });
+          if (res.error) throw new Error(res.error);
+          stats.push({ table: t, count: readableCount(res.count) });
+          continue;
+        }
         const { count, error } = await adminDb.from(t).select('id', { count: 'exact', head: true });
         if (error) throw error;
         stats.push({ table: t, count: readableCount(count) });

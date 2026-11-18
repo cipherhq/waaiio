@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
+import { SortableTh } from '@/components/SortableTh';
+import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
@@ -186,7 +188,15 @@ export default function Broadcasts() {
 
   // History pagination
   const totalPages = Math.max(1, Math.ceil(broadcasts.length / perPage));
-  const pageItems = broadcasts.slice((page - 1) * perPage, page * perPage);
+  const { sorted, sortProps } = useTableSort(broadcasts, {
+    channel: b => b.channel,
+    audience: b => b.audience,
+    subject: b => b.subject,
+    recipients: b => sortNumber(b.recipient_count),
+    status: b => b.status,
+    date: b => sortTime(b.sent_at || b.created_at),
+  }, { onSortChange: () => setPage(1) });
+  const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
 
   return (
     <div>
@@ -335,12 +345,12 @@ export default function Broadcasts() {
                 <table className="w-full text-sm">
                   <thead className="border-b border-gray-100 bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Audience</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Subject</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Recipients</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Recorded Status</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Recorded Date</th>
+                      <SortableTh {...sortProps('channel')} className="px-4 py-3 text-left font-medium text-gray-500">Channel</SortableTh>
+                      <SortableTh {...sortProps('audience')} className="px-4 py-3 text-left font-medium text-gray-500">Audience</SortableTh>
+                      <SortableTh {...sortProps('subject')} className="px-4 py-3 text-left font-medium text-gray-500">Subject</SortableTh>
+                      <SortableTh {...sortProps('recipients')} className="px-4 py-3 text-left font-medium text-gray-500">Recipients</SortableTh>
+                      <SortableTh {...sortProps('status')} className="px-4 py-3 text-left font-medium text-gray-500">Recorded Status</SortableTh>
+                      <SortableTh {...sortProps('date')} className="px-4 py-3 text-left font-medium text-gray-500">Recorded Date</SortableTh>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">

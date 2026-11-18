@@ -142,10 +142,15 @@ export default function Orders() {
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
           <option value="all">All Statuses</option>
+          {/* order_status enum values (M002, M030, M094, M479); there is no 'completed' (#1108 X4). */}
+          <option value="draft">Draft</option>
           <option value="pending">Pending</option>
+          <option value="paid_pending_approval">Paid, awaiting approval</option>
           <option value="confirmed">Confirmed</option>
           <option value="processing">Processing</option>
-          <option value="completed">Completed</option>
+          <option value="shipped">Shipped</option>
+          <option value="ready">Ready</option>
+          <option value="delivered">Delivered</option>
           <option value="cancelled">Cancelled</option>
         </select>
         <select

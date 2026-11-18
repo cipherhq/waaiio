@@ -198,7 +198,10 @@ export default function Bookings() {
           <option value="all">All Statuses</option>
           <option value="pending">Pending</option>
           <option value="confirmed">Confirmed</option>
+          {/* bookings.status also has in_progress (M132) and no_show; they were reachable only under All (#1108). */}
+          <option value="in_progress">In progress</option>
           <option value="completed">Completed</option>
+          <option value="no_show">No-show</option>
           <option value="cancelled">Cancelled</option>
         </select>
         <select

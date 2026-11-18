@@ -33,6 +33,19 @@ vi.mock('@/lib/supabase', () => ({
     },
   },
 }));
+// customer_subscriptions is counted server-side through adminQuery (#1108 X3); the
+// same synthetic results and failure modes apply to it.
+vi.mock('@/lib/adminQuery', () => ({
+  adminQuery: async (table: string, options: { select?: string; count?: string }) => {
+    const scope = f.calls.length < 7 ? 'service' : 'stat';
+    f.calls.push({ table, columns: options.select || '', options: { count: options.count }, filters: [] });
+    if (f.pending) await f.pending;
+    const failure = f.failure?.table === table && f.failure.scope === scope ? f.failure.mode : null;
+    if (failure === 'unknown') return { data: null, count: undefined };
+    if (failure) return { data: null, error: 'Synthetic returned error' };
+    return { data: null, count: f.count ?? undefined };
+  },
+}));
 vi.mock('@/lib/formatters', () => ({ fmtDateTime: () => 'checked time' }));
 import SystemHealth from '@/pages/SystemHealth';
 const services = [

@@ -209,7 +209,9 @@ import SubscriptionsPage from '@/pages/Subscriptions';
 
 // ── Helpers ──
 
-function postCalls() { return fetchCalls.filter(c => c.method === 'POST'); }
+// Tier-change writes only. The Subscriptions detail also reads its capability-override
+// count through the /api/admin/query read proxy (POST), which is not a write (#1108).
+function postCalls() { return fetchCalls.filter(c => c.method === 'POST' && !c.url.endsWith('/api/admin/query')); }
 
 // ── Tests: Businesses page ──
 

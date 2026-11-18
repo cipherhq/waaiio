@@ -5,6 +5,17 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { channelChangeFailure, channelChangeOptions, channelChangeResponse, mutateChannelChange, safeChannelOperation } from '@/lib/admin-channel-change';
 
 export const OPTIONS = channelChangeOptions;
+
+// M496 (channel_change_approvals) is not installed everywhere yet (staging, #1108).
+// PostgreSQL reports a missing relation as 42P01; PostgREST's schema cache as PGRST205.
+const CHANNEL_CHANGES_NOT_INSTALLED = {
+  code: 'CHANNEL_CHANGES_NOT_INSTALLED',
+  error: 'Channel change requests are not set up on this environment yet.',
+} as const;
+function isMissingTable(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === '42P01' || code === 'PGRST205';
+}
 export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return channelChangeResponse(request, { error: 'Forbidden' }, 403);
@@ -16,6 +27,7 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false }).limit(100);
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
+    if (error && isMissingTable(error)) return channelChangeResponse(request, CHANNEL_CHANGES_NOT_INSTALLED, 503);
     if (error) throw error;
     const requests = (data || []).map(row => ({ ...row, verification_record: safeChannelOperation(row).verification_record }));
     return channelChangeResponse(request, { requests });

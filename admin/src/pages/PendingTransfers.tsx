@@ -213,6 +213,8 @@ export default function PendingTransfers() {
     { value: 'confirmed', label: 'Confirmed' },
     { value: 'rejected', label: 'Rejected' },
     { value: 'expired', label: 'Expired' },
+    // Most staging rows are cancelled and were reachable only under All (#1108).
+    { value: 'cancelled', label: 'Cancelled' },
   ];
 
   return (

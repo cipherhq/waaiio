@@ -26,6 +26,8 @@ const ACTION_OPTIONS = [
   { value: 'session_end', label: 'Session End' },
   { value: 'update_profile', label: 'Update Profile' },
   { value: 'update_settings', label: 'Update Settings' },
+  // Written by /api/admin/impersonate when View Dashboard issues a login link (#1108).
+  { value: 'login_as_token_generated', label: 'View Dashboard Link' },
 ];
 
 function summarizeChanges(log: ImpersonationLog): string {

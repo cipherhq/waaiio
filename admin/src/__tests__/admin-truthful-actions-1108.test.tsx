@@ -329,8 +329,10 @@ describe('X3: hidden reads come from admin read routes and failures are shown', 
 describe('Recurring payments: money actions stop pretending (out of scope for a server route)', () => {
   it('shows the actions disabled with an honest note and writes nothing', async () => {
     const { default: RecurringPayments } = await import('@/pages/RecurringPayments');
-    h.fixtures.customer_subscriptions = [{ id: ID, business_id: BIZ, customer_name: 'Ada', customer_phone: '234', status: 'active', amount: 5000, currency: 'NGN', interval: 'month', failure_count: 0, created_at: '2026-11-01T00:00:00Z' }];
-    h.fixtures.businesses = [{ id: BIZ, name: 'Gym' }];
+    // Rows now come from GET /api/admin/recurring (#1108 X3).
+    api = url => url.endsWith('/api/admin/recurring')
+      ? json({ records: [{ id: ID, business_id: BIZ, business_name: 'Gym', customer_name: 'Ada', customer_phone: '234', status: 'active', amount: 5000, currency: 'NGN', frequency: 'monthly', failure_count: 0, charge_count: 0, total_charged: 0, created_at: '2026-11-01T00:00:00Z' }] })
+      : json({}, 500);
     render(<RecurringPayments />);
     fireEvent.click((await screen.findAllByText('Ada')).find(e => e.closest('tr'))!);
     expect(await screen.findByText(/These actions are not available yet/)).toBeInTheDocument();

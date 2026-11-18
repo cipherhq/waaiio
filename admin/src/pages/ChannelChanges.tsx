@@ -49,6 +49,8 @@ export default function ChannelChanges() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
+  // Set when the server says the feature is switched off or not installed here.
+  const [unavailable, setUnavailable] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -62,8 +64,19 @@ export default function ChannelChanges() {
     setLoading(true);
     try {
       const res = await adminApiGet('/api/admin/channel-changes');
+      if (res.status === 503) {
+        // Not a failure to retry: the feature is off (flag) or M496 is not installed (#1108).
+        const body = await res.json().catch(() => ({}));
+        if (body.code === 'CHANNEL_OPERATIONS_UNAVAILABLE' || body.code === 'CHANNEL_CHANGES_NOT_INSTALLED') {
+          setUnavailable(body.error || 'Channel change requests are not available on this environment.');
+          setRequests([]);
+          setLoadError('');
+          return;
+        }
+      }
       if (!res.ok) throw new Error('Unable to load requests');
       setRequests((await res.json()).requests || []);
+      setUnavailable('');
       setLoadError('');
     } catch (cause) {
       setLoadError('Unable to load requests. Please retry.');
@@ -136,8 +149,9 @@ export default function ChannelChanges() {
   return <div className="space-y-6">
     <div><h1 className="text-2xl font-bold">Channel Change Requests</h1>
       <p className="text-sm text-gray-500">Recovery and shared replacement require two distinct admins. Approvals expire after five minutes. Existing WhatsApp chat history is not transferred.</p></div>
-    <button className={buttonClass} disabled={busy} onClick={() => { setShowCreate(!showCreate); setPreview(null); }}> {showCreate ? 'Close form' : 'Create Request'}</button>
-    {showCreate && <fieldset disabled={busy} className="border rounded-lg p-4 space-y-3">
+    {unavailable && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{unavailable}</p>}
+    {!unavailable && <button className={buttonClass} disabled={busy} onClick={() => { setShowCreate(!showCreate); setPreview(null); }}> {showCreate ? 'Close form' : 'Create Request'}</button>}
+    {showCreate && !unavailable && <fieldset disabled={busy} className="border rounded-lg p-4 space-y-3">
       <legend>New request</legend>
       <label className="block">Business ID<input className={fieldClass} value={form.business_id} onChange={e => setForm({ ...form, business_id: e.target.value })} /></label>
       <label className="block">Request type<select className={fieldClass} value={form.request_type} onChange={e => setForm({ ...form, request_type: e.target.value, target_action: e.target.value === 'shared_replacement' ? 'reassign_shared_channel' : 'transition_to_shared' })}>
@@ -174,7 +188,7 @@ export default function ChannelChanges() {
       <button className={buttonClass} disabled={!reviewed || busy} onClick={authorize}>Confirm with MFA</button>
       <button className={buttonClass} disabled={busy} onClick={() => setPreview(null)}>Dismiss preview</button>
     </section>}
-    {loading ? <p>Loading…</p> : loadError ? <div><p role="alert">{loadError}</p><button className={buttonClass} onClick={() => { setError(''); void refresh().catch(() => undefined); }}>Retry loading requests</button></div> : requests.length === 0 ? <p>No channel change requests.</p> : requests.map(req => {
+    {loading ? <p>Loading…</p> : unavailable ? null : loadError ? <div><p role="alert">{loadError}</p><button className={buttonClass} onClick={() => { setError(''); void refresh().catch(() => undefined); }}>Retry loading requests</button></div> : requests.length === 0 ? <p>No channel change requests.</p> : requests.map(req => {
       const open = ['pending', 'approved'].includes(req.status);
       const stale = Date.now() - new Date(req.requester_step_up_verified_at).getTime() >= 300000 || (req.approver_step_up_verified_at && Date.now() - new Date(req.approver_step_up_verified_at).getTime() >= 300000);
       return <article key={req.id} className="border rounded-lg p-4 space-y-3">
