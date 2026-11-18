@@ -1,7 +1,7 @@
 ## 2026-11-18 — Monthly platform-fee invoice job switched off
 
 - **Owner decisions (2026-11-18):** switch the monthly fee invoice off. The fee on direct bank transfer and cash stays ₦0 ("Not now").
-- **Why:** `app/api/cron/platform-fee-invoices` selected `is_direct_transfer` fees. Code sets that flag for `byo`/`connect` routing, whose Waaiio fee a split already collected, so the job would have billed merchants a second time. Real bank transfers record a ₦0 fee. The job also never succeeded: its end-date filter (`periodEnd.toISOString() + 'T23:59:59.999Z'`) is not a valid timestamp. Staging has 0 invoices.
+- **Why:** `app/api/cron/platform-fee-invoices` selected `is_direct_transfer` fees. Code sets that flag for `byo`/`connect` routing. On `byo` the reversed split already collected the Waaiio fee, so the job would have billed merchants a second time; on `connect` how the fee is collected is not shown in code. Real bank transfers record a ₦0 fee (cash has no separate route; rule 3 is not widened). The job's end-date filter (`periodEnd.toISOString() + 'T23:59:59.999Z'`) is not a valid timestamp, so its query errors before writing anything; staging has 0 invoices (production not checked).
 - **Change:**
   - `vercel.json` no longer schedules the job (previously `17 9 1 * *`).
   - The route code stays, with a comment pointing to the decision.
