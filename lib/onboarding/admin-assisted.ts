@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CountryCode } from '@/lib/constants';
 import { validateBusinessAuthorityInputs } from '@/lib/onboarding/validation';
 import { OnboardingProvisionError, provisionPendingBusiness } from '@/lib/onboarding/provision-business';
-import { CAPABILITY_IDS, CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
+import { CAPABILITY_IDS, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
 
 export interface AdminOnboardingInput {
   request_key: string;
@@ -55,9 +55,6 @@ export async function validateAdminOnboardingInput(service: SupabaseClient, raw:
   if (!['free', 'growth', 'business'].includes(input.intended_plan)) throw new Error('Starting plan is invalid');
   if (!['shared', 'dedicated', 'coexistence'].includes(input.whatsapp_method)) throw new Error('WhatsApp method is invalid');
   if (input.capabilities.some(capability => !CAPABILITY_IDS.includes(capability))) throw new Error('A capability is invalid');
-  if (input.capabilities.some(capability => !tierMeetsRequirement(input.intended_plan, CAPABILITY_TIER_REQUIREMENTS[capability]))) {
-    throw new Error('Selected capabilities exceed the intended plan');
-  }
 
   await validateBusinessAuthorityInputs(service, { country: input.country, category: input.category, phone: input.business_phone });
   if (input.owner_phone) await validateBusinessAuthorityInputs(service, { country: input.country, category: input.category, phone: input.owner_phone });
@@ -65,9 +62,12 @@ export async function validateAdminOnboardingInput(service: SupabaseClient, raw:
 }
 
 export async function provisionAdminBusiness(service: SupabaseClient, input: AdminOnboardingInput, userId: string, onboardingId: string) {
-  // Admin plan selection is intent, never entitlement. Only free-tier capabilities
-  // are materialized before the customer completes canonical paid activation.
-  const provisionedCapabilities = input.capabilities.filter(capability => tierMeetsRequirement('free', CAPABILITY_TIER_REQUIREMENTS[capability]));
+  // Admin plan selection is intent, never entitlement: the business is created
+  // on Free exactly like Get Started. Every selected capability is saved, as
+  // Get Started does; higher-plan ones run under the 14-day Pro/Premium trial
+  // (feature_trial_ends_at, set at insert) and are gated by the capability policy.
+  // An empty selection falls back to the category defaults.
+  const provisionedCapabilities = input.capabilities.length ? input.capabilities : undefined;
   const business = await provisionPendingBusiness(service, {
     ownerId: userId, name: input.business_name, city: input.city, state: input.state,
     zipCode: input.postcode, address: input.address, phone: input.business_phone,

@@ -1,4 +1,4 @@
-import { channelOperationsEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
+import { channelOperationsEnabled, firstSharedAssignmentEnabled, CHANNEL_OPERATIONS_UNAVAILABLE } from '@/lib/channels/operation-admission';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
@@ -12,7 +12,7 @@ import {
   getSharedChannelFallbackPolicy,
   isAssignedWhatsAppChannelReady,
 } from '@/lib/onboarding/whatsapp-readiness';
-import { CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
+import type { SubscriptionTier } from '@/shared/capabilities';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 import { logAdminAudit } from '@/lib/admin-audit';
 
@@ -22,7 +22,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const service = createServiceClient({ noStore: true });
   const body = await request.json();
   const action = String(body.action || '');
-  if (['ensure_shared_channel', 'retry'].includes(action) && !channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
+  // Shared-channel repair stays behind the broad switch. Retry re-provisions a
+  // new business, so it uses the same admission as create and Get Started.
+  if (action === 'ensure_shared_channel' && !channelOperationsEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
+  if (action === 'retry' && !channelOperationsEnabled() && !firstSharedAssignmentEnabled()) return NextResponse.json(CHANNEL_OPERATIONS_UNAVAILABLE, { status: 503 });
   const { id } = await params;
   const { data: onboarding, error } = await service.from('admin_onboarding_invites').select('*').eq('id', id).maybeSingle();
   if (error || !onboarding) return NextResponse.json({ error: 'Onboarding not found' }, { status: 404 });
@@ -407,11 +410,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     const intendedPlan = String(body.intended_plan || '') as SubscriptionTier;
     if (!['free', 'growth', 'business'].includes(intendedPlan)) return NextResponse.json({ error: 'Invalid intended plan' }, { status: 400 });
+    // Capabilities are kept whatever the plan: like Get Started, higher-plan
+    // ones run under the 14-day Pro/Premium trial and are gated at runtime.
     const stored = (onboarding.metadata as { input?: AdminOnboardingInput } | null)?.input;
-    const capabilities = (stored?.capabilities || []) as CapabilityId[];
-    if (capabilities.some(capability => !tierMeetsRequirement(intendedPlan, CAPABILITY_TIER_REQUIREMENTS[capability]))) {
-      return NextResponse.json({ error: 'The intended plan does not support the selected capabilities' }, { status: 400 });
-    }
     const metadata = { ...(onboarding.metadata || {}), input: { ...stored, intended_plan: intendedPlan } };
     const { error: updateError } = await service.from('admin_onboarding_invites').update({ intended_plan: intendedPlan, metadata })
       .eq('id', onboarding.id).eq('status', onboarding.status);
