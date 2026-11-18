@@ -433,7 +433,7 @@ export default function Finance() {
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-3">Platform</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard label="Platform Fees Earned" value={formatMultiCurrency(metrics.platformFeesByCurrency)} color="green" />
-          <MetricCard label="Fees on merchant-held payments (billed by monthly invoice)" value={formatMultiCurrency(metrics.directTransferFeesByCurrency)} color="indigo" />
+          <MetricCard label="Fees on merchant-held payments (not deducted from payouts)" value={formatMultiCurrency(metrics.directTransferFeesByCurrency)} color="indigo" />
           <MetricCard label="Gateway Revenue" value={formatMultiCurrency(metrics.gatewayFeesByCurrency)} color="blue" />
           <MetricCard label="Payouts Owed" value={formatMultiCurrency(metrics.payoutsOwedByCurrency)} color="yellow" />
           <MetricCard label="Paid Out" value={formatMultiCurrency(metrics.paidOutByCurrency)} color="green" />

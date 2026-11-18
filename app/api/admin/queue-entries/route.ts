@@ -9,8 +9,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { adminPreflight, adminResponder, businessNames } from '@/lib/admin-route';
 
 const METHODS = 'GET, OPTIONS';
-// queue_entries.status CHECK (M018)
-const STATUSES = new Set(['waiting', 'serving', 'completed', 'no_show']);
+// queue_entries.status CHECK (M018, widened by M316)
+const STATUSES = new Set(['waiting', 'serving', 'completed', 'no_show', 'cancelled']);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function OPTIONS(request: NextRequest) {

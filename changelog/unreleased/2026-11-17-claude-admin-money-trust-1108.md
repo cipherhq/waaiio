@@ -4,7 +4,7 @@
 - **Finance** (`admin/src/pages/Finance.tsx`):
   - "Active Paid Subscribers" and ARPU count paid plans only (`amount > 0`).
   - Payouts use their own `business_payouts.currency`; legacy rows without one still use the business country.
-  - "Direct Transfer Revenue" is relabelled "Fees on merchant-held payments (billed by monthly invoice)".
+  - "Direct Transfer Revenue" is relabelled "Fees on merchant-held payments (not deducted from payouts)". These are fees on payments the merchant received directly (own gateway, Connect, bank transfer); depending on the route they are collected by the split or by the monthly invoice.
 - **Audit log (X1)**: new `POST /api/admin/audit` (service role, any platform role, actor is always the verified admin, rows marked `source: 'admin_panel'`). `admin/src/lib/auditLog.ts` calls it, returns `{ ok, error }`, and on failure shows `AuditFailureNotice` (in `AdminLayout`) instead of dropping the entry.
 - **Admin writes (X2)**: these now go through role-checked `/api/admin/*` routes that use the service client, report 404/409 when no row changed, and audit:
   - Campaigns save: `campaigns/[id]` (admin).

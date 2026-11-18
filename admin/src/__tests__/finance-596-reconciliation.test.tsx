@@ -342,10 +342,10 @@ describe('#682 Finance: subscriptions query selects plan column', () => {
     expect(screen.getByText('Avg Revenue Per Subscriber').parentElement!).toHaveTextContent('39,999');
   });
 
-  it('labels merchant-held fees as billed by monthly invoice, not revenue (#1108)', async () => {
+  it('labels merchant-held fees as not deducted from payouts, not revenue (#1108)', async () => {
     setSource('businesses', { data: businesses, error: null });
     render(<Finance />);
-    expect(await screen.findByText('Fees on merchant-held payments (billed by monthly invoice)')).toBeInTheDocument();
+    expect(await screen.findByText('Fees on merchant-held payments (not deducted from payouts)')).toBeInTheDocument();
     expect(screen.queryByText('Direct Transfer Revenue')).not.toBeInTheDocument();
   });
 

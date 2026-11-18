@@ -131,7 +131,8 @@ export default function Broadcasts() {
         setResult('The API did not acknowledge this submission. No history record was saved. Check its outcome before sending again; resubmission is blocked on this page.');
         return;
       }
-      const failedCount = recipientCount - acceptedCount;
+      // Use the API's own counts: it removes duplicate addresses before sending.
+      const failedCount = typeof acknowledgement?.failed === 'number' ? acknowledgement.failed : recipientCount - acceptedCount;
       recipientCount = acceptedCount;
       accepted = true;
       const { error } = await adminDb.from('admin_broadcasts').insert({

@@ -123,8 +123,14 @@ describe('POST /api/admin/audit (X1)', () => {
     }]);
   });
 
+  it.each(['country.update', 'site_announcement_updated', 'edit_campaign'])('accepts the action names existing pages send (%s)', async action => {
+    as('admin');
+    expect((await audit.POST(req('/api/admin/audit', 'POST', { action, entity_type: 'country', entity_id: 'NG' }))).status).toBe(200);
+  });
+
   it.each([
     [{ action: 'Bad Action', entity_id: ID }],
+    [{ entity_id: ID }],
     [{ action: 'x'.repeat(51), entity_id: ID }],
     [{ action: 'ok', entity_id: ID, details: ['not', 'an', 'object'] }],
     [{ action: 'ok', entity_id: ID, details: { big: 'x'.repeat(9000) } }],
@@ -433,6 +439,8 @@ describe('X3 read routes', () => {
     expect(body.entries.map((e: { id: string }) => e.id)).toEqual([ID]);
     expect((await queue.GET(req('/api/admin/queue-entries', 'GET'))).status).toBe(400);
     expect((await queue.GET(req('/api/admin/queue-entries?date=2026-11-17&status=gone', 'GET'))).status).toBe(400);
+    // M316 added 'cancelled'; the page offers it as a filter.
+    expect((await queue.GET(req('/api/admin/queue-entries?date=2026-11-17&status=cancelled', 'GET'))).status).toBe(200);
     m.db.failReads.add('queue_entries');
     expect((await queue.GET(req('/api/admin/queue-entries?date=2026-11-17', 'GET'))).status).toBe(500);
   });

@@ -246,7 +246,7 @@ export default function Tickets() {
               {pageItems.map(ticket => (
                 <tr
                   key={ticket.id}
-                  onClick={() => setSelected(ticket)}
+                  onClick={() => { setSelected(ticket); setCancelError(null); }}
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">{ticket.ticket_code}</td>

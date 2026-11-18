@@ -12,8 +12,9 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logAdminAudit } from '@/lib/admin-audit';
 import { adminPreflight, adminRequestIp, adminResponder, readJsonObject, UUID_RE } from '@/lib/admin-route';
 
-// admin_audit_logs.action and entity_type are VARCHAR(50).
-const NAME_RE = /^[a-z][a-z0-9_]{0,49}$/;
+// admin_audit_logs.action and entity_type are VARCHAR(50). Dots are allowed for
+// existing names such as Countries' `country.update`.
+const NAME_RE = /^[a-z][a-z0-9_.]{0,49}$/;
 const MAX_DETAILS_BYTES = 8_000;
 
 export async function OPTIONS(request: NextRequest) {

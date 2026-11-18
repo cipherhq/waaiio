@@ -87,6 +87,23 @@ describe('Broadcast submission and recorded history (#762)', () => {
     expect(screen.getByRole('status')).toHaveTextContent('not confirmation of recipient delivery');
   });
 
+  it('records the accepted count and reports a partial send using the API counts (#1108)', async () => {
+    mocks.fetch.mockResolvedValue(reply({ success: false, accepted: 1, failed: 1, total: 2 }));
+    compose();
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('API accepted 1 of 2 separate emails; 1 were not accepted'));
+    expect(mocks.insert).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipient_count: 1 }));
+  });
+
+  it('does not report duplicates the API removed as failures (#1108)', async () => {
+    mocks.profiles.mockResolvedValue({ data: [{ email: 'one@example.com' }, { email: 'ONE@example.com' }], error: null });
+    mocks.fetch.mockResolvedValue(reply({ success: true, accepted: 1, failed: 0, total: 1 }));
+    compose();
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('API acknowledged submission for 1 recipient(s)'));
+    expect(mocks.insert).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipient_count: 1 }));
+  });
+
   it.each([
     ['non-2xx', () => Promise.resolve(reply({ success: true }, 500)), 'did not acknowledge'],
     ['failed body', () => Promise.resolve(reply({ success: false })), 'did not acknowledge'],
