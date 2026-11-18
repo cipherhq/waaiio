@@ -11,10 +11,14 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: NextRequest) {
+  // Echo the admin origin (admin or admin-staging). With null the header is
+  // empty and the browser blocks the response, so View Dashboard never opened.
+  const cors = adminCorsHeaders(request.headers.get('origin'));
+
   // Impersonation is admin-only — support role cannot impersonate businesses
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: adminCorsHeaders(null) });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
 
   const supabase = createServiceClient();
@@ -23,7 +27,7 @@ export async function POST(request: NextRequest) {
   const { business_id, stepUpId } = body;
 
   if (!business_id) {
-    return NextResponse.json({ error: 'Missing business_id' }, { status: 400, headers: adminCorsHeaders(null) });
+    return NextResponse.json({ error: 'Missing business_id' }, { status: 400, headers: cors });
   }
 
   // SEC-005 Layer 4: Consume operation-bound step-up authorization
@@ -31,7 +35,7 @@ export async function POST(request: NextRequest) {
     await consumeStepUp(admin, stepUpId, 'impersonate', business_id, { business_id });
   } catch (err) {
     const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
-    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403, headers: adminCorsHeaders(null) });
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403, headers: cors });
   }
 
   // Verify the business exists
@@ -42,7 +46,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!business) {
-    return NextResponse.json({ error: 'Business not found' }, { status: 404, headers: adminCorsHeaders(null) });
+    return NextResponse.json({ error: 'Business not found' }, { status: 404, headers: cors });
   }
 
   try {
@@ -63,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       logger.error('Failed to create impersonation token:', insertError.message);
-      return NextResponse.json({ error: 'Failed to create token' }, { status: 500, headers: adminCorsHeaders(null) });
+      return NextResponse.json({ error: 'Failed to create token' }, { status: 500, headers: cors });
     }
 
     // Log to impersonation_logs
@@ -79,9 +83,9 @@ export async function POST(request: NextRequest) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
     const url = `${appUrl}/dashboard/impersonate?token=${token}`;
 
-    return NextResponse.json({ url }, { headers: adminCorsHeaders(null) });
+    return NextResponse.json({ url }, { headers: cors });
   } catch (error) {
     logger.error('Impersonate token error:', (error as Error).message);
-    return NextResponse.json({ error: 'Failed to generate impersonation token' }, { status: 500, headers: adminCorsHeaders(null) });
+    return NextResponse.json({ error: 'Failed to generate impersonation token' }, { status: 500, headers: cors });
   }
 }

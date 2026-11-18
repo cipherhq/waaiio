@@ -1,6 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
+
+type TurnstileApi = {
+  render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+  reset: (widgetId?: string) => void;
+  remove: (widgetId: string) => void;
+};
+type TurnstileWindow = { turnstile?: TurnstileApi; onDemoTurnstileLoad?: () => void };
 
 const INDUSTRIES = [
   'Concierge',
@@ -42,6 +51,46 @@ export default function DemoForm() {
   const [form, setForm] = useState<FormData>(initial);
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const widgetIdRef = useRef<string | null>(null);
+  const formShown = status !== 'sent';
+
+  // Load the Turnstile widget if a site key is configured (same as the contact
+  // form). Re-renders when the form comes back via "Submit another request",
+  // because each token can be used only once.
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY || !formShown || !turnstileRef.current) return;
+    const w = window as unknown as TurnstileWindow;
+
+    const render = () => {
+      if (turnstileRef.current && w.turnstile && !widgetIdRef.current) {
+        widgetIdRef.current = w.turnstile.render(turnstileRef.current, {
+          sitekey: TURNSTILE_SITE_KEY,
+          callback: (token: string) => setTurnstileToken(token),
+          'expired-callback': () => setTurnstileToken(''),
+          theme: 'light',
+        });
+      }
+    };
+
+    let script: HTMLScriptElement | null = null;
+    if (w.turnstile) {
+      render();
+    } else {
+      w.onDemoTurnstileLoad = render;
+      script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onDemoTurnstileLoad';
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      script?.remove();
+      if (widgetIdRef.current) w.turnstile?.remove(widgetIdRef.current);
+      widgetIdRef.current = null;
+    };
+  }, [formShown]);
 
   const set = (field: keyof FormData) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
@@ -52,6 +101,13 @@ export default function DemoForm() {
     setStatus('sending');
     setErrorMsg('');
 
+    // If Turnstile is configured but no token, block submission
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      setStatus('error');
+      setErrorMsg('Please complete the verification check.');
+      return;
+    }
+
     try {
       const res = await fetch('/api/demo-request', {
         method: 'POST',
@@ -59,6 +115,7 @@ export default function DemoForm() {
         body: JSON.stringify({
           ...form,
           has_waba: form.has_waba === 'yes' ? true : form.has_waba === 'no' ? false : null,
+          turnstileToken: turnstileToken || undefined,
         }),
       });
 
@@ -69,9 +126,15 @@ export default function DemoForm() {
 
       setStatus('sent');
       setForm(initial);
+      setTurnstileToken('');
     } catch (err) {
       setStatus('error');
       setErrorMsg((err as Error).message);
+      // A token is single-use; get a fresh one for the next try.
+      if (widgetIdRef.current) {
+        (window as unknown as TurnstileWindow).turnstile?.reset(widgetIdRef.current);
+        setTurnstileToken('');
+      }
     }
   };
 
@@ -273,6 +336,9 @@ export default function DemoForm() {
           placeholder="Tell us about your use case, number of locations, or anything else..."
         />
       </div>
+
+      {/* Turnstile widget — only renders if site key is configured */}
+      {TURNSTILE_SITE_KEY && <div ref={turnstileRef} className="mt-2" />}
 
       {status === 'error' && (
         <p className="text-sm text-red-600">{errorMsg || 'Something went wrong. Please try again.'}</p>
