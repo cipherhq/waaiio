@@ -1368,7 +1368,8 @@ export class BotService {
         // Exact business-code match (same query as the restart logic below):
         // a code that is also an entry keyword belongs to the platform.
         const isBusinessCode = async (candidate: string): Promise<boolean> => {
-          const trimmed = candidate.trim();
+          // A scanned giving-category link ("CODE:giving:ref") counts as its business code.
+          const trimmed = (parseGivingCategoryPrefill(candidate)?.botCode ?? candidate).trim();
           if (!/^[a-z0-9-]{2,30}$/i.test(trimmed)) return false;
           const { data } = await this.supabase
             .from('businesses')

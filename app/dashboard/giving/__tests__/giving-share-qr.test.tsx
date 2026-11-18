@@ -54,7 +54,7 @@ describe('Giving page — category share options', () => {
     await waitFor(() => expect(screen.getByText('Tithe')).toBeTruthy());
 
     // One Share button: the inactive category has none.
-    const shareButtons = screen.getAllByRole('button', { name: 'Share' });
+    const shareButtons = screen.getAllByRole('button', { name: /^Share / });
     expect(shareButtons).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Copy Link' })).toBeNull();
 
@@ -66,6 +66,7 @@ describe('Giving page — category share options', () => {
     const qrBox = document.getElementById(`giving-qr-${TITHE}`)!;
     expect(qrBox).toBeTruthy();
     expect(qrBox.querySelector('canvas')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'QR code for giving to Tithe' })).toBe(qrBox);
     expect(screen.getByText(link)).toBeTruthy();
 
     // Copy Link copies the permanent link.
@@ -90,7 +91,7 @@ describe('Giving page — category share options', () => {
     click.mockRestore();
 
     // Share toggles closed again.
-    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Share Tithe' }));
     expect(screen.queryByRole('button', { name: 'Copy Link' })).toBeNull();
   });
 
@@ -99,7 +100,7 @@ describe('Giving page — category share options', () => {
     render(<GivingPage />);
     await waitFor(() => expect(screen.getByText('Tithe')).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Share Tithe' }));
     const panel = document.getElementById(`giving-qr-${TITHE}`)!.parentElement!.parentElement!;
     expect(within(panel).getByRole('button', { name: 'Download PNG' })).toBeTruthy();
   });

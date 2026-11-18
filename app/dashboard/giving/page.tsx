@@ -285,6 +285,8 @@ export default function GivingPage() {
                   <button
                     onClick={() => setShareOpenId(shareOpenId === cat.id ? null : cat.id)}
                     aria-expanded={shareOpenId === cat.id}
+                    aria-controls={`giving-share-${cat.id}`}
+                    aria-label={`Share ${cat.name}`}
                     className="text-xs text-brand hover:text-brand-600 font-medium"
                   >
                     Share
@@ -306,10 +308,10 @@ export default function GivingPage() {
               </div>
             </div>
             {cat.is_active && shareOpenId === cat.id && (
-              <div className="mt-3 rounded-lg border border-brand/20 bg-brand-50/30 p-3 space-y-2">
+              <div id={`giving-share-${cat.id}`} className="mt-3 rounded-lg border border-brand/20 bg-brand-50/30 p-3 space-y-2">
                 <p className="text-xs font-semibold text-brand uppercase">Share {cat.name}</p>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                  <div id={`giving-qr-${cat.id}`} className="shrink-0 self-start rounded bg-white p-1.5 shadow-sm">
+                  <div id={`giving-qr-${cat.id}`} role="img" aria-label={`QR code for giving to ${cat.name}`} className="shrink-0 self-start rounded bg-white p-1.5 shadow-sm">
                     <QRCodeCanvas value={link} size={120} level="H" />
                   </div>
                   <div className="flex-1 min-w-0">
