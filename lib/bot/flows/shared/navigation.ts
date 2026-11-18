@@ -9,6 +9,28 @@ export async function isSharedConversation(supabase: SupabaseClient, data: Recor
 }
 
 export const DIRECTORY_ACTION = { id: 'nav_directory', title: 'Search directory' };
+
+// "View Options" on a next-steps menu carries the business it belongs to, so a tap
+// after the chat has expired can go back to that business (Owner bug 2026-11-18).
+// Older menus sent the bare ids ('menu', 'pc_options'); both forms are accepted.
+const VIEW_OPTIONS_POSTBACK = /^(menu|pc_options):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const STALE_NEXT_STEPS_IDS = /^(menu|pc_options|pc_done|pc_again|pc_history)$/i;
+
+/** Button id for a next-steps "View Options" tap that names its business. */
+export function viewOptionsPostback(id: 'menu' | 'pc_options', businessId: string | null | undefined): string {
+  return businessId ? `${id}:${businessId}` : id;
+}
+
+/** Splits "menu:<businessId>" into the bare id and the business it names (unverified). */
+export function parseViewOptionsPostback(text: string): { id: string; businessId: string } | null {
+  const match = text.match(VIEW_OPTIONS_POSTBACK);
+  return match ? { id: match[1].toLowerCase(), businessId: match[2].toLowerCase() } : null;
+}
+
+/** A next-steps menu id: navigation, never something to search the directory for. */
+export function isNextStepsNavigation(text: string): boolean {
+  return STALE_NEXT_STEPS_IDS.test(text);
+}
 export const DIRECTORY_PROMPT = 'What would you like to find? Try *restaurants in Ikoyi* or *barbers in Lekki*. You can also enter a business name or code.';
 
 /** Preserve conversation authority and identity, but never copy an old payment or checkout. */

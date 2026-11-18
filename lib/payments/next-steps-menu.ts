@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
+import { viewOptionsPostback } from '@/lib/bot/flows/shared/navigation';
 
 /**
  * Next-steps menu for payments confirmed by the payment confirmation (Stage 3).
@@ -10,7 +11,7 @@ import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
  * customer to type ("my bookings", "menu", "directory", ...). A tap arrives as
  * that text, so the menu works whatever state the chat session is in.
  */
-export function buildPaymentNextStepsButtons(kind: string, shared: boolean, lang = 'en'): Array<{ id: string; title: string }> {
+export function buildPaymentNextStepsButtons(kind: string, shared: boolean, lang = 'en', businessId?: string): Array<{ id: string; title: string }> {
   // Titles come from the bot's fixed copy, the same labels as the in-chat menu.
   // "Payment history" and "Search directory" have no copy key and stay English,
   // as they do in the in-chat menu.
@@ -18,7 +19,8 @@ export function buildPaymentNextStepsButtons(kind: string, shared: boolean, lang
     : kind === 'giving' || kind === 'crowdfunding' ? { id: 'my giving', title: getFlowCopy(lang, 'post.my_giving') }
       : kind === 'payment' || kind === 'invoice' ? { id: 'history', title: 'Payment history' }
         : { id: 'my bookings', title: getFlowCopy(lang, 'post.my_bookings') };
-  const buttons = [history, { id: 'menu', title: getFlowCopy(lang, 'nav.view_options') }];
+  // "View Options" names its business so a tap after the chat expires can go back to it.
+  const buttons = [history, { id: viewOptionsPostback('menu', businessId), title: getFlowCopy(lang, 'nav.view_options') }];
   if (shared) buttons.push({ id: 'directory', title: 'Search directory' });
   return buttons;
 }

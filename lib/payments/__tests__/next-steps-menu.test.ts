@@ -29,6 +29,12 @@ describe('buildPaymentNextStepsButtons', () => {
     }
     expect(buildPaymentNextStepsButtons('scheduling', false, 'en').map(b => b.title)).toEqual(['My Bookings', 'View Options']);
   });
+
+  it('"View Options" names its business so a tap after the chat expires can go back to it', () => {
+    const biz = '10000000-0000-4000-8000-000000000001';
+    expect(buildPaymentNextStepsButtons('payment', true, 'en', biz).map(b => b.id))
+      .toEqual(['history', `menu:${biz}`, 'directory']);
+  });
 });
 
 function db(opts: { payment?: unknown; paymentError?: unknown; deliveries?: unknown; deliveryError?: unknown; throws?: boolean } = {}) {
