@@ -104,7 +104,10 @@ export async function GET(
 /**
  * POST /api/tickets/verify/[code]
  * Check in / mark ticket as used.
- * Enforces: event-day only, duplicate protection, rate limiting.
+ * Only the signed-in owner or an active team member of the event's business
+ * can check a ticket in. Guests check themselves in through the WhatsApp bot
+ * (lib/bot/handlers/ticket-checkin.ts), not here.
+ * Enforces: business staff auth, event-day only, duplicate protection, rate limiting.
  */
 export async function POST(
   req: NextRequest,
@@ -131,7 +134,7 @@ export async function POST(
   // Fetch ticket with event info
   const { data: ticket, error } = await supabase
     .from('event_tickets')
-    .select('id, status, scanned_at, scanned_by, guest_name, event:events!event_id(date, time, self_checkin_enabled, business_id)')
+    .select('id, status, scanned_at, scanned_by, guest_name, event:events!event_id(date, time, business_id)')
     .eq('ticket_code', code.toUpperCase())
     .single();
 
@@ -152,10 +155,12 @@ export async function POST(
     );
   }
 
-  // Self-checkin: if no business_id (guest scanning themselves), check if self-checkin is enabled
-  if (!businessId && !event?.self_checkin_enabled) {
+  // Check-in needs the signed-in owner or team of the event's business.
+  // The business_id in the body only scopes the scan; it is not proof of who is asking.
+  const isBusinessTeam = await isSignedInBusinessMember(req, supabase, event?.business_id);
+  if (!isBusinessTeam) {
     return NextResponse.json(
-      { success: false, error: 'Self check-in is not enabled for this event. Please check in at the door.' },
+      { success: false, error: 'Please sign in as staff of this business to check in tickets.' },
       { status: 403 },
     );
   }
