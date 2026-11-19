@@ -30,18 +30,20 @@ describe('canonical language catalog', () => {
     expect(new Set(catalogCodes).size).toBe(catalogCodes.length);
   });
 
-  it('certifies only English and Nigerian Pidgin after Slice 6 Gate 2', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('certifies English, Nigerian Pidgin, Yoruba and Igbo', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
     expect(
       LANGUAGE_CATALOG.filter(language => language.certified).map(language => language.code),
-    ).toEqual(['en', 'pcm']);
+    ).toEqual(['en', 'pcm', 'yo', 'ig']);
     expect(CERTIFIED_LANGUAGE_OPTIONS).toEqual([
       expect.objectContaining({ code: 'en', displayName: 'English' }),
       expect.objectContaining({ code: 'pcm', displayName: 'Nigerian Pidgin' }),
+      expect.objectContaining({ code: 'yo', displayName: 'Yoruba' }),
+      expect.objectContaining({ code: 'ig', displayName: 'Igbo' }),
     ]);
     expect(
       LANGUAGE_CATALOG.filter(language => !language.certified).map(language => language.code),
-    ).toEqual(['yo', 'ig', 'ha', 'tw', 'fr', 'es']);
+    ).toEqual(['ha', 'tw', 'fr', 'es']);
   });
 
   it('provides non-empty English display names and native names', () => {

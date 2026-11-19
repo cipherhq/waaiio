@@ -1,8 +1,8 @@
 export const LANGUAGE_CATALOG = [
   { code: 'en', displayName: 'English', nativeName: 'English', certified: true },
   { code: 'pcm', displayName: 'Nigerian Pidgin', nativeName: 'Naijá', certified: true },
-  { code: 'yo', displayName: 'Yoruba', nativeName: 'Yorùbá', certified: false },
-  { code: 'ig', displayName: 'Igbo', nativeName: 'Igbo', certified: false },
+  { code: 'yo', displayName: 'Yoruba', nativeName: 'Yorùbá', certified: true },
+  { code: 'ig', displayName: 'Igbo', nativeName: 'Igbo', certified: true },
   { code: 'ha', displayName: 'Hausa', nativeName: 'Hausa', certified: false },
   { code: 'tw', displayName: 'Twi', nativeName: 'Twi', certified: false },
   { code: 'fr', displayName: 'French', nativeName: 'Français', certified: false },

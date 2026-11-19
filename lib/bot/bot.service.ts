@@ -1,5 +1,6 @@
 import { isMenuSelectionToken } from './flows/capability-selection.flow';
 import { isSharedConversation, repeatSessionData, persistDirectoryEntry, parseViewOptionsPostback, isNextStepsNavigation, viewOptionsPostback } from './flows/shared/navigation';
+import { matchBookForAnswer } from './flows/shared/book-for-answer';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -4051,7 +4052,9 @@ export class BotService {
         .some(t => t.toLowerCase() === text.toLowerCase().trim())
     );
     const inputOwnedByStep = isPollOwned || isCampaignOwned ||
-      (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
+      (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim())) ||
+      // Yoruba typed answers, with or without tone marks (#1127)
+      (step === 'book_for_other' && matchBookForAnswer(text) !== null);
 
     if (!isFreeTextStepForKeywords && !inputOwnedByStep) {
       // Typed "updates" / "get updates" (Owner decision 2026-11-06, #591 Q6):

@@ -300,9 +300,11 @@ describe('561-G: capability menu labels', () => {
     expect(_FLOW_COPY_FOR_TESTS.ig['cap.appointment']).toBe('Debe Oge');
     expect(_FLOW_COPY_FOR_TESTS.ig['cap.ordering']).toBe('Nye Oda');
     expect(_FLOW_COPY_FOR_TESTS.ig['cap.ticketing']).toBe('Zụta Tiketi');
-    expect(_FLOW_COPY_FOR_TESTS.ig['cap.table_reservation']).toBe('Mee Ndoputa');
+    // ig table_reservation and waitlist changed 2026-11-18 (yo/ig certification): the old
+    // label meant "Make a Reservation" and the waitlist label was over the 20-char button limit.
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.table_reservation']).toBe('Debe Tebụl / Ebe');
     expect(_FLOW_COPY_FOR_TESTS.ig['cap.crowdfunding']).toBe('Kwado Mgbasa');
-    expect(_FLOW_COPY_FOR_TESTS.ig['cap.waitlist']).toBe('Soro na Ndepụta Ichere');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.waitlist']).toBe('Sonyere Ndepụta');
     expect(_FLOW_COPY_FOR_TESTS.ig['cap.queue']).toBe("Banye n'Ahịrị");
     expect(_FLOW_COPY_FOR_TESTS.yo['cap.crowdfunding']).toBe('Àtìlẹ́yìn Ìpolongo');
     expect(_FLOW_COPY_FOR_TESTS.yo['cap.giving']).toBe('Ṣa n owo');
@@ -356,7 +358,7 @@ describe('561-G: capability menu labels', () => {
 
   it('uncertified language falls back to English', () => {
     expect(getCapabilityLabel('ordering', 'shop', null, 'fr')).toBe('Place an Order');
-    expect(getCapabilityLabel('chat', 'shop', null, 'yo')).toBe('Chat with Us');
+    expect(getCapabilityLabel('chat', 'shop', null, 'ha')).toBe('Chat with Us');
   });
 
   it('no lang argument defaults to English (backward compat)', () => {
@@ -467,7 +469,7 @@ describe('561-G: ordering flow runtime', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-G: CERTIFIED_LANGUAGES unchanged', () => {
-  it('only en and pcm are certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('only en, pcm, yo and ig are certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 });

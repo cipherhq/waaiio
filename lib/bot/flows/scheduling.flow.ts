@@ -34,6 +34,7 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { resolveBusinessLocalNow, hasTableSlotLeftToday, addDaysToDateStr, filterSlotsAfterNow, type BusinessLocalNow } from './shared/table-same-day';
 import { parseTypedDate, isCalendarDate } from './shared/typed-date';
+import { matchBookForAnswer } from './shared/book-for-answer';
 import { openTimesOnDate, tableTimeInsideBusinessHours, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
 import { seatingGalleryMessages } from './table-reservation.flow';
 import {
@@ -2782,11 +2783,11 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-        const lower = input.toLowerCase().trim();
-        if (lower === 'for_myself' || lower === 'myself' || lower === 'me') {
+        const answer = matchBookForAnswer(input);
+        if (answer === 'myself') {
           return { valid: true, data: { book_for_other: false } };
         }
-        if (lower === 'for_other' || lower === 'someone else' || lower === 'other') {
+        if (answer === 'other') {
           return { valid: true, data: { book_for_other: true } };
         }
         return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.book_for_hint') };

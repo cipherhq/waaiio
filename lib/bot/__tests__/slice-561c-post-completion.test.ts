@@ -354,8 +354,8 @@ describe('561-C: escape hatch sends localized exit buttons', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-C: CERTIFIED_LANGUAGES unchanged', () => {
-  it('only en and pcm are certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('only en, pcm, yo and ig are certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 });
 
@@ -547,13 +547,13 @@ describe('561-C: production resolveHandlerCopyLang authority seam', () => {
     expect(lang).toBe('en');
   });
 
-  it('uncertified yo + entitled => English (production resolver)', async () => {
+  it('uncertified ha + entitled => English (production resolver)', async () => {
     const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
     const lang = await resolveHandlerCopyLang({
       supabase: mockSupabaseForLang({ tier: 'business' }), // business = all certified langs
       businessId: 'biz-1',
       userId: 'user-1',
-      sessionLanguage: 'yo',
+      sessionLanguage: 'ha',
     });
     expect(lang).toBe('en');
   });

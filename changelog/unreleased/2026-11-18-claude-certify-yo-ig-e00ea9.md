@@ -1,0 +1,38 @@
+## 2026-11-18 — Yoruba and Igbo certified: merchants can select them
+
+- **Owner decision (2026-11-18):** "Fix, test, then turn on" for Yoruba (`yo`) and Igbo (`ig`). Related: #515, #524, #561.
+- **Change:**
+  - `lib/bot/languages.ts`: `yo` and `ig` are `certified: true`. They now appear in `CERTIFIED_LANGUAGE_OPTIONS` (the AI Settings language checkboxes and the bot language picker), Business tier gets them automatically, and Growth can choose them as its 2 extra languages. Hausa, Twi, French and Spanish stay uncertified.
+  - `lib/bot/flows/flow-localization.ts`, yo and ig blocks only:
+    - 152 yo and 153 ig phrases that were still English are now translated: ordering, bank-transfer labels, greetings, language picker, receipts and docs, notifications, live chat, recurring, directory search.
+    - The open Owner review items are fixed: button and list-title lengths, the "updates" opt-in/confirm copy, `cap.table_reservation` ("Book Table / Section"), and date paging.
+    - Clear meaning errors are fixed. Yoruba used "ìpèdè" (dialect) for "booking"; it is now "ìfipamọ́". Yoruba "ẹbọ" (ritual sacrifice) is now "ọrẹ", and "tọ̀" (urinate) is now "tọ́" (correct). Igbo used "Ekweghị" (refused) for "cancelled"; it now uses "kagbuo". Igbo "Anataghị" ("payment/order NOT received") was shown after paying; it now says "Anatala". Igbo "nọọsụ" (nurse) for a stay is now "ebe ịnọ".
+    - Hints that say "tap" now quote the yo/ig button the customer sees, not the English label.
+    - In all, 442 yo and 305 ig values changed.
+  - **Owner native-speaker corrections (Yoruba, 2026-11-18):** applied as written, with standard tone marks: `payment.received_processing` ("A ti rí owó tí o san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ…"), `ordering.order_received` and `notification.catalog_order_received` ("A Ti Gba Ọjà Tí O Rà!"), `greeting.welcome_default` (now "…ràn yín lọ́wọ́…"), and `booking.book_for_hint` ("Tẹ *fún ara mi* tàbí *ẹlòmíràn*…"). Igbo is not reviewed yet and is unchanged.
+  - **Owner Yoruba word choices, second round (2026-11-18):** "booking" is now "ìforúkọsílẹ̀" everywhere (33 occurrences, replacing "ìfipamọ́"; the two saved-card lines keep "fipamọ́", meaning "save"). "Subscription" was also "ìforúkọsílẹ̀", so the Owner chose "ìsanwó lóòrèkóòrè": `account.subscriptions` is "Àwọn Ìsanwó Lóòrèkóòrè", and `recurring.not_found`, `recurring.cancel_failed` and `recurring.sub_not_found_retry` use it, so My Bookings and Subscriptions no longer share a word in the My Account menu. `menu.how_can_help`, `feedback.anything_else` and `greeting.welcome_default` use the Owner's "ràn yín" wording ("yín everywhere"; a test checks no yo phrase uses "ràn ẹ́/ọ́ lọ́wọ́"). `account.bookings_title` dropped "Rẹ" to stay within the 24-character list-title limit.
+  - **Owner polite-form pass (2026-11-18, "Polite yín everywhere"):** 211 yo phrases now address the customer in the polite plural. Subject *o* became *ẹ*, object *ọ/ọ́* became *yín*, *rẹ* (your) became *yín*, *tìrẹ* became *tiyín*, and *ìwọ* became *ẹ̀yin*. Unchanged: "Rárá o, ẹ ṣeun" (interjection), "kọ ọ́" ("write it"), *rẹ̀* (his/its), and the "Tẹ …" instructions. The impersonal "O dàbí pé" ("it seems") became "Ó dàbí pé ẹ fẹ́…". Earlier Owner lines follow the same rule ("tí ẹ san", "ìforúkọsílẹ̀ yín", "Tí Ẹ Rà"). Nothing went over the button or title limits. A test fails if a singular form comes back. Every line is listed (English | before | now) in the "Polite form pass" section of the phrase-list doc.
+  - Owner menu labels from `docs/translations/waaiio_option_labels_final.csv` are kept. Three exceptions:
+    - `cap.table_reservation` is a review item.
+    - yo `cap.waitlist`, `cap.waiver` and `cap.class_booking`, and ig `cap.waitlist`, were over the 20-character button limit and were shortened.
+    - yo `cap.crowdfunding` keeps its existing 18-character label; the CSV's 25-character label does not fit.
+  - `OWNER_REVIEW_ITEMS`: all yo/ig entries are removed (resolved).
+  - Typed commands (*Hi*, *cancel*, *menu*, *my orders*…), STOP/START, YES/NO, `*20 Dec*`, all `{placeholders}` and English directory search examples are kept as they were.
+- **Native check:** `docs/translations/yo-ig-certification-2026-11-18.md` lists every changed phrase (English | Yoruba | Igbo), with a "check these first" table. The wording is best-effort, written by Claude, and has not been checked by a native speaker.
+- **Also changes:** custom-flow date rows (`lib/bot/custom-flow/dates.ts`) now show yo/ig dates, e.g. "Àbámẹ́ta, 21 Oṣù Bélú", through the existing certified-language rule in `lib/bot/format-date.ts` (unchanged code); they are at most 23 characters. Booking date list rows (`scheduling.flow.ts`, country locale) and My Bookings (`my-bookings.ts`, hard-coded English) still show English dates, as before; localizing them would be a separate Owner decision.
+- **Typed-word hints:** ig `booking.book_for_hint` asked customers to type Igbo words the bot does not accept. It now keeps the English words *myself* / *someone else*. The yo hint asks for the Yoruba words *fún ara mi* / *ẹlòmíràn* (Owner), so the bot now accepts them: new `lib/bot/flows/shared/book-for-answer.ts` (`matchBookForAnswer`) is used by the `book_for_other` validate in `scheduling.flow.ts` and by the step-ownership check in `bot.service.ts`, so keyword routing does not take these words. It accepts the English words, the Yoruba words with or without tone marks, and the typed button labels ("Fún ara mi", "Fún ẹlòmíràn"). The test checks that every word a yo/ig hint asks for is accepted.
+- **Before deploy:** any stored yo/ig business or platform translation overrides (`bot_translation_overrides`, `bot_translation_platform_overrides`) start being served once yo/ig are certified; check staging and production for such rows first.
+- **Tests:**
+  - New `lib/bot/__tests__/certification-yo-ig.test.ts` checks:
+    - no English left in yo/ig;
+    - NFC text, with buttons ≤20, list titles ≤24 and menu labels ≤20, measured as the app slices titles (UTF-16 `.length`);
+    - placeholders, STOP/START, *updates* and *directory* are kept;
+    - hints quote the localized buttons;
+    - the menu, booking, ordering, payment with I've Paid, tickets, My Account and cancel journeys render through `getFlowCopy`/`fillFlowCopy`/`getCapabilityLabel` with no English;
+    - the bank-transfer block and buttons render in yo/ig;
+    - phrase-book text skips AI;
+    - detection, the Business-tier authority, and that no yo/ig review item is open.
+  - Updated 20 existing tests that pinned "only en and pcm are certified", or used yo/ig as the example of an uncertified language. They now use ha/tw.
+  - `slice-561g` pins the two changed ig Owner labels.
+- **Unchanged:** English and Pidgin copy, ha/tw/fr/es copy and status, language policy code, homepage language claims (they still advertise no African languages), migrations, payments.
+- **Could break:** yo/ig customers now see the phrase book as written, with no AI rewording. Any wording a native speaker rejects should be fixed in the code defaults, or as a platform override (`bot_translation_platform_overrides`).

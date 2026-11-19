@@ -91,7 +91,7 @@ describe('561-F: PCM (authorized Pidgin) date formatting', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-F: uncertified language fallback to English', () => {
-  const uncertified = ['fr', 'yo', 'ig', 'ha', 'tw', 'es'];
+  const uncertified = ['fr', 'ha', 'tw', 'es'];
 
   for (const lang of uncertified) {
     it(`${lang} (uncertified) falls back to English date output`, () => {
@@ -325,7 +325,7 @@ describe('561-F: ticket path country resolution', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('561-F: CERTIFIED_LANGUAGES unchanged', () => {
-  it('only en and pcm are certified', () => {
-    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+  it('only en, pcm, yo and ig are certified', () => {
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm', 'yo', 'ig']);
   });
 });
