@@ -207,6 +207,22 @@ describe('X3: hidden reads go through /api/admin and show failures', () => {
     });
     expect(readsOf('capability_overrides')).toEqual([]);
   });
+
+  it('Subscriptions: Extend Trial and Cancel are off with an honest note and write nothing (Owner 2026-11-18)', async () => {
+    h.fixtures.subscriptions = [{ id: ID, business_id: BIZ, plan: 'growth', status: 'active', amount: 5000, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'Acme Shop', category: 'retail', subscription_tier: 'growth', trial_ends_at: null } }];
+    render(<Subscriptions />);
+    fireEvent.click((await screen.findAllByText('Acme Shop')).find(e => e.closest('tr'))!);
+    expect(await screen.findByText(/Extend Trial and Cancel Subscription are not available yet/)).toBeInTheDocument();
+    const extend = screen.getByRole('button', { name: 'Extend' });
+    const cancel = screen.getByRole('button', { name: 'Cancel Subscription...' });
+    expect(extend).toBeDisabled();
+    expect(cancel).toBeDisabled();
+    fireEvent.click(extend);
+    fireEvent.click(cancel);
+    expect(screen.queryByRole('button', { name: 'Confirm Cancel' })).not.toBeInTheDocument();
+    expect(h.directWrites).toEqual([]);
+    expect(calls(/\/api\/admin\/audit/)).toEqual([]);
+  });
 });
 
 describe('Channel Changes when M496 is not installed', () => {
