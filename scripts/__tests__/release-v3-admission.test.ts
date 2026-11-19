@@ -154,6 +154,49 @@ describe('catalog admission (lock + reviewed deltas, exact equality)', () => {
     const after = new Map(baseCatalog); after.set('function:public.b()', h(10));
     expect(() => verifyCatalog(after, lockEnv(), [m509], 'production', baseCatalog)).toThrow('function:public.b()');
   });
+  it('measured corrections replace exactly the reviewed prediction, only while their migration is admitted', () => {
+    const fix = { migration: '509_add_b', identity: 'table:public.t', predicted_sha256: h(2), measured_sha256: h(20), reason: 'r' };
+    const after = new Map(baseCatalog); after.set('function:public.b()', h(9)); after.set('table:public.t', h(20));
+    expect(() => verifyCatalog(after, lockEnv(), [m509], 'production', baseCatalog)).toThrow('table:public.t');
+    expect(verifyCatalog(after, lockEnv(), [m509], 'production', baseCatalog, [fix]).sha256).toBe(catalogAggregate(after));
+    expect(() => verifyCatalog(after, lockEnv(), [m509], 'production', baseCatalog, [{ ...fix, predicted_sha256: h(21) }])).toThrow('no longer matches the reviewed prediction');
+    expect(() => verifyCatalog(after, lockEnv(), [m509], 'production', baseCatalog, [{ ...fix, migration: '510_other' }])).toThrow('which this release does not admit');
+    expect(() => verifyCatalog(baseCatalog, lockEnv(), [], 'production', baseCatalog, [fix])).toThrow('which this release does not admit');
+    // A correction never hides any other difference.
+    const drift = new Map(after); drift.set('column:public.t.c', h(99));
+    expect(() => verifyCatalog(drift, lockEnv(), [m509], 'production', baseCatalog, [fix])).toThrow('column:public.t.c');
+  });
+  it('the committed measured corrections (Owner 2026-11-19, option A) match the reviewed predictions and reproduce the measured catalogs', () => {
+    const lock = loadLock();
+    const migrations = postBootstrapMigrations(process.cwd(), 'HEAD', lock, []).filter((m: { name: string }) => m.name <= '554_paystack_plan_expiry_authority');
+    expect(Object.fromEntries(Object.entries(lock.measured).map(([env, list]) => [env, (list as { identity: string }[]).map(c => c.identity)]))).toEqual({
+      production: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts'],
+      staging: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts', 'table:public.customer_suspensions'] });
+    for (const env of ['production', 'staging']) {
+      const lockMap = loadLockMap(lock.environments[env]);
+      const predicted = applyDeltas(lockMap, migrations.map((m: { delta: unknown }) => m.delta));
+      const measured = lock.measured[env] as { identity: string; predicted_sha256: string; measured_sha256: string }[];
+      for (const c of measured) expect(predicted.get(c.identity)).toBe(c.predicted_sha256);
+      const live = new Map(predicted); for (const c of measured) live.set(c.identity, c.measured_sha256);
+      const observed = lock.observed.measured_corrections_2026_11_19[env];
+      expect({ count: live.size, sha256: catalogAggregate(live) }).toEqual({ count: observed.count, sha256: observed.sha256 });
+      expect(verifyCatalog(live, lock.environments[env], migrations, env, lockMap, measured).sha256).toBe(observed.sha256);
+      expect(() => verifyCatalog(live, lock.environments[env], migrations, env, lockMap)).toThrow('differs from lock + reviewed deltas');
+    }
+  }, 60_000);
+  it('rejects malformed measured corrections in the lock', () => {
+    const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
+    const bad = (mutate: (l: any) => void) => { const l = JSON.parse(text); mutate(l); return JSON.stringify(l); };
+    for (const mutate of [
+      (l: any) => { l.measured = {}; }, (l: any) => { l.measured = { preview: l.measured.production }; }, (l: any) => { l.measured.production = []; },
+      (l: any) => { l.measured.production[0].extra = 1; }, (l: any) => { l.measured.production[0].migration = '549'; },
+      (l: any) => { l.measured.production[0].identity = 'thing:x'; }, (l: any) => { l.measured.production[0].measured_sha256 = 'x'; },
+      (l: any) => { l.measured.production[0].measured_sha256 = l.measured.production[0].predicted_sha256; },
+      (l: any) => { l.measured.production[0].reason = ' '; }, (l: any) => { l.measured.production[1] = l.measured.production[0]; }]) {
+      expect(() => loadLock(bad(mutate))).toThrow('Release lock measured corrections are invalid');
+    }
+    expect(loadLock(bad(l => { delete l.measured; })).measured).toBeUndefined();
+  });
   it('applies deltas strictly: add must be new, modify/remove must exist', () => {
     const add = delta('x', 'x', [{ identity: 'table:public.t', operation: 'add', after_sha256: h(1), after: {} }]);
     expect(() => applyDeltas(baseCatalog, [add])).toThrow('adds an existing object');

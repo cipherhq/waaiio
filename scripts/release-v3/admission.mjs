@@ -21,7 +21,8 @@ const MIGRATION = /^supabase\/migrations\/(([0-9]{3})[a-z]?_[a-z0-9_]+)\.sql$/;
 export function loadLock(text = readFileSync(here('./lock.json'), 'utf8')) {
   let lock; try { lock = JSON.parse(text); } catch { fail('Release lock is not valid JSON'); }
   const keys = ['schema_version', 'bootstrap_migration', 'certified', 'catalog_query_sha256', 'ledger_query_sha256', 'environments', 'observed', 'reviewed_prs'];
-  if (!(exactKeys(lock, keys) || exactKeys(lock, [...keys, 'recertified']))
+  const optional = ['recertified', 'measured'].filter(k => k in lock);
+  if (!exactKeys(lock, [...keys, ...optional])
     || lock.schema_version !== 1 || !/^[0-9]{3}_[a-z0-9_]+\.sql$/.test(lock.bootstrap_migration || '')
     || !exactKeys(lock.certified, ['merchant', 'admin']) || !SHA.test(lock.certified.merchant) || !SHA.test(lock.certified.admin)
     || lock.catalog_query_sha256 !== CATALOG_QUERY_SHA256 || lock.ledger_query_sha256 !== LEDGER_QUERY_SHA256
@@ -39,6 +40,20 @@ export function loadLock(text = readFileSync(here('./lock.json'), 'utf8')) {
       || !Number.isSafeInteger(re.after_deploy_run) || re.after_deploy_run <= 0 || !SHA.test(re.sha)
       || !HASH.test(re.merchant_deployment_sha256) || !HASH.test(re.admin_deployment_sha256)
       || typeof re.reason !== 'string' || !re.reason.trim() || re.reason.length > 500) fail('Release lock re-certification is invalid');
+  }
+  // Optional measured corrections (docs: "Measured corrections"): per environment, an
+  // object whose live digest after an admitted migration differs from the PG17
+  // replay's prediction because of grants the replay does not model.
+  if ('measured' in lock) {
+    const m = lock.measured;
+    if (!m || typeof m !== 'object' || Array.isArray(m) || !Object.keys(m).length || Object.keys(m).some(env => !(env in ENVIRONMENTS))) fail('Release lock measured corrections are invalid');
+    for (const entries of Object.values(m)) {
+      if (!Array.isArray(entries) || !entries.length || new Set(entries.map(e => e?.identity)).size !== entries.length
+        || entries.some(e => !exactKeys(e, ['migration', 'identity', 'predicted_sha256', 'measured_sha256', 'reason'])
+          || !/^[0-9]{3}[a-z]?_[a-z0-9_]+$/.test(e.migration) || !/^(schema|table|column|constraint|index|trigger|policy|function|type|publication):\S/.test(e.identity)
+          || !HASH.test(e.predicted_sha256) || !HASH.test(e.measured_sha256) || e.predicted_sha256 === e.measured_sha256
+          || typeof e.reason !== 'string' || !e.reason.trim() || e.reason.length > 500)) fail('Release lock measured corrections are invalid');
+    }
   }
   if (!lock.reviewed_prs || typeof lock.reviewed_prs !== 'object' || Object.entries(lock.reviewed_prs).some(([n, sha]) => !/^[1-9][0-9]*$/.test(n) || !SHA.test(sha))) fail('Release lock review records are invalid');
   return lock;
@@ -103,13 +118,19 @@ export function loadLockMap(lockEnv, root = new URL('../../', import.meta.url)) 
   return map;
 }
 
-export function verifyCatalog(observed, lockEnv, migrations, environment, lockMap) {
+export function verifyCatalog(observed, lockEnv, migrations, environment, lockMap, measured = []) {
   const changes = migrations.reduce((n, m) => n + m.delta.changes.length, 0);
-  if (!changes) {
+  if (!changes && !measured.length) {
     if (observed.size !== lockEnv.catalog.count || catalogAggregate(observed) !== lockEnv.catalog.sha256) fail(`${environment} catalog differs from the approved lock`);
   } else {
     if (!lockMap) fail(`${environment} lock catalog map is not bootstrapped; releases with catalog changes are blocked until it is`);
     const expected = applyDeltas(lockMap, migrations.map(m => m.delta));
+    // A correction replaces exactly the reviewed prediction, only while its migration is admitted.
+    for (const c of measured) {
+      if (!migrations.some(m => m.name === c.migration)) fail(`${environment} measured correction for ${c.identity} names ${c.migration}, which this release does not admit`);
+      if (expected.get(c.identity) !== c.predicted_sha256) fail(`${environment} measured correction for ${c.identity} no longer matches the reviewed prediction`);
+      expected.set(c.identity, c.measured_sha256);
+    }
     const differing = compareCatalogs(expected, observed);
     if (differing.length) fail(`${environment} catalog differs from lock + reviewed deltas: ${differing.slice(0, 10).join(', ')}${differing.length > 10 ? ` (+${differing.length - 10} more)` : ''}`);
   }
@@ -136,7 +157,7 @@ export function admitDatabase({ observation, lock, migrations, lockMap, m430 }) 
   if (!lockEnv || observation.project_ref !== lockEnv.project_ref) fail('Observation is for the wrong project');
   requireReplica(environment, observation);
   const ledger = verifyLedger(observation.ledger, lockEnv, migrations, environment);
-  const catalog = verifyCatalog(observation.catalog, lockEnv, migrations, environment, lockMap);
+  const catalog = verifyCatalog(observation.catalog, lockEnv, migrations, environment, lockMap, lock.measured?.[environment] ?? []);
   const result = { environment, project_ref: lockEnv.project_ref, ledger, catalog };
   if (environment === 'production') result.m430 = verifyM430Absent(observation.catalog, m430);
   return result;

@@ -32,6 +32,47 @@
   }
  },
  "ledger_query_sha256": "342b70fe7982e7ee22f7a5858aea8f721ddc35edf477e332aa3869417ba0292b",
+ "measured": {
+  "production": [
+   {
+    "identity": "table:public.admin_role_permissions",
+    "measured_sha256": "bd7df3fb9f3fc62237d1482938cc7f50e91aaca2feb182cae996b42ba04a7cc6",
+    "migration": "549_admin_access_tightening",
+    "predicted_sha256": "966ec71f9f6797091d60c493a07bd26d66cad1ab902aec68e4d6b18b64b9cf3c",
+    "reason": "M549 revokes and grants on a table whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction. Measured read-only 2026-11-19 after M547-M554; Owner decision 2026-11-19 (option A)."
+   },
+   {
+    "identity": "table:public.business_bank_accounts",
+    "measured_sha256": "b869032989d36aa57350ece5762640bfce2c43671d7129a8dcec379aaa54cd6e",
+    "migration": "549_admin_access_tightening",
+    "predicted_sha256": "b87a8bf767b1806fc9e403dd54412077f562c402a47d51526635d3dacb131738",
+    "reason": "M549 revokes and grants on a table whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction. Measured read-only 2026-11-19 after M547-M554; Owner decision 2026-11-19 (option A)."
+   }
+  ],
+  "staging": [
+   {
+    "identity": "table:public.admin_role_permissions",
+    "measured_sha256": "121285d737c0309d3b5ac9afa3429d2d580235a27233b8a9c3633025564e0611",
+    "migration": "549_admin_access_tightening",
+    "predicted_sha256": "966ec71f9f6797091d60c493a07bd26d66cad1ab902aec68e4d6b18b64b9cf3c",
+    "reason": "M549 revokes and grants on a table whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction. Measured read-only 2026-11-19 after M547-M554; Owner decision 2026-11-19 (option A)."
+   },
+   {
+    "identity": "table:public.business_bank_accounts",
+    "measured_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "migration": "549_admin_access_tightening",
+    "predicted_sha256": "eb9ddd8095d02cc59b1a42a728b84c5cfa449657e0f6f3fac5601f41ffc048fa",
+    "reason": "M549 revokes and grants on a table whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction. Measured read-only 2026-11-19 after M547-M554; Owner decision 2026-11-19 (option A)."
+   },
+   {
+    "identity": "table:public.customer_suspensions",
+    "measured_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "migration": "547_customer_suspensions",
+    "predicted_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+    "reason": "M547 revokes only client roles; staging's default grants for the server role differ from production's, which the replay models, so staging's result differs from the reviewed prediction. Measured read-only 2026-11-19; Owner decision 2026-11-19 (option A)."
+   }
+  ]
+ },
  "observed": {
   "at": "2026-11-04T01:20:00Z (V3 aggregates); re-read and per-object maps 2026-11-04T02:30Z",
   "bootstrap_release": {
@@ -78,6 +119,19 @@
    },
    "method": "lock state unchanged (M508). The new catalog-v3.sql changes no digest except objects with reloptions or a BEGIN ATOMIC body; in the lock state that is exactly the two M293 views (security_barrier=true). Each old value was rebuilt and proven equal to the lock digest, then re-hashed with its options added.",
    "previous_query_sha256": "fa6a3ad4bc9eeb5e1a39e45d9bcab22bf1a722cd7f80b1d00d0f82f6bcde5809"
+  },
+  "measured_corrections_2026_11_19": {
+   "method": "read-only catalog-v3.sql aggregate (count, sha256 over identity TAB digest LF in C order) via the Supabase connector as postgres, after M547-M554 were applied; prepare run 44537217990 named the production differences",
+   "production": {
+    "count": 7184,
+    "sha256": "370dce7176b029b543bf3f9884ce5c17ca039efb39c215dcd1a88fc818c869bb",
+    "through": "554_paystack_plan_expiry_authority"
+   },
+   "staging": {
+    "count": 7205,
+    "sha256": "9bae4ca40b99bf6ff2a55de097c26b972f7c31afefff1d7c1aae6cb19a25909d",
+    "through": "554_paystack_plan_expiry_authority"
+   }
   },
   "method": "authorized Supabase connector, read-only SELECT",
   "staging_813_teardown": {
