@@ -2,7 +2,7 @@
  * POST /api/admin/customer-links/resend — admin resends a customer's ticket or
  * confirmation link by email (Owner decision 2026-11-18). See lib/customer-links.ts.
  *
- * Body: { kind: 'ticket' | 'booking' | 'order', id: uuid, check?: true }
+ * Body: { kind: 'ticket' | 'booking' | 'order' | 'stay', id: uuid, check?: true }
  *   check: true → returns { link, canEmail, reason, emailHint } and sends nothing.
  *   otherwise   → emails the link (rate-limited per record) and writes an admin audit row.
  */

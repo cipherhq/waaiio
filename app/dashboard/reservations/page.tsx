@@ -1354,13 +1354,11 @@ export default function BookingsPage() {
                 {selected.guest_email && <p className="text-sm text-gray-600">{selected.guest_email}</p>}
               </div>
 
-              {/* Confirmation link (bookings only; stays have no customer page yet) */}
-              {!selected._isReservation && (
-                <div className="rounded-lg border border-gray-100 p-4">
-                  <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Confirmation link</h3>
-                  <CustomerLinkActions kind="booking" id={selected.id} />
-                </div>
-              )}
+              {/* Confirmation link: bookings use the receipt, stays the /stays page */}
+              <div className="rounded-lg border border-gray-100 p-4">
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Confirmation link</h3>
+                <CustomerLinkActions kind={selected._isReservation ? 'stay' : 'booking'} id={selected.id} />
+              </div>
 
               {/* Client intake (#963): service bookings only */}
               {!selected._isReservation && (

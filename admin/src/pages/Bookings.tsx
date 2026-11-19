@@ -342,13 +342,11 @@ export default function Bookings() {
               </div>
             </div>
 
-            {/* Confirmation link: bookings only; stays have no customer page yet */}
-            {!selected._isStay && (
-              <div className="mt-4 rounded-lg bg-gray-50 p-4">
-                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Confirmation link</p>
-                <CustomerLinkActions kind="booking" id={selected.id} />
-              </div>
-            )}
+            {/* Confirmation link: bookings use the receipt, stays the /stays page */}
+            <div className="mt-4 rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Confirmation link</p>
+              <CustomerLinkActions kind={selected._isStay ? 'stay' : 'booking'} id={selected.id} />
+            </div>
 
             {selected.special_requests && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
