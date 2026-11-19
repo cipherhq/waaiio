@@ -1216,6 +1216,40 @@ export function buildMessagingPayload(
   return { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes };
 }
 
+/** A save replaces the whole messaging maps, but the form only has rows for currencies of listed
+ *  countries. Copies every value of a currency in the loaded snapshot that no listed country uses
+ *  (a hidden or removed market) into the payload unchanged, so saving never drops it.
+ *  Returns the currencies it carried. Exported for testability. */
+export function carryUnlistedCurrencies(
+  countries: CountryRow[],
+  snapshot: Record<string, unknown>,
+  payload: Pick<ReturnType<typeof buildMessagingPayload>, 'messagingPricing' | 'trialCredit' | 'tierIncluded'>,
+): string[] {
+  const listed = new Set(countries.map(c => c.currency_code));
+  const pricing = (snapshot.messaging_pricing ?? {}) as Record<string, typeof payload.messagingPricing[string]>;
+  const trialCredit = (snapshot.trial_credit_minor_by_currency ?? {}) as Record<string, number>;
+  const included = (snapshot.subscription_included_minor_by_tier_currency ?? {}) as Record<string, Record<string, number>>;
+  const carried = new Set<string>();
+  for (const [currency, bucket] of Object.entries(pricing)) {
+    if (listed.has(currency)) continue;
+    payload.messagingPricing[currency] = bucket;
+    carried.add(currency);
+  }
+  for (const [currency, value] of Object.entries(trialCredit)) {
+    if (listed.has(currency)) continue;
+    payload.trialCredit[currency] = value;
+    carried.add(currency);
+  }
+  for (const [tier, byCurrency] of Object.entries(included)) {
+    for (const [currency, value] of Object.entries(byCurrency ?? {})) {
+      if (listed.has(currency)) continue;
+      (payload.tierIncluded[tier] ??= {})[currency] = value;
+      carried.add(currency);
+    }
+  }
+  return Array.from(carried);
+}
+
 /** Shows a smallest-unit amount as normal money (e.g. 600000 NGN -> ₦6,000.00) so a
  *  factor-of-100 slip is visible before saving. Display only; the saved value is unchanged. */
 export function MinorAmountHint({ value, currency, locale }: { value: string; currency: string; locale?: string }) {
@@ -1262,6 +1296,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   // Currencies configured in the loaded snapshot. A save replaces the whole maps, so it must not
   // silently drop one of these (e.g. a cleared spend cap would remove that market's pricing and credit).
   const loadedCurrenciesRef = useRef<string[]>([]);
+  const loadedSnapshotRef = useRef<Record<string, unknown>>({});
 
   // Country-scoped state: category rates + Paystack plan codes
   // rates keyed by category (utility, marketing, *, authentication, service)
@@ -1296,6 +1331,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
         }
 
         const snapshot = ver.config_snapshot;
+        loadedSnapshotRef.current = snapshot;
         loadedCurrenciesRef.current = Array.from(new Set([
           ...Object.keys((snapshot.messaging_pricing as Record<string, unknown> | undefined) ?? {}),
           ...Object.keys((snapshot.trial_credit_minor_by_currency as Record<string, unknown> | undefined) ?? {}),
@@ -1358,7 +1394,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     try {
       const { messagingPricing, trialCredit, tierIncluded } =
         buildMessagingPayload(countries, currencyState, countryState);
-      const dropped = loadedCurrenciesRef.current.filter(c => !messagingPricing[c]);
+      const carried = carryUnlistedCurrencies(countries, loadedSnapshotRef.current, { messagingPricing, trialCredit, tierIncluded });
+      const dropped = loadedCurrenciesRef.current.filter(c => !messagingPricing[c] && !carried.includes(c));
       if (dropped.length > 0) {
         throw new Error(`${dropped.join(', ')}: Spend Cap is required. Saving without it would remove that currency's message prices and credit.`);
       }
