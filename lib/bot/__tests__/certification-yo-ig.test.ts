@@ -195,10 +195,10 @@ describe('Owner native-speaker corrections (yo, 2026-11-18)', () => {
   const yo = (k: string) => getFlowCopy('yo', k);
   it('pins the four corrected Yoruba lines', () => {
     expect(yo('payment.received_processing')).toBe(
-      '✅ A ti rí owó tí o san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ.\n\nO óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* lẹ́ẹ̀kan sí.'.normalize('NFC'),
+      '✅ A ti rí owó tí ẹ san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ yín.\n\nẸ óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* lẹ́ẹ̀kan sí.'.normalize('NFC'),
     );
-    expect(yo('ordering.order_received')).toBe('*A Ti Gba Ọjà Tí O Rà!*'.normalize('NFC'));
-    expect(yo('notification.catalog_order_received')).toBe('*A Ti Gba Ọjà Tí O Rà!*'.normalize('NFC'));
+    expect(yo('ordering.order_received')).toBe('*A Ti Gba Ọjà Tí Ẹ Rà!*'.normalize('NFC'));
+    expect(yo('notification.catalog_order_received')).toBe('*A Ti Gba Ọjà Tí Ẹ Rà!*'.normalize('NFC'));
     expect(yo('greeting.welcome_default')).toBe('Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí?'.normalize('NFC'));
     expect(yo('booking.book_for_hint')).toBe('Tẹ *fún ara mi* tàbí *ẹlòmíràn*, tàbí tẹ bọ́tìnì.'.normalize('NFC'));
   });
@@ -209,6 +209,22 @@ describe('Owner Yoruba word choices (2026-11-18, second round)', () => {
   const yoValues = Object.entries(COPY.yo);
   it('uses "ràn yín" (never ẹ́/ọ́) whenever the bot offers to help the customer', () => {
     const offenders = yoValues.filter(([, v]) => /ràn (ẹ́|ọ́) lọ́wọ́/.test(v.normalize('NFC'))).map(([k]) => k);
+    expect(offenders).toEqual([]);
+  });
+  it('addresses the customer politely: no singular you/your (o, ọ, rẹ, tìrẹ, ìwọ)', () => {
+    // Owner 2026-11-18: "Polite yín everywhere". Allowed: the interjection in "Rárá o" (No thanks)
+    // and "kọ ọ́" ("write it", where ọ́ means "it"). Third-person rẹ̀ (with grave) is not matched.
+    const singular = new Set(['o', 'O', 'ọ', 'ọ́', 'Ọ', 'Ọ́', 'rẹ', 'Rẹ', 'tìrẹ', 'tirẹ', 'ìwọ', 'Ìwọ'].map(w => w.normalize('NFC')));
+    const offenders: string[] = [];
+    for (const [key, raw] of yoValues) {
+      const words = raw.normalize('NFC').split(/(?:\\n|\n|[^\p{L}\p{M}])+/u);
+      words.forEach((w, i) => {
+        if (!singular.has(w)) return;
+        if ((w === 'o' || w === 'O') && words[i - 1] === 'Rárá'.normalize('NFC')) return;
+        if (w === 'ọ́'.normalize('NFC') && words[i - 1] === 'kọ'.normalize('NFC')) return;
+        offenders.push(`${key}: …${words.slice(Math.max(0, i - 3), i + 3).join(' ')}…`);
+      });
+    }
     expect(offenders).toEqual([]);
   });
   it('pins the two "help" lines', () => {
