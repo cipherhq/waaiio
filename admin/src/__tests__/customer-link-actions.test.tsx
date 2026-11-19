@@ -1,6 +1,7 @@
 /**
  * Admin "Email link" / "Copy link" (Owner decision 2026-11-18), rendered on
- * the real Tickets, Bookings and Orders pages with a fake admin API.
+ * the real Tickets, Bookings (bookings and property stays) and Orders pages
+ * with a fake admin API.
  * Proves the buttons call /api/admin/customer-links/resend, show the server's
  * answer, stay off with a reason when there is no customer email, and never
  * write to a table directly.
@@ -127,12 +128,31 @@ describe('admin Bookings: confirmation link', () => {
     await waitFor(() => expect(resendCalls()).toEqual([{ kind: 'booking', id: BOOKING, check: true }]));
   });
 
-  it('a property stay has no confirmation link buttons (no customer page yet)', async () => {
+  it('a property stay checks the stay link (kind stay), sends through the admin route, and copies the /stays link', async () => {
+    const stayLink = 'https://app.example.test/stays/0123456789abcdef0123456789abcdef';
+    api = (_url, body) => body.check
+      ? json({ link: stayLink, canEmail: true, reason: null, emailHint: 's•••@example.test' })
+      : json({ sent: true, sentTo: 's•••@example.test', auditRecorded: true });
     render(<Bookings />);
     fireEvent.click((await screen.findByText('Sade Stayer')).closest('tr')!);
-    expect(await screen.findByText('Booking Details', { exact: false })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Email link' })).not.toBeInTheDocument();
-    expect(resendCalls()).toEqual([]);
+    expect(await screen.findByText('Sends to s•••@example.test')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    await waitFor(() => expect(h.copied).toEqual([stayLink]));
+    fireEvent.click(screen.getByRole('button', { name: 'Email link' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Link emailed to s•••@example.test.');
+    expect(resendCalls()).toEqual([{ kind: 'stay', id: STAY, check: true }, { kind: 'stay', id: STAY }]);
+    expect(h.directWrites).toEqual([]);
+  });
+
+  it('a stay with no customer email has Email link off with the reason', async () => {
+    api = (_url, body) => body.check
+      ? json({ link: 'https://app.example.test/stays/0123456789abcdef0123456789abcdef', canEmail: false, reason: 'No customer email on file.', emailHint: null })
+      : json({ error: 'should not be called' }, 500);
+    render(<Bookings />);
+    fireEvent.click((await screen.findByText('Sade Stayer')).closest('tr')!);
+    expect(await screen.findByText('Email is off: No customer email on file.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email link' })).toBeDisabled();
+    expect(resendCalls()).toHaveLength(1);
   });
 });
 

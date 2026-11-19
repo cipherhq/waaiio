@@ -9,6 +9,7 @@ import { formatCurrency, getLocale, type CountryCode, CATEGORY_LABELS } from '@/
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
+import { CustomerLinkActions } from '@/components/dashboard/CustomerLinkActions';
 import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Property {
@@ -897,6 +898,12 @@ export default function PropertyDetailPage() {
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* Confirmation link (/stays page) */}
+              <div className="rounded-lg border border-gray-100 p-4">
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Confirmation link</h3>
+                <CustomerLinkActions kind="stay" id={selectedReservation.id} />
               </div>
 
               {/* Special Requests */}

@@ -1,14 +1,14 @@
 'use client';
 
 /**
- * "Email link" and "Copy link" for a ticket, booking or order (Owner decision
+ * "Email link" and "Copy link" for a ticket, booking, order or stay (Owner decision
  * 2026-11-18). Emails the customer the link to their existing ticket or
  * confirmation page, or copies it so the merchant can paste it anywhere.
  * Waaiio sends no WhatsApp message here. Server: /api/customer-links/resend.
  */
 import { useEffect, useState } from 'react';
 
-type Kind = 'ticket' | 'booking' | 'order';
+type Kind = 'ticket' | 'booking' | 'order' | 'stay';
 
 interface LinkStatus {
   link: string;

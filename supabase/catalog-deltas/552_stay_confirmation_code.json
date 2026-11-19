@@ -1,0 +1,58 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": "replace((gen_random_uuid())::text, '-'::text, ''::text)",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "d73559c673d19bc1fc05fe36b688e899204112e76357082980759013ea6c54c6",
+   "identity": "column:public.reservations.confirmation_code",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (confirmation_code ~ '^[0-9a-f]{32}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "82380b1ee81cfc13363f4d829c9642f92812ae58a0873923e91578af2824db34",
+   "identity": "constraint:public.reservations.reservations_confirmation_code_format",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (confirmation_code)",
+    "validated": true
+   },
+   "after_sha256": "22a0d75239c1ea5a7408b78850ed12ee06377690608fba2811fdf062c9685efe",
+   "identity": "constraint:public.reservations.reservations_confirmation_code_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX reservations_confirmation_code_key ON public.reservations USING btree (confirmation_code)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "aac31221de2fd32e871b4fecb147570fb473fcfe35382964cfd857e6178c5556",
+   "identity": "index:public.reservations.reservations_confirmation_code_key",
+   "operation": "add"
+  }
+ ],
+ "migration": "552_stay_confirmation_code.sql",
+ "migration_sha256": "f12d4d7146617710270cc8498919b003e35b092319f657c6f9df684512c8a7fd",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

@@ -10,6 +10,8 @@
  *   ticket  → /tickets/{ticket_code}                (lib/bot/flows/shared/send-tickets.ts)
  *   booking → /api/receipts/image?ref={reference}   (lib/bot/handlers/transaction-docs.ts)
  *   order   → /api/receipts/image?ref={reference}   (same receipt route, orders branch)
+ *   stay    → /stays/{confirmation_code}            (app/stays/[code]; secret code from M552,
+ *                                                    because WA-RS-#### is easy to guess)
  *
  * Used by POST /api/customer-links/resend (merchant) and
  * POST /api/admin/customer-links/resend (admin).
@@ -19,7 +21,7 @@ import { wrap, h, p, btn, esc, businessFrom } from '@/lib/email/templates';
 import { isWhiteLabel } from '@/lib/whitelabel';
 import { checkRateLimitAsync } from '@/lib/rate-limit';
 
-export const CUSTOMER_LINK_KINDS = ['ticket', 'booking', 'order'] as const;
+export const CUSTOMER_LINK_KINDS = ['ticket', 'booking', 'order', 'stay'] as const;
 export type CustomerLinkKind = typeof CUSTOMER_LINK_KINDS[number];
 
 export function isCustomerLinkKind(value: unknown): value is CustomerLinkKind {
@@ -36,7 +38,7 @@ export interface CustomerLinkTarget {
   businessId: string;
   businessName: string;
   subscriptionTier: string;
-  /** Ticket code or reference code. */
+  /** Ticket code or reference code (shown in the email and the audit row). */
   code: string;
   url: string;
   /** What the link is for, e.g. the event or service name. */
@@ -52,11 +54,12 @@ export function emailBlockedReason(target: CustomerLinkTarget): string | null {
   return null;
 }
 
+/** For a stay, `code` is the secret confirmation code, not the reference code. */
 export function customerLinkUrl(kind: CustomerLinkKind, code: string): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-  return kind === 'ticket'
-    ? `${appUrl}/tickets/${encodeURIComponent(code)}`
-    : `${appUrl}/api/receipts/image?ref=${encodeURIComponent(code)}`;
+  if (kind === 'ticket') return `${appUrl}/tickets/${encodeURIComponent(code)}`;
+  if (kind === 'stay') return `${appUrl}/stays/${encodeURIComponent(code)}`;
+  return `${appUrl}/api/receipts/image?ref=${encodeURIComponent(code)}`;
 }
 
 type Service = { from: (table: string) => any };
@@ -82,6 +85,7 @@ export async function loadCustomerLinkTarget(
   id: string,
 ): Promise<CustomerLinkTarget | null> {
   let base: Omit<CustomerLinkTarget, 'businessName' | 'subscriptionTier' | 'url'> | null = null;
+  let linkCode: string | null = null;
 
   if (kind === 'ticket') {
     const { data } = await service.from('event_tickets')
@@ -108,6 +112,19 @@ export async function loadCustomerLinkTarget(
       email: data.guest_email || await profileEmail(service, data.user_id),
       cancelled: data.status === 'cancelled',
     };
+  } else if (kind === 'stay') {
+    const { data } = await service.from('reservations')
+      .select('id, reference_code, confirmation_code, business_id, status, guest_email, user_id, property:properties!property_id(name)')
+      .eq('id', id).maybeSingle();
+    if (!data || !data.reference_code || !data.confirmation_code) return null;
+    const property = one(data.property) as { name?: string | null } | null;
+    linkCode = data.confirmation_code;
+    base = {
+      kind, id: data.id, businessId: data.business_id, code: data.reference_code,
+      title: property?.name || 'Your stay',
+      email: data.guest_email || await profileEmail(service, data.user_id),
+      cancelled: data.status === 'cancelled',
+    };
   } else {
     const { data } = await service.from('orders')
       .select('id, reference_code, business_id, status, user_id')
@@ -127,7 +144,7 @@ export async function loadCustomerLinkTarget(
     ...base,
     businessName: biz?.name || 'Business',
     subscriptionTier: biz?.subscription_tier || 'free',
-    url: customerLinkUrl(kind, base.code),
+    url: customerLinkUrl(kind, linkCode ?? base.code),
   };
 }
 
@@ -142,6 +159,7 @@ const LINK_LABELS: Record<CustomerLinkKind, { noun: string; button: string }> = 
   ticket: { noun: 'ticket', button: 'View your ticket' },
   booking: { noun: 'booking confirmation', button: 'View your confirmation' },
   order: { noun: 'order confirmation', button: 'View your confirmation' },
+  stay: { noun: 'stay confirmation', button: 'View your confirmation' },
 };
 
 export function customerLinkEmail(target: CustomerLinkTarget): { subject: string; html: string } {

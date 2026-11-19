@@ -434,10 +434,18 @@ Reserved 2026-11-18 after checking main through M548, open PR #1125 (M549) and l
 
 Reserved 2026-11-18 after checking main through M550, the open PRs and the local worktree migration filenames. Owner decisions 2026-11-18 (#1131). Adds `message_send_attempts.units` (SMS pages 1–10) and the `sms_sends` table (RLS deny-all, service role S/I/U). It rewrites only the pricing statement in both `authorize_message_send` overloads: SMS costs ceil(sms_cost × 1.2) per page × units, for NG/GH only and same-country only, with no fallback rate. It allows the `sms_cost` key in `_save_messaging_config_impl`. Schema, SECURITY DEFINER, search_path, owner and ACL are kept (the M550 method). Applying it to staging or production needs separate Owner approval, and M551 must ship before the app.
 
+### Reservation — secret confirmation code for property stays
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 552 | stay_confirmation_code | claude/stays-resend-link-099bfd | Reserved; not applied |
+
+Reserved 2026-11-18 after checking main through M550, open PR #1132 (M551) and local worktree and remote branch migration filenames. Follow-up to #1121 (Owner decision 2026-11-18, resend confirmation as a link). Adds `public.reservations.confirmation_code` (text NOT NULL, 32 random hex characters, format CHECK and UNIQUE) for the customer page `/stays/{code}`; no function, grant, RLS, policy or trigger change. Applying it to staging or production needs separate Owner approval, and must happen before the app code that reads the column is deployed.
+
 ### Reservation — admin subscription money actions step-up
 
 | Version | Name | Branch | Status |
 |---|---|---|---|
 | 553 | subscription_admin_action_step_up | claude/admin-subscription-actions-d9e81b | Reserved; not applied |
 
-Reserved by the coordinator 2026-11-18 after checking main through M551 (SMS #1132, merged) and open PR #1134 (M552 stays). Neither M551 nor M552 redefines the step-up CHECK; M548 is its last definition, so M553 carries every M548 value and must apply after M548 (any later migration that redefines the CHECK must include `subscription_admin_action`). Owner decisions 2026-11-18 (admin Stop Renewal, Extend Trial, recurring pause/resume/cancel/retry). Adds only `subscription_admin_action` to the cumulative `admin_step_up_authorizations_action_type_check` as last redefined by M548; no other object changes. Applying it to staging or production needs separate Owner approval.
+Reserved by the coordinator 2026-11-18 after checking main through M551 (SMS #1132, merged) and PR #1134 (M552 stays, since merged). Neither M551 nor M552 redefines the step-up CHECK; M548 is its last definition, so M553 carries every M548 value and must apply after M548 (any later migration that redefines the CHECK must include `subscription_admin_action`). Owner decisions 2026-11-18 (admin Stop Renewal, Extend Trial, recurring pause/resume/cancel/retry). Adds only `subscription_admin_action` to the cumulative `admin_step_up_authorizations_action_type_check` as last redefined by M548; no other object changes. Applying it to staging or production needs separate Owner approval.

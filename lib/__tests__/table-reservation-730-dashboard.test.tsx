@@ -407,6 +407,16 @@ describe('#731: actual BookingsPage', () => {
     expect(urls.filter(url => url !== '/api/customer-links/resend')).toEqual([]);
   });
 
+  it('stay detail checks the stay confirmation link (kind stay, follow-up to #1121)', async () => {
+    await mount();
+    fireEvent.click(tab('Stays'));
+    fireEvent.click(row('stay-one'));
+    expect(await screen.findByText('Confirmation link')).toBeTruthy();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/customer-links/resend', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ kind: 'stay', id: 'stay-one', check: true }),
+    })));
+  });
+
   it('tab switch resets the existing client pagination without losing table rows', async () => {
     pageFixture.bookings = [
       ...Array.from({ length: 21 }, (_, i) => booking('appointment-' + i)),
