@@ -115,9 +115,57 @@ export async function GET(request: NextRequest) {
     logger.error('[CRON:RENEWAL-RECOVERY] Paystack discovery error', { error: String(err) });
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // Pass 3: expiry evidence for Paystack plans whose renewal was stopped
+  // (#1135, M554). Admin Stop Renewal and the subscription.disable /
+  // not_renew webhook keep the plan 'active' with cancelled_at set until the
+  // paid period ends. Record evidence for that exact period boundary so the
+  // expiry cron's expire_subscription_with_authority can move it to Free.
+  // Plans whose renewal was not stopped are left to Paystack's own retries.
+  // ═══════════════════════════════════════════════════════════
+  let paystackExpiryEvidence = 0;
+  try {
+    const nowIso = new Date().toISOString();
+    const cooldownCutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    const { data: stopped, error: stoppedErr } = await supabase
+      .from('subscriptions')
+      .select('id, current_period_end, paystack_subscription_code')
+      .eq('status', 'active')
+      .eq('gateway', 'paystack')
+      .not('cancelled_at', 'is', null)
+      .not('paystack_subscription_code', 'is', null)
+      .lt('current_period_end', nowIso)
+      .or('last_reconciliation_attempt_at.is.null,last_reconciliation_attempt_at.lt.' + cooldownCutoff)
+      .limit(20);
+    if (stoppedErr) throw stoppedErr;
+
+    const { paystackPlanExpiryEvidence } = await import('@/lib/payments/paystack-plan-expiry-evidence');
+    for (const sub of stopped || []) {
+      try {
+        await supabase.from('subscriptions').update({ last_reconciliation_attempt_at: nowIso }).eq('id', sub.id);
+        const evidence = await paystackPlanExpiryEvidence(sub.paystack_subscription_code, sub.current_period_end);
+        const { error: recordErr } = await supabase.rpc('record_reconciliation_evidence', {
+          p_subscription_id: sub.id, p_gateway: 'paystack', p_provider_subscription_id: sub.paystack_subscription_code,
+          p_period_boundary: sub.current_period_end, p_outcome: evidence.outcome,
+          p_source_key: `renewal_recovery_paystack_${sub.id}`,
+          p_evidence_tx_count: evidence.invoiceCount, p_evidence_matched_count: evidence.paidInWindow,
+          p_evidence_provider_status: evidence.providerStatus,
+        });
+        if (recordErr) { skipped++; continue; }
+        evidenceRecorded++;
+        paystackExpiryEvidence++;
+      } catch (err) {
+        logger.error('[CRON:RENEWAL-RECOVERY] Paystack expiry evidence error', { subId: sub.id, error: String(err) });
+        skipped++;
+      }
+    }
+  } catch (err) {
+    logger.error('[CRON:RENEWAL-RECOVERY] Paystack expiry discovery error', { error: String(err) });
+  }
+
   return NextResponse.json({
     ok: true, finalized, evidenceRecorded, skipped,
-    batchSize: (batch as unknown[]).length, paystackRecovered,
+    batchSize: (batch as unknown[]).length, paystackRecovered, paystackExpiryEvidence,
   });
 
   // ═══════════════════════════════════════════════════════════

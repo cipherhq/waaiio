@@ -50,7 +50,8 @@ export type StepUpAction =
   | 'passkey_approve'
   | 'passkey_remove'
   | 'customer_suspension'
-  | 'admin_broadcast';
+  | 'admin_broadcast'
+  | 'subscription_admin_action';
 
 const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 

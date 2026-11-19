@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
-import { logAudit } from '@/lib/auditLog';
 import { adminQuery } from '@/lib/adminQuery';
+import { adminApiFetch } from '@/lib/adminApi';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
+import { extendTrialStepUp, stopRenewalStepUp, SUBSCRIPTION_STEP_UP_ACTION, type SubscriptionStepUp } from '../../../lib/admin-subscription-step-up';
 import { Pagination } from '@/components/Pagination';
 import { SortableTh } from '@/components/SortableTh';
 import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
@@ -59,11 +64,13 @@ interface AuditLogEntry {
 
 type TabId = 'subscriptions' | 'catalog' | 'analytics';
 
-// Extend Trial wrote columns subscriptions does not have (the trial is businesses.feature_trial_ends_at,
-// M525), and Cancel marked the row cancelled without stopping Paystack/Stripe, so the merchant kept
-// being billed. Both must go through a server route that reaches the gateway, so they stay off until
-// it exists (Owner decision 2026-11-18).
-const SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE = false;
+// Owner decisions 2026-11-18: Stop Renewal stops billing at the gateway and keeps the plan until
+// the paid period ends (no refund); Extend Trial adds 1–30 days to the feature trial
+// (businesses.feature_trial_ends_at, M525) of a Free business that has never paid. Both go through
+// POST /api/admin/subscriptions with a step-up; the server enforces every rule.
+const MAX_TRIAL_DAYS = 30;
+const STOP_RENEWAL_AUDIT = 'admin_subscription_stop_renewal';
+const EXTEND_TRIAL_AUDIT = 'admin_extend_feature_trial';
 
 // ── Tier Catalog — hardcoded fallback, overridden by platform_settings at runtime ──
 const TIER_CATALOG_FALLBACK: Record<string, TierCatalogEntry> = {
@@ -156,6 +163,11 @@ const TIERS = ['free', 'growth', 'business'] as const;
 type TierKey = (typeof TIERS)[number];
 
 export default function Subscriptions() {
+  const canMutate = isFullAdmin(useAdminSession());
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
+  const stepUpFlightRef = useRef(false);
+  const [actionMessage, setActionMessage] = useState('');
   const [subscriptions, setSubscriptions] = useState<SubscriptionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -277,7 +289,7 @@ export default function Subscriptions() {
       const { data } = await adminDb
         .from('admin_audit_logs')
         .select('*')
-        .in('action', ['change_subscription_tier', 'extend_trial', 'cancel_subscription'])
+        .in('action', ['change_subscription_tier', 'extend_trial', 'cancel_subscription', EXTEND_TRIAL_AUDIT, STOP_RENEWAL_AUDIT])
         .gte('created_at', thirtyDaysAgo)
         .order('created_at', { ascending: false })
         .limit(50);
@@ -325,6 +337,9 @@ export default function Subscriptions() {
       filters: [{ column: 'business_id', op: 'eq', value: selected.business_id }],
     }).then(res => setSelectedOverrideCount(res.error ? null : res.count ?? 0));
   }, [selected]);
+
+  // A message belongs to the row it was shown for.
+  useEffect(() => { setActionMessage(''); }, [selected?.id]);
 
   // ── Admin Actions ──
 
@@ -380,83 +395,74 @@ export default function Subscriptions() {
     }
   }
 
-  async function handleExtendTrial() {
-    if (!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE || !selected || trialDays <= 0) return;
+  /** Runs one money action behind a step-up bound to exactly what the admin confirmed. */
+  async function runMoneyAction(opts: {
+    stepUp: SubscriptionStepUp;
+    body: Record<string, unknown>;
+    description: string;
+    onDone: (data: Record<string, unknown>) => void;
+  }) {
+    if (!canMutate || actionSaving) return;
     setActionSaving(true);
+    setActionMessage('');
+    const onAuthorized = async (stepUpId: string) => {
+      const res = await adminApiFetch('/api/admin/subscriptions', { ...opts.body, stepUpId });
+      const data = await res.json().catch(() => ({}));
+      stepUpCallbackRef.current = null;
+      if (!res.ok) {
+        setActionMessage(data.error || 'Nothing was changed.');
+        // 409: the record changed; show the real state.
+        if (res.status === 409) await loadData();
+        return;
+      }
+      opts.onDone(data);
+      if (data.auditRecorded === false) setActionMessage('Done, but the audit entry could not be recorded.');
+    };
+    stepUpCallbackRef.current = onAuthorized;
     try {
-      const baseDate = selected.trial_ends_at ? new Date(selected.trial_ends_at) : new Date();
-      const newEnd = new Date(baseDate.getTime() + trialDays * 24 * 60 * 60 * 1000);
-
-      const { error } = await adminDb
-        .from('subscriptions')
-        .update({ trial_ends_at: newEnd.toISOString(), status: 'trial' })
-        .eq('id', selected.id);
-      if (error) throw error;
-
-      await logAudit({
-        action: 'extend_trial',
-        entity_type: 'subscription',
-        entity_id: selected.id,
-        details: {
-          days_added: trialDays,
-          new_trial_end: newEnd.toISOString(),
-          business_id: selected.business_id,
-          business_name: selected.business_name,
-        },
-      });
-
-      setSubscriptions(prev => prev.map(s =>
-        s.id === selected.id ? { ...s, trial_ends_at: newEnd.toISOString(), status: 'trial' } : s
-      ));
-      setSelected(prev => prev ? { ...prev, trial_ends_at: newEnd.toISOString(), status: 'trial' } : prev);
+      await stepUp.execute({ actionType: SUBSCRIPTION_STEP_UP_ACTION, targetId: opts.stepUp.targetId, params: opts.stepUp.params, description: opts.description, onAuthorized });
     } catch (err) {
-      console.error('Extend trial error:', err);
-      alert('Failed to extend trial');
+      stepUpCallbackRef.current = null;
+      setActionMessage(err instanceof Error ? err.message : 'Step-up failed');
+      stepUp.reset();
     } finally {
       setActionSaving(false);
     }
   }
 
-  async function handleCancel() {
-    if (!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE || !selected) return;
-    setActionSaving(true);
-    try {
-      const now = new Date().toISOString();
-      const { error } = await adminDb
-        .from('subscriptions')
-        .update({
-          status: 'cancelled',
-          cancelled_at: now,
-          cancellation_reason: cancelReason || 'Admin cancelled',
-          auto_renew: false,
-        })
-        .eq('id', selected.id);
-      if (error) throw error;
+  async function handleExtendTrial() {
+    if (!selected || !Number.isInteger(trialDays) || trialDays < 1 || trialDays > MAX_TRIAL_DAYS) return;
+    const { business_id: businessId } = selected;
+    await runMoneyAction({
+      stepUp: extendTrialStepUp(businessId, trialDays),
+      body: { action: 'extend_trial', businessId, days: trialDays },
+      description: `Add ${trialDays} day${trialDays === 1 ? '' : 's'} to the trial of ${selected.business_name || 'this business'}`,
+      onDone: data => {
+        const trialEndsAt = String(data.trialEndsAt);
+        setSubscriptions(prev => prev.map(s => s.business_id === businessId ? { ...s, trial_ends_at: trialEndsAt } : s));
+        setSelected(prev => prev && prev.business_id === businessId ? { ...prev, trial_ends_at: trialEndsAt } : prev);
+      },
+    });
+  }
 
-      await logAudit({
-        action: 'cancel_subscription',
-        entity_type: 'subscription',
-        entity_id: selected.id,
-        details: {
-          reason: cancelReason || 'Admin cancelled',
-          business_id: selected.business_id,
-          business_name: selected.business_name,
-        },
-      });
-
-      setSubscriptions(prev => prev.map(s =>
-        s.id === selected.id
-          ? { ...s, status: 'cancelled', cancelled_at: now, cancellation_reason: cancelReason || 'Admin cancelled', auto_renew: false }
-          : s
-      ));
-      setSelected(null);
-      setShowCancelConfirm(false);
-    } catch (err) {
-      console.error('Cancel error:', err);
-      alert('Failed to cancel subscription');
-    } finally {
-      setActionSaving(false);
+  async function handleStopRenewal() {
+    if (!selected || cancelReason.trim().length < 3) {
+      setActionMessage('Enter a reason (at least 3 characters).');
+      return;
     }
+    const { id, business_id: businessId } = selected;
+    const reason = cancelReason.trim();
+    await runMoneyAction({
+      stepUp: stopRenewalStepUp(id, businessId, reason),
+      body: { action: 'stop_renewal', subscriptionId: id, businessId, reason },
+      description: `Stop renewal of ${selected.business_name || 'this business'}'s ${selected.plan} plan (no refund)`,
+      onDone: () => {
+        const now = new Date().toISOString();
+        setSubscriptions(prev => prev.map(s => s.id === id ? { ...s, cancelled_at: now, cancellation_reason: reason } : s));
+        setSelected(prev => prev && prev.id === id ? { ...prev, cancelled_at: now, cancellation_reason: reason } : prev);
+        setShowCancelConfirm(false);
+      },
+    });
   }
 
   // ── Derived Data ──
@@ -828,15 +834,16 @@ export default function Subscriptions() {
                 {auditLogs.map(log => (
                   <div key={log.id} className="flex items-start gap-3 rounded-lg border border-gray-100 p-3">
                     <span className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                      log.action === 'cancel_subscription'
+                      log.action === 'cancel_subscription' || log.action === STOP_RENEWAL_AUDIT
                         ? 'bg-red-100 text-red-700'
-                        : log.action === 'extend_trial'
+                        : log.action === 'extend_trial' || log.action === EXTEND_TRIAL_AUDIT
                           ? 'bg-yellow-100 text-yellow-700'
                           : 'bg-blue-100 text-blue-700'
                     }`}>
                       {log.action === 'change_subscription_tier' ? 'Tier Change'
-                        : log.action === 'extend_trial' ? 'Trial Extended'
-                          : 'Cancelled'}
+                        : log.action === 'extend_trial' || log.action === EXTEND_TRIAL_AUDIT ? 'Trial Extended'
+                          : log.action === STOP_RENEWAL_AUDIT ? 'Renewal Stopped'
+                            : 'Cancelled'}
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-gray-900">
@@ -846,10 +853,10 @@ export default function Subscriptions() {
                         {log.action === 'change_subscription_tier' && (
                           <>{(log.details as any)?.previous_tier} &rarr; {(log.details as any)?.new_tier}</>
                         )}
-                        {log.action === 'extend_trial' && (
+                        {(log.action === 'extend_trial' || log.action === EXTEND_TRIAL_AUDIT) && (
                           <>+{(log.details as any)?.days_added} days</>
                         )}
-                        {log.action === 'cancel_subscription' && (
+                        {(log.action === 'cancel_subscription' || log.action === STOP_RENEWAL_AUDIT) && (
                           <>Reason: {(log.details as any)?.reason || 'N/A'}</>
                         )}
                       </p>
@@ -979,29 +986,37 @@ export default function Subscriptions() {
                   </div>
                 </div>
 
-                {!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE && (
-                  <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    Extend Trial and Cancel Subscription are not available yet: they need to update the
-                    payment provider as well as this record, and that part has not been built.
+                {actionMessage && (
+                  <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{actionMessage}</p>
+                )}
+                {!canMutate && (
+                  <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                    Only a full admin can extend a trial or stop a renewal.
                   </p>
                 )}
 
-                {/* Extend Trial */}
+                {/* Extend Trial: Free businesses that have never paid (the server checks). */}
                 <div className="mt-3 rounded-lg border border-gray-200 p-3">
-                  <p className="text-xs font-semibold text-gray-700 mb-2">Extend Trial</p>
+                  <p className="text-xs font-semibold text-gray-700 mb-1">Extend Trial</p>
+                  <p className="text-xs text-gray-500 mb-2">
+                    Adds days to the Pro/Premium trial. Only for businesses on Free that have never paid; the Waaiio fee still applies.
+                  </p>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
                       min={1}
-                      max={365}
+                      max={MAX_TRIAL_DAYS}
+                      step={1}
+                      aria-label="Days to add"
                       value={trialDays}
                       onChange={e => setTrialDays(Number(e.target.value))}
-                      className="w-20 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
+                      disabled={!canMutate}
+                      className="w-20 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none disabled:bg-gray-50"
                     />
-                    <span className="text-sm text-gray-500">days</span>
+                    <span className="text-sm text-gray-500">days (1 to {MAX_TRIAL_DAYS})</span>
                     <button
                       onClick={handleExtendTrial}
-                      disabled={!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE || actionSaving || trialDays <= 0}
+                      disabled={!canMutate || actionSaving || !Number.isInteger(trialDays) || trialDays < 1 || trialDays > MAX_TRIAL_DAYS}
                       className="rounded-lg bg-yellow-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-yellow-600 disabled:opacity-50"
                     >
                       {actionSaving ? 'Extending...' : 'Extend'}
@@ -1009,33 +1024,44 @@ export default function Subscriptions() {
                   </div>
                 </div>
 
-                {/* Cancel Subscription */}
+                {/* Stop Renewal: billing stops at the provider; the plan stays until the paid period ends. */}
                 <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-                  <p className="text-xs font-semibold text-red-700 mb-2">Cancel Subscription</p>
-                  {!showCancelConfirm ? (
-                    <button
-                      onClick={() => setShowCancelConfirm(true)}
-                      disabled={!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE}
-                      className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      Cancel Subscription...
-                    </button>
+                  <p className="text-xs font-semibold text-red-700 mb-1">Stop Renewal</p>
+                  {selected.cancelled_at ? (
+                    <p className="text-xs text-red-700">
+                      Renewal is stopped. The plan stays until {selected.current_period_end ? fmtDate(selected.current_period_end) : 'the end of the paid period'}, then moves to Free.
+                    </p>
+                  ) : !showCancelConfirm ? (
+                    <>
+                      <p className="text-xs text-red-700 mb-2">
+                        Stops future charges at the payment provider. The plan stays until the paid period ends, then moves to Free. No refund.
+                      </p>
+                      <button
+                        onClick={() => setShowCancelConfirm(true)}
+                        disabled={!canMutate}
+                        className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Stop Renewal...
+                      </button>
+                    </>
                   ) : (
                     <div className="space-y-2">
                       <input
                         type="text"
-                        placeholder="Reason for cancellation"
+                        placeholder="Reason (required)"
+                        aria-label="Reason for stopping renewal"
                         value={cancelReason}
                         onChange={e => setCancelReason(e.target.value)}
+                        maxLength={500}
                         className="w-full rounded-lg border border-red-300 px-3 py-1.5 text-sm focus:border-red-500 focus:outline-none"
                       />
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={handleCancel}
-                          disabled={actionSaving}
+                          onClick={handleStopRenewal}
+                          disabled={actionSaving || cancelReason.trim().length < 3}
                           className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                         >
-                          {actionSaving ? 'Cancelling...' : 'Confirm Cancel'}
+                          {actionSaving ? 'Stopping...' : 'Confirm Stop Renewal'}
                         </button>
                         <button
                           onClick={() => setShowCancelConfirm(false)}
@@ -1052,6 +1078,23 @@ export default function Subscriptions() {
           </div>
         )}
       </DetailModal>
+
+      <StepUpDialog
+        open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
+        description={stepUp.state.description} method={stepUp.state.method}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={async (code) => {
+          if (stepUpFlightRef.current || !stepUpCallbackRef.current) return;
+          stepUpFlightRef.current = true;
+          try { await stepUp.submitCode(code, stepUpCallbackRef.current); }
+          finally {
+            stepUpFlightRef.current = false;
+            if (!stepUpCallbackRef.current) stepUp.reset();
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }

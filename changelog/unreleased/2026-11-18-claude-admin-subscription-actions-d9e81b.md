@@ -1,0 +1,39 @@
+## 2026-11-18 — Admin subscription money actions reach the gateway (Owner decisions 2026-11-18)
+
+- **What changed:** The admin Subscriptions and Recurring Payments buttons work again, through new server routes. Each needs a full admin, a single-use step-up bound to every confirmed field, and a reason where the Owner asked for one. Each writes an audit entry.
+  - **Stop Renewal** (was Cancel) on a merchant's Waaiio plan: stops renewal at Paystack (`/subscription/disable`) or Stripe (`cancel_at_period_end`). The plan stays until the paid period ends, then moves to Free. No refund.
+    - Stripe: its `customer.subscription.deleted` at the period end downgrades.
+    - Paystack: new in this PR (user decision 2026-11-19, "Add Paystack expiry"). Before this, a Paystack plan whose renewal stopped stayed paid forever, because `expire_subscription_with_authority` had no Paystack branch.
+      - M554 adds that branch.
+      - A new pass in `subscription-renewal-recovery` records evidence for active Paystack plans whose renewal was stopped (`cancelled_at` set) and whose period has ended. The evidence is `terminal_no_payment` only when Paystack says the subscription will not renew AND returns its invoice list AND that list has no invoice paid (by its payment date) from 24h before the period end. A paid invoice without a payment date, a missing list or any read problem gives ambiguous or unavailable, and nothing expires.
+      - This also ends merchant- or provider-stopped Paystack plans (the `subscription.disable`/`not_renew` webhook), which had the same gap.
+      - Past-due Paystack plans are refused by Stop Renewal, because the authority only expires active plans.
+    - Flutterwave plans are refused for now: their reconciliation cron would downgrade at once.
+  - **Extend Trial:** adds 1 to 30 days to `businesses.feature_trial_ends_at` (M525), only for Free businesses that have never paid. No billing change; the Waaiio fee still applies.
+  - **Recurring pause/resume/cancel** for a merchant's customer: the same gateway calls as `/api/recurring/manage` (Paystack disable/enable, Stripe pause_collection/resume/cancel, Flutterwave status only). The gateway goes first, there is no refund and no customer message.
+  - **Recurring retry:** resets the failure count of a past_due Paystack or Flutterwave payment with a saved card, so the daily 10:00 retry cron charges it through its existing claim guard. Stripe is refused, because it retries on its own.
+- **Safety:**
+  - A missing gateway key is refused (503); it is never reported as success.
+  - The row must belong to the business sent, or the route returns 404.
+  - Local writes are compare-and-set on the checked state, so a double click or a concurrent change returns 409 instead of acting twice.
+  - A provider failure changes nothing (502).
+- **Correction to the switch-off fragment:** the old admin Cancel also wrote `auto_renew`, which no migration creates, so it most likely always failed. It could still never have stopped billing.
+- **Files:**
+  - `lib/admin-subscription-actions.ts` (new)
+  - `app/api/admin/subscriptions/route.ts` (new)
+  - `app/api/admin/recurring/route.ts` (POST added)
+  - `lib/payments/stripe-recurring.ts` (`cancelSubscriptionAtPeriodEnd`)
+  - `lib/admin-step-up.ts`
+  - `app/api/admin/step-up/prepare/route.ts`
+  - `supabase/migrations/553_subscription_admin_action_step_up.sql` (step-up CHECK only; carries every value from M548, the last CHECK definition; M551/M552 do not touch it)
+  - `supabase/migrations/554_paystack_plan_expiry_authority.sql` (one added CASE line in `expire_subscription_with_authority`; attributes and grants unchanged)
+  - `lib/payments/paystack-plan-expiry-evidence.ts` (new) and `app/api/cron/subscription-renewal-recovery/route.ts` (Paystack evidence pass)
+  - `lib/admin-subscription-step-up.ts` (new): one step-up binding shared by the admin pages and the routes (review B1: Stop Renewal's page and route had bound different fields, so every attempt was refused)
+  - `admin/src/pages/Subscriptions.tsx`
+  - `admin/src/pages/RecurringPayments.tsx`
+  - tests, `.github/workflows/ci.yml` (the new `.pg` test) and `docs/MIGRATION_REGISTRY.md`
+- **Affects:** admin panel money actions; Paystack plan expiry (the expiry authority and one renewal-recovery pass). The merchant dashboard, webhooks and payment flows are unchanged.
+- **What could break:**
+  - Until M553 is applied, preparing the new step-up fails the CHECK, so the actions refuse rather than run.
+  - Until M554 is applied, recorded Paystack evidence is ignored (`no_provider_identity`), so stopped Paystack plans stay paid as before. After M554 and the cron change, any active Paystack plan whose renewal was stopped and whose period ended (admin, merchant or provider) moves to Free on terminal evidence. That includes plans stopped before this change.
+  - A Paystack "pause" is a disable at Paystack (the same as the merchant dashboard today). If Paystack later sends `subscription.disable`, the webhook marks the payment cancelled.
