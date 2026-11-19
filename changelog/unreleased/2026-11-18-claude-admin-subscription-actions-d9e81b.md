@@ -5,7 +5,7 @@
     - Stripe: its `customer.subscription.deleted` at the period end downgrades.
     - Paystack: new in this PR (user decision 2026-11-19, "Add Paystack expiry"). Before this, a Paystack plan whose renewal stopped stayed paid forever, because `expire_subscription_with_authority` had no Paystack branch.
       - M554 adds that branch.
-      - A new pass in `subscription-renewal-recovery` records evidence for active Paystack plans whose renewal was stopped (`cancelled_at` set) and whose period has ended. The evidence is `terminal_no_payment` only when Paystack says the subscription will not renew AND lists no paid invoice from 24h before the period end; otherwise it is ambiguous, unavailable or active, and nothing expires.
+      - A new pass in `subscription-renewal-recovery` records evidence for active Paystack plans whose renewal was stopped (`cancelled_at` set) and whose period has ended. The evidence is `terminal_no_payment` only when Paystack says the subscription will not renew AND returns its invoice list AND that list has no invoice paid (by its payment date) from 24h before the period end. A paid invoice without a payment date, a missing list or any read problem gives ambiguous or unavailable, and nothing expires.
       - This also ends merchant- or provider-stopped Paystack plans (the `subscription.disable`/`not_renew` webhook), which had the same gap.
       - Past-due Paystack plans are refused by Stop Renewal, because the authority only expires active plans.
     - Flutterwave plans are refused for now: their reconciliation cron would downgrade at once.

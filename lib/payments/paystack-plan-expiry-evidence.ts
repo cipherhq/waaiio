@@ -31,8 +31,9 @@ function isPaid(invoice: Record<string, unknown>): boolean {
   return invoice.status === 'success' || invoice.paid === true || invoice.paid === 1;
 }
 
-function invoiceTime(invoice: Record<string, unknown>): number | null {
-  for (const key of ['paid_at', 'paidAt', 'created_at', 'createdAt', 'period_start']) {
+/** When the invoice was paid. Only a payment date counts: a creation or period date may predate the payment. */
+function paidTime(invoice: Record<string, unknown>): number | null {
+  for (const key of ['paid_at', 'paidAt']) {
     const value = invoice[key];
     if (typeof value === 'string' && value) {
       const time = Date.parse(value);
@@ -66,15 +67,16 @@ export async function paystackPlanExpiryEvidence(subscriptionCode: string, perio
   if (STILL_BILLING.has(providerStatus)) return { outcome: 'provider_active_or_retrying', providerStatus, invoiceCount: 0, paidInWindow: 0 };
   if (!NOT_RENEWING.has(providerStatus)) return unavailable(providerStatus || 'unknown');
 
-  if (data.invoices !== undefined && !Array.isArray(data.invoices)) return unavailable(providerStatus);
-  const invoices = [...((data.invoices as Array<Record<string, unknown>> | undefined) || [])];
+  // Without Paystack's invoice list we cannot rule out a payment.
+  if (!Array.isArray(data.invoices)) return unavailable(providerStatus);
+  const invoices = [...(data.invoices as Array<Record<string, unknown>>)];
   if (data.most_recent_invoice && typeof data.most_recent_invoice === 'object') invoices.push(data.most_recent_invoice as Record<string, unknown>);
 
   let paidInWindow = 0;
   for (const invoice of invoices) {
     if (!invoice || typeof invoice !== 'object' || !isPaid(invoice)) continue;
-    const time = invoiceTime(invoice);
-    // A paid invoice with no readable date cannot be ruled out.
+    const time = paidTime(invoice);
+    // A paid invoice with no readable payment date cannot be ruled out.
     if (time === null || time >= periodEndMs - WINDOW_MS) paidInWindow++;
   }
   return {

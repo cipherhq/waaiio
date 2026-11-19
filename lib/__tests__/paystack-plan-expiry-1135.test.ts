@@ -41,15 +41,27 @@ describe('paystackPlanExpiryEvidence', () => {
   it('completed and non-renewing are also terminal when nothing was paid', async () => {
     reply({ status: 'completed', invoices: [] });
     expect((await (await load())('SUB_x', PERIOD_END)).outcome).toBe('terminal_no_payment');
-    reply({ status: 'non-renewing' });
+    reply({ status: 'non-renewing', invoices: [] });
     expect((await (await load())('SUB_x', PERIOD_END)).outcome).toBe('terminal_no_payment');
   });
 
   it('a paid invoice in the window (or one with no date) is ambiguous, never terminal', async () => {
     reply({ status: 'cancelled', invoices: [{ status: 'success', paid_at: at(-0.5) }] });
     expect((await (await load())('SUB_x', PERIOD_END)).outcome).toBe('ambiguous');
-    reply({ status: 'cancelled', most_recent_invoice: { paid: true } });
+    reply({ status: 'cancelled', invoices: [], most_recent_invoice: { paid: true } });
     expect((await (await load())('SUB_x', PERIOD_END))).toMatchObject({ outcome: 'ambiguous', paidInWindow: 1 });
+  });
+
+  it('only a payment date rules a paid invoice out: an old created_at or period_start does not (review B S2)', async () => {
+    reply({ status: 'cancelled', invoices: [{ status: 'success', created_at: at(-30), period_start: at(-30) }] });
+    expect((await (await load())('SUB_x', PERIOD_END))).toMatchObject({ outcome: 'ambiguous', paidInWindow: 1 });
+  });
+
+  it('no invoice list in the reply is unavailable, never terminal (review B S1)', async () => {
+    reply({ status: 'cancelled' });
+    expect((await (await load())('SUB_x', PERIOD_END)).outcome).toBe('unavailable');
+    reply({ status: 'cancelled', most_recent_invoice: { status: 'failed' } });
+    expect((await (await load())('SUB_x', PERIOD_END)).outcome).toBe('unavailable');
   });
 
   it('active or attention means Paystack may still charge', async () => {
