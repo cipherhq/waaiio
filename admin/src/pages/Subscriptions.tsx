@@ -59,6 +59,12 @@ interface AuditLogEntry {
 
 type TabId = 'subscriptions' | 'catalog' | 'analytics';
 
+// Extend Trial wrote columns subscriptions does not have (the trial is businesses.feature_trial_ends_at,
+// M525), and Cancel marked the row cancelled without stopping Paystack/Stripe, so the merchant kept
+// being billed. Both must go through a server route that reaches the gateway, so they stay off until
+// it exists (Owner decision 2026-11-18).
+const SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE = false;
+
 // ── Tier Catalog — hardcoded fallback, overridden by platform_settings at runtime ──
 const TIER_CATALOG_FALLBACK: Record<string, TierCatalogEntry> = {
   free: {
@@ -375,7 +381,7 @@ export default function Subscriptions() {
   }
 
   async function handleExtendTrial() {
-    if (!selected || trialDays <= 0) return;
+    if (!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE || !selected || trialDays <= 0) return;
     setActionSaving(true);
     try {
       const baseDate = selected.trial_ends_at ? new Date(selected.trial_ends_at) : new Date();
@@ -412,7 +418,7 @@ export default function Subscriptions() {
   }
 
   async function handleCancel() {
-    if (!selected) return;
+    if (!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE || !selected) return;
     setActionSaving(true);
     try {
       const now = new Date().toISOString();
@@ -973,6 +979,13 @@ export default function Subscriptions() {
                   </div>
                 </div>
 
+                {!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE && (
+                  <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Extend Trial and Cancel Subscription are not available yet: they need to update the
+                    payment provider as well as this record, and that part has not been built.
+                  </p>
+                )}
+
                 {/* Extend Trial */}
                 <div className="mt-3 rounded-lg border border-gray-200 p-3">
                   <p className="text-xs font-semibold text-gray-700 mb-2">Extend Trial</p>
@@ -988,7 +1001,7 @@ export default function Subscriptions() {
                     <span className="text-sm text-gray-500">days</span>
                     <button
                       onClick={handleExtendTrial}
-                      disabled={actionSaving || trialDays <= 0}
+                      disabled={!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE || actionSaving || trialDays <= 0}
                       className="rounded-lg bg-yellow-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-yellow-600 disabled:opacity-50"
                     >
                       {actionSaving ? 'Extending...' : 'Extend'}
@@ -1002,7 +1015,8 @@ export default function Subscriptions() {
                   {!showCancelConfirm ? (
                     <button
                       onClick={() => setShowCancelConfirm(true)}
-                      className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                      disabled={!SUBSCRIPTION_MONEY_ACTIONS_AVAILABLE}
+                      className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                     >
                       Cancel Subscription...
                     </button>
