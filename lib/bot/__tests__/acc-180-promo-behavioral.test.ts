@@ -118,7 +118,7 @@ const BIZ_DATA = {
   id: 'biz-promo', name: 'PromoBiz', slug: 'promobiz', category: 'shop',
   flow_type: 'ordering', subscription_tier: 'growth', trial_ends_at: null,
   metadata: {}, country_code: 'NG', is_whitelabel: false, payment_gateway: null,
-  operating_hours: null, status: 'active', whatsapp_phone_number_id: null,
+  operating_hours: null, status: 'active',
   bot_code: null, total_bookings: 0, rating_avg: 0,
 };
 
@@ -133,7 +133,6 @@ function buildSupabase(opts: {
   const bizId = opts.businessId || 'biz-promo';
   const caps = opts.caps || ['ordering', 'promo_verification'];
   const biz = { ...BIZ_DATA, id: bizId };
-  if (opts.dedicatedNumber) (biz as any).whatsapp_phone_number_id = 'dedicated-phone-id';
 
   const mkChain = (): Record<string, any> => {
     const c: Record<string, any> = {};
@@ -317,17 +316,22 @@ describe('ACC-180 Runtime: pre_resolved business', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('ACC-180 Runtime: dedicated-number resolution', () => {
-  it('business resolved via dedicated-number DB lookup (no preResolvedBusinessId) → promo handler called', async () => {
-    // preResolvedBusinessId is ABSENT — business resolves through
-    // from('businesses').eq('whatsapp_phone_number_id', destinationPhone).single()
+  // Bot latency 2026-11-19: this test used to fake a businesses.whatsapp_phone_number_id
+  // column and expect a dedicated number to resolve its business through it. That column
+  // does not exist on staging or production (checked 2026-11-19), so in production the
+  // lookup always failed and resolved nothing; it was removed. A dedicated number's
+  // business reaches the bot from the webhook as preResolvedBusinessId (tested above).
+  it('dedicated number without preResolvedBusinessId: no businesses phone-number lookup, promo not trusted', async () => {
     const sb = buildSupabase({ businessId: 'biz-ded', dedicatedNumber: true });
     const bot = new BotService(sb as any, mockSender() as any, mockStandalone() as any, mockIntelligence() as any);
     // Only destinationPhone, no preResolvedBusinessId
     await bot.handleMessage('+2341234567890', 'TROPHY ABC12345', 'text', 'dedicated-phone-id', undefined, undefined, 'wamid.DED456');
 
-    expect(promoHandlerCalls.length).toBeGreaterThanOrEqual(1);
-    expect(promoHandlerCalls[0].businessId).toBe('biz-ded');
-    expect(promoHandlerCalls[0].messageId).toBe('wamid.DED456');
+    const phoneNumberIdFilters = (sb.from as any).mock.results
+      .flatMap((r: { value: Record<string, any> }) => r.value.eq.mock.calls)
+      .filter((args: unknown[]) => args[0] === 'whatsapp_phone_number_id');
+    expect(phoneNumberIdFilters).toHaveLength(0);
+    expect(promoHandlerCalls).toHaveLength(0);
   });
 });
 

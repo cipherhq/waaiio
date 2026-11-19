@@ -259,6 +259,46 @@ interface OpenTimesInputs {
   localNow?: BusinessLocalNow | null;
 }
 
+/**
+ * Services the select_service list offers: active, not giving, not deleted, in
+ * sort order, class or non-class by the active capability, and only the
+ * smart-intent matches when there are any.
+ */
+async function readSelectableServices(ctx: FlowContext, activeCap: string | undefined, matchedIds: string[] | undefined) {
+  let query = ctx.supabase
+    .from('services')
+    .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+    .eq('business_id', ctx.business!.id)
+    .eq('is_active', true)
+    .neq('service_type', 'giving')
+    .is('deleted_at', null)
+    .order('sort_order');
+
+  // Separate class vs normal service paths
+  if (activeCap === 'class_booking') {
+    query = query.eq('is_class', true);
+  } else {
+    query = query.or('is_class.is.null,is_class.eq.false');
+  }
+
+  // If smart intent matched multiple services, only show those
+  if (matchedIds && matchedIds.length > 0) {
+    query = query.in('id', matchedIds);
+  }
+
+  const { data } = await query;
+  return data;
+}
+
+/**
+ * Bot latency 2026-11-19: select_service's skipIf reads the same services list its
+ * prompt shows, in the same execute() (same ctx). The prompt takes it from here.
+ */
+const servicesReadBySkipIf = new WeakMap<FlowContext, {
+  classPath: boolean;
+  services: NonNullable<Awaited<ReturnType<typeof readSelectableServices>>>;
+}>();
+
 /** Bookings needed to judge one date: that date, and the dates either side for tables (M510). */
 function slotBookingRange(ctx: FlowContext, dateStr: string): [string, string] {
   return ctx.session.session_data._is_table_reservation === true
@@ -270,14 +310,17 @@ function slotBookingRange(ctx: FlowContext, dateStr: string): [string, string] {
 async function openTimesForDate(ctx: FlowContext, dateStr: string, inputs: OpenTimesInputs = {}): Promise<OpenTime[]> {
   const d = ctx.session.session_data;
   const isTableRes = d._is_table_reservation === true;
-  const staffSchedule = inputs.staffSchedule !== undefined ? inputs.staffSchedule : await loadStaffSchedule(ctx);
-  const localNow = inputs.localNow !== undefined ? inputs.localNow : (isTableRes ? await resolveBusinessLocalNow(ctx) : null);
-  const rows = inputs.rows ?? await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
+  // Bot latency 2026-11-19: these reads are independent, so they run together.
+  const [staffSchedule, localNow, rows, seatingHolds] = await Promise.all([
+    inputs.staffSchedule !== undefined ? inputs.staffSchedule : loadStaffSchedule(ctx),
+    inputs.localNow !== undefined ? inputs.localNow : (isTableRes ? resolveBusinessLocalNow(ctx) : null),
+    inputs.rows ?? fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr)),
+    isTableRes && d.seating_resource_id
+      ? loadSeatingHolds(ctx.supabase, ctx.business!.id, d.seating_resource_id as string,
+        `${dateStr}T00:00:00`, `${addDaysToDateStr(dateStr, 2)}T00:00:00`)
+      : [],
+  ]);
   const slots = candidateTimes(ctx, dateStr, staffSchedule, localNow, inputs.pref, inputs.extraTime);
-  const seatingHolds = isTableRes && d.seating_resource_id
-    ? await loadSeatingHolds(ctx.supabase, ctx.business!.id, d.seating_resource_id as string,
-      `${dateStr}T00:00:00`, `${addDaysToDateStr(dateStr, 2)}T00:00:00`)
-    : [];
   return openTimesOnDate(slots, rows, {
     date: dateStr,
     isTable: isTableRes,
@@ -302,9 +345,12 @@ async function openTimesForDate(ctx: FlowContext, dateStr: string, inputs: OpenT
 async function checkTimeOpen(ctx: FlowContext, dateStr: string, time: string): Promise<'open' | 'taken' | 'not_offered'> {
   const isTableRes = ctx.session.session_data._is_table_reservation === true;
   const pref = ctx.session.session_data._time_preference as string | undefined;
-  const staffSchedule = await loadStaffSchedule(ctx);
-  const localNow = isTableRes ? await resolveBusinessLocalNow(ctx) : null;
-  const rows = await fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr));
+  // Bot latency 2026-11-19: these reads are independent, so they run together.
+  const [staffSchedule, localNow, rows] = await Promise.all([
+    loadStaffSchedule(ctx),
+    isTableRes ? resolveBusinessLocalNow(ctx) : null,
+    fetchSlotBookings(ctx, ...slotBookingRange(ctx, dateStr)),
+  ]);
   const runs: OpenTimesInputs[] = [{ extraTime: time }, ...(pref ? [{ pref }] : [])];
   for (const run of runs) {
     const open = await openTimesForDate(ctx, dateStr, { ...run, rows, staffSchedule, localNow });
@@ -778,30 +824,15 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
-        let query = ctx.supabase
-          .from('services')
-          .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
-          .eq('business_id', ctx.business.id)
-          .eq('is_active', true)
-          .neq('service_type', 'giving')
-          .is('deleted_at', null)
-          .order('sort_order');
-
-        // Separate class vs normal service paths
+        // Bot latency 2026-11-19: skipIf just read this business's services for the
+        // same message; reuse that list (same filters and order) instead of reading again.
         const activeCap = ctx.session.session_data.active_capability as string | undefined;
-        if (activeCap === 'class_booking') {
-          query = query.eq('is_class', true);
-        } else {
-          query = query.or('is_class.is.null,is_class.eq.false');
-        }
-
-        // If smart intent matched multiple services, only show those
         const matchedIds = ctx.session.session_data._matched_service_ids as string[] | undefined;
-        if (matchedIds && matchedIds.length > 0) {
-          query = query.in('id', matchedIds);
-        }
-
-        const { data: services } = await query;
+        const skipRead = servicesReadBySkipIf.get(ctx);
+        servicesReadBySkipIf.delete(ctx);
+        const services = skipRead && skipRead.classPath === (activeCap === 'class_booking')
+          ? (matchedIds && matchedIds.length > 0 ? skipRead.services.filter(s => matchedIds.includes(s.id)) : skipRead.services)
+          : await readSelectableServices(ctx, activeCap, matchedIds);
 
         if (!services || services.length === 0) {
           return [{ type: 'text' as const, text: getFlowCopy(ctx.copyLang, 'booking.no_services') }];
@@ -815,17 +846,19 @@ export const schedulingFlow: FlowDefinition = {
           const futureDate = new Date();
           futureDate.setDate(futureDate.getDate() + 14);
           const futureDateStr = futureDate.toISOString().split('T')[0];
-          for (const cs of classServices) {
-            const { count } = await ctx.supabase
-              .from('bookings')
-              .select('id', { count: 'exact', head: true })
-              .eq('business_id', ctx.business.id)
-              .eq('service_id', cs.id)
-              .in('status', ['confirmed', 'pending', 'in_progress'])
-              .gte('date', todayStr)
-              .lte('date', futureDateStr);
-            spotsMap.set(cs.id, Math.max(0, (cs.max_capacity || 1) - (count || 0)));
-          }
+          // Bot latency 2026-11-19: one count per class, run together instead of one by one.
+          const businessId = ctx.business.id;
+          const counts = await Promise.all(classServices.map(cs => ctx.supabase
+            .from('bookings')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId)
+            .eq('service_id', cs.id)
+            .in('status', ['confirmed', 'pending', 'in_progress'])
+            .gte('date', todayStr)
+            .lte('date', futureDateStr)));
+          classServices.forEach((cs, i) => {
+            spotsMap.set(cs.id, Math.max(0, (cs.max_capacity || 1) - (counts[i].count || 0)));
+          });
         }
 
         const labels = getCategoryLabels(ctx.business.category);
@@ -1011,6 +1044,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         // Owner decision: the customer always picks the service, even when there is only one
+        servicesReadBySkipIf.set(ctx, { classPath: skipActiveCap === 'class_booking', services });
         return false;
       },
     },

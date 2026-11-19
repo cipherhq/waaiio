@@ -7,7 +7,7 @@ vi.mock('@/lib/channels/channel-resolver',()=>({ChannelResolver:class {
  resolveByPhoneNumberId=async()=>m.resolved;
  resolveByBusinessId=async()=>m.resolved;
 }}));
-vi.mock('@/lib/bot/bot.service',()=>({BotService:class {handleMessage=m.bot;}}));
+vi.mock('@/lib/bot/bot.service',()=>({BotService:class {handleMessage=m.bot; markSuspensionGated(){}}}));
 vi.mock('@/lib/bot/bot-intelligence',()=>({BotIntelligenceService:class{}}));
 vi.mock('@/lib/bot/standalone.service',()=>({StandaloneService:class{}}));
 vi.mock('@/lib/channels/send-or-email',()=>({findCustomerEmail:async()=>null}));

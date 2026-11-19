@@ -29,7 +29,8 @@ import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext, type TranslateOptions } from './translate';
-import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
+import { getEffectiveLanguages } from './language-policy';
+import { createAiConfigReader, type AiConfigReader } from './ai-config-reader';
 import { loadPlatformSettings, getPlatformSettingsSync } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting, buildDefaultWelcomeLine } from './customer-intelligence';
@@ -68,7 +69,6 @@ import { HOME_PATTERN, handleEscapeHatch as _handleEscapeHatch } from './handler
 import { handlePromoVerification as _handlePromoVerification } from './handlers/promo-verification';
 import { handleGlobalQuery, isOrdersQuery } from './handlers/global-queries';
 import { ConversationOrchestrator } from './conversation-orchestrator';
-import { loadConversationConfig } from './confidence-policy';
 import { answerTemporaryQuestion } from './business-knowledge';
 import { applyCorrection } from './correction-parser';
 import { searchMarketplace, formatMarketplaceResults, loadDirectoryHiddenIds } from '@/lib/marketplace/search';
@@ -112,6 +112,10 @@ export class BotService {
    * Request-scoped (one BotService per message) and never persisted or logged.
    */
   private inboundLocation: { latitude: number; longitude: number } | null = null;
+  /** The webhook already ran the #1103 suspension gate for this inbound message. */
+  private suspensionGated = false;
+  /** ai_conversation_config read at most once per business for this inbound message. */
+  private readonly aiConfig: AiConfigReader;
   private readonly ctx: BotContext;
 
   constructor(
@@ -121,13 +125,19 @@ export class BotService {
     private readonly intelligence: BotIntelligenceService,
     private readonly guardNativeSender: (sender: MessageSender) => MessageSender = sender => sender,
   ) {
-    this.flowExecutor = new FlowExecutor(supabase, messageSender, standaloneService, intelligence);
+    this.aiConfig = createAiConfigReader(supabase);
+    this.flowExecutor = new FlowExecutor(supabase, messageSender, standaloneService, intelligence, this.aiConfig);
     this.ctx = { supabase, messageSender, standaloneService, intelligence, flowExecutor: this.flowExecutor };
   }
 
   /** #1072 step 2: the webhook hands over a location pin before handleMessage(LOCATION_PIN_TEXT). */
   setInboundLocation(pin: { latitude: number; longitude: number }): void {
     this.inboundLocation = pin;
+  }
+
+  /** #1103: the webhook ran gateSuspendedCustomer for this inbound message, so handleMessage need not repeat it. */
+  markSuspensionGated(): void {
+    this.suspensionGated = true;
   }
 
   async handleMessage(
@@ -197,9 +207,12 @@ export class BotService {
     // If so, the full early dispatcher (after rate limit) will handle it.
     // Store the pre-resolved session so the dispatcher doesn't re-query.
     let _preResolvedPendingStop: Record<string, unknown> | null = null;
+    // Bot latency 2026-11-19: the early dispatcher below reuses this read instead of
+    // repeating the identical query (undefined = not read, or the read failed).
+    let _prePendingStopRead: { data: Record<string, unknown> | null } | undefined;
     const _pendingStopInputsPre = /^(stop_merchant|stop_platform|biz_\d+|[1-9]|10)$/i;
     if (_pendingStopInputsPre.test(text)) {
-      const { data: prePendingSession } = await this.supabase
+      const { data: prePendingSession, error: prePendingError } = await this.supabase
         .from('bot_sessions')
         .select('id, session_data, version, whatsapp_number, current_step')
         .eq('whatsapp_number', from)
@@ -209,6 +222,7 @@ export class BotService {
         .gte('expires_at', new Date().toISOString())
         .limit(1)
         .maybeSingle();
+      if (!prePendingError) _prePendingStopRead = { data: prePendingSession ?? null };
       if (prePendingSession?.session_data &&
           (prePendingSession.session_data._pending_stop || prePendingSession.session_data._pending_stop_choice) &&
           !prePendingSession.session_data._claimed) {
@@ -252,7 +266,7 @@ export class BotService {
 
     // #1103: platform-wide customer suspension. The webhook gates first; this
     // covers every other entry. Re-entries from this method already passed.
-    if (!_internalProvenance && await gateSuspendedCustomer(this.supabase, from, this.messageSender)) {
+    if (!_internalProvenance && !this.suspensionGated && await gateSuspendedCustomer(this.supabase, from, this.messageSender)) {
       return;
     }
 
@@ -756,7 +770,9 @@ export class BotService {
       // Use pre-resolved session from before rate limit if available (avoids redundant query)
       let pendingSession = _preResolvedPendingStop as typeof _preResolvedPendingStop & { id: string; session_data: Record<string, unknown>; version: number; whatsapp_number: string; current_step: string } | null;
       let pendingErr: { message: string } | null = null;
-      if (!pendingSession) {
+      if (!pendingSession && _prePendingStopRead) {
+        pendingSession = _prePendingStopRead.data as typeof pendingSession;
+      } else if (!pendingSession) {
         const result = await this.supabase
           .from('bot_sessions')
           .select('id, session_data, version, whatsapp_number, current_step')
@@ -1039,6 +1055,9 @@ export class BotService {
           expires_at: ctx.session.expires_at,
           version: ctx.session.version ?? 0,
         };
+        // Bot latency 2026-11-19: start the (memoised) wording-override read now so it
+        // overlaps the work before the flow runs. Its result is awaited where it is used.
+        if (session.business_id) getOverrides(session.business_id).catch(() => {});
 
         if (ctx.business) {
           // Build business record with all fields from RPC
@@ -1938,29 +1957,19 @@ export class BotService {
 
       // ── #219 Block B: Resolve business from destinationPhone only if not already known ──
       if (!businessId && destinationPhone) {
-        // Check if this is a dedicated number for a specific business
-        const { data: biz } = await this.supabase
-          .from('businesses')
-          .select('id')
-          .eq('whatsapp_phone_number_id', destinationPhone)
-          .single();
-        businessId = biz?.id || null;
-        if (businessId) bizResolution = 'dedicated_number';
-        logger.debug('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
-
-        // If not a dedicated business number, check if it's a shared channel
-        if (!businessId) {
-          // Channel already resolved in Block A — just need country for scoping
-          if (!sharedNumberCountry) {
-            const { data: channel } = await this.supabase
-              .from('whatsapp_channels')
-              .select('country_code')
-              .eq('phone_number_id', destinationPhone)
-              .eq('channel_type', 'shared')
-              .eq('is_active', true)
-              .maybeSingle();
-            if (channel) sharedNumberCountry = channel.country_code;
-          }
+        // Dedicated numbers resolve through whatsapp_channels (Block A above).
+        // businesses has no whatsapp_phone_number_id column, so the old lookup
+        // here always failed and found nothing; it was removed (bot latency 2026-11-19).
+        // Shared channel: already resolved in Block A — just need country for scoping
+        if (!sharedNumberCountry) {
+          const { data: channel } = await this.supabase
+            .from('whatsapp_channels')
+            .select('country_code')
+            .eq('phone_number_id', destinationPhone)
+            .eq('channel_type', 'shared')
+            .eq('is_active', true)
+            .maybeSingle();
+          if (channel) sharedNumberCountry = channel.country_code;
         }
       }
 
@@ -2210,7 +2219,7 @@ export class BotService {
         const rememberedLanguage = await readPreferredResponseLanguage(this.supabase as never, profile.id);
         if (rememberedLanguage) {
           hasRememberedLanguage = true;
-          const configuredLanguages = await loadBusinessLanguages(this.supabase, business.id);
+          const configuredLanguages = await this.aiConfig.languages(business.id);
           const rememberedEntitlement = getEffectiveLanguages(
             business.subscription_tier,
             configuredLanguages,
@@ -2290,6 +2299,7 @@ export class BotService {
           canonicalResult = await understandCanonicalMessage({
             text, businessId: business.id, businessCategory: business.category,
             subscriptionTier: business.subscription_tier, supabase: this.supabase,
+            loadConfiguredLanguages: bizId => this.aiConfig.languages(bizId),
             timezone: (waConfig?.business_hours as BusinessHours | undefined)?.timezone,
             skipLLM: textIsBareBotCode,
           });
@@ -2302,8 +2312,7 @@ export class BotService {
           }
 
           // Confidence check BEFORE any semantic action
-          const { loadConversationConfig } = await import('./confidence-policy');
-          const convConfig = await loadConversationConfig(this.supabase, business.id);
+          const convConfig = await this.aiConfig.conversationConfig(business.id);
           if (canonicalResult.confidence > 0 && canonicalResult.confidence < convConfig.clarificationThreshold) {
             // Below clarification threshold → force menu, no auto-route
             forceCapabilityMenu = true;
@@ -2852,7 +2861,7 @@ export class BotService {
         if (custProfile?.preferred_language) {
           // Verify the saved language is still allowed by the business
           const savedLang = custProfile.preferred_language;
-          const savedLangConfigured = await loadBusinessLanguages(this.supabase, business.id);
+          const savedLangConfigured = await this.aiConfig.languages(business.id);
           const savedLangEntitlement = getEffectiveLanguages(
             business.subscription_tier,
             savedLangConfigured,
@@ -2887,7 +2896,7 @@ export class BotService {
         }
 
         if (!hasRememberedLanguage && !_internalProvenance) {
-          const pickerConfiguredLangs = await loadBusinessLanguages(this.supabase, business.id);
+          const pickerConfiguredLangs = await this.aiConfig.languages(business.id);
           const pickerEntitlement = getEffectiveLanguages(
             business.subscription_tier,
             pickerConfiguredLangs,
@@ -4673,8 +4682,7 @@ export class BotService {
     const revalidatedBiz = _cachedBusiness?.id === resumedBizId ? _cachedBusiness : null;
     const loadResumedBiz = async () => revalidatedBiz
       ?? (await this.supabase.from('businesses').select('subscription_tier, category').eq('id', resumedBizId).single()).data;
-    let resumedConvConfigPromise: ReturnType<typeof loadConversationConfig> | null = null;
-    const loadResumedConvConfig = () => resumedConvConfigPromise ??= loadConversationConfig(this.supabase, resumedBizId!);
+    const loadResumedConvConfig = () => this.aiConfig.conversationConfig(resumedBizId!);
     _bmark(isDeterministicPostback ? 'cas004_skipped_deterministic' : 'cas004_start');
     if (session.business_id && text && !isCasExcluded && !isDeterministicPostback) {
       try {
@@ -4686,6 +4694,7 @@ export class BotService {
           businessCategory: bizForCas?.category || (session.session_data?.business_category as string) || null,
           subscriptionTier: bizForCas?.subscription_tier || 'free',
           supabase: this.supabase,
+          loadConfiguredLanguages: bizId => this.aiConfig.languages(bizId),
           skipLLM: skipIntentLLM,
         });
 
@@ -5614,7 +5623,7 @@ export class BotService {
   /** Build TranslationContext for a business — resolves entitlement from tier + configured languages */
   private async buildTranslationContext(businessId: string | null, tier: string): Promise<TranslationContext> {
     const configuredLangs = businessId
-      ? await loadBusinessLanguages(this.supabase, businessId)
+      ? await this.aiConfig.languages(businessId)
       : null;
     const entitlement = getEffectiveLanguages(tier, configuredLangs);
     return { entitlement, businessId: businessId || '', supabase: this.supabase };

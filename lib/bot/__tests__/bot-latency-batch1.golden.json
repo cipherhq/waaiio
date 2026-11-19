@@ -1,0 +1,79 @@
+{
+  "menu tap at select_capability": [
+    {
+      "type": "list",
+      "to": "2348011112222",
+      "title": "Select Service",
+      "body": "What would you like to book?",
+      "buttonLabel": "Choose",
+      "items": [
+        {
+          "title": "Haircut",
+          "description": "₦5,000 • 30min",
+          "postbackText": "svc-1"
+        },
+        {
+          "title": "Braids",
+          "description": "₦15,000 • 2hr",
+          "postbackText": "svc-2"
+        }
+      ]
+    }
+  ],
+  "number tap at select_capability": [
+    {
+      "type": "list",
+      "to": "2348011112222",
+      "title": "Select Service",
+      "body": "What would you like to book?",
+      "buttonLabel": "Choose",
+      "items": [
+        {
+          "title": "Haircut",
+          "description": "₦5,000 • 30min",
+          "postbackText": "svc-1"
+        },
+        {
+          "title": "Braids",
+          "description": "₦15,000 • 2hr",
+          "postbackText": "svc-2"
+        }
+      ]
+    }
+  ],
+  "typed answer at collect_name": [
+    {
+      "type": "text",
+      "to": "2348011112222",
+      "text": "📧 We'll send your booking confirmation to your email. Type your email or *skip* to skip:"
+    }
+  ],
+  "free text at select_service": [
+    {
+      "type": "buttons",
+      "to": "2348011112222",
+      "body": "When would you like to book?\n\nOr type a date, like *20 Dec*.",
+      "buttons": [
+        {
+          "id": "date_2026-11-19",
+          "title": "Tomorrow (Thu)"
+        },
+        {
+          "id": "date_2026-11-21",
+          "title": "This Saturday"
+        },
+        {
+          "id": "pick_date",
+          "title": "Pick a Date"
+        }
+      ]
+    }
+  ],
+  "shared number, unknown business": [
+    {
+      "type": "text",
+      "to": "2348011112222",
+      "text": "Your business selection changed. Please send the business code again."
+    }
+  ]
+}

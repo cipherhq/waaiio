@@ -72,6 +72,7 @@ describe('#1072 step 2 webhook: location pins', { timeout: 60_000 }, () => {
       BotService: class {
         private pin: unknown = null;
         setInboundLocation(pin: unknown) { this.pin = pin; }
+        markSuspensionGated() {}
         async handleMessage(...args: unknown[]) { botCalls.push({ pin: this.pin, args }); }
       },
     }));

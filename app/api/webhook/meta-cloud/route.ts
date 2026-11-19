@@ -854,6 +854,8 @@ export async function POST(request: NextRequest) {
               const standalone = new StandaloneService(supabase);
               const bot = new BotService(supabase, guardedSender, standalone, intelligenceSvc, sender => createDeadlineGuardedSender(sender, t0));
               if (locationPin) bot.setInboundLocation(locationPin);
+              // gateSuspendedCustomer already ran for this message above (#1103)
+              bot.markSuspensionGated();
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
