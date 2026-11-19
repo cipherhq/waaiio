@@ -6,7 +6,7 @@ import { blocksReminder } from '@/lib/customer-suspension';
 import { findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
-import { isSmsEligible } from '@/lib/sms/bulksms-ng';
+import { isSmsConfigured, isSmsEligible } from '@/lib/sms/bulksms-ng';
 import type { CountryCode } from '@/lib/constants';
 export type ReminderPurpose = 'chase' | 'followup';
 export type ReminderChannel = 'whatsapp_text' | 'whatsapp_template' | 'email' | 'sms';
@@ -118,7 +118,7 @@ export async function loadReminderPreview(db:SupabaseClient,partyId:string,purpo
    const emailAllowed=!!resolved && !!process.env.RESEND_API_KEY && !!address && permitted;
    recipient.variants.push({channel:'email',available:emailAllowed,reason:emailAllowed?'Scheduled dual delivery':'Email address, configured channel or utility consent unavailable',text:email.html,address:address||undefined,subject:email.subject,html:email.html,category:'service'});
    const sms=text.replace(/\*/g,'').replace(/_/g,'').slice(0,160);
-   const smsAllowed=!suspended && !!resolved && !!process.env.BULKSMS_NG_API_TOKEN && isSmsEligible(recipient.phone) && await smsPermission(db,party.business_id,recipient.phone) && (!seating||sms.includes(seating));
+   const smsAllowed=!suspended && !!resolved && isSmsConfigured() && isSmsEligible(recipient.phone) && await smsPermission(db,party.business_id,recipient.phone) && (!seating||sms.includes(seating));
    recipient.variants.push({channel:'sms',available:smsAllowed,reason:smsAllowed?'Fallback after definitive WhatsApp/email failure':'SMS channel/consent unavailable or table content exceeds 160 characters',text:sms,category:'service'});
   }
  }

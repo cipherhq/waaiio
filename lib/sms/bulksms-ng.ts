@@ -3,30 +3,67 @@ import { normalizeError } from '@/lib/errors';
 import { isSafeIdentifier } from '@/lib/redact';
 
 /**
- * BulkSMS Nigeria — SMS fallback for NG/GH event invites.
+ * BulkSMS Nigeria provider client (API v2), NG/GH numbers only.
  * API docs: https://www.bulksmsnigeria.com/api
  *
- * Env var: BULKSMS_NG_API_TOKEN (Bearer token)
- * Only used for party/event invites when WhatsApp + email fail.
+ * Env vars:
+ * - BULKSMS_NG_API_TOKEN: Bearer token.
+ * - BULKSMS_SENDER_ID: the sender name registered on the BulkSMS account
+ *   (max 11 characters). No default (Owner decision 2026-11-18, #1131): while
+ *   it is unset every SMS is refused, so an unregistered name is never used.
+ * - BULKSMS_NG_SANDBOX=true: use the sandbox API (simulated, nothing is sent
+ *   or charged).
+ *
+ * Callers do not use this directly: business sends go through
+ * lib/sms/send.ts, which charges the merchant's messaging credit.
  */
 
-const BULKSMS_API_URL = 'https://www.bulksmsnigeria.com/api/v1/sms/create';
+const PRODUCTION_BASE = 'https://www.bulksmsnigeria.com/api/v2';
+const SANDBOX_BASE = 'https://www.bulksmsnigeria.com/api/sandbox/v2';
+const SEND_TIMEOUT_MS = 20_000;
 
 interface SendSmsOpts {
-  to: string; // phone number (e.g., 2348012345678)
+  to: string; // E.164 digits, e.g. 2348012345678
   message: string;
-  from?: string; // sender ID (max 11 chars, default 'Waaiio')
+  /** Send as Unicode (keeps accents and emoji; 70 characters per page). */
+  unicode?: boolean;
+  /** Our own reference, echoed in delivery reports. */
+  reference?: string;
 }
 
-interface SendSmsResult {
+export interface SendSmsResult {
   sent: boolean;
+  /**
+   * True when the outcome is unknown (timeout, network error, provider 5xx):
+   * the message may have gone out, so it must not be retried or released as
+   * a definite failure.
+   */
+  ambiguous?: boolean;
   error?: string;
+  messageId?: string;
+  /** What BulkSMS reports it charged, in its currency (NGN). */
+  cost?: number;
+  pages?: number;
+}
+
+/** The registered sender name, or null when SMS is switched off. */
+export function smsSenderId(): string | null {
+  const id = process.env.BULKSMS_SENDER_ID?.trim();
+  return id && /^[A-Za-z0-9 .&-]{1,11}$/.test(id) ? id : null;
+}
+
+/** True when both the token and a registered sender name are configured. */
+export function isSmsConfigured(): boolean {
+  return !!process.env.BULKSMS_NG_API_TOKEN && !!smsSenderId();
+}
+
+function baseUrl(): string {
+  return process.env.BULKSMS_NG_SANDBOX === 'true' ? SANDBOX_BASE : PRODUCTION_BASE;
 }
 
 /**
- * Send SMS via BulkSMS Nigeria.
- * Only works for Nigerian (+234) and Ghanaian (+233) numbers.
- * Returns { sent: true } on success, { sent: false, error } on failure.
+ * Send one SMS via BulkSMS Nigeria. Only Nigerian (234) and Ghanaian (233)
+ * numbers in international form are accepted.
  */
 export async function sendSms(opts: SendSmsOpts): Promise<SendSmsResult> {
   const token = process.env.BULKSMS_NG_API_TOKEN;
@@ -34,41 +71,35 @@ export async function sendSms(opts: SendSmsOpts): Promise<SendSmsResult> {
     logger.warn('[BULKSMS] BULKSMS_NG_API_TOKEN not set — SMS skipped');
     return { sent: false, error: 'SMS not configured' };
   }
-
-  // Normalize phone number — ensure it starts with country code
-  let phone = opts.to.replace(/\D/g, '');
-  if (phone.startsWith('0')) {
-    phone = '234' + phone.slice(1); // Nigerian local to international
+  const sender = smsSenderId();
+  if (!sender) {
+    logger.warn('[BULKSMS] BULKSMS_SENDER_ID not set — SMS skipped');
+    return { sent: false, error: 'SMS sender name not configured' };
   }
-  if (!phone.startsWith('234') && !phone.startsWith('233')) {
+
+  const phone = opts.to.replace(/\D/g, '');
+  if (!/^(234|233)\d{8,11}$/.test(phone)) {
     return { sent: false, error: 'SMS only available for NG/GH numbers' };
   }
 
-  const sender = (opts.from || 'Waaiio').slice(0, 11);
-
+  let response: Response;
   try {
-    const response = await fetch(BULKSMS_API_URL, {
+    response = await fetch(`${baseUrl()}/sms`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         from: sender,
         to: phone,
         body: opts.message,
-        api_token: token,
+        unicode: opts.unicode === true,
+        ...(opts.reference ? { customer_reference: opts.reference } : {}),
       }),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
-
-    if (!response.ok) {
-      logger.withContext({ op: 'sms.send', provider: 'bulksms', httpStatus: response.status }).error('[BULKSMS] API error');
-      return { sent: false, error: `SMS API error: ${response.status}` };
-    }
-
-    await response.json().catch(() => null);
-    logger.info('[BULKSMS] SMS sent');
-    return { sent: true };
   } catch (err) {
     const norm = normalizeError(err);
     logger.withContext({
@@ -76,8 +107,34 @@ export async function sendSms(opts: SendSmsOpts): Promise<SendSmsResult> {
       ...(isSafeIdentifier(norm.name) ? { errorName: norm.name } : {}),
       ...(norm.retryable !== undefined ? { retryable: norm.retryable } : {}),
     }).error('[BULKSMS] Send failed');
-    return { sent: false, error: err instanceof Error ? err.message : 'SMS send failed' };
+    return { sent: false, ambiguous: true, error: 'SMS provider did not answer' };
   }
+
+  const payload = await response.json().catch(() => null) as {
+    status?: string; code?: string;
+    data?: { message_id?: unknown; cost?: unknown; page_count?: unknown };
+  } | null;
+
+  if (response.status >= 500) {
+    logger.withContext({ op: 'sms.send', provider: 'bulksms', httpStatus: response.status }).error('[BULKSMS] API error');
+    return { sent: false, ambiguous: true, error: `SMS API error: ${response.status}` };
+  }
+  if (!response.ok || payload?.status !== 'success') {
+    // BulkSMS: an error response means the message was not sent and not charged.
+    const code = typeof payload?.code === 'string' && /^BSNG-\d{4}$/.test(payload.code) ? payload.code : null;
+    logger.withContext({ op: 'sms.send', provider: 'bulksms', httpStatus: response.status, ...(code ? { providerCode: code } : {}) })
+      .error('[BULKSMS] API refused');
+    return { sent: false, error: code ? `SMS refused (${code})` : `SMS API error: ${response.status}` };
+  }
+
+  const data = payload.data || {};
+  logger.info('[BULKSMS] SMS sent');
+  return {
+    sent: true,
+    messageId: typeof data.message_id === 'string' ? data.message_id.slice(0, 200) : undefined,
+    cost: typeof data.cost === 'number' && data.cost >= 0 ? data.cost : undefined,
+    pages: typeof data.page_count === 'number' && data.page_count >= 0 ? data.page_count : undefined,
+  };
 }
 
 /**

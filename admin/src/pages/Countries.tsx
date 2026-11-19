@@ -1232,6 +1232,25 @@ export function MinorAmountHint({ value, currency, locale }: { value: string; cu
   return <div className="mt-0.5 text-[11px] text-gray-500">= {text}</div>;
 }
 
+/** SMS is offered in these markets only (Owner decision 2026-11-18, #1131). */
+const SMS_MARKETS = ['NG', 'GH'];
+
+/** The merchant price per SMS page: the cost plus Waaiio's 20%, rounded up (as the database charges). */
+export function SmsPriceHint({ value, currency, locale }: { value: string; currency: string; locale?: string }) {
+  const cost = parseMinorInt(value);
+  if (cost === null || cost <= 0) return null;
+  const price = Math.ceil((cost * 12) / 10);
+  let text: string;
+  try {
+    const format = new Intl.NumberFormat(locale || undefined, { style: 'currency', currency });
+    const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
+    text = format.format(price / 10 ** digits);
+  } catch {
+    return null;
+  }
+  return <div className="text-[11px] text-gray-500">Merchant pays {text}</div>;
+}
+
 /** Messaging Financial Controls — currency-scoped shared values + country-scoped rates/plan codes */
 function MessagingFinancialControls({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [saving, setSaving] = useState(false);
@@ -1452,6 +1471,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
               <th className="px-2 py-2 text-left font-medium text-gray-500">Marketing Rate</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500" title="Bot and other replies to a customer who messaged first. WhatsApp does not charge for these, so 0 means no charge (#1075)">Service Replies Rate</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500" title="Used for any message without its own rate">All Other Messages Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500" title="What BulkSMS charges Waaiio per SMS page, VAT included, in this market's currency. Merchants pay this plus 20% (#1131). Empty means SMS is off for this market.">SMS Cost / Page</th>
               {hasPaystack && (
                 <>
                   <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
@@ -1475,6 +1495,11 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
                   <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} marketing rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.marketing || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
                   <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} service replies rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.service || ''} onChange={e => updateRate('service', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates.service || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
                   <td className="px-2 py-2 align-top"><input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} all other messages rate`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates['*'] || ''} onChange={e => updateRate('*', e.target.value)} disabled={!canMutate} /><MinorAmountHint value={cs.rates['*'] || ''} currency={c.currency_code} locale={c.currency_locale} /></td>
+                  <td className="px-2 py-2 align-top">{SMS_MARKETS.includes(c.code) ? (<>
+                    <input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`${c.code} SMS cost per page`} className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.sms_cost || ''} onChange={e => updateRate('sms_cost', e.target.value)} disabled={!canMutate} />
+                    <MinorAmountHint value={cs.rates.sms_cost || ''} currency={c.currency_code} locale={c.currency_locale} />
+                    <SmsPriceHint value={cs.rates.sms_cost || ''} currency={c.currency_code} locale={c.currency_locale} />
+                  </>) : <span className="text-gray-300" title="SMS is available in Nigeria and Ghana only">—</span>}</td>
                   {hasPaystack && (
                     <>
                       <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-500" value={cs.paystackGrowthPlan} readOnly disabled title="Manage via Provider Configuration panel" /> : <span className="text-gray-300">—</span>}</td>

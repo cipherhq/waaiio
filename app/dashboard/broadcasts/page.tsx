@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { filterEligibleAudience, eligibleTags, keepEligible, phoneDigits, type EligibleContact } from '@/lib/broadcasts/audience-filter';
+import { SmsEstimate, formatMinor, smsSendable, type SmsEstimateData } from '@/components/dashboard/SmsEstimate';
 
 interface BroadcastContact {
   phone: string;
@@ -106,6 +107,13 @@ export default function BroadcastsPage() {
   const [pasteInput, setPasteInput] = useState('');
   const [importCount, setImportCount] = useState<number | null>(null);
   const [campaignBanner, setCampaignBanner] = useState<{ name: string; count: number; skipped: number } | null>(null);
+  // SMS campaigns (#1131): Nigeria and Ghana businesses only, sent now (not scheduled).
+  const smsOffered = business.country_code === 'NG' || business.country_code === 'GH';
+  const [channel, setChannel] = useState<'whatsapp' | 'sms'>('whatsapp');
+  const [smsEstimate, setSmsEstimate] = useState<SmsEstimateData | null>(null);
+  // One id per composed campaign, so a retry never texts anyone twice.
+  const [smsRequestId, setSmsRequestId] = useState(() => crypto.randomUUID());
+  const smsMode = smsOffered && channel === 'sms';
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
@@ -310,7 +318,59 @@ export default function BroadcastsPage() {
   const recipientLimitReached = !isUnlimited && maxRecipients !== null && maxRecipients > 0 && recipientsUsed + contacts.length > maxRecipients;
   const quotaExceeded = isFreeTier || broadcastLimitReached || recipientLimitReached;
 
+  async function handleSmsSend() {
+    if (!smsEstimate || !smsSendable(smsEstimate)) return;
+    const cost = smsEstimate.currency && smsEstimate.totalMinor !== null ? formatMinor(smsEstimate.totalMinor, smsEstimate.currency) : null;
+    if (!confirm(`Send this SMS to ${smsEstimate.recipients} ${smsEstimate.recipients === 1 ? 'person' : 'people'}?${cost ? ` Up to ${cost} will be taken from your messaging credit.` : ''}`)) return;
+    setSending(true);
+    setSendError(null);
+    setSent(false);
+    setSendSummary('');
+    try {
+      const res = await fetch('/api/broadcasts/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          channel: 'sms',
+          request_id: smsRequestId,
+          message: message.trim(),
+          phones: contacts.map(c => c.phone),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSendError(data.message || 'Failed to send SMS');
+      } else {
+        const sentCount = Number(data.sent) || 0;
+        const charged = data.currency && data.chargedMinor ? ` ${formatMinor(Number(data.chargedMinor), data.currency)} taken from your messaging credit.` : '';
+        const skipped = data.skipped || {};
+        const notes = [
+          skipped.insufficient_credit || skipped.not_attempted ? 'Your messaging credit ran out; top up to reach the rest.' : '',
+          skipped.no_consent ? `${skipped.no_consent} had not opted in.` : '',
+          skipped.opted_out ? `${skipped.opted_out} opted out.` : '',
+          data.alreadySent ? `${data.alreadySent} already got this SMS.` : '',
+          data.unknown ? `${data.unknown} could not be confirmed and were not charged.` : '',
+        ].filter(Boolean).join(' ');
+        const summary = `${sentCount} of ${Number(data.total) || contacts.length} SMS sent.${charged}${notes ? ` ${notes}` : ''}`;
+        if (sentCount > 0) {
+          setSent(true);
+          setSendSummary(summary);
+          setMessage('');
+          setSmsRequestId(crypto.randomUUID());
+          setTimeout(() => setSent(false), 3000);
+        } else {
+          setSendError(summary);
+        }
+      }
+    } catch {
+      setSendError('Network error. Check History before retrying.');
+    }
+    setSending(false);
+  }
+
   async function handleSend() {
+    if (smsMode) return handleSmsSend();
     if (!message.trim() || contacts.length === 0) return;
     setSending(true);
     setSendError(null);
@@ -888,7 +948,32 @@ export default function BroadcastsPage() {
               )}
             </div>
 
+            {smsOffered && (
+              <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Send by</h2>
+                <div className="mt-3 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1" role="radiogroup" aria-label="Send by">
+                  {(['whatsapp', 'sms'] as const).map(c => (
+                    <button
+                      key={c}
+                      role="radio"
+                      aria-checked={channel === c}
+                      onClick={() => { setChannel(c); if (c === 'sms') setSendMode('now'); }}
+                      className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${channel === c ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}
+                    >
+                      {c === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+                    </button>
+                  ))}
+                </div>
+                {smsMode && (
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    SMS is charged per page from your messaging credit. It goes only to people who opted in, in your own country, between 8am and 8pm.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Message Type */}
+            {!smsMode && (
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Message Type</h2>
               <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Choose what kind of message you're sending</p>
@@ -929,6 +1014,7 @@ export default function BroadcastsPage() {
                 </div>
               )}
             </div>
+            )}
 
             {/* Message */}
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
@@ -948,6 +1034,10 @@ export default function BroadcastsPage() {
                 )}
               </div>
 
+              {smsMode && (
+                <SmsEstimate businessId={business.id} message={message} phones={contacts.map(c => c.phone)} onChange={setSmsEstimate} />
+              )}
+
               {sendError && (
                 <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 p-3">
                   <p className="text-sm text-red-700 dark:text-red-400">{sendError}</p>
@@ -955,6 +1045,7 @@ export default function BroadcastsPage() {
               )}
 
               {/* Send Now / Schedule toggle */}
+              {!smsMode && (
               <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1">
                 <button
                   onClick={() => setSendMode('now')}
@@ -969,6 +1060,7 @@ export default function BroadcastsPage() {
                   Schedule
                 </button>
               </div>
+              )}
 
               {sendMode === 'schedule' && (
                 <div className="mt-3 grid grid-cols-2 gap-3">
@@ -997,7 +1089,7 @@ export default function BroadcastsPage() {
 
               <button
                 onClick={sendMode === 'now' ? handleSend : handleSchedule}
-                disabled={sending || !message.trim() || contacts.length === 0 || quotaExceeded || (sendMode === 'schedule' && (!scheduleDate || !scheduleTime))}
+                disabled={sending || !message.trim() || contacts.length === 0 || quotaExceeded || (sendMode === 'schedule' && (!scheduleDate || !scheduleTime)) || (smsMode && !smsSendable(smsEstimate))}
                 className="mt-3 w-full rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
                 {quotaExceeded
@@ -1006,6 +1098,8 @@ export default function BroadcastsPage() {
                   ? (sendMode === 'now' ? 'Sending...' : 'Scheduling...')
                   : sent
                   ? (sendMode === 'now' ? 'Sent!' : 'Scheduled!')
+                  : smsMode
+                  ? `Send SMS to ${smsEstimate?.recipients ?? 0} contacts`
                   : sendMode === 'now'
                   ? `Send to ${contacts.length} contacts`
                   : `Schedule for ${scheduleDate && scheduleTime ? new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '...'}`}

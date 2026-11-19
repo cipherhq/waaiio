@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
             email: emailPayload,
             businessName,
             alwaysEmail: true,
-            smsFallback: true,
+            smsFallback: { businessId: booking.business_id, idempotencyKey: `booking-reminder:${booking.id}:${hoursAhead}h` },
           });
           if (result.whatsapp === 'sent') whatsappSent++;
           if (result.email === 'sent') remindersSent++;
@@ -202,7 +202,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName: bizName,
           alwaysEmail: true,
-          smsFallback: true,
+          smsFallback: { businessId: res.business_id, idempotencyKey: `reservation-reminder:${res.id}:${res.check_in}` },
         });
         if (result.whatsapp === 'sent') whatsappSent++;
         if (result.email === 'sent') remindersSent++;
@@ -264,7 +264,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName: bizName,
           alwaysEmail: true,
-          smsFallback: true,
+          smsFallback: { businessId: event.business_id, idempotencyKey: `event-reminder:${ticket.id}` },
         });
         if (result.whatsapp === 'sent') whatsappSent++;
         if (result.email === 'sent') remindersSent++;

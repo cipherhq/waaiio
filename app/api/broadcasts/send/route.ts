@@ -15,6 +15,7 @@ import { ensurePlus } from '@/lib/utils/phone';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { resolveTemplateCategory } from '@/lib/bot/automation/sealed-rule-actions';
 import { businessNotificationEmail } from '@/lib/email/templates';
+import { estimateSmsCampaign, sendSmsCampaign } from '@/lib/sms/campaign';
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
     };
 
     const emailMode = body.channel === 'email';
+    const smsMode = body.channel === 'sms';
     const responseIds = emailMode && Array.isArray(body.response_ids) ? [...new Set(body.response_ids)] as string[] : [];
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
     if (emailMode && (!uuid.test(body.request_id) || !responseIds.length || responseIds.length > 100
@@ -46,6 +48,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Select up to 100 form responses and enter a message of up to 5,000 characters.' }, { status: 400 });
     }
     const phones: string[] = emailMode ? responseIds : body.phones;
+    if (smsMode && (!uuid.test(body.request_id) || typeof message !== 'string' || message.length > 5000)) {
+      return NextResponse.json({ message: 'An SMS campaign needs a request id and a message of up to 5,000 characters.' }, { status: 400 });
+    }
 
     if (!business_id || !message || !phones?.length) {
       return NextResponse.json(
@@ -141,6 +146,38 @@ export async function POST(request: NextRequest) {
       const result = await dispatchNativeFormEmails({ db: service, businessId: business_id, businessName: business.name,
         responseIds, requestId: body.request_id, message });
       return NextResponse.json({ ...result, channel: 'email', success: result.accepted === result.total });
+    }
+
+    if (smsMode) {
+      // SMS campaign (#1131): charged per page from messaging credit, NG/GH only.
+      const estimate = await estimateSmsCampaign(service, { businessCountry: business.country_code, phones, message });
+      if (!estimate.available) {
+        const why = estimate.problem === 'not_configured' ? 'SMS is not switched on yet.'
+          : estimate.problem === 'country_not_supported' ? 'SMS campaigns are available for businesses in Nigeria and Ghana only.'
+          : 'SMS pricing is not set up for your country yet.';
+        return NextResponse.json({ message: why }, { status: 400 });
+      }
+      if (estimate.tooLong) {
+        return NextResponse.json({ message: 'This message is too long for SMS (more than 10 pages). Shorten it and try again.' }, { status: 400 });
+      }
+      if (estimate.quietHoursNow) {
+        return NextResponse.json({ message: 'SMS campaigns are not sent between 8pm and 8am. Try again after 8am.' }, { status: 422 });
+      }
+      const result = await sendSmsCampaign(service, {
+        businessId: business_id, businessCountry: business.country_code, requestId: body.request_id, phones, message,
+      });
+      if (result.sent > 0) {
+        await service.rpc('increment_broadcast_usage', { p_business_id: business_id, p_recipient_count: result.sent });
+      }
+      return NextResponse.json({
+        channel: 'sms',
+        success: result.sent > 0 && result.sent === phones.length,
+        ...result,
+        total: phones.length,
+        pages: estimate.pages,
+        unicode: estimate.unicode,
+        price_per_page_minor: estimate.pricePerPageMinor,
+      });
     }
 
     // Resolve the sender for this business
