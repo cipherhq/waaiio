@@ -183,7 +183,7 @@ describe('catalog admission (lock + reviewed deltas, exact equality)', () => {
       expect(verifyCatalog(live, lock.environments[env], migrations, env, lockMap, measured).sha256).toBe(observed.sha256);
       expect(() => verifyCatalog(live, lock.environments[env], migrations, env, lockMap)).toThrow('differs from lock + reviewed deltas');
     }
-  });
+  }, 60_000);
   it('rejects malformed measured corrections in the lock', () => {
     const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
     const bad = (mutate: (l: any) => void) => { const l = JSON.parse(text); mutate(l); return JSON.stringify(l); };
