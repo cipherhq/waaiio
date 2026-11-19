@@ -137,6 +137,21 @@ export async function cancelSubscription(subscriptionId: string): Promise<boolea
 }
 
 /**
+ * Stop renewal and keep the subscription until the paid period ends; Stripe
+ * then sends customer.subscription.deleted. Unlike the helpers above, a missing
+ * key is never reported as success.
+ */
+export async function cancelSubscriptionAtPeriodEnd(subscriptionId: string): Promise<boolean> {
+  if (!stripeSecretKey) throw new Error('Payment gateway not configured: missing Stripe secret key');
+  const data = await stripeRequest(
+    `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    'POST',
+    { cancel_at_period_end: 'true' },
+  );
+  return data.cancel_at_period_end === true;
+}
+
+/**
  * Pause a Stripe subscription (void upcoming invoices).
  */
 export async function pauseSubscription(subscriptionId: string): Promise<boolean> {

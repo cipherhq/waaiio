@@ -425,3 +425,11 @@ schema application or deployment authority. Recheck collisions before SQL creati
 | 550 | fee_round_to_cent | claude/fee-round-to-cent-db | Reserved; not applied |
 
 Reserved 2026-11-18 after checking main through M548, open PR #1125 (M549) and local worktree and remote branch migration filenames. Owner decision 2026-11-18 (round the fee to the cent/kobo). Rewrites only the whole-unit fee statement in `bind_merchant_tax_fee_980`, `finalize_stripe_recurring_charge` and `finalize_refund_accounting_modern`, keeping schema, SECURITY DEFINER, search_path, owner and ACL. Applying it to staging or production needs separate Owner approval.
+
+### Reservation — admin subscription money actions step-up
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 553 | subscription_admin_action_step_up | claude/admin-subscription-actions-d9e81b | Proposed; awaiting coordinator confirmation; not applied |
+
+Proposed 2026-11-18 after checking main through M550, open PR #1132 (M551 SMS) and local worktree migration filenames (552 in the stays-resend worktree). Owner decisions 2026-11-18 (admin Stop Renewal, Extend Trial, recurring pause/resume/cancel/retry). Adds only `subscription_admin_action` to the cumulative `admin_step_up_authorizations_action_type_check` as last redefined by M548; no other object changes. Applying it to staging or production needs separate Owner approval.

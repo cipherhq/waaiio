@@ -1,0 +1,28 @@
+## 2026-11-18 — Admin subscription money actions reach the gateway (Owner decisions 2026-11-18)
+
+- **What changed:** The admin Subscriptions and Recurring Payments buttons work again, through new server routes. Each needs a full admin, a single-use step-up bound to every confirmed field, and a reason where the Owner asked for one. Each writes an audit entry.
+  - **Stop Renewal** (was Cancel) on a merchant's Waaiio plan: stops renewal at Paystack (`/subscription/disable`) or Stripe (`cancel_at_period_end`). The plan stays until the paid period ends, then the existing webhook/expiry path moves it to Free. No refund. Flutterwave plans are refused for now: their reconciliation cron would downgrade at once.
+  - **Extend Trial:** adds 1 to 30 days to `businesses.feature_trial_ends_at` (M525), only for Free businesses that have never paid. No billing change; the Waaiio fee still applies.
+  - **Recurring pause/resume/cancel** for a merchant's customer: the same gateway calls as `/api/recurring/manage` (Paystack disable/enable, Stripe pause_collection/resume/cancel, Flutterwave status only). The gateway goes first, there is no refund and no customer message.
+  - **Recurring retry:** resets the failure count of a past_due Paystack or Flutterwave payment with a saved card, so the daily 10:00 retry cron charges it through its existing claim guard. Stripe is refused, because it retries on its own.
+- **Safety:**
+  - A missing gateway key is refused (503); it is never reported as success.
+  - The row must belong to the business sent, or the route returns 404.
+  - Local writes are compare-and-set on the checked state, so a double click or a concurrent change returns 409 instead of acting twice.
+  - A provider failure changes nothing (502).
+- **Correction to the switch-off fragment:** the old admin Cancel also wrote `auto_renew`, which no migration creates, so it most likely always failed. It could still never have stopped billing.
+- **Files:**
+  - `lib/admin-subscription-actions.ts` (new)
+  - `app/api/admin/subscriptions/route.ts` (new)
+  - `app/api/admin/recurring/route.ts` (POST added)
+  - `lib/payments/stripe-recurring.ts` (`cancelSubscriptionAtPeriodEnd`)
+  - `lib/admin-step-up.ts`
+  - `app/api/admin/step-up/prepare/route.ts`
+  - `supabase/migrations/553_subscription_admin_action_step_up.sql` (step-up CHECK only)
+  - `admin/src/pages/Subscriptions.tsx`
+  - `admin/src/pages/RecurringPayments.tsx`
+  - tests, `.github/workflows/ci.yml` (the new `.pg` test) and `docs/MIGRATION_REGISTRY.md`
+- **Affects:** admin panel money actions only. The merchant dashboard, webhooks, crons and payment flows are unchanged.
+- **What could break:**
+  - Until M553 is applied, preparing the new step-up fails the CHECK, so the actions refuse rather than run.
+  - A Paystack "pause" is a disable at Paystack (the same as the merchant dashboard today). If Paystack later sends `subscription.disable`, the webhook marks the payment cancelled.

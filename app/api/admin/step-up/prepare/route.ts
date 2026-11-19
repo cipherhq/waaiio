@@ -13,6 +13,7 @@ const VALID_ACTIONS: StepUpAction[] = [
   'reseller_payout_generate',
   'commercial_config', 'messaging_config', 'messaging_suspension', 'business_status', 'channel_change_execute',
   'passkey_approve', 'passkey_remove', 'customer_suspension', 'admin_broadcast',
+  'subscription_admin_action',
 ];
 
 export async function OPTIONS(request: NextRequest) {

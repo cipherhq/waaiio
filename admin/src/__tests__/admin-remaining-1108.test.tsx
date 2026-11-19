@@ -208,21 +208,18 @@ describe('X3: hidden reads go through /api/admin and show failures', () => {
     expect(readsOf('capability_overrides')).toEqual([]);
   });
 
-  it('Subscriptions: Extend Trial and Cancel are off with an honest note and write nothing (Owner 2026-11-18)', async () => {
-    h.fixtures.subscriptions = [{ id: ID, business_id: BIZ, plan: 'growth', status: 'active', amount: 5000, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'Acme Shop', category: 'retail', subscription_tier: 'growth', trial_ends_at: null } }];
+  it('Subscriptions: Extend Trial and Stop Renewal use the step-up route and never write from the browser (Owner 2026-11-18)', async () => {
+    h.fixtures.subscriptions = [{ id: ID, business_id: BIZ, plan: 'growth', status: 'active', amount: 5000, currency: 'NGN', billing_interval: 'month', created_at: NOW, businesses: { name: 'Acme Shop', category: 'retail', subscription_tier: 'free', feature_trial_ends_at: null } }];
     render(<Subscriptions />);
     fireEvent.click((await screen.findAllByText('Acme Shop')).find(e => e.closest('tr'))!);
-    expect(await screen.findByText(/Extend Trial and Cancel Subscription are not available yet/)).toBeInTheDocument();
-    const extend = screen.getByRole('button', { name: 'Extend' });
-    const cancel = screen.getByRole('button', { name: 'Cancel Subscription...' });
-    expect(extend).toBeDisabled();
-    expect(cancel).toBeDisabled();
-    fireEvent.click(extend);
-    fireEvent.click(cancel);
-    expect(screen.queryByRole('button', { name: 'Confirm Cancel' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop Renewal...' }));
+    fireEvent.change(screen.getByLabelText('Reason for stopping renewal'), { target: { value: 'Merchant asked' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Stop Renewal' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Extend' }));
     expect(h.directWrites).toEqual([]);
     expect(calls(/\/api\/admin\/audit/)).toEqual([]);
   });
+
 });
 
 describe('Channel Changes when M496 is not installed', () => {

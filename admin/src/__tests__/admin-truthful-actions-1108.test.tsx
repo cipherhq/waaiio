@@ -326,21 +326,20 @@ describe('X3: hidden reads come from admin read routes and failures are shown', 
   });
 });
 
-describe('Recurring payments: money actions stop pretending (out of scope for a server route)', () => {
-  it('shows the actions disabled with an honest note and writes nothing', async () => {
+describe('Recurring payments: money actions go through the server route, never the browser client', () => {
+  // The full step-up flow is covered in subscription-money-actions.test.tsx (Owner decisions 2026-11-18).
+  it('asks for a step-up and writes nothing from the browser', async () => {
     const { default: RecurringPayments } = await import('@/pages/RecurringPayments');
     // Rows now come from GET /api/admin/recurring (#1108 X3).
     api = url => url.endsWith('/api/admin/recurring')
       ? json({ records: [{ id: ID, business_id: BIZ, business_name: 'Gym', customer_name: 'Ada', customer_phone: '234', status: 'active', amount: 5000, currency: 'NGN', frequency: 'monthly', failure_count: 0, charge_count: 0, total_charged: 0, created_at: '2026-11-01T00:00:00Z' }] })
-      : json({}, 500);
+      : url.endsWith('/step-up/prepare') ? json({ error: 'stop here' }, 400) : json({}, 500);
     render(<RecurringPayments />);
     fireEvent.click((await screen.findAllByText('Ada')).find(e => e.closest('tr'))!);
-    expect(await screen.findByText(/These actions are not available yet/)).toBeInTheDocument();
-    for (const name of ['Pause', 'Cancel Subscription']) {
-      const button = screen.getByRole('button', { name });
-      expect(button).toBeDisabled();
-      fireEvent.click(button);
-    }
+    fireEvent.change(await screen.findByLabelText('Reason for this change'), { target: { value: 'Support ticket' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(calls(/\/step-up\/prepare$/)).toHaveLength(1));
     expect(h.directWrites).toEqual([]);
+    expect(calls(/\/api\/admin\/audit/)).toEqual([]);
   });
 });

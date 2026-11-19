@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
-import { logAudit } from '@/lib/auditLog';
-import { adminApiGet, adminJson } from '@/lib/adminApi';
+import { adminApiFetch, adminApiGet, adminJson } from '@/lib/adminApi';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
@@ -42,10 +42,13 @@ interface RecurringRecord {
   created_at: string;
 }
 
-// #1108: these buttons wrote customer_subscriptions with the browser client, matched 0 rows and
-// still looked successful. Pause/resume/cancel/retry must also reach the payment gateway server-side,
-// which is a money decision, so they stay off until a server route exists.
-const RECURRING_ACTIONS_AVAILABLE = false;
+// Owner decisions 2026-11-18: pause/resume/cancel work like the merchant dashboard (gateway first,
+// no refund, no message to the customer); retry gives a past_due Paystack/Flutterwave payment three
+// more tries at the daily retry run. All go through POST /api/admin/recurring with a step-up and a
+// reason; the server enforces every rule.
+type RecurringAction = 'pause' | 'resume' | 'cancel' | 'retry';
+const ACTION_LABEL: Record<RecurringAction, string> = { pause: 'Pause', resume: 'Resume', cancel: 'Cancel', retry: 'Retry' };
+const RETRY_GATEWAYS = ['paystack', 'flutterwave'];
 
 export default function RecurringPayments() {
   const adminSession = useAdminSession();
@@ -58,7 +61,12 @@ export default function RecurringPayments() {
   const [frequencyFilter, setFrequencyFilter] = useState('all');
   const [selected, setSelected] = useState<RecurringRecord | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
+  const [actionReason, setActionReason] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
   const [loadError, setLoadError] = useState('');
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
+  const stepUpFlightRef = useRef(false);
   const perPage = 20;
   const loadingRef = useRef(false);
 
@@ -127,50 +135,53 @@ export default function RecurringPayments() {
     return r.cancelled_at ? new Date(r.cancelled_at) >= start : false;
   }).length;
 
-  async function handlePause() {
-    if (!selected || !canMutate) return;
+  // A reason and message belong to the row they were typed or shown for.
+  useEffect(() => { setActionReason(''); setActionMessage(''); }, [selected?.id]);
+
+  async function runAction(action: RecurringAction) {
+    if (!selected || !canMutate || actionSaving) return;
+    const reason = actionReason.trim();
+    if (reason.length < 3) { setActionMessage('Enter a reason (at least 3 characters).'); return; }
+    if (action === 'cancel' && !confirm('Cancel this recurring payment at the payment provider? No refund is made and it cannot be undone.')) return;
+    const { id, business_id: businessId } = selected;
     setActionSaving(true);
-    try {
+    setActionMessage('');
+    const onAuthorized = async (stepUpId: string) => {
+      const res = await adminApiFetch('/api/admin/recurring', { subscriptionId: id, businessId, action, reason, stepUpId });
+      const data = await res.json().catch(() => ({}));
+      stepUpCallbackRef.current = null;
+      if (!res.ok) {
+        setActionMessage(data.error || 'Nothing was changed.');
+        // 409: the record changed; show the real state.
+        if (res.status === 409) { setSelected(null); await loadData(); }
+        return;
+      }
       const now = new Date().toISOString();
-      await adminDb.from('customer_subscriptions').update({ status: 'paused', paused_at: now }).eq('id', selected.id);
-      await logAudit({ action: 'pause_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name } });
-      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'paused', paused_at: now } : r));
-      setSelected(null);
-    } catch { alert('Failed to pause'); } finally { setActionSaving(false); }
-  }
-
-  async function handleResume() {
-    if (!selected || !canMutate) return;
-    setActionSaving(true);
+      const patch: Partial<RecurringRecord> = action === 'pause' ? { status: 'paused', paused_at: now }
+        : action === 'resume' ? { status: 'active', paused_at: null }
+        : action === 'cancel' ? { status: 'cancelled', cancelled_at: now }
+        : { failure_count: 0 };
+      setRecords(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+      setSelected(prev => prev && prev.id === id ? { ...prev, ...patch } : prev);
+      setActionReason('');
+      if (data.auditRecorded === false) setActionMessage('Done, but the audit entry could not be recorded.');
+    };
+    stepUpCallbackRef.current = onAuthorized;
     try {
-      await adminDb.from('customer_subscriptions').update({ status: 'active', paused_at: null }).eq('id', selected.id);
-      await logAudit({ action: 'resume_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name } });
-      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'active', paused_at: null } : r));
-      setSelected(null);
-    } catch { alert('Failed to resume'); } finally { setActionSaving(false); }
-  }
-
-  async function handleCancel() {
-    if (!selected || !canMutate || !confirm('Cancel this recurring subscription? This cannot be undone.')) return;
-    setActionSaving(true);
-    try {
-      const now = new Date().toISOString();
-      await adminDb.from('customer_subscriptions').update({ status: 'cancelled', cancelled_at: now }).eq('id', selected.id);
-      await logAudit({ action: 'cancel_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name } });
-      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'cancelled', cancelled_at: now } : r));
-      setSelected(null);
-    } catch { alert('Failed to cancel'); } finally { setActionSaving(false); }
-  }
-
-  async function handleRetry() {
-    if (!selected || !canMutate) return;
-    setActionSaving(true);
-    try {
-      await adminDb.from('customer_subscriptions').update({ status: 'active', failure_count: 0 }).eq('id', selected.id);
-      await logAudit({ action: 'retry_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name, previous_failures: selected.failure_count } });
-      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'active', failure_count: 0 } : r));
-      setSelected(null);
-    } catch { alert('Failed to retry'); } finally { setActionSaving(false); }
+      await stepUp.execute({
+        actionType: 'subscription_admin_action',
+        targetId: id,
+        params: { action: `recurring_${action}`, businessId, reason },
+        description: `${ACTION_LABEL[action]} ${selected.customer_name || 'this customer'}'s recurring payment to ${selected.business_name || 'this business'}`,
+        onAuthorized,
+      });
+    } catch (err) {
+      stepUpCallbackRef.current = null;
+      setActionMessage(err instanceof Error ? err.message : 'Step-up failed');
+      stepUp.reset();
+    } finally {
+      setActionSaving(false);
+    }
   }
 
   if (loading) {
@@ -387,17 +398,32 @@ export default function RecurringPayments() {
               <>
                 <div className="my-4 border-t-2 border-gray-200" />
                 <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Admin Actions</p>
-                {!RECURRING_ACTIONS_AVAILABLE && (
-                  <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    These actions are not available yet: they need to update the payment provider as well
-                    as this record, and that part has not been built.
-                  </p>
+                {!canMutate ? (
+                  <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">Only a full admin can change a recurring payment.</p>
+                ) : (
+                  <>
+                    <p className="mt-2 text-xs text-gray-500">
+                      Changes are made at the payment provider first. No refund is made and the customer is not messaged.
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="Reason (required)"
+                      aria-label="Reason for this change"
+                      value={actionReason}
+                      onChange={e => setActionReason(e.target.value)}
+                      maxLength={500}
+                      className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </>
+                )}
+                {actionMessage && (
+                  <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{actionMessage}</p>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {selected.status === 'active' && (
                     <button
-                      onClick={handlePause}
-                      disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
+                      onClick={() => runAction('pause')}
+                      disabled={!canMutate || actionSaving}
                       className="rounded-lg bg-yellow-100 px-4 py-2 text-sm font-medium text-yellow-700 hover:bg-yellow-200 disabled:opacity-50"
                     >
                       {actionSaving ? 'Saving...' : 'Pause'}
@@ -405,35 +431,55 @@ export default function RecurringPayments() {
                   )}
                   {selected.status === 'paused' && (
                     <button
-                      onClick={handleResume}
-                      disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
+                      onClick={() => runAction('resume')}
+                      disabled={!canMutate || actionSaving}
                       className="rounded-lg bg-green-100 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-200 disabled:opacity-50"
                     >
                       {actionSaving ? 'Saving...' : 'Resume'}
                     </button>
                   )}
-                  {selected.status === 'past_due' && (
+                  {selected.status === 'past_due' && RETRY_GATEWAYS.includes(selected.gateway || '') && (
                     <button
-                      onClick={handleRetry}
-                      disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
+                      onClick={() => runAction('retry')}
+                      disabled={!canMutate || actionSaving}
+                      title="Resets the failure count so the daily retry charges the saved card again (up to 3 tries)"
                       className="rounded-lg bg-blue-100 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-200 disabled:opacity-50"
                     >
-                      {actionSaving ? 'Saving...' : 'Retry (Reset Failures)'}
+                      {actionSaving ? 'Saving...' : 'Retry (3 more tries)'}
                     </button>
                   )}
-                  <button
-                    onClick={handleCancel}
-                    disabled={!RECURRING_ACTIONS_AVAILABLE || actionSaving}
-                    className="rounded-lg bg-red-100 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
-                  >
-                    {actionSaving ? 'Saving...' : 'Cancel Subscription'}
-                  </button>
+                  {['active', 'paused', 'past_due'].includes(selected.status) && (
+                    <button
+                      onClick={() => runAction('cancel')}
+                      disabled={!canMutate || actionSaving}
+                      className="rounded-lg bg-red-100 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
+                    >
+                      {actionSaving ? 'Saving...' : 'Cancel Subscription'}
+                    </button>
+                  )}
                 </div>
               </>
             )}
           </div>
         )}
       </DetailModal>
+
+      <StepUpDialog
+        open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
+        description={stepUp.state.description} method={stepUp.state.method}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={async (code) => {
+          if (stepUpFlightRef.current || !stepUpCallbackRef.current) return;
+          stepUpFlightRef.current = true;
+          try { await stepUp.submitCode(code, stepUpCallbackRef.current); }
+          finally {
+            stepUpFlightRef.current = false;
+            if (!stepUpCallbackRef.current) stepUp.reset();
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }
