@@ -27,8 +27,10 @@ const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 export function _clearTranslationCache(): void { cache.clear(); flagCache.clear(); }
 
 // Bot latency 2026-11-19: the translation flag is a remote PostHog call. It was made
-// for every string of every message (a list message has 4+). Each language's answer
+// for every string of every message (a list message has 4+). A "yes" for a language
 // is now reused for 60 seconds, so turning the flag off takes effect within a minute.
+// A "no" is not reused: the flag client also answers "no" when PostHog fails, and one
+// failed check must still only affect that one string, as before.
 const flagCache = new Map<string, { enabled: Promise<boolean>; expiry: number }>();
 const FLAG_CACHE_TTL = 60_000;
 
@@ -38,6 +40,7 @@ function translationFlagEnabled(language: string): Promise<boolean> {
   const enabled = isFeatureEnabledServer(FLAGS.BOT_TRANSLATION_ENABLED, language)
     .catch(err => { logger.warn('[TRANSLATE] Feature flag check failed (defaulting to enabled):', err); return true; });
   flagCache.set(language, { enabled, expiry: Date.now() + FLAG_CACHE_TTL });
+  enabled.then(on => { if (!on && flagCache.get(language)?.enabled === enabled) flagCache.delete(language); });
   return enabled;
 }
 

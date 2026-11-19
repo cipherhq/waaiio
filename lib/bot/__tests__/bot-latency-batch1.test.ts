@@ -124,6 +124,13 @@ describe('translateBotResponse: translation flag', () => {
     expect(aiCreate).not.toHaveBeenCalled();
   });
 
+  it('a "no" (flag off, or PostHog failing) is not reused: the next string asks again', async () => {
+    flagSpy.mockResolvedValueOnce(false).mockResolvedValue(true);
+    expect(await translateBotResponse('Choose a service', 'fr', tCtx('fr'))).toBe('Choose a service');
+    expect(await translateBotResponse('Pick a date', 'fr', tCtx('fr'))).toBe('FR:Pick a date');
+    expect(flagSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('flag check failure still defaults to translating, as before', async () => {
     flagSpy.mockRejectedValue(new Error('posthog down'));
     expect(await translateBotResponse('Choose a service', 'fr', tCtx('fr'))).toBe('FR:Choose a service');

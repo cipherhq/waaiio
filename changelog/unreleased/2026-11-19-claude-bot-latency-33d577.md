@@ -16,7 +16,7 @@
   - `app/api/webhook/meta-cloud/route.ts`: tells the bot the suspension gate already ran.
   - `lib/bot/translate.ts`:
     - the translation feature flag (a remote PostHog call) is checked only for text that may actually be translated, i.e. after the short-text and nothing-to-translate skips.
-    - each language's flag answer is reused for 60 seconds.
+    - a "yes" answer for a language is reused for 60 seconds. A "no" is not reused, because the flag client also returns "no" when PostHog fails.
   - `lib/bot/outbound-localizer.ts`: the parts of one list or buttons message are translated together instead of one after another.
   - `lib/bot/flows/scheduling.flow.ts`:
     - the time list's independent reads run together;
@@ -35,6 +35,7 @@
   Translated (non-English) messages also save one remote flag call per string, and a list's four main parts no longer wait for each other.
 - **Affects:** the bot's per-message lookups and outbound translation. Replies, flows, payments, consent, billing and sending are unchanged. Every scenario's replies equal those recorded from the old code (`lib/bot/__tests__/bot-latency-batch1.golden.json`, recorded at 6a94fabc8).
 - **Could break:**
+  - the suspension status is now read once per webhook message instead of twice. If that one read fails, the message goes through, as #1103 designed (fail-open); before, a second read could still have blocked it;
   - turning the translation flag off now takes effect within 60 seconds instead of immediately;
   - a business's language settings changed in the middle of handling one message are picked up on the next message.
 - **Tests:**
