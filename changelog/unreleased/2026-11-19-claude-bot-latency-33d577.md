@@ -17,7 +17,7 @@
   - `lib/bot/translate.ts`:
     - the translation feature flag (a remote PostHog call) is checked only for text that may actually be translated, i.e. after the short-text and nothing-to-translate skips.
     - a "yes" answer for a language is reused for 60 seconds. A "no" is not reused, because the flag client also returns "no" when PostHog fails.
-  - `lib/bot/outbound-localizer.ts`: the parts of one list or buttons message are translated together instead of one after another.
+  - `lib/bot/outbound-localizer.ts`: the parts of one list or buttons message are translated together instead of one after another. The same text appearing twice in one message is translated once, so both places read the same.
   - `lib/bot/flows/scheduling.flow.ts`:
     - the time list's independent reads run together;
     - class "spots left" counts run together;

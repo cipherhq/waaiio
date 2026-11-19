@@ -71,19 +71,9 @@
   ],
   "shared number, unknown business": [
     {
-      "type": "buttons",
+      "type": "text",
       "to": "2348011112222",
-      "body": "Welcome!\n\n_Powered by Waaiio_\n\n_Type *cancel* anytime to exit._\n\nWhat would you like to do? 👇",
-      "buttons": [
-        {
-          "id": "cap_scheduling",
-          "title": "Our Services"
-        },
-        {
-          "id": "cap_chat",
-          "title": "Chat with Us"
-        }
-      ]
+      "text": "Your business selection changed. Please send the business code again."
     }
   ]
 }

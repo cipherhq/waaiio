@@ -79,14 +79,18 @@ type Call = { kind: 'from' | 'rpc'; name: string; filters: string[] };
 
 const delay = () => (DELAY_MS > 0 ? new Promise(r => setTimeout(r, DELAY_MS)) : Promise.resolve());
 
-function createDb(session: Record<string, unknown> | null) {
+function createDb(session: Record<string, unknown> | null, channelType: 'dedicated' | 'shared' = 'dedicated') {
   const calls: Call[] = [];
   function rowsFor(table: string): unknown {
     if (table === 'businesses') return business;
     if (table === 'business_capabilities') return [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }, { capability: 'chat', is_enabled: true, sort_order: 1 }];
     if (table === 'platform_settings') return { value: false };
     if (table === 'services') return SERVICES;
-    if (table === 'whatsapp_channels') return { id: 'ch-1', business_id: BIZ, country_code: 'NG', channel_type: 'dedicated' };
+    if (table === 'whatsapp_channels') {
+      return channelType === 'shared'
+        ? { id: 'ch-shared', business_id: null, country_code: 'NG', channel_type: 'shared' }
+        : { id: 'ch-1', business_id: BIZ, country_code: 'NG', channel_type: 'dedicated' };
+    }
     if (table === 'ai_conversation_config') return { enabled_languages: ['en'] };
     return null;
   }
@@ -104,7 +108,12 @@ function createDb(session: Record<string, unknown> | null) {
     }
     const data = rowsFor(table);
     const first = Array.isArray(data) ? data[0] ?? null : data;
-    c.single = vi.fn(async () => { await delay(); return { data: written ?? first, error: null }; });
+    c.single = vi.fn(async () => {
+      await delay();
+      // As PostgREST answers in production: businesses has no whatsapp_phone_number_id column.
+      if (call.filters.includes('eq:whatsapp_phone_number_id')) return { data: null, error: { code: '42703', message: 'column businesses.whatsapp_phone_number_id does not exist' } };
+      return { data: written ?? first, error: null };
+    });
     c.maybeSingle = vi.fn(async () => { await delay(); return { data: written ?? first, error: null }; });
     c.then = (ok: any, bad: any) => delay().then(() => ({ data: Array.isArray(data) ? data : (data ? [data] : []), count: Array.isArray(data) ? data.length : 0, error: null })).then(ok, bad);
     return c;
@@ -154,14 +163,15 @@ function makeBot(db: ReturnType<typeof createDb>, sender: ReturnType<typeof crea
   return bot;
 }
 
-type Scenario = { name: string; session: Record<string, unknown> | null; text: string; type: string; pre: string | undefined };
+type Scenario = { name: string; session: Record<string, unknown> | null; text: string; type: string; pre: string | undefined; channel?: 'shared' };
 
 const SCENARIOS: Scenario[] = [
   { name: 'menu tap at select_capability', session: sessionAt('select_capability'), text: 'cap_scheduling', type: 'list', pre: BIZ },
   { name: 'number tap at select_capability', session: sessionAt('select_capability'), text: '1', type: 'text', pre: BIZ },
   { name: 'typed answer at collect_name', session: sessionAt('collect_name', { active_capability: 'scheduling', service_id: 'svc-1' }), text: 'John Doe', type: 'text', pre: BIZ },
   { name: 'free text at select_service', session: sessionAt('select_service', { active_capability: 'scheduling' }), text: 'I want braids please', type: 'text', pre: BIZ },
-  { name: 'shared number, unknown business', session: null, text: 'hello there', type: 'text', pre: undefined },
+  // A shared number: the webhook supplies no business and the channel row is shared.
+  { name: 'shared number, unknown business', session: null, text: 'hello there', type: 'text', pre: undefined, channel: 'shared' },
 ];
 
 function replyOf(sender: ReturnType<typeof createCaptureSender>) {
@@ -188,7 +198,7 @@ afterAll(() => {
 
 describe('Batch 1: identical replies through BotService.handleMessage', () => {
   it.each(SCENARIOS)('$name', async (sc) => {
-    const db = createDb(sc.session);
+    const db = createDb(sc.session, sc.channel);
     const sender = createCaptureSender();
     const t0 = performance.now();
     await makeBot(db, sender).handleMessage(PHONE, sc.text, sc.type, PNID, sc.pre);

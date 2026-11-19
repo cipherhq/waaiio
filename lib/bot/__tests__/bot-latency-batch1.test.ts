@@ -187,6 +187,14 @@ describe('localizeMessage: parts translated together, same message out', () => {
     expect(maxInFlight).toBe(6);
   });
 
+  it('the same text twice in one message is translated once, so both places read the same', async () => {
+    const repeat = { ...list, title: 'Our services', items: [{ title: 'Our services', description: 'Our services', postbackText: 'x' }], sections: undefined } as PromptList;
+    const out = await localizeMessage(repeat, 'fr', tCtx('fr'), { waaiioOwnedItemTitles: true }) as PromptList;
+    expect(out.title).toBe('FR:Our services');
+    expect(out.items[0]).toEqual({ title: 'FR:Our services', description: 'FR:Our services', postbackText: 'x' });
+    expect(aiCreate.mock.calls.filter(([req]) => req.messages[0].content === 'Our services')).toHaveLength(1);
+  });
+
   it('buttons: same message out; button ids untouched; no footer stays no footer', async () => {
     const buttons: PromptButtons = {
       type: 'buttons', body: 'Ready to check out?',
