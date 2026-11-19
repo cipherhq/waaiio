@@ -18,6 +18,7 @@ import { logAdminAudit } from '@/lib/admin-audit';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminPreflight, adminRequestIp, adminResponder, readJsonObject, UUID_RE } from '@/lib/admin-route';
 import { cancelPlanRenewal, extendFeatureTrial, MAX_TRIAL_EXTENSION_DAYS, type ActionResult } from '@/lib/admin-subscription-actions';
+import { extendTrialStepUp, stopRenewalStepUp, SUBSCRIPTION_STEP_UP_ACTION, type SubscriptionStepUp } from '@/lib/admin-subscription-step-up';
 
 export const dynamic = 'force-dynamic';
 const METHODS = 'POST, OPTIONS';
@@ -37,27 +38,24 @@ export async function POST(request: NextRequest) {
     const { action, subscriptionId, businessId, reason, days, stepUpId } = body;
     if (typeof businessId !== 'string' || !UUID_RE.test(businessId)) return reply({ error: 'A valid businessId is required' }, 400);
 
-    let targetId: string;
-    let params: Record<string, unknown>;
+    let binding: SubscriptionStepUp;
     if (action === 'stop_renewal') {
       if (typeof subscriptionId !== 'string' || !UUID_RE.test(subscriptionId)) return reply({ error: 'A valid subscriptionId is required' }, 400);
       if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 500) {
         return reply({ error: 'A reason (3 to 500 characters) is required' }, 400);
       }
-      targetId = subscriptionId;
-      params = { action, businessId, reason };
+      binding = stopRenewalStepUp(subscriptionId, businessId, reason);
     } else if (action === 'extend_trial') {
       if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > MAX_TRIAL_EXTENSION_DAYS) {
         return reply({ error: `days must be a whole number from 1 to ${MAX_TRIAL_EXTENSION_DAYS}` }, 400);
       }
-      targetId = businessId;
-      params = { action, businessId, days };
+      binding = extendTrialStepUp(businessId, days);
     } else {
       return reply({ error: 'action must be stop_renewal or extend_trial' }, 400);
     }
 
     try {
-      await consumeStepUp(admin, typeof stepUpId === 'string' ? stepUpId : '', 'subscription_admin_action', targetId, params);
+      await consumeStepUp(admin, typeof stepUpId === 'string' ? stepUpId : '', SUBSCRIPTION_STEP_UP_ACTION, binding.targetId, binding.params);
     } catch (err) {
       return reply({ error: err instanceof StepUpError ? err.message : 'Step-up authorization required', code: 'step_up_required' }, 403);
     }

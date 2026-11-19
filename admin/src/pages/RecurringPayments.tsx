@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { adminApiFetch, adminApiGet, adminJson } from '@/lib/adminApi';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import { recurringStepUp, SUBSCRIPTION_STEP_UP_ACTION } from '../../../lib/admin-subscription-step-up';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
@@ -167,11 +168,12 @@ export default function RecurringPayments() {
       if (data.auditRecorded === false) setActionMessage('Done, but the audit entry could not be recorded.');
     };
     stepUpCallbackRef.current = onAuthorized;
+    const binding = recurringStepUp(id, businessId, action, reason);
     try {
       await stepUp.execute({
-        actionType: 'subscription_admin_action',
-        targetId: id,
-        params: { action: `recurring_${action}`, businessId, reason },
+        actionType: SUBSCRIPTION_STEP_UP_ACTION,
+        targetId: binding.targetId,
+        params: binding.params,
         description: `${ACTION_LABEL[action]} ${selected.customer_name || 'this customer'}'s recurring payment to ${selected.business_name || 'this business'}`,
         onAuthorized,
       });

@@ -20,6 +20,7 @@ import { logAdminAudit } from '@/lib/admin-audit';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminPreflight, adminRequestIp, adminResponder, businessNames, readJsonObject, UUID_RE } from '@/lib/admin-route';
 import { RECURRING_ACTIONS, recurringAdminAction, type RecurringAction } from '@/lib/admin-subscription-actions';
+import { recurringStepUp, SUBSCRIPTION_STEP_UP_ACTION } from '@/lib/admin-subscription-step-up';
 
 export const dynamic = 'force-dynamic';
 const METHODS = 'GET, POST, OPTIONS';
@@ -81,9 +82,8 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await consumeStepUp(admin, typeof stepUpId === 'string' ? stepUpId : '', 'subscription_admin_action', subscriptionId, {
-        action: `recurring_${action}`, businessId, reason,
-      });
+      const binding = recurringStepUp(subscriptionId, businessId, action as RecurringAction, reason);
+      await consumeStepUp(admin, typeof stepUpId === 'string' ? stepUpId : '', SUBSCRIPTION_STEP_UP_ACTION, binding.targetId, binding.params);
     } catch (err) {
       return reply({ error: err instanceof StepUpError ? err.message : 'Step-up authorization required', code: 'step_up_required' }, 403);
     }

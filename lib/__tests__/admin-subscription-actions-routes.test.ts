@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NextRequest } from 'next/server';
 import { createMemoryDb } from './helpers/memory-db';
 import { hashOperationParams } from '@/lib/admin-step-up';
+// The admin pages prepare their step-up with these same builders (#1135 review B1).
+import { extendTrialStepUp, recurringStepUp, stopRenewalStepUp, type SubscriptionStepUp } from '@/lib/admin-subscription-step-up';
 
 const f = vi.hoisted(() => ({
   role: 'admin' as string, db: null as any,
@@ -80,8 +82,8 @@ async function doubleClick(send: () => Promise<Response>, viaGateway = true): Pr
   return [a.status, b.status].sort();
 }
 
-/** Record a verified step-up for exactly this operation; returns its id. */
-function grant(targetId: string, params: Record<string, unknown>): string {
+/** Record a verified step-up for exactly this operation (as the admin page prepares it); returns its id. */
+function grant({ targetId, params }: SubscriptionStepUp): string {
   const id = `su-${++grants}`;
   f.db.tables.admin_step_up_authorizations.push({
     id, admin_user_id: 'admin-1', session_id: 'sess-1', action_type: 'subscription_admin_action', target_id: targetId,
@@ -127,7 +129,7 @@ beforeEach(() => {
 describe('POST /api/admin/subscriptions stop_renewal', () => {
   const body = (stepUpId: string, extra: Record<string, unknown> = {}) =>
     ({ action: 'stop_renewal', subscriptionId: SUB, businessId: BIZ, reason: 'Merchant asked to stop', stepUpId, ...extra });
-  const bound = () => grant(SUB, { action: 'stop_renewal', businessId: BIZ, reason: 'Merchant asked to stop' });
+  const bound = () => grant(stopRenewalStepUp(SUB, BIZ, 'Merchant asked to stop'));
   const send = (b: unknown) => subscriptions.POST(req('/api/admin/subscriptions', b));
 
   it('Paystack: disables renewal, keeps the plan to the period end, audits', async () => {
@@ -170,7 +172,7 @@ describe('POST /api/admin/subscriptions stop_renewal', () => {
   });
 
   it('wrong business: 404, nothing at the gateway', async () => {
-    const id = grant(SUB, { action: 'stop_renewal', businessId: OTHER_BIZ, reason: 'Merchant asked to stop' });
+    const id = grant(stopRenewalStepUp(SUB, OTHER_BIZ, 'Merchant asked to stop'));
     const res = await send(body(id, { businessId: OTHER_BIZ }));
     expect(res.status).toBe(404);
     expect(calls()).toEqual({});
@@ -236,7 +238,7 @@ describe('POST /api/admin/subscriptions stop_renewal', () => {
 
 describe('POST /api/admin/subscriptions extend_trial', () => {
   const body = (stepUpId: string, days = 7, businessId = BIZ) => ({ action: 'extend_trial', businessId, days, stepUpId });
-  const bound = (days = 7, businessId = BIZ) => grant(businessId, { action: 'extend_trial', businessId, days });
+  const bound = (days = 7, businessId = BIZ) => grant(extendTrialStepUp(businessId, days));
   const send = (b: unknown) => subscriptions.POST(req('/api/admin/subscriptions', b));
   // The default fixture's plan row is paid; these businesses have never paid.
   beforeEach(() => { row('subscriptions', SUB).plan = 'free'; });
@@ -322,7 +324,7 @@ describe('POST /api/admin/subscriptions extend_trial', () => {
 describe('POST /api/admin/recurring', () => {
   const body = (action: string, stepUpId: string, businessId = BIZ) =>
     ({ subscriptionId: CSUB, businessId, action, reason: 'Support ticket 12', stepUpId });
-  const bound = (action: string, businessId = BIZ) => grant(CSUB, { action: `recurring_${action}`, businessId, reason: 'Support ticket 12' });
+  const bound = (action: 'pause' | 'resume' | 'cancel' | 'retry', businessId = BIZ) => grant(recurringStepUp(CSUB, businessId, action, 'Support ticket 12'));
   const send = (b: unknown) => recurring.POST(req('/api/admin/recurring', b));
   const set = (patch: Record<string, unknown>) => Object.assign(row('customer_subscriptions', CSUB), patch);
 

@@ -37,6 +37,8 @@ vi.mock('@/lib/supabase', () => {
 vi.mock('@/lib/adminQuery', () => ({ adminQuery: async () => ({ data: [], count: 0 }) }));
 vi.mock('@/components/AdminLayout', () => ({ useAdminSession: () => ({ role: m.role }) }));
 
+// The routes consume the step-up with these same builders (#1135 review B1).
+import { extendTrialStepUp, recurringStepUp, stopRenewalStepUp } from '../../../lib/admin-subscription-step-up';
 import Subscriptions from '@/pages/Subscriptions';
 import RecurringPayments from '@/pages/RecurringPayments';
 
@@ -94,10 +96,9 @@ describe('Subscriptions: Stop Renewal', () => {
     fireEvent.change(screen.getByLabelText('Reason for stopping renewal'), { target: { value: 'Merchant asked' } });
     fireEvent.click(confirmButton);
     await screen.findByPlaceholderText('000000');
-    expect(bodyOf(calls('/step-up/prepare')[0])).toEqual({
-      actionType: 'subscription_admin_action', targetId: SUB,
-      params: { action: 'stop_renewal', subscriptionId: SUB, businessId: BIZ, reason: 'Merchant asked' },
-    });
+    expect(bodyOf(calls('/step-up/prepare')[0])).toEqual({ actionType: 'subscription_admin_action', ...stopRenewalStepUp(SUB, BIZ, 'Merchant asked') });
+    // The bound fields are exactly the ones the server re-derives: no extra key such as subscriptionId.
+    expect(bodyOf(calls('/step-up/prepare')[0]).params).toEqual({ action: 'stop_renewal', businessId: BIZ, reason: 'Merchant asked' });
     authorize();
     expect(await screen.findByText(/Renewal is stopped\. The plan stays until/)).toBeInTheDocument();
     expect(bodyOf(calls('/api/admin/subscriptions')[0])).toEqual({
@@ -128,7 +129,7 @@ describe('Subscriptions: Extend Trial', () => {
     fireEvent.change(screen.getByLabelText('Days to add'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Extend' }));
     await screen.findByPlaceholderText('000000');
-    expect(bodyOf(calls('/step-up/prepare')[0]).params).toEqual({ action: 'extend_trial', businessId: BIZ, days: 10 });
+    expect(bodyOf(calls('/step-up/prepare')[0])).toEqual({ actionType: 'subscription_admin_action', ...extendTrialStepUp(BIZ, 10) });
     authorize();
     await waitFor(() => expect(calls('/api/admin/subscriptions')).toHaveLength(1));
     expect(bodyOf(calls('/api/admin/subscriptions')[0])).toEqual({ action: 'extend_trial', businessId: BIZ, days: 10, stepUpId: 'grant-1' });
@@ -171,10 +172,7 @@ describe('Recurring Payments: pause, resume, cancel, retry', () => {
     fireEvent.change(screen.getByLabelText('Reason for this change'), { target: { value: 'Support ticket 12' } });
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     await screen.findByPlaceholderText('000000');
-    expect(bodyOf(calls('/step-up/prepare')[0])).toEqual({
-      actionType: 'subscription_admin_action', targetId: CSUB,
-      params: { action: 'recurring_pause', businessId: BIZ, reason: 'Support ticket 12' },
-    });
+    expect(bodyOf(calls('/step-up/prepare')[0])).toEqual({ actionType: 'subscription_admin_action', ...recurringStepUp(CSUB, BIZ, 'pause', 'Support ticket 12') });
     authorize();
     expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument();
     expect(bodyOf(calls('/api/admin/recurring')[0])).toEqual({
@@ -210,7 +208,7 @@ describe('Recurring Payments: pause, resume, cancel, retry', () => {
     fireEvent.change(screen.getByLabelText('Reason for this change'), { target: { value: 'Card topped up' } });
     fireEvent.click(screen.getByRole('button', { name: 'Retry (3 more tries)' }));
     await screen.findByPlaceholderText('000000');
-    expect(bodyOf(calls('/step-up/prepare')[0]).params).toEqual({ action: 'recurring_retry', businessId: BIZ, reason: 'Card topped up' });
+    expect(bodyOf(calls('/step-up/prepare')[0])).toEqual({ actionType: 'subscription_admin_action', ...recurringStepUp(CSUB, BIZ, 'retry', 'Card topped up') });
     authorize();
     await waitFor(() => expect(calls('/api/admin/recurring')).toHaveLength(1));
     expect(bodyOf(calls('/api/admin/recurring')[0]).action).toBe('retry');

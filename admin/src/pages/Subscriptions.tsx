@@ -6,6 +6,7 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
+import { extendTrialStepUp, stopRenewalStepUp, SUBSCRIPTION_STEP_UP_ACTION, type SubscriptionStepUp } from '../../../lib/admin-subscription-step-up';
 import { Pagination } from '@/components/Pagination';
 import { SortableTh } from '@/components/SortableTh';
 import { sortNumber, sortTime, useTableSort } from '@/lib/tableSort';
@@ -396,8 +397,8 @@ export default function Subscriptions() {
 
   /** Runs one money action behind a step-up bound to exactly what the admin confirmed. */
   async function runMoneyAction(opts: {
-    targetId: string;
-    params: Record<string, unknown>;
+    stepUp: SubscriptionStepUp;
+    body: Record<string, unknown>;
     description: string;
     onDone: (data: Record<string, unknown>) => void;
   }) {
@@ -405,7 +406,7 @@ export default function Subscriptions() {
     setActionSaving(true);
     setActionMessage('');
     const onAuthorized = async (stepUpId: string) => {
-      const res = await adminApiFetch('/api/admin/subscriptions', { ...opts.params, stepUpId });
+      const res = await adminApiFetch('/api/admin/subscriptions', { ...opts.body, stepUpId });
       const data = await res.json().catch(() => ({}));
       stepUpCallbackRef.current = null;
       if (!res.ok) {
@@ -419,7 +420,7 @@ export default function Subscriptions() {
     };
     stepUpCallbackRef.current = onAuthorized;
     try {
-      await stepUp.execute({ actionType: 'subscription_admin_action', targetId: opts.targetId, params: opts.params, description: opts.description, onAuthorized });
+      await stepUp.execute({ actionType: SUBSCRIPTION_STEP_UP_ACTION, targetId: opts.stepUp.targetId, params: opts.stepUp.params, description: opts.description, onAuthorized });
     } catch (err) {
       stepUpCallbackRef.current = null;
       setActionMessage(err instanceof Error ? err.message : 'Step-up failed');
@@ -433,8 +434,8 @@ export default function Subscriptions() {
     if (!selected || !Number.isInteger(trialDays) || trialDays < 1 || trialDays > MAX_TRIAL_DAYS) return;
     const { business_id: businessId } = selected;
     await runMoneyAction({
-      targetId: businessId,
-      params: { action: 'extend_trial', businessId, days: trialDays },
+      stepUp: extendTrialStepUp(businessId, trialDays),
+      body: { action: 'extend_trial', businessId, days: trialDays },
       description: `Add ${trialDays} day${trialDays === 1 ? '' : 's'} to the trial of ${selected.business_name || 'this business'}`,
       onDone: data => {
         const trialEndsAt = String(data.trialEndsAt);
@@ -452,8 +453,8 @@ export default function Subscriptions() {
     const { id, business_id: businessId } = selected;
     const reason = cancelReason.trim();
     await runMoneyAction({
-      targetId: id,
-      params: { action: 'stop_renewal', subscriptionId: id, businessId, reason },
+      stepUp: stopRenewalStepUp(id, businessId, reason),
+      body: { action: 'stop_renewal', subscriptionId: id, businessId, reason },
       description: `Stop renewal of ${selected.business_name || 'this business'}'s ${selected.plan} plan (no refund)`,
       onDone: () => {
         const now = new Date().toISOString();
