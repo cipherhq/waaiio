@@ -165,6 +165,28 @@ To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `
 - **Production:** do not grant this there. Production already gives `USAGE` to PUBLIC, and a grant would change its `schema:public` digest.
 - **Recreating the staging login:** repeat this grant.
 
+### Measured corrections (Owner decision 2026-11-19, option A)
+
+**Why:**
+- A delta is the PG17 replay's prediction. A migration whose `GRANT`/`REVOKE` result depends on grants the table already held can end differently in a live database, because the replay does not model Supabase-era table grants or each environment's default grants.
+- First case: prepare run 44537217990 (target `1c4eec0a`) stopped after M547–M554 were applied, with production `table:public.admin_role_permissions` and `table:public.business_bank_accounts` differing from lock + deltas.
+- Read-only measurement showed those 2 objects in production and 3 in staging (the same 2 plus `table:public.customer_suspensions`, M547) were the only differences. Both databases are in the state the migrations intend; their self-checks passed.
+
+**What:**
+- `lock.json` may hold `measured.<environment>`: a list of `{migration, identity, predicted_sha256, measured_sha256, reason}`.
+- After applying the deltas, the gate replaces an object's expected digest with `measured_sha256` only when both of these hold, and stops otherwise:
+  - the named migration is admitted in this release;
+  - the predicted digest equals `predicted_sha256` exactly.
+- A correction never hides another difference: every other object must still match exactly.
+
+**Evidence:**
+- `lock.observed.measured_corrections_2026_11_19` records the measured catalogs:
+  - production: 7184 objects, `370dce71…`;
+  - staging: 7205 objects, `9bae4ca4…`.
+- `release-v3-admission.test.ts` proves lock + committed deltas through M554 + these corrections reproduce both exactly, and that without them the gate stops.
+
+**Removal:** a later lock re-bootstrap past M549 drops the entries; a correction naming a migration that is no longer admitted fails closed.
+
 ## Migrations (authors)
 
 A new migration PR must include `supabase/catalog-deltas/<name>.json`. To get it:
