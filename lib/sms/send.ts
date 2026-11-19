@@ -60,13 +60,18 @@ async function updateSend(db: SupabaseClient, id: string, fields: Record<string,
   if (error) logger.error('[SMS] send record update failed:', error.message);
 }
 
-async function settle(db: SupabaseClient, attemptId: string, outcome: 'charged' | 'released'): Promise<void> {
+/**
+ * Settle the attempt. True only when the database confirms the outcome
+ * (settled, or already settled the same way); anything else is flagged for
+ * reconciliation and returns false.
+ */
+async function settle(db: SupabaseClient, attemptId: string, outcome: 'charged' | 'released'): Promise<boolean> {
   const { data, error } = await db.rpc('settle_message_cost', { p_attempt_id: attemptId, p_outcome: outcome });
   const result = data as { settled?: boolean; reason?: string } | null;
-  if (error || !result || (result.settled === false && result.reason !== 'already_terminally_settled')) {
-    logger.error(`[SMS] settle_message_cost(${outcome}) failed for attempt ${attemptId}`);
-    await db.from('message_send_attempts').update({ needs_reconciliation: true }).eq('id', attemptId);
-  }
+  if (!error && result?.settled === true) return true;
+  logger.error(`[SMS] settle_message_cost(${outcome}) failed for attempt ${attemptId}`);
+  await db.from('message_send_attempts').update({ needs_reconciliation: true }).eq('id', attemptId);
+  return false;
 }
 
 /**
@@ -157,9 +162,12 @@ export async function sendBusinessSms(db: SupabaseClient, opts: {
   const attemptId = (attempt as { id: string }).id;
   await updateSend(db, sendId, { attempt_id: attemptId });
 
-  const refuse = async (reason: string, outcome: SmsOutcome): Promise<SmsOutcome> => {
+  // A row is 'failed' (and may be sent again under its key) only when nothing
+  // is left reserved. When a release could not be confirmed, the row is
+  // 'unknown' instead: never re-sent, flagged for reconciliation.
+  const refuse = async (reason: string, outcome: SmsOutcome, released = true): Promise<SmsOutcome> => {
     await db.from('message_send_attempts').update({ status: 'failed_send' }).eq('id', attemptId);
-    await updateSend(db, sendId, { status: 'failed', error: reason.slice(0, 500) });
+    await updateSend(db, sendId, { status: released ? 'failed' : 'unknown', error: reason.slice(0, 500) });
     return outcome;
   };
 
@@ -182,8 +190,8 @@ export async function sendBusinessSms(db: SupabaseClient, opts: {
       await updateSend(db, sendId, { status: 'unknown', error: 'authorization_error' });
       return { status: 'skipped', reason: 'not_authorized' };
     }
-    if (disposition === 'reserved') await settle(db, attemptId, 'released');
-    return refuse('authorization_error', { status: 'skipped', reason: 'not_authorized' });
+    const released = disposition === 'reserved' ? await settle(db, attemptId, 'released') : true;
+    return refuse('authorization_error', { status: 'skipped', reason: 'not_authorized' }, released);
   }
   const result = auth as { authorized?: boolean; enforcement_required?: boolean; reason?: string; cost_minor?: number; currency_code?: string } | null;
   if (!result || result.authorized !== true) {
@@ -199,8 +207,8 @@ export async function sendBusinessSms(db: SupabaseClient, opts: {
   const { error: sendingError } = await db.from('message_send_attempts')
     .update({ status: 'sending', sent_at: new Date().toISOString() }).eq('id', attemptId);
   if (sendingError) {
-    await settle(db, attemptId, 'released');
-    return refuse('pre_emission_failed', { status: 'failed', reason: 'pre_emission_failed' });
+    const released = await settle(db, attemptId, 'released');
+    return refuse('pre_emission_failed', { status: 'failed', reason: 'pre_emission_failed' }, released);
   }
 
   const provider = await sendSms({ to: recipient.phone, message: segments.text, unicode: segments.unicode, reference: sendId });
@@ -229,8 +237,8 @@ export async function sendBusinessSms(db: SupabaseClient, opts: {
   }
 
   await db.from('message_send_attempts').update({ status: 'failed_send' }).eq('id', attemptId);
-  await settle(db, attemptId, 'released');
-  await updateSend(db, sendId, { status: 'failed', error: (provider.error || 'failed').slice(0, 500) });
+  const released = await settle(db, attemptId, 'released');
+  await updateSend(db, sendId, { status: released ? 'failed' : 'unknown', error: (provider.error || 'failed').slice(0, 500) });
   return { status: 'failed', reason: provider.error || 'failed' };
 }
 

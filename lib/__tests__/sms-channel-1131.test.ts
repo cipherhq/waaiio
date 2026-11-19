@@ -50,6 +50,10 @@ function fakeDb(opts: {
   pricing?: Row;
   /** financial_disposition read back after an authorization error (undefined = read fails). */
   disposition?: string;
+  /** settle_message_cost answers with an error. */
+  settleFails?: boolean;
+  /** The 'sending' pre-emission marker cannot be written. */
+  sendingFails?: boolean;
 } = {}) {
   const state = {
     smsSends: [] as Row[],
@@ -66,7 +70,7 @@ function fakeDb(opts: {
         if (opts.authSequence?.length) return { data: opts.authSequence.shift(), error: null };
         return { data: opts.auth === undefined ? { authorized: true, cost_minor: 838, currency_code: 'NGN' } : opts.auth, error: null };
       }
-      if (name === 'settle_message_cost') return { data: { settled: true }, error: null };
+      if (name === 'settle_message_cost') return opts.settleFails ? { data: null, error: { message: 'down' } } : { data: { settled: true }, error: null };
       return { data: null, error: null };
     }),
     from(table: string) {
@@ -111,6 +115,7 @@ function fakeDb(opts: {
             return opts.disposition ? { data: { financial_disposition: opts.disposition }, error: null } : { data: null, error: { message: 'down' } };
           }
           state.attemptUpdates.push({ ...q.payload, id: q.filters.id });
+          if (opts.sendingFails && q.payload?.status === 'sending') return { data: null, error: { message: 'trigger' } };
           return { data: null, error: null };
         }
         if (table === 'platform_config_versions') {
@@ -356,6 +361,34 @@ describe('sendBusinessSms (charged to messaging credit)', () => {
     expect(state.smsSends[0]).toMatchObject({ status: 'accepted', attempt_id: 'attempt-2' });
     expect(await sendBusinessSms(db, { ...base, idempotencyKey: key })).toEqual({ status: 'duplicate', previous: 'accepted' });
     expect(m.sendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it('when a release cannot be confirmed the row is unknown, never re-sent (no double-held credit)', async () => {
+    // Provider refusal + failed release
+    m.sendSms.mockResolvedValue({ sent: false, error: 'SMS refused (BSNG-2004)' });
+    const refused = fakeDb({ settleFails: true });
+    await sendBusinessSms(refused.db, { ...base, idempotencyKey: 'k-rel-1' });
+    expect(refused.state.smsSends[0].status).toBe('unknown');
+    expect(refused.state.attemptUpdates).toContainEqual(expect.objectContaining({ needs_reconciliation: true }));
+    expect(await sendBusinessSms(refused.db, { ...base, idempotencyKey: 'k-rel-1' })).toEqual({ status: 'duplicate', previous: 'unknown' });
+
+    // Authorization error with a committed reservation + failed release
+    const auth = fakeDb({ authError: true, disposition: 'reserved', settleFails: true });
+    await sendBusinessSms(auth.db, { ...base, idempotencyKey: 'k-rel-2' });
+    expect(auth.state.smsSends[0].status).toBe('unknown');
+    expect(await sendBusinessSms(auth.db, { ...base, idempotencyKey: 'k-rel-2' })).toEqual({ status: 'duplicate', previous: 'unknown' });
+    expect(m.sendSms).toHaveBeenCalledTimes(1);
+
+    // Pre-emission marker refused + failed release: nothing sent, row unknown
+    const marker = fakeDb({ sendingFails: true, settleFails: true });
+    expect((await sendBusinessSms(marker.db, { ...base, idempotencyKey: 'k-rel-3' })).status).toBe('failed');
+    expect(marker.state.smsSends[0].status).toBe('unknown');
+    expect(m.sendSms).toHaveBeenCalledTimes(1);
+
+    // ...and with a confirmed release the key may be retried
+    const markerOk = fakeDb({ sendingFails: true });
+    await sendBusinessSms(markerOk.db, { ...base, idempotencyKey: 'k-rel-4' });
+    expect(markerOk.state.smsSends[0].status).toBe('failed');
   });
 
   it('a key with an unknown outcome is never sent again', async () => {
