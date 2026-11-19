@@ -1,0 +1,45 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_subscription_id uuid, p_period_boundary timestamp with time zone",
+    "body_sha256": "185a895e7db31f316ec22c5050258c36a8fb5a8d01182d6e243d6b7f393c4f32",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": true,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "86af353ccf49ec6a782e887a86b681a3687b5bf2995782346d46765d820f5ce7",
+   "identity": "function:public.expire_subscription_with_authority(p_subscription_id uuid, p_period_boundary timestamp with time zone)",
+   "operation": "modify"
+  }
+ ],
+ "migration": "554_paystack_plan_expiry_authority.sql",
+ "migration_sha256": "6abc4f3d57df14a6221e82a78414e9ce72a225bfd53a05ee7096e4901a3696b1",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
