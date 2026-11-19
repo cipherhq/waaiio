@@ -7,7 +7,7 @@ import { createEvent as createEventAction } from '@/lib/actions/event-persistenc
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
@@ -912,7 +912,7 @@ export default function EventsPage() {
                   <p className="text-xs font-semibold text-brand uppercase">Share Event</p>
                   <div className="flex items-start gap-3">
                     <div className="shrink-0 rounded bg-white p-1.5 shadow-sm">
-                      <QRCodeSVG value={eventUrl} size={64} level="M" />
+                      <StyledQRCode value={eventUrl} size={64} level="M" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-gray-600 dark:text-gray-400 break-all">{eventUrl}</p>

@@ -132,12 +132,18 @@ describe('Ticket image route', () => {
 
     const images = findInJsx(capturedJsx, (n: any) => n?.type === 'img');
     const qrImg = images.find((img: any) =>
-      typeof img.props?.src === 'string' && img.props.src.includes('qrserver.com')
+      typeof img.props?.src === 'string' && img.props.src.startsWith('data:image/svg+xml')
     );
     expect(qrImg, 'QR code image should exist').toBeTruthy();
+    // Drawn locally: no third-party QR service sees the ticket code.
+    expect(images.some((img: any) => String(img.props?.src).includes('qrserver.com'))).toBe(false);
 
+    // Rasterize the image and decode it: the payload must be exactly the ticket URL.
     const expectedPayload = `https://waaiio.com/tickets/${TICKET_CODE}`;
-    const qrSrc = qrImg.props.src as string;
-    expect(qrSrc).toContain(encodeURIComponent(expectedPayload));
+    const svg = decodeURIComponent((qrImg.props.src as string).replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
+    const { default: sharp } = await import('sharp');
+    const { default: jsQR } = await import('jsqr');
+    const { data, info } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    expect(jsQR(new Uint8ClampedArray(data), info.width, info.height)?.data).toBe(expectedPayload);
   });
 });

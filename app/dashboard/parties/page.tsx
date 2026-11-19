@@ -5,7 +5,7 @@ import Image from 'next/image';
 import PartyQuestionsEditor from './components/PartyQuestionsEditor';
 import PartyReminderPreview from './components/PartyReminderPreview';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -852,7 +852,7 @@ export default function PartiesPage() {
           <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/30 p-4">
             <div className="flex items-start gap-4">
               <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm">
-                <QRCodeSVG value={`${appUrl}/i/${selectedParty.slug || selectedParty.id}`} size={80} level="M" />
+                <StyledQRCode value={`${appUrl}/i/${selectedParty.slug || selectedParty.id}`} size={80} level="M" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-brand-700 uppercase">Share this party</p>

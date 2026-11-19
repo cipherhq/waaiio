@@ -1,0 +1,28 @@
+## 2026-11-19 — Modern rounded QR codes everywhere (Owner request)
+
+- **Change:** every QR code Waaiio draws now has the look the Owner asked for. Modules are rounded and join into smooth shapes, the finder "eyes" are rounded, and thin corner brackets sit outside the quiet zone. The encoded content of every QR is byte-for-byte unchanged.
+- **One renderer:**
+  - `shared/styled-qr.ts` turns a QR matrix into SVG/canvas geometry and has no imports.
+  - `lib/qr/styled-qr.ts` encodes with the existing `qrcode` package (browser, Node, edge).
+  - `lib/qr/styled-qr-png.ts` makes server PNGs (sharp).
+  - `components/ui/StyledQRCode.tsx` is the main-app component, and `admin/src/components/StyledQRCode.tsx` is the admin copy (admin now depends on `qrcode` 1.5.4).
+- **Replaced:**
+  - dashboard home, events, giving, QR page (plain code and poster preview), scan-to-pay, waivers, contracts, parties, keyword campaigns, property check-in;
+  - onboarding success, the merchant alert confirmation, the launch page and the site announcement modal;
+  - ticket PDF, contract PDF and signature page, and the ticket share image;
+  - admin Platform Campaigns and WhatsApp Assistance.
+- **Scannability rules:**
+  - error correction stays at each page's level (M or H, never lower);
+  - the quiet zone is at least 4 modules;
+  - downloads are print resolution: 1024px PNG (1200px for scan-to-pay and waivers, up from 600, and up from 120–512px elsewhere).
+- **Ticket share image (`app/api/tickets/image/route.tsx`):** the QR is now drawn locally. Before, it came from `api.qrserver.com`, so the ticket code no longer goes to a third party.
+- **Layout:** the keyword-campaign thumbnail grows from 56px plus 4px padding to 72px with no padding (+8px), so its long link still scans on 2× screens. The ticket PDF and ticket image QR now fill their white box, which is the same size as before.
+- **Tests:**
+  - `lib/qr/__tests__/styled-qr-decode.test.ts` renders every page's payload shape, level and size, every style variant and the PDF/PNG/data-URL outputs, then decodes each with jsQR and with the dashboard scanner's zxing build, asserting the exact string;
+  - `components/ui/__tests__/StyledQRCode*.test.tsx` decodes the real React markup and checks the canvas contract;
+  - `admin/src/__tests__/styled-qr-code.test.tsx` checks the admin copy draws the same geometry.
+  - Tests that mocked `qrcode.react` or checked its import were updated.
+  - `jsqr` 1.4.0 was added as a dev dependency.
+- **Could break:**
+  - At the same on-screen size the code itself is a little smaller, because the quiet zone and frame are now drawn inside the box. The smallest dashboard thumbnails are only scannable on 2× (retina/phone) screens, as before.
+  - `qrcode.react` is no longer used by any page but is still installed (removal left for later).

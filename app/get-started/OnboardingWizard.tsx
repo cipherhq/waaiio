@@ -1319,8 +1319,8 @@ function QRCodeDisplay({ value }: { value: string }) {
   const componentRef = useRef<React.ComponentType<{ value: string; size: number; level: string }> | null>(null);
 
   useEffect(() => {
-    import('qrcode.react').then(mod => {
-      componentRef.current = mod.QRCodeSVG as unknown as React.ComponentType<{ value: string; size: number; level: string }>;
+    import('@/components/ui/StyledQRCode').then(mod => {
+      componentRef.current = mod.StyledQRCode as unknown as React.ComponentType<{ value: string; size: number; level: string }>;
       setLoaded(true);
     }).catch(() => {});
   }, []);

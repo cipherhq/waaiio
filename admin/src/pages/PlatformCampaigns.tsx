@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { adminApiGet, getAdminApiBase } from '@/lib/adminApi';
 import { supabase } from '@/lib/supabase';
-import { QRCodeCanvas } from 'qrcode.react';
+import { StyledQRCode } from '@/components/StyledQRCode';
 import { Megaphone, Plus, QrCode, Copy, Check, ExternalLink, Link2, ChevronLeft, ToggleLeft, ToggleRight, Pencil, Download } from 'lucide-react';
 
 interface Campaign {
@@ -457,12 +457,13 @@ export default function PlatformCampaigns() {
                   </div>
                   {qrToken === a.attribution_token && (
                     <div className="mt-3 flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-3">
-                      <QRCodeCanvas
+                      <StyledQRCode
                         id={`${QR_CANVAS_ID_PREFIX}${a.attribution_token}`}
                         value={getTrackedUrl(a.attribution_token)}
                         size={128}
                         level="M"
-                        includeMargin
+                        renderAs="canvas"
+                        resolution={1024}
                       />
                       <div className="space-y-2">
                         <p className="text-xs text-gray-500">QR encodes:</p>

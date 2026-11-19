@@ -4,7 +4,7 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { hasAccess } from '@/lib/permissions';
 import { useStepUp } from '@/hooks/useStepUp';
 import { StepUpDialog } from '@/components/StepUpDialog';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/StyledQRCode';
 import { SortableTh } from '@/components/SortableTh';
 import { useTableSort } from '@/lib/tableSort';
 
@@ -178,7 +178,7 @@ export default function WhatsAppAssistance() {
                 {setup?.permanent_link && <div className="mt-2">
                   <p className="text-xs font-medium text-gray-600">Permanent Waaiio link (survives number changes):</p>
                   <div className="mt-1 flex items-center gap-2">
-                    <QRCodeSVG value={setup.permanent_link} size={76} aria-label="Permanent merchant WhatsApp QR code" />
+                    <StyledQRCode value={setup.permanent_link} size={76} aria-label="Permanent merchant WhatsApp QR code" />
                     <a href={setup.permanent_link} target="_blank" rel="noopener noreferrer" className="max-w-44 break-all text-xs font-medium text-brand underline">{setup.permanent_link}</a>
                   </div>
                 </div>}

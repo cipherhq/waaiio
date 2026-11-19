@@ -39,8 +39,8 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-vi.mock('qrcode.react', () => ({
-  QRCodeCanvas: ({ value }: { value: string }) => (
+vi.mock('@/components/ui/StyledQRCode', () => ({
+  StyledQRCode: ({ value }: { value: string }) => (
     <div data-testid="qr-value" data-value={value} />
   ),
 }));

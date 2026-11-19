@@ -8,7 +8,7 @@ import type { SettingsTabProps } from '@/app/dashboard/settings/tabs/types';
 import { StepSuccess } from '@/app/get-started/steps/StepSuccess';
 
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({data:null,error:null}) }) }) }) }) }));
-vi.mock('qrcode.react', () => ({ QRCodeSVG: ({ value }: {value: string}) => <svg data-testid="qr" data-value={value} />, QRCodeCanvas: () => <canvas /> }));
+vi.mock('@/components/ui/StyledQRCode', () => ({ StyledQRCode: ({ value }: {value: string}) => <svg data-testid="qr" data-value={value} /> }));
 const recipient = { id:'r1', business_id:'business-a', label:'Sales manager', channel:'whatsapp', address:'+2348012345678', events:['sale','payment'], enabled:true, verified_at:null, revoked_at:null };
 const payload = (recipients: unknown[] = [recipient], enabled = true) => ({ recipients, enabled, readiness:{whatsapp:true,email:true} });
 const response = (data: unknown, ok = true) => Promise.resolve({ok,json:async()=>data});

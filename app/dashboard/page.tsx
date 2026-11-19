@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { QRCodeCanvas } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { getLimitTier } from '@/lib/capabilities/policy';
 import { createClient } from '@/lib/supabase/client';
@@ -553,7 +553,7 @@ export default function DashboardOverview() {
               className="mt-4 flex items-center gap-5 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 transition hover:border-brand/20 hover:shadow-sm"
             >
               <div className="shrink-0 rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-2">
-                <QRCodeCanvas value={qrLink} size={80} level="H" />
+                <StyledQRCode value={qrLink} size={80} level="H" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Your QR Code</p>

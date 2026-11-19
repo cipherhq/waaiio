@@ -2,6 +2,7 @@ import { ImageResponse } from 'next/og';
 import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { WORDMARK_PATH, WORDMARK_ALT, WORDMARK_DISPLAY } from '@/lib/brand';
+import { styledQrSvgDataUrl } from '@/lib/qr/styled-qr';
 
 export const runtime = 'edge';
 
@@ -38,8 +39,10 @@ export async function GET(request: NextRequest) {
   const ticketCode = ticket.ticket_code;
   const businessName = business?.name || '';
 
-  // QR code URL
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=png&color=1a1a1a&bgcolor=ffffff&data=${encodeURIComponent(`https://waaiio.com/tickets/${ticketCode}`)}`;
+  // QR code, drawn locally in the Waaiio style (no third-party QR service).
+  // The styled image carries its own quiet zone and frame, so it takes the
+  // box's old padding; the box stays the same size.
+  const qrUrl = styledQrSvgDataUrl(`https://waaiio.com/tickets/${ticketCode}`, 180, { fgColor: '#1a1a1a' });
 
   const flyerUrl = event?.image_url || null;
 
@@ -132,9 +135,9 @@ export async function GET(request: NextRequest) {
             zIndex: 1,
           }}
         >
-          <div style={{ background: 'white', borderRadius: '14px', padding: '14px', display: 'flex' }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '4px', display: 'flex' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={qrUrl} width={160} height={160} alt="QR" />
+            <img src={qrUrl} width={180} height={180} alt="QR" />
           </div>
           <div style={{ fontSize: 11, color: '#a0a0c0', marginTop: '8px', display: 'flex' }}>
             Scan to verify

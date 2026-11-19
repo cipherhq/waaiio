@@ -1,5 +1,5 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import QRCode from 'qrcode';
+import { styledQrPng } from '@/lib/qr/styled-qr-png';
 
 interface SignerEntry {
   signerName: string;
@@ -306,7 +306,7 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   // ── Verification QR Code ──
   if (data.verifyUrl) {
     try {
-      const qrBuffer = await QRCode.toBuffer(data.verifyUrl, { width: 100, margin: 1 });
+      const qrBuffer = await styledQrPng(data.verifyUrl, 400);
       const qrImage = await pdfDoc.embedPng(qrBuffer);
       currentPage.drawImage(qrImage, {
         x: 50, y: y - 100, width: 100, height: 100,

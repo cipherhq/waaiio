@@ -10,6 +10,7 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
 import { CustomerLinkActions } from '@/components/dashboard/CustomerLinkActions';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { sortTime, useTableSort } from '@/lib/table-sort';
 
 interface Property {
@@ -106,13 +107,6 @@ function CheckInQRSection({ propertyId, propertyName }: { propertyId: string; pr
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const qrUrl = `https://waaiio.com/checkin/property/${propertyId}`;
 
-  useEffect(() => {
-    if (!showQR || !canvasRef.current) return;
-    import('qrcode').then(QRCode => {
-      QRCode.toCanvas(canvasRef.current, qrUrl, { width: 256, margin: 2 }, () => {});
-    });
-  }, [showQR, qrUrl]);
-
   function downloadQR() {
     if (!canvasRef.current) return;
     const link = document.createElement('a');
@@ -157,7 +151,7 @@ function CheckInQRSection({ propertyId, propertyName }: { propertyId: string; pr
       </div>
       {showQR && (
         <div className="mt-4 flex flex-col items-center gap-3">
-          <canvas ref={canvasRef} className="rounded-lg border border-gray-200" />
+          <StyledQRCode ref={canvasRef} value={qrUrl} size={256} level="M" renderAs="canvas" resolution={1024} className="rounded-lg border border-gray-200" />
           <p className="text-xs text-gray-400 font-mono break-all text-center max-w-xs">{qrUrl}</p>
           <div className="flex gap-2">
             <button onClick={downloadQR} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">

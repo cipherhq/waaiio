@@ -14,7 +14,6 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('next/image', () => ({ default: () => null }));
 vi.mock('@/components/dashboard/PageHelp', () => ({ PageHelp: () => null }));
-vi.mock('qrcode', () => ({ toCanvas: vi.fn() }));
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({
     from: (table: string) => {

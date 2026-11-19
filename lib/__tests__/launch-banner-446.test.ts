@@ -153,9 +153,9 @@ describe('SiteAnnouncement component contract (#460 strip + modal)', () => {
     expect(siteAnnouncementSrc).toContain('computeTimeLeft');
   });
 
-  it('has QRCodeSVG for QR rendering in modal', () => {
-    expect(siteAnnouncementSrc).toContain('QRCodeSVG');
-    expect(siteAnnouncementSrc).toContain('qrcode.react');
+  it('has the shared StyledQRCode for QR rendering in modal', () => {
+    expect(siteAnnouncementSrc).toContain('<StyledQRCode value={waLink}');
+    expect(siteAnnouncementSrc).toContain("from '@/components/ui/StyledQRCode'");
   });
 
   it('has whatsapp-button test ID in modal', () => {
@@ -235,8 +235,8 @@ describe('LaunchClient /launch page uses shared helpers', () => {
     expect(launchClientSrc).toContain('/api/launch/regions');
   });
 
-  it('still uses QRCodeSVG', () => {
-    expect(launchClientSrc).toContain('QRCodeSVG');
+  it('still renders the WhatsApp link as a QR code (shared StyledQRCode)', () => {
+    expect(launchClientSrc).toContain('<StyledQRCode value={waLink}');
   });
 });
 

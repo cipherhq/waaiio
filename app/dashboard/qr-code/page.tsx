@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { QRCodeCanvas } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
@@ -608,7 +608,7 @@ export default function QRCodePage() {
             <p className="mt-1 text-xs text-gray-400">Download just the QR code to use in your own designs</p>
             <div className="mt-4 flex items-center gap-4">
               <div ref={qrOnlyRef} className="rounded-lg border border-gray-100 p-3">
-                <QRCodeCanvas value={activeLink} size={120} level="H" />
+                <StyledQRCode value={activeLink} size={120} level="H" renderAs="canvas" resolution={1024} />
               </div>
               <button
                 onClick={downloadQROnly}
@@ -726,7 +726,7 @@ export default function QRCodePage() {
               {/* QR code section */}
               <div className="flex flex-col items-center px-6 py-8">
                 <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-                  <QRCodeCanvas value={activeLink} size={180} level="H" />
+                  <StyledQRCode value={activeLink} size={180} level="H" />
                 </div>
 
                 <p
