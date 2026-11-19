@@ -1883,14 +1883,19 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     cleanup();
   });
 
-  it('83d. paystack provider_active_or_retrying or ambiguous evidence → expired=false', () => {
+  it('83d. paystack: every evidence outcome other than terminal_no_payment → expired=false', () => {
     const periodEnd = '2026-08-01T00:00:00Z';
-    const { subId, cleanup } = m554PaystackSub('t83d', periodEnd);
-    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83d', '${periodEnd}'::timestamptz, 'ambiguous', 'renewal_recovery_paystack_t83d');`);
-    expect(psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`)).toContain('authority_ambiguous');
-    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83d', '${periodEnd}'::timestamptz, 'provider_active_or_retrying', 'renewal_recovery_paystack_t83d');`);
-    expect(psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`)).toContain('authority_provider_active_or_retrying');
+    const { bizId, subId, cleanup } = m554PaystackSub('t83d', periodEnd);
+    // Evidence only moves up in rank (M380), so record from lowest to highest.
+    for (const outcome of ['unavailable', 'ambiguous', 'provider_active_or_retrying', 'paid_finalized']) {
+      psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83d', '${periodEnd}'::timestamptz, '${outcome}', 'renewal_recovery_paystack_t83d');`);
+      expect(psql(`SELECT outcome FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`)).toBe(outcome);
+      const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+      expect(result).toContain('"expired": false');
+      expect(result).toContain(`authority_${outcome}`);
+    }
     expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+    expect(psql(`SELECT subscription_tier FROM businesses WHERE id='${bizId}'::uuid;`)).toBe('growth');
     cleanup();
   });
 

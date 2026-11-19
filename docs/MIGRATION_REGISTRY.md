@@ -454,6 +454,6 @@ Reserved by the coordinator 2026-11-18 after checking main through M551 (SMS #11
 
 | Version | Name | Branch | Status |
 |---|---|---|---|
-| 554 | paystack_plan_expiry_authority | claude/admin-subscription-actions-d9e81b | Proposed; awaiting coordinator confirmation; not applied |
+| 554 | paystack_plan_expiry_authority | claude/admin-subscription-actions-d9e81b | Reserved; not applied |
 
-Proposed 2026-11-19 after checking main through M552 and local worktree migration filenames. User decision 2026-11-19 ("Add Paystack expiry", #1135 review B2). Re-creates `expire_subscription_with_authority` (M381, its only definition) with one added CASE line for `paystack`; signature, SECURITY DEFINER, `search_path = public, pg_temp` and service_role-only EXECUTE unchanged. Must apply after M381. Applying it to staging or production needs separate Owner approval and CTO sign-off.
+Reserved by the coordinator 2026-11-19 after checking main through M552 (M551 SMS and M552 stays merged) and local worktree migration filenames. User decision 2026-11-19 ("Add Paystack expiry", #1135 review B2). Re-creates `expire_subscription_with_authority` (M381, its only definition) with one added CASE line for `paystack`; signature, SECURITY DEFINER, `search_path = public, pg_temp` and service_role-only EXECUTE unchanged. Must apply after M381. Applying it to staging or production needs separate Owner approval and CTO sign-off.
