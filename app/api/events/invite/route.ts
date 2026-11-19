@@ -8,7 +8,8 @@ import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { checkOptInBatch } from '@/lib/security/check-optin';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
-import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
+import { isSmsEligible } from '@/lib/sms/bulksms-ng';
+import { sendBusinessSms } from '@/lib/sms/send';
 import { sendColdPartyInvite, coldInviteBlocked } from '@/lib/parties/cold-invite';
 import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
 
@@ -27,6 +28,12 @@ function checkRateLimit(userId: string): boolean {
   entry.count++;
   return true;
 }
+
+/**
+ * SMS invites are charged to the business's messaging credit (#1131). One SMS
+ * per invite per minute, so a double click or retry never sends twice.
+ */
+const smsInviteKey = (inviteId: string) => `invite:${inviteId}:${new Date().toISOString().slice(0, 16)}`;
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -349,8 +356,8 @@ export async function POST(request: NextRequest) {
             // Email failed — try SMS for NG/GH
             if (isSmsEligible(phone)) {
               const smsMsg = `You're invited to ${inviteTarget.name}! RSVP: ${inviteLink}`;
-              const smsRes = await sendSms({ to: phone, message: smsMsg, from: (hostName || 'Waaiio').slice(0, 11) });
-              if (smsRes.sent) {
+              const smsRes = await sendBusinessSms(service, { businessId, phone, text: smsMsg, purpose: 'invite', idempotencyKey: smsInviteKey(invite.id) });
+              if (smsRes.status === 'sent') {
                 results.push({ phone, status: 'sms_sent', note: 'Email failed — invite sent via SMS' });
               } else {
                 results.push({ phone, status: 'needs_optin', note: 'Share the invite link with this guest.', error: inviteLink });
@@ -371,8 +378,8 @@ export async function POST(request: NextRequest) {
             `RSVP: ${inviteLink}`,
           ].filter(Boolean).join('\n');
 
-          const smsResult = await sendSms({ to: phone, message: smsMessage, from: (hostName || business?.name || 'Waaiio').slice(0, 11) });
-          if (smsResult.sent) {
+          const smsResult = await sendBusinessSms(service, { businessId, phone, text: smsMessage, purpose: 'invite', idempotencyKey: smsInviteKey(invite.id) });
+          if (smsResult.status === 'sent') {
             results.push({ phone, status: 'sms_sent', note: 'Guest not on WhatsApp or email — invite sent via SMS' });
           } else {
             results.push({

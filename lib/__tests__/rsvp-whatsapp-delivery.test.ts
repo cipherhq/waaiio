@@ -8,7 +8,8 @@ vi.mock('@/lib/api-auth', () => ({ authenticateRequest: async () => ({ user: { i
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({}) }));
 vi.mock('@/lib/capabilities/api-guard', () => ({ requireCapability: async () => ({ allowed: true }) }));
 vi.mock('@/lib/security/check-optin', () => ({ checkOptInBatch: mocks.optIn }));
-vi.mock('@/lib/sms/bulksms-ng', async (orig) => ({ ...(await orig<object>()), sendSms: mocks.sms }));
+// #1131: SMS invites go through the charged business sender.
+vi.mock('@/lib/sms/send', () => ({ sendBusinessSms: mocks.sms }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ from: mocks.from }) }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: mocks.limit, getRateLimitKey: () => 'test' }));
 vi.mock('@/lib/channels/channel-resolver', () => ({
@@ -108,7 +109,7 @@ describe('POST /api/events/invite (host dashboard) stores international guest ph
     mocks.from.mockImplementation((t: string) => tables[t] ?? table({}));
     mocks.resolve.mockResolvedValue(null);
     mocks.optIn.mockResolvedValue(new Map());
-    mocks.sms.mockResolvedValue({ sent: true });
+    mocks.sms.mockResolvedValue({ status: 'sent', pages: 1, priceMinor: 838, currency: 'NGN' });
     const res = await hostInvite(new Request('http://x/api/events/invite', {
       method: 'POST', body: JSON.stringify({ partyId: 'p1', businessId: 'biz-1', phones: ['0803 123 4567'] }),
     }) as never);
@@ -116,7 +117,7 @@ describe('POST /api/events/invite (host dashboard) stores international guest ph
     expect(mocks.optIn).toHaveBeenCalledWith(expect.anything(), ['2348031234567'], 'biz-1');
     expect(tables.event_invites.in).toHaveBeenCalledWith('guest_phone', ['2348031234567', '08031234567']);
     expect(inserted?.guest_phone).toBe('2348031234567');
-    expect(mocks.sms).toHaveBeenCalledWith(expect.objectContaining({ to: '2348031234567' }));
+    expect(mocks.sms).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ phone: '2348031234567', purpose: 'invite' }));
   });
 });
 
@@ -134,7 +135,7 @@ describe('existing invite saved in legacy local format', () => {
     mocks.from.mockImplementation((t: string) => tables[t] ?? table({}));
     mocks.resolve.mockResolvedValue(null);
     mocks.optIn.mockResolvedValue(new Map());
-    mocks.sms.mockResolvedValue({ sent: true });
+    mocks.sms.mockResolvedValue({ status: 'sent', pages: 1, priceMinor: 838, currency: 'NGN' });
     return tables;
   };
 
@@ -155,6 +156,6 @@ describe('existing invite saved in legacy local format', () => {
     await send();
     expect(tables.event_invites.insert).not.toHaveBeenCalled();
     expect(tables.event_invites.update).not.toHaveBeenCalled();
-    expect(mocks.sms.mock.calls[0][0].message).toContain('e'.repeat(24));
+    expect(mocks.sms.mock.calls[0][1].text).toContain('e'.repeat(24));
   });
 });

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from './message-sender';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
-import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
+import { sendBusinessSms } from '@/lib/sms/send';
 
 interface SendOrEmailOpts {
   supabase: SupabaseClient;
@@ -18,8 +18,12 @@ interface SendOrEmailOpts {
   businessName?: string;
   /** If true, send email alongside WhatsApp (not just as fallback) */
   alwaysEmail?: boolean;
-  /** If true, attempt SMS as final fallback when both WhatsApp and email fail (NG/GH only) */
-  smsFallback?: boolean;
+  /**
+   * SMS as the final fallback when both WhatsApp and email fail (NG/GH only).
+   * Charged to the business's messaging credit and skipped when credit is
+   * short (Owner decision 2026-11-18, #1131). The key makes it send once.
+   */
+  smsFallback?: { businessId: string; idempotencyKey: string; purpose?: 'reminder' | 'notice' };
   /** WhatsApp message classification per Meta policy (utility, marketing, service). Callers should set this explicitly. */
   messageCategory?: string;
 }
@@ -80,21 +84,24 @@ export async function sendOrEmail(opts: SendOrEmailOpts): Promise<SendOrEmailRes
     }
   }
 
-  // 3. SMS fallback — attempt when both WhatsApp and email failed (NG/GH only)
+  // 3. SMS fallback — attempt when both WhatsApp and email failed (NG/GH only, charged)
   if (opts.smsFallback && result.whatsapp === 'failed' && (result.email === 'failed' || result.email === 'no_address')) {
-    if (isSmsEligible(to)) {
-      // Truncate to SMS limit (160 chars) and strip WhatsApp formatting
-      const smsText = text.replace(/\*/g, '').replace(/_/g, '').slice(0, 160);
-      const smsResult = await sendSms({ to, message: smsText });
-      result.sms = smsResult.sent ? 'sent' : 'failed';
-      if (smsResult.sent) {
-        logger.info(`[SEND_OR_EMAIL] SMS fallback succeeded for ${to}`);
-      } else {
-        logger.error(`[SEND_OR_EMAIL] All channels failed for ${to}: WA, email, SMS`);
-      }
-    } else {
+    const sms = await sendBusinessSms(opts.supabase, {
+      businessId: opts.smsFallback.businessId,
+      phone: to,
+      text,
+      purpose: opts.smsFallback.purpose || 'reminder',
+      idempotencyKey: opts.smsFallback.idempotencyKey,
+    });
+    if (sms.status === 'sent') {
+      result.sms = 'sent';
+      logger.info('[SEND_OR_EMAIL] SMS fallback succeeded');
+    } else if (sms.status === 'skipped' && (sms.reason === 'not_sms_number' || sms.reason === 'other_country' || sms.reason === 'business_not_eligible')) {
       result.sms = 'not_eligible';
-      logger.error(`[SEND_OR_EMAIL] Both WhatsApp and email failed for ${to} (${opts.businessName || 'unknown business'}). SMS not eligible (non-NG/GH).`);
+      logger.error(`[SEND_OR_EMAIL] Both WhatsApp and email failed (${opts.businessName || 'unknown business'}). SMS not eligible.`);
+    } else {
+      result.sms = sms.status === 'skipped' || sms.status === 'duplicate' ? 'skipped' : 'failed';
+      logger.error(`[SEND_OR_EMAIL] All channels failed: WA, email, SMS (${sms.status === 'skipped' ? sms.reason : sms.status})`);
     }
   } else if (result.whatsapp === 'failed' && (result.email === 'failed' || result.email === 'no_address')) {
     logger.error(`[SEND_OR_EMAIL] Both WhatsApp and email failed for ${to} (${opts.businessName || 'unknown business'}). Message lost.`);

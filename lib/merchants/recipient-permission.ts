@@ -6,7 +6,7 @@ export const RECIPIENT_POLICY = 'Cold messaging is not allowed. Only contact peo
 /** Merchant-initiated sends only; never changes bot replies or manufactures consent. */
 export async function hasRecipientPermission(
   db: SupabaseClient, businessId: string, phone: string,
-  purpose: 'utility' | 'marketing', channel: 'whatsapp' | 'email' = 'whatsapp',
+  purpose: 'utility' | 'marketing', channel: 'whatsapp' | 'email' | 'sms' = 'whatsapp',
 ): Promise<boolean> {
   const digits = typeof phone === 'string' ? phone.replace(/\D/g, '') : '';
   if (!businessId || !/^[1-9]\d{6,14}$/.test(digits)) return false;

@@ -142,13 +142,16 @@ describe('maskEmail', () => {
 
 describe('BulkSMS behavioral tests', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
-  afterEach(() => { delete process.env.BULKSMS_NG_API_TOKEN; });
+  // #1131: a registered sender name is required (no default), and the client uses API v2.
+  beforeEach(() => { process.env.BULKSMS_SENDER_ID = 'Waaiio'; });
+  afterEach(() => { delete process.env.BULKSMS_NG_API_TOKEN; delete process.env.BULKSMS_SENDER_ID; });
 
   it('successful send: returns { sent: true }, logs no phone/body/response', async () => {
     process.env.BULKSMS_NG_API_TOKEN = 'test-token';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ status: 'success' }),
+      status: 200,
+      json: () => Promise.resolve({ status: 'success', data: {} }),
     }));
 
     const captured: string[] = [];
@@ -172,7 +175,7 @@ describe('BulkSMS behavioral tests', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 429,
-      text: () => Promise.resolve('Rate limit exceeded for customer@mail.com'),
+      json: () => Promise.resolve({ status: 'error', message: 'Rate limit exceeded for customer@mail.com' }),
     }));
 
     const captured: string[] = [];
@@ -203,8 +206,8 @@ describe('BulkSMS behavioral tests', () => {
     const { sendSms } = await import('@/lib/sms/bulksms-ng');
     const result = await sendSms({ to: '2348012345678', message: 'Hello' });
 
-    // Return value preserves original Error.message (pre-PR behavior)
-    expect(result).toEqual({ sent: false, error: sensitiveMsg });
+    // #1131: a transport error is an unknown outcome; the provider's message is not returned
+    expect(result).toEqual({ sent: false, ambiguous: true, error: 'SMS provider did not answer' });
     // But the log does NOT contain the sensitive message
     for (const line of captured) {
       expect(line).not.toContain('secret-server.internal');
@@ -212,7 +215,7 @@ describe('BulkSMS behavioral tests', () => {
     vi.unstubAllGlobals();
   });
 
-  it('thrown string: returns "SMS send failed" (pre-PR behavior)', async () => {
+  it('thrown string: an unknown outcome, never a definite failure (#1131)', async () => {
     process.env.BULKSMS_NG_API_TOKEN = 'test-token';
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue('some raw string'));
 
@@ -220,7 +223,7 @@ describe('BulkSMS behavioral tests', () => {
     const { sendSms } = await import('@/lib/sms/bulksms-ng');
     const result = await sendSms({ to: '2348012345678', message: 'Hello' });
 
-    expect(result).toEqual({ sent: false, error: 'SMS send failed' });
+    expect(result).toEqual({ sent: false, ambiguous: true, error: 'SMS provider did not answer' });
     vi.unstubAllGlobals();
   });
 });

@@ -17,13 +17,13 @@ const BROADCASTS_SRC = fs.readFileSync(
 );
 
 describe('Slice 0C — Admin Broadcasts channel cleanup (#439)', () => {
-  it('SMS option is marked disabled', () => {
-    // The sms entry should have disabled: true
-    expect(BROADCASTS_SRC).toMatch(/value:\s*'sms'.*disabled:\s*true/s);
-  });
-
-  it('SMS label indicates coming soon', () => {
-    expect(BROADCASTS_SRC).toMatch(/sms.*coming soon/i);
+  // #1131 (Owner decision 2026-11-18): SMS is on. Its behaviour is proved on
+  // the rendered page in broadcasts-sms-1131.test.tsx.
+  it('SMS option is enabled (#1131)', () => {
+    const smsLine = BROADCASTS_SRC.match(/\{[^}]*value:\s*'sms'[^}]*\}/);
+    expect(smsLine).not.toBeNull();
+    expect(smsLine![0]).not.toContain('disabled');
+    expect(smsLine![0]).not.toMatch(/coming soon/i);
   });
 
   // #1104 (Owner request 2026-11-17): WhatsApp is on. Its behaviour is proved

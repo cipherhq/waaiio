@@ -98,7 +98,7 @@ export async function notifyCustomerChargeFailed(
         }
       : null,
     businessName,
-    smsFallback: true,
+    smsFallback: { businessId, idempotencyKey: `charge-failed:${subscriptionId}:${new Date().toISOString().slice(0, 10)}`, purpose: 'notice' },
   });
 
   logger.info(`[NOTIFY_CHARGE_FAILED] Sent failure notification for subscription ${subscriptionId} (${gateway})`);

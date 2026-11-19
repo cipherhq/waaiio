@@ -84,10 +84,10 @@ function authorize() {
 }
 
 describe('Admin Broadcasts: WhatsApp (#1104)', () => {
-  it('turns WhatsApp on and keeps SMS coming soon', () => {
+  it('turns WhatsApp on (SMS is on too since #1131)', () => {
     render(<Broadcasts />);
     expect(screen.getByRole('button', { name: 'WhatsApp' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /SMS — coming soon/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'SMS' })).toBeEnabled();
   });
 
   it('previews recipients, skips and the Waaiio cost before anything is sent', async () => {
