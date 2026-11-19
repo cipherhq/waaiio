@@ -426,6 +426,14 @@ schema application or deployment authority. Recheck collisions before SQL creati
 
 Reserved 2026-11-18 after checking main through M548, open PR #1125 (M549) and local worktree and remote branch migration filenames. Owner decision 2026-11-18 (round the fee to the cent/kobo). Rewrites only the whole-unit fee statement in `bind_merchant_tax_fee_980`, `finalize_stripe_recurring_charge` and `finalize_refund_accounting_modern`, keeping schema, SECURITY DEFINER, search_path, owner and ACL. Applying it to staging or production needs separate Owner approval.
 
+### Reservation — SMS as a real channel (#1131)
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 551 | sms_channel | claude/sms-channel-0281f8 | Reserved; not applied |
+
+Reserved 2026-11-18 after checking main through M550, the open PRs and the local worktree migration filenames. Owner decisions 2026-11-18 (#1131). Adds `message_send_attempts.units` (SMS pages 1–10) and the `sms_sends` table (RLS deny-all, service role S/I/U). It rewrites only the pricing statement in both `authorize_message_send` overloads: SMS costs ceil(sms_cost × 1.2) per page × units, for NG/GH only and same-country only, with no fallback rate. It allows the `sms_cost` key in `_save_messaging_config_impl`. Schema, SECURITY DEFINER, search_path, owner and ACL are kept (the M550 method). Applying it to staging or production needs separate Owner approval, and M551 must ship before the app.
+
 ### Reservation — secret confirmation code for property stays
 
 | Version | Name | Branch | Status |

@@ -185,12 +185,12 @@ describe('Broadcast submission and recorded history (#762)', () => {
     pending.resolve({ data: { session: null }, error: null });
     await expectNoSubmission();
   });
-  it('keeps SMS disabled and blocks empty and unauthorized submission', () => {
+  it('blocks empty and unauthorized email submission', () => {
     mocks.role = 'support';
     render(<Broadcasts />);
-    // WhatsApp is on since #1104 (broadcasts-whatsapp-1104.test.tsx).
+    // WhatsApp is on since #1104 and SMS since #1131 (broadcasts-sms-1131.test.tsx).
     expect(screen.getByRole('button', { name: 'WhatsApp' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /SMS/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'SMS' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Email' })).toBeEnabled();
     expect(sendButton()).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText('Email subject line'), { target: { value: 'Subject' } });
