@@ -166,6 +166,22 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     });
   });
 
+  it('#1131: NG has an SMS cost per page field showing the merchant price; other markets do not', async () => {
+    render(<Countries />); await loaded();
+    expect(screen.getByRole('columnheader', { name: 'SMS Cost / Page' })).toBeTruthy();
+    expect(screen.queryByLabelText('US SMS cost per page')).toBeNull();
+    fireEvent.change(input('NG SMS cost per page'), { target: { value: '698' } });
+    expect(within(cell('NG SMS cost per page')).getByText(/= ₦\s?6\.98/)).toBeTruthy();
+    expect(within(cell('NG SMS cost per page')).getByText(/Merchant pays ₦\s?8\.38/)).toBeTruthy();
+    for (const code of ['NG', 'US']) {
+      fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
+      fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText('Confirm operation');
+    expect(body(requests('/prepare')[0]).params.messaging_pricing.NGN.rates.NG).toEqual({ '*': 2100, utility: 5, marketing: 9, sms_cost: 698 });
+  });
+
   it('#1075: a non-whole service rate is refused before any MFA request', async () => {
     render(<Countries />); await loaded();
     for (const code of ['NG', 'US']) {

@@ -9,8 +9,12 @@ import { isSafeIdentifier } from '@/lib/redact';
  * Env vars:
  * - BULKSMS_NG_API_TOKEN: Bearer token.
  * - BULKSMS_SENDER_ID: the sender name registered on the BulkSMS account
- *   (max 11 characters). No default (Owner decision 2026-11-18, #1131): while
- *   it is unset every SMS is refused, so an unregistered name is never used.
+ *   (max 11 characters). The value to configure is "WAAIIO" once BulkSMS has
+ *   approved it (it was registered on 2026-11-18 and is pending). No default
+ *   (Owner decision 2026-11-18, #1131): while it is unset every SMS is
+ *   refused, so an unregistered name is never used. "TICKETRACK" belongs to
+ *   another product and is never used for Waaiio traffic. If BulkSMS refuses
+ *   the name (pending or unregistered), the send fails with nothing charged.
  * - BULKSMS_NG_SANDBOX=true: use the sandbox API (simulated, nothing is sent
  *   or charged).
  *
@@ -46,10 +50,14 @@ export interface SendSmsResult {
   pages?: number;
 }
 
+/** Sender names that must never carry Waaiio traffic (Owner, 2026-11-18). */
+const FORBIDDEN_SENDER_IDS = new Set(['TICKETRACK']);
+
 /** The registered sender name, or null when SMS is switched off. */
 export function smsSenderId(): string | null {
   const id = process.env.BULKSMS_SENDER_ID?.trim();
-  return id && /^[A-Za-z0-9 .&-]{1,11}$/.test(id) ? id : null;
+  if (!id || !/^[A-Za-z0-9 .&-]{1,11}$/.test(id) || FORBIDDEN_SENDER_IDS.has(id.toUpperCase())) return null;
+  return id;
 }
 
 /** True when both the token and a registered sender name are configured. */
