@@ -18,7 +18,7 @@
   - `lib/payments/stripe-recurring.ts` (`cancelSubscriptionAtPeriodEnd`)
   - `lib/admin-step-up.ts`
   - `app/api/admin/step-up/prepare/route.ts`
-  - `supabase/migrations/553_subscription_admin_action_step_up.sql` (step-up CHECK only)
+  - `supabase/migrations/553_subscription_admin_action_step_up.sql` (step-up CHECK only; carries every value from M548, the last CHECK definition; M551/M552 do not touch it)
   - `admin/src/pages/Subscriptions.tsx`
   - `admin/src/pages/RecurringPayments.tsx`
   - tests, `.github/workflows/ci.yml` (the new `.pg` test) and `docs/MIGRATION_REGISTRY.md`

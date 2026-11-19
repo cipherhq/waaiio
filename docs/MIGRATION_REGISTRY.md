@@ -438,6 +438,6 @@ Reserved 2026-11-18 after checking main through M550, the open PRs and the local
 
 | Version | Name | Branch | Status |
 |---|---|---|---|
-| 553 | subscription_admin_action_step_up | claude/admin-subscription-actions-d9e81b | Proposed; awaiting coordinator confirmation; not applied |
+| 553 | subscription_admin_action_step_up | claude/admin-subscription-actions-d9e81b | Reserved; not applied |
 
-Proposed 2026-11-18 after checking main through M550, open PR #1132 (M551 SMS) and local worktree migration filenames (552 in the stays-resend worktree). Owner decisions 2026-11-18 (admin Stop Renewal, Extend Trial, recurring pause/resume/cancel/retry). Adds only `subscription_admin_action` to the cumulative `admin_step_up_authorizations_action_type_check` as last redefined by M548; no other object changes. Applying it to staging or production needs separate Owner approval.
+Reserved by the coordinator 2026-11-18 after checking main through M551 (SMS #1132, merged) and open PR #1134 (M552 stays). Neither M551 nor M552 redefines the step-up CHECK; M548 is its last definition, so M553 carries every M548 value and must apply after M548 (any later migration that redefines the CHECK must include `subscription_admin_action`). Owner decisions 2026-11-18 (admin Stop Renewal, Extend Trial, recurring pause/resume/cancel/retry). Adds only `subscription_admin_action` to the cumulative `admin_step_up_authorizations_action_type_check` as last redefined by M548; no other object changes. Applying it to staging or production needs separate Owner approval.
