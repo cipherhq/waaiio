@@ -1,3 +1,603 @@
+## 2026-11-19 — Messaging config save keeps currencies with no listed country
+
+- **Problem:** in admin Countries → Messaging Financial Controls, **Save Messaging Config** failed with "GHS: Spend Cap is required…" when the saved config still held a currency (here GHS) whose market is no longer in the country list. The form only builds rows for currencies of listed countries, so that currency was missing from the payload and the dropped-currency guard refused the save. This blocked setting the Service Replies Rate to 0.
+- **Change (`admin/src/pages/Countries.tsx`):** the loaded config snapshot is kept, and new `carryUnlistedCurrencies()` copies every value of a currency that no listed country uses (its `messaging_pricing` bucket, trial credit, and included credit for each tier) into the save payload unchanged. The dropped-currency guard skips only the currencies carried that way. No row is added to the form for them.
+- **Unchanged:** a listed currency with an empty Spend Cap is still refused before any MFA request. The step-up binding, the server route, the database save function, the rate rules for listed markets, and the lookup of charges are all unchanged. No migration.
+- **Tests (`admin/src/__tests__/countries-messaging-controls.test.tsx`):**
+  - an unlisted GHS saves with its bucket identical byte-for-byte and its credits kept, while NG and US save Service Replies Rate 0;
+  - with GHS unlisted, a cleared USD Spend Cap is still refused, naming only USD, with no MFA request.
+  - Both fail without the fix.
+- **Could break:** a hidden market's messaging values can't be edited from this form; they are kept as saved. Rates for a country that is not listed but whose currency is listed are still not carried (existing behaviour, not changed here).
+
+## 2026-11-18 — Resend ticket and confirmation links (email or copy)
+
+- **Owner decision (2026-11-18):** merchants and admins can resend a customer's ticket or confirmation as a LINK: email it to the customer, or copy it to paste into WhatsApp or anywhere else. No PDF re-send and no paid WhatsApp send. Stacked on #1119 (ticket check-in needs business staff sign-in), which must merge first.
+- **Change:**
+  - New `lib/customer-links.ts`: loads the record, builds the link the bot already sends (ticket → `/tickets/{ticket_code}`; booking and order → `/api/receipts/image?ref={reference_code}`), picks the customer email (booking `guest_email`, else the customer's profile email; orders use the profile email), and sends a short email through the existing Resend client (`lib/email/client.ts`) and email wrapper (`lib/email/templates.ts`). One send attempt, no retry. At most 3 emails per record per hour, shared by merchant and admin. Cancelled records and records with no email are not emailed.
+  - New `POST /api/customer-links/resend` (merchant): signed-in owner of the record's business only; any other caller gets 404. `check: true` returns the link, whether email is possible and why not, and a masked address, without sending.
+  - New `POST /api/admin/customer-links/resend` (admin): `requirePlatformAdmin` with the Tickets/Bookings/Orders roles (admin, support, operations); each send writes an `admin_audit_logs` row (`resend_customer_link`, masked address only).
+  - Buttons ("Email link", "Copy link"; email off with the reason shown when there is no customer email): merchant `app/dashboard/tickets`, `app/dashboard/orders`, `app/dashboard/reservations` (bookings only) via `components/dashboard/CustomerLinkActions.tsx`; admin `Tickets`, `Bookings` (bookings only), `Orders` via `admin/src/components/CustomerLinkActions.tsx`.
+- **Not built (no customer page exists):** property stays (`reservations` table). Listed as a follow-up in the PR.
+- **Unchanged:** ticket/receipt pages, bot messages, ticket check-in, sort headers on the touched tables (#1118), migrations, payments.
+- **Tests:** `lib/__tests__/customer-link-resend-routes.test.ts` (real handlers: anonymous 401, bad input 400, other business 404, team member 404, check vs send, booking/profile email, no email 409, cancelled 409, 3-per-hour 429, provider failure 502, booking and order links; admin 403 for non-admins, audit row without the full address, no audit when nothing sent, rate limit). `lib/__tests__/customer-link-actions-ui.test.tsx` (rendered merchant buttons and Tickets page with sort). `admin/src/__tests__/customer-link-actions.test.tsx` (rendered admin Tickets, Bookings incl. stays without buttons, Orders).
+- **Changed existing test:** `lib/__tests__/table-reservation-730-dashboard.test.tsx` asserted that opening a booking makes no request at all; the drawer now checks the confirmation link on open, so it asserts that no request other than `/api/customer-links/resend` is made (still proves no reschedule or availability call for table bookings). `admin/src/__tests__/orders-read-contract.test.tsx` mock gains the link-check calls.
+- **Could break:** the rate limit is per server instance when Redis is not configured (in-memory fallback in `lib/rate-limit.ts`). A customer whose only email is on their profile gets the email there.
+
+## 2026-11-18 — Ticket check-in requires business staff sign-in
+
+- **Owner decision (2026-11-18):** checking a ticket in (marking it used) needs the signed-in owner or an active team member of the event's business. Door staff must be logged in to scan. The customer ticket link stays view-only.
+- **Change:**
+  - `app/api/tickets/verify/[code]/route.ts` POST checks the caller with the existing `isSignedInBusinessMember()` (owner or active `business_members` row of the event's business) before marking a ticket used, and returns 403 otherwise. A `business_id` in the request body still scopes the scan (wrong business → the existing "not for your event" 403) but no longer counts as proof of who is asking. GET is unchanged.
+  - `app/tickets/[code]/page.tsx` (the customer ticket link) no longer has a Check In button. It shows the ticket, its status and "Show this page at the entrance to check in."
+  - `app/dashboard/events/page.tsx`: the Self Check-in toggle hint now reads "Attendees can check themselves in on WhatsApp", since guest self check-in now runs only through the WhatsApp bot (`lib/bot/handlers/ticket-checkin.ts`, unchanged; it still honours the toggle).
+- **Unchanged:** dashboard Scan and Check-in pages (`app/dashboard/events/scan`, `app/dashboard/events/checkin`) send the signed-in session, so they keep working for the owner and team. Partner check-in API, WhatsApp self check-in, event-day window, duplicate and race protection, rate limits.
+- **Tests:** `lib/__tests__/ticket-checkin-staff-auth.test.ts` (real handler; anonymous with and without a body business id, another business's owner, a removed member → 403 and nothing written; owner and active member → checked in; already used → 409; lost race → 409; unknown → 404). `lib/__tests__/ticket-page-read-only.test.tsx` renders the customer page (no button, only GET requests). `lib/__tests__/checkin-race-loss-handling.test.ts` now treats its caller as staff.
+- **Could break:** anyone who checked tickets in from the customer link page (guest self check-in on the web, or staff not signed in) now has to use WhatsApp self check-in or the signed-in dashboard scanner.
+
+## 2026-11-18 — WhatsApp self check-in from the ticket's own number; dashboard Mark as Used and Cancel Ticket work
+
+- **Owner decisions (2026-11-18):** WhatsApp self check-in stays, but only from the WhatsApp number the ticket was bought with ("Keep, own number only"), and the event's Self Check-in toggle stays. The merchant Tickets "Mark as Used" and "Cancel Ticket" buttons must work through owner/staff-checked server routes ("Yes, fix it too"); cancelling changes only the ticket status.
+- **Change:**
+  - `lib/bot/handlers/ticket-checkin.ts`: after the Self Check-in toggle check, the sender's number and the ticket's guest phone are normalised to international digits with the existing `toInviteGuestPhone()` (libphonenumber; a local-format guest phone uses the business's country). Check-in goes ahead only when they match. Otherwise the bot replies "Self check-in only works from the WhatsApp number the ticket was bought with. Please check in at the entrance." and writes nothing, before any used/cancelled message. A ticket with no guest phone cannot be self-checked-in. `scanned_by` is now always `self` on this path.
+  - `lib/bot/bot.service.ts`: the WhatsApp ticket-code match accepts `TK-` plus 6 to 9 characters. Tickets issued since migration 481 (`converge_event_ticket_booking`) are `TK-` plus 9 hex characters and never matched the old 6-character pattern, so self check-in could not be reached for them.
+  - `app/dashboard/tickets/page.tsx` "Mark as Used": calls `POST /api/tickets/verify/[code]` (business owner or active team member since #1119; event-day window, double check-in guard) with the business id and name as the scanner, instead of a browser-client update (the repo's grants give `authenticated` SELECT only on `event_tickets`, M417, so the write likely changed nothing). Errors are shown.
+  - New `app/api/tickets/[id]/cancel/route.ts` (merchant): signed-in owner or active team member of the ticket's business (`resolveBusinessRole`); others get 404. Conditional update `status = 'cancelled'` only where the ticket is still valid; otherwise 409 with the current status. No refund, payment, booking or seat-count change, same as the button intended. "Cancel Ticket" now calls it and shows refusals.
+- **Unchanged:** staff scanner pages, partner check-in API, admin ticket cancel, ticket pages, Self Check-in toggle and its hint.
+- **Tests:** `lib/__tests__/ticket-checkin-bot-routing.test.ts` (real `BotService.handleMessage` into the real handler: 6- and 9-character codes from the own number check in, from another number are refused with no write, lower case is matched, 5- and 10-character codes do not reach check-in). `lib/__tests__/ticket-self-checkin-own-number.test.ts` (own number checks in, local-format guest phone matches, other number and same digits in another country refused with no write and no status detail, no guest phone refused, toggle off still refuses, double check-in refused). `lib/__tests__/ticket-cancel-route.test.ts` (401, other business 404, removed member 404, owner and team member cancel with a status-only conditional write, used → 409, bad id 400, missing 404). `lib/__tests__/tickets-mark-used-ui.test.tsx` (rendered page: both buttons call their routes, never a browser write; refusals shown). Staff check-in, other-business refusal and double check-in on the check-in route stay covered by `ticket-checkin-staff-auth.test.ts` and `checkin-race-loss-handling.test.ts`.
+- **Could break:** a guest whose stored phone is a different number from the one they message from (for example a ticket bought on someone else's phone) must now check in at the entrance. "Mark as Used" now follows the check-in route's event-day window.
+
+## 2026-11-18 — Click-to-sort column headers on admin and merchant dashboard tables
+
+- **Owner request (2026-11-17):** sort on all tables. Click a column header to sort, click again to reverse.
+- **Change:**
+  - New shared helper per app (separate builds): `admin/src/lib/tableSort.ts` + `admin/src/components/SortableTh.tsx`, and `lib/table-sort.ts` + `components/dashboard/SortableTh.tsx`. Numbers and money sort by value, dates by time (`sortTime`), amounts through `sortNumber` so a missing amount counts as empty rather than 0, text case-insensitively with natural numbers; empty values always go last; the sort is stable. The header is a real `<button>` inside the `<th>` (keyboard: Tab, Enter, Space), shows ▲/▼ (↕ when inactive) and sets `aria-sort` on the active column. Until a header is clicked, rows keep their loaded order.
+  - About 100 tables across 51 admin pages and 52 dashboard pages use it. Fully loaded lists sort in the browser, before any browser-side page slice, and go back to page 1 on a sort change. Lists paged on the server (`.range()`) sort on the server with a whitelist of real columns plus an `id` tiebreak, and keep their old default order when nothing is sorted: dashboard Payments Received and Growth Contacts, admin Messaging Credits (balances and purchases). Joined, masked or derived columns on those lists are not sortable. Lists loaded with a cap (for example the latest 100 or 500) sort the loaded rows.
+  - Skipped, with reasons in the PR: `admin/src/pages/Broadcasts.tsx` (another worker is changing it). Lists paged by an API route that has no sort parameter: admin Class Sessions and Promotions, dashboard Payout History "All records" and Promotion codes. Non-list tables: admin permissions matrix, Countries messaging-finance input grids, Fee Invoice line items in the modal, CSV upload previews, and dashboard Integrations "Recent deliveries", which renders inside a `.map()`.
+- **Unchanged:** what each page loads, filters, totals, CSV exports (they keep their old order), business logic, APIs, migrations.
+- **Tests:** `admin/src/__tests__/table-sort.test.tsx` and `components/dashboard/__tests__/table-sort.test.tsx` cover the helper, rendered headers, aria-sort, the keyboard, empty values and toggling. `admin/src/__tests__/table-sort-pages.test.tsx` renders Payments (sorts all 25 rows, not just page 1), Orders, and Messaging Credits (server `.order`). `lib/__tests__/table-sort-pages.test.tsx` renders Payments Received and Growth Contacts (server `.order`, page reset, unsortable joined columns) and Tickets (client).
+- **Could break:**
+  - Server text sorts follow the database collation, which may not be case-insensitive.
+  - A money column sorts by number only, so on admin lists that mix currencies the order is by amount, not converted value.
+  - `ResellerFinancials` and `ResellerPayouts` already call hooks after a role-guard `return`. The new sort hook follows that existing pattern, which was not fixed here.
+
+## 2026-11-18 — Suspended customers also get no reminders, Edge campaigns, automation messages or after-payment offers (#1103 follow-up)
+
+- **Owner decision 2026-11-17 (#1103):** a suspended customer's number is blocked from ALL Waaiio bots, and money is untouched. PR #1112 shipped the inbound block and merchant marketing. This PR closes the paths it left open. No new table or migration: every check reads `public.customer_suspensions` (M547) with the service role, and RLS stays deny-all.
+- **Reminders skip the number and fail closed** (`blocksReminder`, `lib/customer-suspension.ts`). The whole reminder is skipped, on WhatsApp, email and SMS, as #1112 did for marketing email. A skipped reminder is not marked sent, so it goes out if the number is unsuspended in time.
+  - `app/api/cron/reminders/route.ts`: booking, reservation check-in and event reminders.
+  - `app/api/cron/balance-reminder/route.ts`: balance-due payment reminders (checked before a payment link is created).
+  - `app/api/cron/subscription-reminders/route.ts`: pending Stripe recurring-setup reminder and expiry notice. The stale setup still expires.
+  - `lib/intake/send.ts` `sendIntakeReminder`: intake form reminder (new skip reason `suspended`).
+  - `lib/parties/reminder-preview.ts`: party chase and follow-up reminders, every channel. The preview shows "consent unavailable", never the suspension.
+- **Supabase Edge Functions skip the number and fail closed** (`supabase/functions/_shared/customer-suspension.ts`, the Deno copy of the same rule):
+  - campaigns: `birthday-campaign`, `customer-reengagement`, `abandoned-cart-reminder`, `process-sequences`. A suspended customer's sequence step is held an hour at a time, so those rows cannot fill every 50-row batch.
+  - reminders: `booking-reminders` (booking, check-in, check-out and post-visit), `recurring-reminder` (due, failed-payment and auto-cancel messages), `contract-reminders`, `noshow-reschedule`.
+  - In `recurring-reminder` the money state still moves as before: the due date advances and a third failure still auto-cancels. Only the messages are skipped.
+- **Automation rule messages** (`lib/bot/automation/rules-engine.ts`, `sealed-rule-actions.ts`): `send_message` and `send_template` to a suspended customer are refused (fail closed), with the same rule as reminders, so a number stored in local format is not refused. After a payment, the sealed action is settled `failed` before the sending fence, so it is never recorded as possibly sent. `notify_owner` still reaches the business.
+- **After-payment follow-up** (`lib/payments/transaction-followup.ts`, `lib/bot/transaction-followups.ts`): a suspended customer gets no saved-card offer, recurring offer, updates opt-in or next-steps menu. The follow-up is retired (`done`). If the status read fails, nothing is sent and the recovery cron retries later.
+- **Money paths are untouched.** The payment confirmation, tickets and receipt still go to a suspended customer who paid. A new test proves it.
+- **Unrelated pre-existing fix, needed to run these functions:** four Edge Functions did not parse. Their header comment held a cron string with a star-slash (`*/30`, `*/5`), which ended the comment early (`deno check`: "SyntaxError: Expression expected"). The comment now gives the same schedule as `0,30 * * * *` or `0-59/5 * * * *`. Code is unchanged.
+- **Tests:**
+  - New `lib/__tests__/customer-suspension-reminders-1103.test.ts`: the real reminder and balance crons, the rules engine (live and sealed) and the after-payment follow-up, over an in-memory database.
+  - New `lib/__tests__/customer-suspension-edge-1103.test.ts`: runs each real Edge Function handler under Node with a stubbed Deno and Meta API.
+  - Added cases to `intake-send-963`, `party-reminders-preview-490` and `post-payment-message-order-1070` (confirmation, ticket and receipt still sent).
+  - Test DB mocks gained an empty `customer_suspensions` table in `rules-engine-actions`, `sealed-rule-actions` and `report-failure-wiring`.
+- **Could break:**
+  - If the suspension status cannot be read, these reminders, campaigns and automation messages are skipped for that run. Before M547 is applied, that means every one of them.
+  - A number stored without its country code (for example `080…`) is not matched to a suspension, so its email or SMS reminder still goes out.
+  - Not covered here (follow-ups):
+    - the waitlist-expiry notice and the quote-expiry notice;
+    - the chat-timeout closing message;
+    - the post-payment loyalty points text;
+    - the first after-booking intake link;
+    - the merchant-sent sign link;
+    - the email-only overdue-invoice reminder;
+    - form invites sent inside an open 24-hour window (from #1112).
+
+    Merchant-facing messages are out of scope.
+  - **Release order:** M547 must be applied before this app code and before these Edge Functions are deployed. Otherwise every gate fails closed for everyone, and sealed after-payment rule messages are settled `failed` for good.
+
+## 2026-11-18 — Stay confirmation page, and Email link / Copy link for property stays
+
+- **Follow-up to #1121 (Owner decision 2026-11-18, resend confirmation as a link).** #1121 left property stays out because a stay had no customer page.
+- **Change:**
+  - Migration `supabase/migrations/552_stay_confirmation_code.sql` (+ catalog delta): adds `reservations.confirmation_code`, 32 random hex characters per stay (existing stays get one too), format CHECK and UNIQUE. The short reference code (WA-RS-0000 to 9999) is easy to guess, so it never opens the page. No grant, RLS, policy or trigger change.
+  - New customer page `app/stays/[code]/page.tsx` and its data route `GET /api/stays/[code]` (30 per minute per IP, no-store). Read-only. It shows what the WhatsApp stay confirmation already shows (business, property, dates, nights and nightly rate, guests, total, deposit, reference) plus the stay status and the property address from the public property page. No guest name, phone, email, special requests or notes.
+  - `lib/customer-links.ts`: new kind `stay` → link `/stays/{confirmation_code}`, email = the stay's guest email, else the customer's profile email; subject "Your stay confirmation from …". Same rules as #1121: one send attempt, 3 emails per stay per hour shared by merchant and admin, cancelled stays and stays with no email are not emailed.
+  - Both resend routes accept `kind: 'stay'` with no other change (merchant: owner of the stay's business only, else 404; admin: `requirePlatformAdmin` admin/support/operations, audit row `resend_customer_link` with entity type `stay` and the masked address).
+  - Buttons: merchant property detail drawer (`app/dashboard/properties/[id]/page.tsx`), merchant Reservations drawer for stays (`app/dashboard/reservations/page.tsx`, was bookings only), admin Bookings for stays (`admin/src/pages/Bookings.tsx`, was bookings only). The `Kind` type in both `CustomerLinkActions` components gains `stay`.
+- **Tests:** `lib/__tests__/stay-confirmation-link.test.ts` (page data by code, short reference and bad codes 404, no guest data, rate limit; merchant and admin stay resend incl. other business 404, team 404, no email, cancelled, shared rate limit, audit). `lib/__tests__/stay-confirmation-ui.test.tsx` (rendered customer page, rendered property drawer buttons). `lib/__tests__/stay-confirmation-code-552.pg.test.ts` (real PostgreSQL). `lib/__tests__/table-reservation-730-dashboard.test.tsx` and `admin/src/__tests__/customer-link-actions.test.tsx` now assert stays show the buttons (the old admin test asserted they did not).
+- **Could break:** the app reads `confirmation_code`, so M552 must be applied before this code is deployed; without it the stay link check returns 404 and the buttons show "Could not load the customer link." A merchant can still change a stay's code from the dashboard client (table UPDATE grant), but only to another 32-hex code.
+
+## 2026-11-18 — Next-steps buttons tapped after the chat expired no longer search the directory
+
+- **Owner bug (staging, 2026-11-18):** a customer tapped "View Options" on a next-steps menu sent two hours earlier. Their chat had expired, so the bot ran a directory search for the button's id and replied "No businesses found for 'menu'…", followed by the past-business picker (TestBiz / BalaShop).
+- **Cause:** with no open chat on the shared number, `handleMessage` treats any unrecognised text as a business search. The "View Options" ids (`menu` from the payment next-steps menu and opt-in reply, and `pc_options` from the in-chat menu) and the other in-chat ids (`pc_again`, `pc_history`, `pc_done`) were unrecognised there. "Payment history" (`history`), the booking/order history ids and "Search directory" (`directory`) already worked.
+- **Change:**
+  - The "View Options" button now names its business: `menu:<businessId>` (`lib/payments/next-steps-menu.ts`, `lib/bot/transaction-followups.ts` queue menu, `bot.service.ts` `sendUpdatesOptInReply`) and `pc_options:<businessId>` (`lib/bot/flows/executor.ts` `showPostCompletionMenu`). Helpers are in `lib/bot/flows/shared/navigation.ts`.
+  - `handleMessage` strips the business from these ids on entry, so with a chat open they behave exactly as the bare ids did. On a dedicated number the business named in the button is ignored.
+  - With no open chat on the shared number, a next-steps id (`menu`, `pc_options`, `pc_done`, `pc_again`, `pc_history`) is navigation, never a search. If the button names a business that is one of this customer's past businesses (`findReturningCustomerBusinesses`: active, not messaging-suspended, has a bot code), the customer goes back to that business's options as a returning customer. Otherwise, including menus sent before this change, they get the past-business picker (or the directory welcome for a new customer). There is no "No businesses found" message.
+  - The same applies inside an open directory search (`directory_search` / `directory_results`, e.g. right after the picker). Before, the `pc_*` ids were searched there. A next-steps id goes back to the named past business: on the shared number the directory session is closed with the selection, as a directory pick does. Otherwise it goes to the picker. Both places use one helper, `resumeStaleNextSteps`.
+  - `enterExactDirectoryMatch` takes an optional provenance (default `fuzzy`, unchanged for existing callers).
+- **Unchanged:** button titles, the "Powered by Waaiio.com" footer, the menu contents, history and directory handling, and live-chat handling of these buttons. No migration.
+- **Tests:** new `lib/__tests__/stale-next-steps-button.test.ts` (real `handleMessage`, with no open chat). It covers: "View Options" naming a past business goes back to it (both ids); a business the customer never used gets the picker; old bare ids get the picker; a new customer gets the directory welcome; "Payment history" opens the history; "Search directory" opens the directory; with a chat still open, `pc_options:<id>` behaves like `pc_options`; with a directory search open, every next-steps id goes to the picker or back to the named business; and on a shared number the re-entry selects the conversation's business (`select_shared_conversation` with the conversation version). Updated id assertions in `next-steps-menu.test.ts`, `transaction-followups.test.ts`, `updates-optin-executor-menu.test.ts`, `executor-payment-menu-dedupe.test.ts`, `updates-optin-keyword-account.test.ts`, `updates-optin-payment-menu.test.ts`, `abandoned-card-step-1070.test.ts` and `stripe-reuse-followup.test.ts`.
+- **Could break:** anything that matches the exact ids `menu` or `pc_options` on outbound buttons; inbound handling strips the business first. The tapped message itself (WhatsApp reply context) is not used, because the bot does not store sent message ids.
+
+## 2026-11-18 — SMS becomes a real channel for Nigeria and Ghana (#1131)
+
+**What changed (Owner decisions 2026-11-18, all 9 recommendations in #1131 accepted)**
+
+- **Merchant campaigns:** the broadcast page has an SMS channel for Nigeria and Ghana businesses.
+  - Before sending, the merchant sees an estimate: pages, whether accents/Unicode apply, price per page and the total.
+  - Each SMS is charged from messaging credit at the BulkSMS cost (VAT included, entered by an admin) plus 20%, rounded up, per page.
+  - Sends go only to opted-in customers in the business's own country, and not between 20:00 and 08:00.
+- **Admin broadcasts:** SMS is no longer "coming soon".
+  - Waaiio pays, and no merchant credit is used.
+  - Uses the same step-up, recipient checks and one-send-per-request record as WhatsApp (#1104).
+- **Fallback SMS now charged:** the SMS sent when WhatsApp and email fail is now charged to the business (it used to be free, paid by Waaiio). This covers:
+  - party invites and party reminders;
+  - booking, reservation and event reminders;
+  - subscription-setup reminders;
+  - failed-charge notices.
+  - When credit is short, the SMS is skipped.
+- **Charge only on acceptance:** the credit is reserved before sending and charged only when BulkSMS accepts.
+  - A refusal or an unknown outcome releases the reservation (the unknown outcome is flagged for reconciliation).
+  - While the financial gate is off, merchant SMS is refused, never sent free.
+- **One SMS per person per campaign:** each recipient gets at most one SMS per campaign (request id).
+  - Pressing Send again after a top-up or after 8am reaches only the people whose earlier try definitely failed.
+  - Accepted or unconfirmed recipients are never texted or charged twice.
+- **Text is kept as written:** only WhatsApp `*bold*`/`_italic_` marker pairs are removed, so USSD codes like `*737*1*5000#` and links survive.
+- **Waaiio-written texts drop decorative emoji:** reminder, invite and notice texts no longer carry emoji, so they stay plain 160-character SMS and are not charged as Unicode. Accents are kept.
+- **BulkSMS client moved to API v2** (`lib/sms/bulksms-ng.ts`):
+  - Unicode is used only when the text needs it;
+  - it records the provider's real cost, page count and message id;
+  - it supports the sandbox via `BULKSMS_NG_SANDBOX=true`.
+- **New setting `BULKSMS_SENDER_ID`:** the sender name registered with BulkSMS. It has no default; while unset, SMS is off everywhere.
+  - The value to configure is `WAAIIO`, but **only after BulkSMS approves it**: it was registered on 2026-11-18 and is still pending.
+  - `TICKETRACK` is refused by the code and never carries Waaiio traffic.
+  - If BulkSMS refuses a pending or unregistered name, the send fails: it is recorded and the credit is released, so nothing is charged.
+- **Admin Countries editor:** new "SMS Cost / Page" column for NG and GH, which shows what the merchant pays.
+
+**Files**
+
+- `supabase/migrations/551_sms_channel.sql`
+- `lib/sms/` (`segments.ts`, `pricing.ts`, `send.ts`, `campaign.ts`, `bulksms-ng.ts`)
+- `lib/admin-broadcast/sms.ts`
+- `app/api/admin/broadcasts/sms/route.ts`
+- `app/api/broadcasts/sms-estimate/route.ts`
+- `app/api/broadcasts/send/route.ts`
+- `app/dashboard/broadcasts/page.tsx`
+- `components/dashboard/SmsEstimate.tsx`
+- `lib/channels/send-or-email.ts` and its callers
+- `app/api/events/invite/route.ts`
+- `lib/parties/reminder-delivery.ts` and `reminder-preview.ts`
+- `lib/merchants/recipient-permission.ts` (accepts the `sms` channel)
+- `admin/src/pages/Broadcasts.tsx`, `admin/src/components/SmsBroadcastForm.tsx`
+- `admin/src/pages/Countries.tsx`
+
+**What it affects**
+
+- Merchant messaging credit, for SMS only. WhatsApp pricing is unchanged.
+- Admin broadcasts.
+- Every SMS fallback.
+
+**What could break**
+
+- No SMS is sent until all three are in place:
+  1. M551 is applied;
+  2. `sms_cost` is set per country;
+  3. `BULKSMS_SENDER_ID` is set.
+- If the app is deployed before M551, SMS attempts are refused: the `units` column is missing, so nothing is charged or sent.
+- A Ghana business needs a GHS `sms_cost` entered by an admin.
+- An SMS campaign accepts SMS or WhatsApp marketing consent (an interpretation flagged on the PR).
+
+## 2026-11-18 — Merchant notifications for every paid order, invoice, appointment and ticket; admin "Delivered" status filter
+
+- **Owner request:** notifications must stay up to date. On staging, orders and saved-card payments created no notification, and the admin Notifications status filter had no "Delivered".
+- **Cause:** every paid transaction (gateway webhook, saved-card PIN charge via `reconcilePayment(..., 'saved_card')`, recovery cron) ends in Stage 3, `sendProactiveConfirmation` (`lib/payments/send-confirmation.ts`). Its in-app notification (manifest effect `owner_notif_inapp`) only covered payment-flow bookings, reservations and donations. Card and saved-card orders, invoices, and appointment/scheduling/ticket/class bookings inserted nothing. The direct-order bank-transfer row used `type 'transfer_confirmed'` and `channel 'dashboard'`, which are not `notification_type` / `notification_channel` enum values (001_initial_schema.sql; no later migration changes them), so that insert was rejected and the error ignored.
+- **Change:**
+  - New `lib/payments/payment-notification.ts` → `createPaymentNotification`: one `type 'payment'`, `channel 'whatsapp'`, `status 'delivered'` row per payment, keyed by `metadata.payment_id`. It looks for an existing row first, so a webhook retry, recovery cron or saved-card reconcile that re-enters Stage 3 adds nothing. If the lookup fails it skips (no duplicate risk). It never throws, so a notification can never hold a payment confirmation open.
+  - `send-confirmation.ts` new step 7d (after the owner notifications, both manifest and legacy paths): calls the helper for orders, invoices and non-payment-flow bookings. Body: `Payment received: Order ORD-… / Invoice INV-… / <service or event name> <ref>. Amount: …`. Families already covered (payment-flow bookings, reservations, donations, direct-order transfers) are excluded, so none gets a second row.
+  - Direct-order bank transfer (inside `owner_notif_inapp`): now uses the helper, so the row has valid enum values and actually lands. Body unchanged.
+  - `admin/src/pages/Notifications.tsx`: status filter lists every `notification_status` value (Queued, Sent, Delivered, Failed) and filters on the chosen one.
+- **Unchanged:** payment logic, fees, routing, settlement, the Stage-3 effect manifest (no new effect key, so in-flight payments' manifests still match), owner WhatsApp/email, customer messages, existing payment-flow booking / reservation / donation rows. No migration, no env change.
+- **Tests:** `lib/__tests__/payment-notifications-gap.test.ts` (real `sendProactiveConfirmation` and real `reconcilePayment` for saved cards, stateful notifications double: order, saved-card order, invoice, appointment, ticket, legacy order, direct transfer, payment-flow booking regression, retry/recovery re-entry with no duplicate, lookup and insert failures never block confirmation; 8 of 12 fail on the old code). `app/dashboard/notifications/__tests__/payment-notification-listed.test.tsx` (rendered merchant page shows the helper's row for its business and under "Payment"). `admin/src/__tests__/notifications-status-filter.test.tsx` (rendered filter options and each status). Updated: `lib/__tests__/phase-2d-stage3-runtime.test.ts` and `lib/__tests__/phase-2d-payment-authority.test.ts` now expect the valid direct-transfer row instead of `transfer_confirmed`.
+- **Could break:**
+  - Merchants now see a "Payment received" row for paid appointments and tickets; some of those flows already add a "Booking … confirmed" row when the booking is made, so a paid booking can show both (booking, then payment).
+  - The dedupe is a lookup before insert, not a database constraint. Two Stage-3 runs for the same payment at the same moment (only possible if a confirmation claim lease expires mid-run) could both insert. A unique index would need a migration; not done here.
+  - New rows are written as `delivered`, like every existing in-app row, so the merchant page's "Unread only" view does not show them (existing behaviour).
+
+## 2026-11-18 — Admin "Onboard Customer" asks for the same required fields as Get Started
+
+- **Owner request (2026-11-18):** "for onboarding customers can you make the required fields request just as how it is in getting started". The screen is the admin panel's **Onboard Customer** page (`/customer-onboarding`), which posts to `POST /api/admin/onboarding`.
+- **Change (new requests only):**
+  - **WhatsApp Name** (the bot code) is now required, as in Get Started: label "Your WhatsApp Name", the same explanation text, cleaned up as it is typed (upper case, spaces to dashes, letters, numbers and dashes only, 30 characters), at least 2 letters or numbers. It was "Bot code (optional)".
+  - **At least one feature** must be ticked, as in Get Started ("Please select at least one feature to continue"). An empty choice no longer falls back to category defaults on create.
+  - **Business phone** must be the full number, as Get Started's phone field produces it: the country dialing code followed by exactly that country's `countries.phone_digits` digits. Spaces, dots, dashes and brackets are ignored and removed. The page shows the expected format under the field, linked to it for screen readers.
+  - A **taken WhatsApp Name** is rejected before the invite record or the owner's account is created, with Get Started's message ("Bot code is already taken. Please choose a different one."). Before, a taken custom code failed after creation and left a failed queue record. The check runs after the repeated-request lookup, so repeating a request that already succeeded (same request key) still returns that record.
+  - The review step shows the WhatsApp Name.
+- **Files:** new `shared/onboarding-fields.ts` (clean-up, phone check and messages, used by both apps); `lib/onboarding/admin-assisted.ts` (`validateAdminOnboardingInput(..., { newRequest: true })` adds the checks; new `assertWhatsAppNameAvailable`); `app/api/admin/onboarding/route.ts` (create passes `newRequest`; options now include `phone_digits`); `admin/src/pages/CustomerOnboarding.tsx`.
+- **Unchanged:** Get Started and `/api/onboarding/register`; payments and fees; no migration. Retry of a failed queue record re-checks its stored input with the earlier rules, so requests saved before this change can still be retried. Owner phone stays optional (Get Started has no such field). Terms and privacy consent stay with the customer at activation.
+- **Tests:** new `lib/__tests__/admin-onboarding-required-fields.test.ts` (real create route: missing/short WhatsApp Name, no feature, wrong phone shapes, taken name — each 400 with no invite or account created; a repeat of a succeeded request still returns its record; complete request saves the cleaned name and phone; retry keeps the earlier rules). New `admin/src/__tests__/customer-onboarding-required-fields.test.tsx` (rendered page: required field and explanation, clean-up, each stop message, phone length from options, complete payload, taken-name server message). Existing `issue-551-admin-onboarding-routes.test.ts` mock gains `assertWhatsAppNameAvailable`; `admin-onboarding-get-started-parity.test.ts`, `customer-onboarding-551.test.tsx` and `customer-onboarding-address-capabilities.test.tsx` now fill the WhatsApp Name and a feature.
+- **Could break:** an admin who used to leave the bot code or features blank, or typed a local phone number (e.g. `080…`), now has to complete them. A country whose `phone_digits` is wrong in the database rejects valid numbers here, as Get Started already does.
+
+## 2026-11-18 — Shareable QR code and link for each giving category
+
+- **Owner request (2026-11-18, staging test):** each giving category (Tithe, Offering, Building Fund…) needs its own QR code, a Download PNG for printing, Copy Link and Share on WhatsApp. Scanning or tapping opens WhatsApp with that business and starts giving in that category, so the donor only enters the amount.
+- **What changed:**
+  - New `lib/giving-category-link.ts`:
+    - `buildGivingCategoryLink` builds the permanent link `/m/{businessId}/giving/{categoryId}`.
+    - The WhatsApp prefill is `{BOT_CODE}:giving:{ref}`. The ref is the first 8 hex characters of the category's own `services.id`, so there is no new column and no migration.
+    - `resolveGivingCategoryRef` matches the ref only among the business's own active, non-deleted giving categories.
+  - New route `app/m/[businessId]/giving/[categoryId]/route.ts`. It uses the same guards as the other `/m/` links (`app/m/resolve.ts`: rate limit, no query parameters, active and not messaging-suspended business, ready channel). It then redirects to `wa.me/{number}?text={BOT_CODE}:giving:{ref}`, on both shared and dedicated numbers. A business with no bot code gets the existing "routing code is not configured" page.
+  - `lib/bot/handlers/bot-code-detection.ts` `parseDeepLink` reads `CODE:giving:ref` as the existing `CODE:giving` deep link, so the shared number finds the business by its exact bot code. Hidden businesses stay reachable (#1083).
+  - `lib/bot/bot.service.ts`:
+    - **Restart.** The link restarts like a bot code, also from a free-text step such as the amount prompt, but not from live chat. A donor midway through one amount can scan another category. An active Custom Flow session also treats the link as its business code: it closes and lets the bot handle the link (`isBusinessCode` closure, reviewer A P2).
+    - **Matching.** On a new or restarted session, the link is used only when its code is the resolved business's own `bot_code` and giving is an effective capability. That business's category is then looked up.
+    - **Preselection.** A valid category is preselected the way quick rebook and the Custom Flow giving handoff already do it: `_repeat_selection_id`, then `select_category` is answered with the category id. That step re-checks that the category is active and a giving one.
+    - **Skipped for the link.** The free-text understanding (CAS-004), the returning-customer "Give again?" prompt and the welcome buttons are skipped. The link text is a machine code, and those steps would replace the category or the giving menu.
+    - **Fallback.** An unknown, inactive or deleted category, or another business's category, falls back to that business's giving menu.
+  - `app/dashboard/giving/page.tsx`: each active category gets a **Share** button. It opens the QR code (`QRCodeCanvas`), Download PNG (`{slug}-{category}-qr.png`), Copy Link and Share on WhatsApp. Each Share button is labelled with its category, and the QR has an image label. Inactive categories show no share options. Sharing is still available during admin impersonation because it changes nothing.
+- **Unchanged:** giving amounts, fees, payment and payout logic, the payment flow steps, the completion and next-steps menu, the existing `CODE:capability` deep links, and the other `/m/` links. No migration.
+- **Tests:**
+  - `lib/__tests__/giving-category-link.test.ts`: builder, ref, prefill parse, scoped resolver, and the real route handler (shared, dedicated, bot-code key, bad id, query parameters, inactive, suspended and no-code businesses).
+  - `lib/__tests__/giving-category-bot-routing.test.ts`: real BotService covering a valid category on a hidden business, case-insensitive matching, deleted, inactive and unknown categories falling back to the menu, another business's category, a dedicated number with a foreign code and with its own code, and a restart from the amount step.
+  - `app/dashboard/giving/__tests__/giving-share-qr.test.tsx`: the rendered page buttons, including the per-category Share label and the QR image label.
+  - `lib/__tests__/custom-flow-botservice-routing.test.ts` 2b: the link closes an active Custom Flow session and switches business.
+- **Could break:**
+  - A ref is 8 hex characters. If two active categories of one business ever share that prefix, the link falls back to the giving menu instead of guessing.
+  - A donor typing exactly `CODE:giving:xxxxxxxx` at a free-text step now restarts instead of having it read as an answer.
+  - The amount prompt does not name the business. It is the same prompt quick rebook uses.
+
+## 2026-11-18 — Waaiio fee on legacy (v0) payments rounds to the cent/kobo
+
+- **Owner decision (2026-11-18):** round Waaiio's platform fee to the cent/kobo instead of whole units, for new payments only. Rates are unchanged and no historical rows are rewritten.
+- **Bug:** `lib/getPlatformFees.ts` used `Math.round(amount * pct / 100)` on major units, so the fee rounded to whole dollars/naira. On staging four $50 Stripe payments at 3% recorded $2.00 instead of $1.50; naira fees were off by under ₦1 (e.g. ₦1,444 → ₦14 instead of ₦14.44).
+- **Change:** `getPlatformFees` now rounds exactly like v1 `calculateFee` (two decimals). It feeds both `recordPlatformFee` versions (`lib/payments/process-success.ts` legacy path, `lib/bot/flows/shared/payment.ts`) and the v0 checkout splits (`charge-saved.ts` merchant split, `resolve-stripe-routing.ts` BYO/connect/subaccount fee), so the amount sent to Paystack/Stripe and the amount recorded stay the same. Provider amounts are still `Math.round(x * 100)` integers in minor units.
+- **Policy:** `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md` fee rule 1 records the rounding decision.
+- **Unchanged:** v1 `calculateFee`, rates, the trial rule (fee still charged), custody routing (`is_direct_transfer`), payouts formula, refunds, invoices, existing `platform_fees` rows.
+- **Tests:** `lib/__tests__/getPlatformFees.test.ts` ($50 at 3% → 1.50, kobo precision, parity with v1, split integers); `lib/__tests__/fee-round-to-cent-routes.test.ts` (both `recordPlatformFee` versions on the Waaiio-owned and merchant-connected routes, duplicate and error inserts, cross-business attribution, payout formula).
+- **Could break / not covered:**
+  - Exact half-cent ties follow the same floating-point rounding as v1 (at most 1 cent either way), e.g. 333 at 2.5% → 8.32.
+  - Not changed here (whole-unit rounding remains, all in DB functions, to be fixed by a follow-up migration PR): `bind_merchant_tax_fee_980` for v0 payments with merchant tax (its pinned fee becomes both the split and the recorded fee, so those payments still charge whole units until then); `finalize_stripe_recurring_charge` (recorded fee); the partial-refund fee reduction in `finalize_refund_accounting_modern`. Also not changed: legacy reseller commission (`process-success.ts:793`); the direct_split fee estimate in `app/api/payouts/balance/route.ts:134`; the unused deprecated `calculatePlatformFee` in `lib/constants.ts`.
+  - The monthly fee-invoice job writes fee sums into `integer` columns, so fractional sums fail that insert (logged, nothing billed). The Owner switched the job off on 2026-11-18 (separate PR #1123); land that first.
+  - Legacy reseller commission stays whole-unit; with a commission rate of about 50% or more on a small fee it can exceed the fee (default 10% cannot). No resellers exist on staging.
+
+## 2026-11-18 — Waaiio fee rounds to the cent/kobo in the database (M550)
+
+- **Owner decision (2026-11-18):** round Waaiio's platform fee to the cent/kobo instead of whole units, for new payments only. Rates are unchanged and no historical rows are rewritten. PR #1122 did this in TypeScript; this PR covers the three database sites it disclosed.
+- **Migration `supabase/migrations/550_fee_round_to_cent.sql`:** rewrites one statement in each function from its live definition (the M525 method), so schema, SECURITY DEFINER, search_path, owner and grants stay the same (DB-002). It fails if a function is missing, if the whole-unit statement is not found exactly once, or if any attribute changes; a re-run is a no-op.
+  - `public.bind_merchant_tax_fee_980`, legacy (v0) branch: `round(net*pct/100)+flat` → `round(round(net*pct*100)/10000+flat,2)`, the same as its v1 branch and `calculateFee`. A v0 payment with merchant tax no longer charges whole units (e.g. 3% of $10.00 net is $0.30, was $0).
+  - `public.finalize_stripe_recurring_charge`: recorded fee `ROUND(amount*pct/100)+flat` → `ROUND(ROUND(amount*pct*100)/10000+flat,2)`, as `getPlatformFees`. $50 at 2.5% records $1.25 (was $1). The token and Paystack recurring finalizers already rounded to the cent and are not touched.
+  - `accounting_private.finalize_refund_accounting_modern`: partial-refund fee reduction for payments without merchant tax `ROUND(x)` → `ROUND(x,2)`. $15.50 refunded of $50 at 3% reduces the fee by $0.47 (was $0). The merchant-tax branch, full refunds (fee to 0) and payout adjustments (they follow the refund amount) are unchanged.
+- **Catalog delta:** `supabase/catalog-deltas/550_fee_round_to_cent.json` from the CI PostgreSQL 17 oracle.
+- **Registry:** `docs/MIGRATION_REGISTRY.md` reserves 550.
+- **Tests:**
+  - New `lib/__tests__/fee-round-to-cent-550-db.test.ts` (full migration history, CI shard b step "Migration 550 fee round-to-cent tests"): final catalog attributes and grants, DB-006 functions untouched, rebuild from the pre-M550 statements, re-run no-op, fail-closed on unexpected bodies, partial-refund reduction on the Waaiio-held route (with payout adjustment) and the merchant-connected route (no adjustment), replay of a finalized refund, another business's fee untouched.
+  - `lib/__tests__/stripe-recurring-finalization-db.test.ts`: cases q/r/s compared the fee with `parseInt`, which read 1.25 as 1; they now compare the exact value. New case s2: the recorded recurring fee equals `calculateFee` for the same amount and rate ($50 at 3% → $1.50).
+  - `lib/tax/__tests__/finance-authority-db.test.ts`: the fixture applies M550 after M532; the v0 test now expects $0.30 (it was named "preserves whole-major percentage rounding").
+- **Not applied:** to staging or production; that needs a separate Owner approval. A read-only check on staging found each statement exactly once, with bodies identical to the CI replay.
+- **Could break / notes:**
+  - The M501 accounting activation procedure recognises the Stripe recurring finalizer by body hash; it already fails closed since M525 and still does.
+  - Exact half-cent ties follow PostgreSQL numeric rounding (half away from zero); the TypeScript side uses float `Math.round`, so a tie can differ by at most one cent, as v1 already does.
+  - Until this is applied, a v0 payment with merchant tax keeps the whole-unit fee pinned by the database while #1122's TypeScript rounds untaxed payments to the cent.
+
+## 2026-11-18 — Monthly platform-fee invoice job switched off
+
+- **Owner decisions (2026-11-18):** switch the monthly fee invoice off. The fee on direct bank transfer and cash stays ₦0 ("Not now").
+- **Why:** `app/api/cron/platform-fee-invoices` selected `is_direct_transfer` fees. Code sets that flag for `byo`/`connect` routing. On `byo` the reversed split already collected the Waaiio fee, so the job would have billed merchants a second time; on `connect` how the fee is collected is not shown in code. Real bank transfers record a ₦0 fee (cash has no separate route; rule 3 is not widened). The job's end-date filter (`periodEnd.toISOString() + 'T23:59:59.999Z'`) is not a valid timestamp, so its query errors before writing anything; staging has 0 invoices (production not checked).
+- **Change:**
+  - `vercel.json` no longer schedules the job (previously `17 9 1 * *`).
+  - The route code stays, with a comment pointing to the decision.
+  - `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md` "Known limits" records both decisions.
+  - `lib/__tests__/fee-invoice-cron-off.test.ts` fails if the job (or the unscheduled `platform-fee-overdue` reminder) is put back on the schedule.
+- **Unchanged:** fee recording, payouts, refunds, the invoice tables, admin and merchant invoice pages (their 100x display units are deferred by the Owner), all other crons.
+- **Could break:** nothing runs on the 1st of the month any more for fee invoices. If the Owner later wants invoices, the job needs the date fix, the units fix and a routing filter first.
+
+## 2026-11-18 — Yoruba and Igbo certified: merchants can select them
+
+- **Owner decision (2026-11-18):** "Fix, test, then turn on" for Yoruba (`yo`) and Igbo (`ig`). Related: #515, #524, #561.
+- **Change:**
+  - `lib/bot/languages.ts`: `yo` and `ig` are `certified: true`. They now appear in `CERTIFIED_LANGUAGE_OPTIONS` (the AI Settings language checkboxes and the bot language picker), Business tier gets them automatically, and Growth can choose them as its 2 extra languages. Hausa, Twi, French and Spanish stay uncertified.
+  - `lib/bot/flows/flow-localization.ts`, yo and ig blocks only:
+    - 152 yo and 153 ig phrases that were still English are now translated: ordering, bank-transfer labels, greetings, language picker, receipts and docs, notifications, live chat, recurring, directory search.
+    - The open Owner review items are fixed: button and list-title lengths, the "updates" opt-in/confirm copy, `cap.table_reservation` ("Book Table / Section"), and date paging.
+    - Clear meaning errors are fixed. Yoruba used "ìpèdè" (dialect) for "booking"; it is now "ìfipamọ́". Yoruba "ẹbọ" (ritual sacrifice) is now "ọrẹ", and "tọ̀" (urinate) is now "tọ́" (correct). Igbo used "Ekweghị" (refused) for "cancelled"; it now uses "kagbuo". Igbo "Anataghị" ("payment/order NOT received") was shown after paying; it now says "Anatala". Igbo "nọọsụ" (nurse) for a stay is now "ebe ịnọ".
+    - Hints that say "tap" now quote the yo/ig button the customer sees, not the English label.
+    - In all, 442 yo and 305 ig values changed.
+  - **Owner native-speaker corrections (Yoruba, 2026-11-18):** applied as written, with standard tone marks: `payment.received_processing` ("A ti rí owó tí o san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ rẹ…"), `ordering.order_received` and `notification.catalog_order_received` ("A Ti Gba Ọjà Tí O Rà!"), `greeting.welcome_default` (now "…ràn yín lọ́wọ́…"), and `booking.book_for_hint` ("Tẹ *fún ara mi* tàbí *ẹlòmíràn*…"). Igbo is not reviewed yet and is unchanged.
+  - **Owner Yoruba word choices, second round (2026-11-18):** "booking" is now "ìforúkọsílẹ̀" everywhere (33 occurrences, replacing "ìfipamọ́"; the two saved-card lines keep "fipamọ́", meaning "save"). "Subscription" was also "ìforúkọsílẹ̀", so the Owner chose "ìsanwó lóòrèkóòrè": `account.subscriptions` is "Àwọn Ìsanwó Lóòrèkóòrè", and `recurring.not_found`, `recurring.cancel_failed` and `recurring.sub_not_found_retry` use it, so My Bookings and Subscriptions no longer share a word in the My Account menu. `menu.how_can_help`, `feedback.anything_else` and `greeting.welcome_default` use the Owner's "ràn yín" wording ("yín everywhere"; a test checks no yo phrase uses "ràn ẹ́/ọ́ lọ́wọ́"). `account.bookings_title` dropped "Rẹ" to stay within the 24-character list-title limit.
+  - **Owner polite-form pass (2026-11-18, "Polite yín everywhere"):** 211 yo phrases now address the customer in the polite plural. Subject *o* became *ẹ*, object *ọ/ọ́* became *yín*, *rẹ* (your) became *yín*, *tìrẹ* became *tiyín*, and *ìwọ* became *ẹ̀yin*. Unchanged: "Rárá o, ẹ ṣeun" (interjection), "kọ ọ́" ("write it"), *rẹ̀* (his/its), and the "Tẹ …" instructions. The impersonal "O dàbí pé" ("it seems") became "Ó dàbí pé ẹ fẹ́…". Earlier Owner lines follow the same rule ("tí ẹ san", "ìforúkọsílẹ̀ yín", "Tí Ẹ Rà"). Nothing went over the button or title limits. A test fails if a singular form comes back. Every line is listed (English | before | now) in the "Polite form pass" section of the phrase-list doc.
+  - Owner menu labels from `docs/translations/waaiio_option_labels_final.csv` are kept. Three exceptions:
+    - `cap.table_reservation` is a review item.
+    - yo `cap.waitlist`, `cap.waiver` and `cap.class_booking`, and ig `cap.waitlist`, were over the 20-character button limit and were shortened.
+    - yo `cap.crowdfunding` keeps its existing 18-character label; the CSV's 25-character label does not fit.
+  - `OWNER_REVIEW_ITEMS`: all yo/ig entries are removed (resolved).
+  - Typed commands (*Hi*, *cancel*, *menu*, *my orders*…), STOP/START, YES/NO, `*20 Dec*`, all `{placeholders}` and English directory search examples are kept as they were.
+- **Native check:** `docs/translations/yo-ig-certification-2026-11-18.md` lists every changed phrase (English | Yoruba | Igbo), with a "check these first" table. The wording is best-effort, written by Claude, and has not been checked by a native speaker.
+- **Also changes:** custom-flow date rows (`lib/bot/custom-flow/dates.ts`) now show yo/ig dates, e.g. "Àbámẹ́ta, 21 Oṣù Bélú", through the existing certified-language rule in `lib/bot/format-date.ts` (unchanged code); they are at most 23 characters. Booking date list rows (`scheduling.flow.ts`, country locale) and My Bookings (`my-bookings.ts`, hard-coded English) still show English dates, as before; localizing them would be a separate Owner decision.
+- **Typed-word hints:** ig `booking.book_for_hint` asked customers to type Igbo words the bot does not accept. It now keeps the English words *myself* / *someone else*. The yo hint asks for the Yoruba words *fún ara mi* / *ẹlòmíràn* (Owner), so the bot now accepts them: new `lib/bot/flows/shared/book-for-answer.ts` (`matchBookForAnswer`) is used by the `book_for_other` validate in `scheduling.flow.ts` and by the step-ownership check in `bot.service.ts`, so keyword routing does not take these words. It accepts the English words, the Yoruba words with or without tone marks, and the typed button labels ("Fún ara mi", "Fún ẹlòmíràn"). The test checks that every word a yo/ig hint asks for is accepted.
+- **Before deploy:** any stored yo/ig business or platform translation overrides (`bot_translation_overrides`, `bot_translation_platform_overrides`) start being served once yo/ig are certified; check staging and production for such rows first.
+- **Tests:**
+  - New `lib/bot/__tests__/certification-yo-ig.test.ts` checks:
+    - no English left in yo/ig;
+    - NFC text, with buttons ≤20, list titles ≤24 and menu labels ≤20, measured as the app slices titles (UTF-16 `.length`);
+    - placeholders, STOP/START, *updates* and *directory* are kept;
+    - hints quote the localized buttons;
+    - the menu, booking, ordering, payment with I've Paid, tickets, My Account and cancel journeys render through `getFlowCopy`/`fillFlowCopy`/`getCapabilityLabel` with no English;
+    - the bank-transfer block and buttons render in yo/ig;
+    - phrase-book text skips AI;
+    - detection, the Business-tier authority, and that no yo/ig review item is open.
+  - Updated 20 existing tests that pinned "only en and pcm are certified", or used yo/ig as the example of an uncertified language. They now use ha/tw.
+  - `slice-561g` pins the two changed ig Owner labels.
+- **Unchanged:** English and Pidgin copy, ha/tw/fr/es copy and status, language policy code, homepage language claims (they still advertise no African languages), migrations, payments.
+- **Could break:** yo/ig customers now see the phrase book as written, with no AI rewording. Any wording a native speaker rejects should be fixed in the code defaults, or as a platform override (`bot_translation_platform_overrides`).
+
+## 2026-11-18 — Admin Broadcasts: WhatsApp channel turned on (#1104)
+
+- **Owner request 2026-11-17 (#1104):** WhatsApp is now a working channel in admin → Broadcasts. SMS stays "coming soon". The email broadcast is unchanged: the API still sends each recipient a separate email, so recipients never see each other (#1111).
+- **What it sends:** Waaiio's own message to its users and account owners, as an approved WhatsApp template (marketing or utility) from the shared Waaiio number for each recipient's country (GH falls back to NG, as elsewhere). Only templates with numbered body values and no header media or button values are offered, because one set of values goes to everyone.
+- **Who pays:** Waaiio. Every send is platform-scoped (`sendPlatformTemplate` on an unbound shared sender): no `check_or_authorize_send`, no reservation, no merchant messaging credit. The attempt is recorded with `attempt_scope = 'platform'` and no business. `sendPlatformTemplate` refuses on a sender bound to a business, so it can never become a business-billed send.
+- **Who is skipped:** numbers suspended platform-wide (#1103), numbers opted out of Waaiio messages (a STOP with no business, or a launch-alert opt-out), and numbers whose status cannot be read (fail closed). A STOP sent to one merchant is that merchant's and does not block Waaiio messages.
+- **Admin flow (`admin/src/components/WhatsAppBroadcastForm.tsx`, `admin/src/pages/Broadcasts.tsx`):** choose template, fill its values, choose recipients (account owners, all users or specific numbers) with optional country and plan filters, then **Preview recipients and cost**. The preview shows the rendered message, how many will be sent, every skip reason, and an estimate at Waaiio's own per-message rates for each recipient's country and the template category (only numbers that will be sent are priced). **Send** needs a step-up bound to exactly the previewed values. Any change to the draft discards the preview. Admins only; support can preview but not send.
+- **Idempotent:** each preview gets a request id. A repeated send with the same id (retry, double click, lost response) returns the first result and never sends again. After a lost or failed response the page offers **Check result**, a read-only lookup. A broadcast still marked `sending` (running, or cut off) is shown as such with how many were not reached yet, and the page stays in that state. A refusal before anything was sent (step-up, limit, validation) clears it.
+- **New route `app/api/admin/broadcasts/whatsapp/route.ts`:** GET sendable templates; POST `mode: 'preview'` (sends nothing), `mode: 'status'` (the recorded result for a request id; sends nothing, no rate limit) or `mode: 'send'` (admin, aal2, step-up action `admin_broadcast` bound to the request id and the normalized values, 5 sends per admin per hour, at most 250 recipients per send, about 10 messages a second). Everything checkable (template approved on every sending account, value count, audience size, someone reachable) is checked before the step-up is used up. Each send writes `admin_audit_logs` rows before the first message (`start_whatsapp_broadcast`) and after the last (`send_whatsapp_broadcast`, with counts and `merchant_credit_charged: false`). A failed shared-number lookup fails only that recipient; a message Meta accepted whose id was not saved is recorded as `unknown`.
+- **Library `lib/admin-broadcast/whatsapp.ts`:** input validation, template filtering, recipient resolution (profiles; account owners via businesses, local numbers read in the business country), batched suspension and opt-out checks, shared-number selection, cost estimate, and delivery with a per-recipient claim before each send.
+- **Migration M548 (`supabase/migrations/548_admin_whatsapp_broadcasts.sql`):**
+  - Step-up action `admin_broadcast` added to the cumulative CHECK as left by M547. Every earlier action is kept.
+  - `admin_broadcasts.request_id` with a partial unique index.
+  - `public.admin_broadcast_recipients`: one row per number per broadcast (unique; the broadcast cannot be deleted while it has rows, ON DELETE RESTRICT), canonical phone, status (`sending`, `sent`, `failed`, `unknown`, `skipped_opted_out`, `skipped_suspended`, `skipped_unverified`), WhatsApp message id and error. RLS on, deny-all policy; no rights for anon or authenticated; service role may read, insert and update, not delete.
+  - Ships before the app, per Release Gate V2 §9.2. Not applied to staging or production by this PR.
+- **Other files:** `lib/channels/message-sender.ts` (new `sendPlatformTemplate`), `lib/admin-step-up.ts` and `app/api/admin/step-up/prepare/route.ts` (new action), `lib/__tests__/helpers/memory-db.ts` (test helper: `upsert` and unique keys), `.github/workflows/ci.yml` (M548 PG test wired into security-acl-tests, excluded from the unit job).
+- **Tests:**
+  - `lib/__tests__/admin-wa-broadcast-route-1104.test.ts`: real `requirePlatformAdmin` and `consumeStepUp`; roles, aal1, missing and mismatched step-up, rate limit, template filtering, preview counts and estimate, platform-scope send with no billing RPC, opt-out and suspended skips, fail-closed reads, idempotent replay, status lookup of a cut-off send, a failed number lookup mid-send, start and end audit, provider failure, owner filters; plus the real `MetaCloudSender` platform path.
+  - `lib/__tests__/admin-whatsapp-broadcasts-548.pg.test.ts`: real PostgreSQL. CHECK, request-id uniqueness, recipient uniqueness and claim, CHECKs, RLS and grants.
+  - `admin/src/__tests__/broadcasts-whatsapp-1104.test.tsx`: rendered page with the real step-up hook and dialog.
+  - `broadcasts-channel-cleanup-439` and `broadcasts-delivery-result-762` now expect WhatsApp enabled.
+- **Could break:**
+  - Audiences over 250 numbers must be narrowed with the filters.
+  - Each recipient is recorded as "accepted by WhatsApp" with its message id. Delivered/read receipts are not tracked for these sends yet.
+  - If the function times out mid-send, unfinished recipients stay `sending` and the broadcast `sending`; a retry with the same request id never resends.
+
+## 2026-11-18 — Admin Subscriptions: switch off Extend Trial and Cancel until they reach the gateway
+
+- **What changed:** On the admin Subscriptions page, Extend Trial and Cancel Subscription are now disabled. They show the same honest note as Recurring Payments (#1111). Their handlers also return early. Owner decision 2026-11-18.
+- **Why:** Extend Trial wrote `subscriptions.trial_ends_at` and status `trial`, which do not exist (the trial is `businesses.feature_trial_ends_at`, M525), so it always failed. Cancel marked the row cancelled in Waaiio but never told Paystack/Stripe, so the merchant could keep being billed.
+- **Files:** `admin/src/pages/Subscriptions.tsx`, `admin/src/__tests__/admin-remaining-1108.test.tsx`.
+- **Affects:** admin Subscriptions detail panel only. Change Tier is unchanged. No API, DB, migration or gateway change.
+- **What could break:** nothing that works today. The server routes that make these actions work come in a follow-up PR.
+
+## 2026-11-18 — Admin subscription money actions reach the gateway (Owner decisions 2026-11-18)
+
+- **What changed:** The admin Subscriptions and Recurring Payments buttons work again, through new server routes. Each needs a full admin, a single-use step-up bound to every confirmed field, and a reason where the Owner asked for one. Each writes an audit entry.
+  - **Stop Renewal** (was Cancel) on a merchant's Waaiio plan: stops renewal at Paystack (`/subscription/disable`) or Stripe (`cancel_at_period_end`). The plan stays until the paid period ends, then moves to Free. No refund.
+    - Stripe: its `customer.subscription.deleted` at the period end downgrades.
+    - Paystack: new in this PR (user decision 2026-11-19, "Add Paystack expiry"). Before this, a Paystack plan whose renewal stopped stayed paid forever, because `expire_subscription_with_authority` had no Paystack branch.
+      - M554 adds that branch.
+      - A new pass in `subscription-renewal-recovery` records evidence for active Paystack plans whose renewal was stopped (`cancelled_at` set) and whose period has ended. The evidence is `terminal_no_payment` only when Paystack says the subscription will not renew AND returns its invoice list AND that list has no invoice paid (by its payment date) from 24h before the period end. A paid invoice without a payment date, a missing list or any read problem gives ambiguous or unavailable, and nothing expires.
+      - This also ends merchant- or provider-stopped Paystack plans (the `subscription.disable`/`not_renew` webhook), which had the same gap.
+      - Past-due Paystack plans are refused by Stop Renewal, because the authority only expires active plans.
+    - Flutterwave plans are refused for now: their reconciliation cron would downgrade at once.
+  - **Extend Trial:** adds 1 to 30 days to `businesses.feature_trial_ends_at` (M525), only for Free businesses that have never paid. No billing change; the Waaiio fee still applies.
+  - **Recurring pause/resume/cancel** for a merchant's customer: the same gateway calls as `/api/recurring/manage` (Paystack disable/enable, Stripe pause_collection/resume/cancel, Flutterwave status only). The gateway goes first, there is no refund and no customer message.
+  - **Recurring retry:** resets the failure count of a past_due Paystack or Flutterwave payment with a saved card, so the daily 10:00 retry cron charges it through its existing claim guard. Stripe is refused, because it retries on its own.
+- **Safety:**
+  - A missing gateway key is refused (503); it is never reported as success.
+  - The row must belong to the business sent, or the route returns 404.
+  - Local writes are compare-and-set on the checked state, so a double click or a concurrent change returns 409 instead of acting twice.
+  - A provider failure changes nothing (502).
+- **Correction to the switch-off fragment:** the old admin Cancel also wrote `auto_renew`, which no migration creates, so it most likely always failed. It could still never have stopped billing.
+- **Files:**
+  - `lib/admin-subscription-actions.ts` (new)
+  - `app/api/admin/subscriptions/route.ts` (new)
+  - `app/api/admin/recurring/route.ts` (POST added)
+  - `lib/payments/stripe-recurring.ts` (`cancelSubscriptionAtPeriodEnd`)
+  - `lib/admin-step-up.ts`
+  - `app/api/admin/step-up/prepare/route.ts`
+  - `supabase/migrations/553_subscription_admin_action_step_up.sql` (step-up CHECK only; carries every value from M548, the last CHECK definition; M551/M552 do not touch it)
+  - `supabase/migrations/554_paystack_plan_expiry_authority.sql` (one added CASE line in `expire_subscription_with_authority`; attributes and grants unchanged)
+  - `lib/payments/paystack-plan-expiry-evidence.ts` (new) and `app/api/cron/subscription-renewal-recovery/route.ts` (Paystack evidence pass)
+  - `lib/admin-subscription-step-up.ts` (new): one step-up binding shared by the admin pages and the routes (review B1: Stop Renewal's page and route had bound different fields, so every attempt was refused)
+  - `admin/src/pages/Subscriptions.tsx`
+  - `admin/src/pages/RecurringPayments.tsx`
+  - tests, `.github/workflows/ci.yml` (the new `.pg` test) and `docs/MIGRATION_REGISTRY.md`
+- **Affects:** admin panel money actions; Paystack plan expiry (the expiry authority and one renewal-recovery pass). The merchant dashboard, webhooks and payment flows are unchanged.
+- **What could break:**
+  - Until M553 is applied, preparing the new step-up fails the CHECK, so the actions refuse rather than run.
+  - Until M554 is applied, recorded Paystack evidence is ignored (`no_provider_identity`), so stopped Paystack plans stay paid as before. After M554 and the cron change, any active Paystack plan whose renewal was stopped and whose period ended (admin, merchant or provider) moves to Free on terminal evidence. That includes plans stopped before this change.
+  - A Paystack "pause" is a disable at Paystack (the same as the merchant dashboard today). If Paystack later sends `subscription.disable`, the webhook marks the payment cancelled.
+
+## 2026-11-18 — Admin "Onboard Customer" works end to end (Get Started gate, all capabilities, address first)
+
+- **Owner request:** admin "Onboard Customer" (`admin/src/pages/CustomerOnboarding.tsx`, `app/api/admin/onboarding`) must follow the same rules as self-serve Get Started.
+- **1. "Create and send invite" failed with 503 "WhatsApp channel setup and changes are temporarily unavailable".**
+  - **Cause:** `app/api/admin/onboarding/route.ts` POST required the broad `ENABLE_CHANNEL_ALLOCATION_OPERATIONS` switch, which is off. Get Started (`app/api/onboarding/register` → `provisionPendingBusiness`) only needs the broad switch **or** the narrow M507 `ENABLE_FIRST_SHARED_ASSIGNMENT`, and gives the new business its first shared number in its own country.
+  - **Change:** create now uses that same check, up front, so nothing is created when both switches are off. The queue "Retry" action (`app/api/admin/onboarding/[id]/route.ts`) re-provisions a new business the same way, so it uses the same check. `ensure_shared_channel` (shared-number repair) still needs the broad switch. Reassignment, disconnect and dedicated promotion are unchanged.
+  - The page shows the server's message, so "temporarily unavailable" now only appears when both switches are off, the same as Get Started.
+  - **Lifecycle (unchanged code, now reachable):** create → `provisionPendingBusiness` (Free, `wa_method: 'shared'`, pending, M507 first shared number, M525 trial clock on insert) → invite email → `/activate` → `activate-admin-invite` → `/api/onboarding/verify` (assigns the first shared number if still missing, activates).
+- **2. Capabilities.** The Setup step lists every capability on every starting plan. Ones above the chosen plan carry a tag with the real plan name, e.g. "Pro — included in 14-day trial" or "Premium — included in 14-day trial". They stay tickable and are no longer dropped when the plan changes.
+  - `lib/onboarding/admin-assisted.ts` no longer rejects capabilities above the intended plan and saves every selected one (as the register route does). An empty selection now falls back to the category defaults, as Get Started does. The business is still created on Free; Pro/Premium capabilities run under the 14-day trial (`feature_trial_ends_at`, M525 trigger). After the trial, `getEffectiveCapabilities` (`lib/capabilities/policy.ts`) blocks them in the dashboard, bot menu, API guards and the bot's pre-creation checks. Unknown capability ids are still refused, and repeated ids are de-duplicated.
+  - The queue's "change plan" action no longer refuses a lower plan because of the stored capabilities.
+- **3. Address first.** In the Business step, Address (Google Places autocomplete) now sits directly under Country, both full width. Picking an address fills City, State and Postcode, which stay editable.
+- **Tests:** `lib/__tests__/admin-onboarding-get-started-parity.test.ts` (real create route, validation, `provisionPendingBusiness` and `initCapabilities`: 201 with the broad switch off, 503 with both off, retry admitted, repair still blocked, Free/Pro/Premium capabilities persisted, plan change keeps them). `admin/src/__tests__/customer-onboarding-address-capabilities.test.tsx` (rendered field order, autofill then edit, all capabilities with tags across plan changes). `lib/__tests__/first-shared-assignment-admission.test.ts` updated: admin create and retry are now admitted with only M507 on.
+- **Unchanged:** admin auth and role, rate limits, idempotent request key, existing-email refusal, rollback/cleanup, audit records, invite and activation flow, plan intent is never entitlement (business starts on Free), fees. No migration, no env change.
+- **Could break:**
+  - With `ENABLE_FIRST_SHARED_ASSIGNMENT=true` and the broad switch off, admin onboarding now creates businesses and sends invites (intended).
+  - An admin-onboarded Free business can now have Pro/Premium capabilities enabled. After the trial ends the capability policy blocks them until the merchant upgrades. A few older paths read the raw capability rows and skip that check (post-payment loyalty/referral/membership effects in `lib/payments/send-confirmation.ts`, the bot loyalty menu, `app/api/referrals/validate`, the mid-flow reroute in `lib/bot/flows/executor.ts`). Get Started businesses already have the same exposure; it is reported separately, not fixed here. Self-serve Get Started's plan step still drops them on Free, so the two screens now differ on that point.
+
+## 2026-11-18 — Tighten admin panel database access (M549)
+
+- **Change (M549 `supabase/migrations/549_admin_access_tightening.sql`):**
+  - `admin_role_permissions`: every admin role still reads it (menu gating in `admin/src/hooks/usePermissions.ts`); writes are now limited to full admins (`is_admin()`, aal2) with separate INSERT/UPDATE/DELETE policies. anon has no rights. No admin page writes this table today.
+  - `payout_accounts` and `business_bank_accounts`: new stored generated column `account_number_last4` (`''` when the stored number has four characters or fewer, so a short number is never shown whole; NULL when there is no number). Browser sessions (`authenticated`) get an exact column grant that includes `account_number_last4` and not `account_number`; server routes (service role) keep the full number for transfers. Pages that showed `****1234` now read the last four directly: admin `Payouts` (approve modal), `Businesses`, `ImpersonationMode`; merchant `app/dashboard/payouts/page.tsx`; and the merchant payout history route `app/api/payouts/history/route.ts`, which reads with the signed-in client (its `linked_destination` text is unchanged).
+  - `public.get_effective_commercial_config()` is dropped. The admin Countries page loads the effective config from a new `GET` on `app/api/admin/countries/messaging-config/route.ts` (full admin, aal2; version chosen by the DB clock via `get_effective_config_version_id()`, then read by id). CORS for that route now allows GET.
+- **Unchanged:** payout approval and mark-paid (the approve route reads the destination with the service role), Paystack/Stripe transfers, merchant bank-account API, the bot's bank-transfer details, messaging config saving (still step-up), the four admin roles' read access.
+- **Tests:** `lib/__tests__/admin-access-tightening-549.pg.test.ts` (real PostgreSQL, two starting grant states, M549 applied twice: role matrix for the permission table, masked columns per role, service role keeps the full number, exact grants, function gone; wired into the security-acl-tests job). `lib/__tests__/admin-commercial-config-route-549.test.ts` (route: admin only, DB-clock version, errors, CORS, POST still needs step-up). `admin/src/__tests__/account-number-masked-549.test.tsx` (rendered approve modal shows `****6789`; every browser read selects only the masked column). Updated: `countries-messaging-controls`, `countries-stripe-plan-refs-762`, `businesses-resource-parity-762`, `lib/__tests__/payout-history-explanation-762.test.ts`, `app/dashboard/payouts/__tests__/flutterwave-setup-availability-762.test.tsx` (mock the route / masked column).
+- **Could break:** during a release, between the migration and the new admin/merchant deploy, old pages that still ask for the full account number or call the dropped function get an error (payout account details and the Countries messaging section fail to load until the deploy). Anything else reading `account_number` from these tables as a signed-in user would now be refused; a repo sweep found only the reads changed here (all other readers use the service role or count rows only).
+
+## 2026-11-18 — Admin Giving page shows giving at every business (#1105)
+
+- **What changed:** the admin Giving page (`admin/src/pages/Giving.tsx`) now reads through a new role-checked `GET /api/admin/giving` (`app/api/admin/giving/route.ts`, admin and finance, the page's own roles; service client, read only). It used to load only businesses in the `church`/`mosque`/`ngo`/`crowdfunding_org` categories and never read `campaign_donations`, so on staging it showed ₦0 and no records for TestBiz (category `shop`).
+- **Which records:** bookings with `flow_type='payment'` for a service with `service_type='giving'` (the bot's own "my giving" rule), plus every `campaign_donations` row, at any business. Ordinary payments are not included.
+- **Status and totals:** each record has one status: success (booking deposit paid or donation success), refunded (deposit refunded or linked payment refunded), failed, cancelled or pending. "Total Given (successful)", Givers and Organizations count successful records only. The Contributions count and the table still list every record, filtered by the status filter (now Success/Pending/Failed/Refunded/Cancelled).
+- **Currency:** each record uses its own payment or donation currency, else the business's country currency from `countries`. Totals are shown per currency. A record with no known currency is shown as "(currency unknown)", never added to NGN.
+- **Partial refunds:** a successful payment with a partial `payments.refund_amount` stays "success", but the total counts it net of the refund, and the detail view shows the refunded amount.
+- **Type:** "Giving" (giving-service bookings) or "Crowdfunding" (campaign donations, purpose = campaign title), instead of a type guessed from the business category.
+- **Errors:** a failed read shows an alert and disables CSV export instead of an empty page with zero totals.
+- **Affects:** admin Giving page only. No writes, no RLS, grant or migration change.
+- **What could break:** the server returns at most 1,000 rows per request, so the route pages through every read. It stops at 20,000 bookings and 20,000 donations, and then returns `truncated` and the page says the totals leave out older records. Givers are counted by phone first, then user id or email, so one person's bookings and donations count once.
+- **Tests:** `lib/__tests__/admin-giving-route-1105.test.ts` (route), `admin/src/__tests__/giving-records-1105.test.tsx` (rendered page).
+
+## 2026-11-18 — Admin audit #1108: remaining non-money fixes, Broadcasts sorting
+
+- **What changed (X2, actions that said "done" but changed nothing):**
+  - Bot Management "End This Session", "Kill All Sessions" and "Block phone" now call a new `POST /api/admin/bot-sessions` (`app/api/admin/bot-sessions/route.ts`, admin only like the page). The browser client could read `bot_sessions` but not update it. The route confirms the change, returns 404/409 when nothing changed, and audits. "Send message as bot" is switched off with a note: it posted to `/api/chat/send`, which only accepts the business's own team.
+  - Impersonation edits (name, phone, email, category) go through the existing `POST /api/admin/businesses/[id]/profile`, which now also accepts `phone` (VARCHAR(20)) and `email`. `slug` and `flow_type` stay out because bot routing depends on them.
+- **What changed (X3, hidden reads):** new read routes `GET /api/admin/surveys` (admin, operations) and `GET /api/admin/recurring` (admin, finance; never returns card authorization or gateway customer/plan codes). Subscriptions' override count and System Health's `customer_subscriptions` count use the existing `/api/admin/query` proxy. Failed reads show an error instead of an empty list.
+- **Support "Assign to":** new `GET /api/admin/team/assignees` (admin, support) lists admin and support members from Auth `app_metadata` roles, with names only. The page used to read `profiles.role` and showed nobody.
+- **What changed (X4, wrong columns or enum values):**
+  - Dashboard "Churned / Suspended" counts `status='suspended'` (the enum has no `cancelled`).
+  - Users counts bookings and payments by `user_id`.
+  - Accounts bank panel reads `is_active`/`is_default`.
+  - Impersonation shows the assigned WhatsApp channel and booking guest/service.
+  - Orders and Bookings filters use the real enum values.
+  - Engagement reads `events.name`.
+  - WhatsApp Channels "Business Configs" shows bot alias and auto-confirm.
+  - Subscriptions takes the trial from `businesses.feature_trial_ends_at` on the free tier (M525, as `isTrialActive`), not the messaging-credit clock `trial_ends_at`, and treats `billing_interval='year'` as yearly.
+  - AI Usage adds translation, voice and AI-setup counters.
+  - AI Marketplace analytics read `llm_classifications`.
+- **Other:** Channel Changes shows "not set up on this environment yet" when the M496 table is missing (`42P01`/`PGRST205` → 503 `CHANNEL_CHANGES_NOT_INSTALLED`) or the feature flag is off, instead of "Unable to load requests". Pending Transfers has a Cancelled tab. Impersonation Audit can filter View Dashboard links. Broadcasts history has click-to-sort columns (shared `useTableSort` from #1118).
+- **Affects:** admin panel pages listed above and the new or changed `/api/admin` routes. No migration, no RLS or grant change, no money action changed.
+- **What could break:** the new read routes return at most 1,000 rows. Subscriptions' "On Trial" now counts subscriptions whose business is a free-tier business still in its feature trial. The disposable-PG fixture in `lib/__tests__/admin-business-saves.pg.test.ts` now has `businesses.phone`/`email`, because the profile route reads them. AI Usage totals and its cost estimate go up, because they now include counters it used to ignore. Subscriptions' override count goes through `/api/admin/query`, which refuses `capability_overrides` for the finance role, so finance sees no override count.
+- **Tests:** `lib/__tests__/admin-remaining-routes-1108.test.ts` (routes), `lib/__tests__/admin-business-saves.pg.test.ts` (phone/email save on real PostgreSQL) and `admin/src/__tests__/admin-remaining-1108.test.tsx` (rendered pages). Updated for the intended changes: `admin/src/__tests__/system-health-762.test.tsx`, `tier-change-precheck.test.tsx`, `ai-review-record-id.test.tsx` and `admin-truthful-actions-1108.test.tsx`.
+
+## 2026-11-17 — Admin can suspend a customer from all Waaiio bots (#1103), Customers page totals fixed (#1108)
+
+- **Owner decision 2026-11-17 (#1103):** a suspended customer's WhatsApp number is blocked from every Waaiio bot at every business, platform-wide.
+- **What a suspended customer gets:** one neutral reply, "This service isn't available for this number.", at most once per 24 hours, with no reason. No flow, native form, catalog order, Custom Flow file answer or payment starts.
+  - On a business's own number the reply is that business's service message. On a shared number it is a Waaiio platform message.
+  - If the reply fails to send, the 24-hour slot is given back, so the next message tries again.
+- **Marketing skips the number.** `hasRecipientPermission(..., 'marketing')` (`lib/merchants/recipient-permission.ts`) refuses it. That covers broadcasts (send, schedule, scheduled cron), polls, surveys and form invites. `coldInviteBlocked` (`lib/parties/cold-invite.ts`) refuses party cold invites too. Both fail closed if the suspension read fails. Utility sends (payment requests, reports, the merchant's chat reply) are unchanged.
+- **Money is untouched.** No payment, refund, payout, fee or settlement code reads the suspension.
+- **Migration M547 (`supabase/migrations/547_customer_suspensions.sql`):**
+  - `public.customer_suspensions`: one row per suspended number, keyed on the canonical phone (E.164 digits, no `+`, as Meta sends `msg.from`). RLS on, deny-all policy, no rights for anon or authenticated, service role only.
+  - Step-up action `customer_suspension` added to the cumulative CHECK as left by M538. Every earlier action is kept.
+  - `public.svc_set_customer_suspension()`: suspend or unsuspend and write the `admin_audit_logs` row in one transaction. It is SECURITY INVOKER (no SECURITY DEFINER), and only `service_role` may execute it. Unsuspend deletes the row; the audit log keeps the history.
+  - Catalog delta `supabase/catalog-deltas/547_customer_suspensions.json` comes from the CI PostgreSQL 17 oracle.
+  - Ships before the app, per Release Gate V2 §9.2. Not applied to staging or production by this PR.
+- **Canonical number:** a number is suspended only as a valid international number (libphonenumber). Local numbers, with or without the trunk 0, are read in the business country. So the admin cannot suspend a key that no WhatsApp sender would match. Inbound and marketing lookups compare plain digits, so an out-of-date number plan cannot let a suspended sender through. The confirmation shows the full number.
+- **New route `app/api/admin/customers/suspension/route.ts`:** GET lists suspended numbers (admin, support). POST suspends or unsuspends (admin only, aal2). It needs a step-up bound to the number, the on/off flag and the reason, consumed once. A reason of 3 to 500 characters is required to suspend. It returns 409 when nothing changed. `lib/admin-step-up.ts` and `app/api/admin/step-up/prepare/route.ts` accept the new action.
+- **Inbound gate (`lib/customer-suspension.ts`):**
+  - `app/api/webhook/meta-cloud/route.ts` checks right after the event claim, before every other path, and completes the event.
+  - `BotService.handleMessage()` (`lib/bot/bot.service.ts`) checks again after the rate limit, for any other caller.
+  - If the suspension read fails, the message goes through (logged and reported), so a database problem cannot stop every customer's bot.
+- **Admin Customers page (`admin/src/pages/WhatsAppCustomers.tsx`):**
+  - Suspend and unsuspend sit in the customer detail, plus a "Suspended numbers" list with unsuspend. Admin only, through the existing step-up dialog. Support sees the status only. Errors from the server are shown; a failure is never reported as success.
+  - Audit #1108 fixes: "Total spent" and the payments count now use successful payments only. Failed and pending payments, booking amounts and duplicates are no longer counted. A guest payment belongs to its booking's customer. A payment with no user and no booking no longer creates a "customer". The summary card is renamed "Successful Payments".
+  - The detail panel selects real booking columns (`date`, `service_id` → service name, `deposit_amount`), loads a guest's bookings by phone and their payments by booking, uses each business's currency instead of NGN, and shows read errors. A failed customer load shows an error instead of an empty list.
+  - `app/api/admin/customers/route.ts` returns each booking's and profile's canonical phone and booking ids, and answers 500 when a read fails.
+- **Tests:**
+  - `lib/__tests__/customer-suspension-1103.test.ts`: helper, plus the real `BotService` at two businesses and the shared number, unsuspend restores use, and fail-open.
+  - `lib/__tests__/customer-suspension-webhook-1103.test.ts`: real webhook route; text, native form, catalog order and image all blocked.
+  - `lib/__tests__/customer-suspension-route-1103.test.ts`: real `requirePlatformAdmin` and `consumeStepUp`; roles, aal1, step-up mismatches and replay, validation, 409 and 500.
+  - `lib/__tests__/customer-suspensions-547.pg.test.ts`: real PostgreSQL. Grants, RLS, CHECKs, invoker function, audit atomicity. Added to CI's security-acl-tests job and excluded from the unit job.
+  - `admin/src/__tests__/customers-suspension-1103.test.tsx`: rendered page.
+  - Suspended-number cases added to `merchant-recipient-permission-785`, `poll-survey-recipient-rules` and `scheduled-broadcast-consent`.
+- **Could break:**
+  - A suspended customer who sends STOP is not processed as an opt-out while suspended.
+  - Marketing to a number whose suspension status cannot be read is skipped.
+  - Supabase Edge Function campaigns (birthday, re-engagement, abandoned cart, sequences) do not read the suspension list; they already ignore opt-outs (follow-up).
+  - The Customers page totals will be lower than before, because they now count successful payments only.
+
+## 2026-11-17 — Admin-staging templates/promotions CORS, impersonation "View Dashboard", Book a Demo captcha
+
+- **Owner staging test 2026-11-17** reported three bugs.
+- **1. WhatsApp Templates page on admin-staging showed "Failed to fetch".**
+  - **Cause:** `app/api/whatsapp/templates/route.ts` and `app/api/promotions/admin-list|admin-action|admin-detail/route.ts` kept their own origin list (`ADMIN_ORIGIN || admin.waaiio.com`, localhost) without admin-staging. Any other origin got `Access-Control-Allow-Origin: https://admin.waaiio.com`, so the browser blocked admin-staging.
+  - **Change:** the four routes now use the shared `adminCorsHeaders` from `lib/admin-cors.ts` (admin, admin-staging, localhost:8083, `ADMIN_ORIGIN`), with the same methods and headers as before. Unknown origins now get an empty header (fail closed) instead of the production admin origin. `Access-Control-Max-Age: 86400` is added, as on other admin routes.
+- **2. Impersonation "View Dashboard" did not open the merchant dashboard.**
+  - **Cause (checked with curl on staging and production):** `app/api/admin/impersonate/route.ts` answered every request with an empty `Access-Control-Allow-Origin` (`adminCorsHeaders(null)`), and the route header wins over the middleware's, so the browser blocked the reply and the page showed "Failed to launch dashboard", on production as well as staging. On staging, the link (`https://staging.waaiio.com/...` from `NEXT_PUBLIC_APP_URL`) would then also have been refused by the admin page's prefix check.
+  - **Change:** the route's POST echoes the request origin through the shared helper. `admin/src/lib/impersonationUrl.ts` (new) accepts only the exact origins `https://waaiio.com`, `https://www.waaiio.com`, `https://staging.waaiio.com` (plus the console's own origin, as before) and only the `/dashboard/impersonate` path. It parses the URL, so look-alike hosts such as `https://waaiio.com.evil.example` (let through by the old `startsWith`) are refused. `admin/src/pages/ImpersonationMode.tsx` uses it and tells the admin if the browser blocked the new tab.
+- **3. Book a Demo form on `/white-label` had no captcha.**
+  - **Change:** `app/(marketing)/white-label/DemoForm.tsx` shows the Cloudflare Turnstile widget like the contact form (only when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is set) and sends `turnstileToken`. It blocks sending until the check is done, resets the widget after a failed send (tokens are single-use) and shows it again for "Submit another request". `app/api/demo-request/route.ts` verifies the token with the shared `verifyTurnstileToken` (`lib/security/turnstile.ts`) after the honeypot and before saving, enforced when `TURNSTILE_SECRET_KEY` is set, like `/api/contact`. A missing or bad token gets 403 and nothing is saved or emailed.
+- **Unchanged:** route auth and roles, step-up for impersonation, the impersonation token and logs, the demo form fields, validation, honeypot, emails and `demo_requests` writes, the contact form. No migration, no env change.
+- **Not fixed here (reported separately):** the admin console's Supabase REST 400s (`businesses?id=in.(__none__)`, a placeholder that is not a valid uuid, used when a list is empty in `QueueManagement.tsx`, `EngagementActivity.tsx`, `AIMarketplace.tsx`) and 403s on direct table reads from those pages. They are not CORS and do not affect the three pages above.
+- **Tests:** `lib/__tests__/admin-staging-cors-routes.test.ts` (real route handlers: admin-staging and admin echoed, unknown origin refused, impersonate 401 and success), `admin/src/__tests__/impersonation-url.test.ts`, `lib/__tests__/demo-request-turnstile.test.ts` (real demo and contact routes side by side), `lib/__tests__/demo-form-turnstile-ui.test.tsx` (rendered form). `lib/__tests__/admin-cors-routes.test.ts` now also lists the four routes.
+- **Could break:**
+  - A same-site request to `/api/whatsapp/templates` (merchant dashboard) now gets an empty `Access-Control-Allow-Origin` instead of the admin origin. Same-origin requests ignore that header.
+  - If `TURNSTILE_SECRET_KEY` is set but `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is not, the demo form shows no widget and every request is refused (same as the contact form today).
+  - Any other app domain that `NEXT_PUBLIC_APP_URL` might point to would now be refused by "View Dashboard" until added to the list.
+
+## 2026-11-17 — Custom flow builder: start screen, inline list entries, edit everything in place (#1107)
+
+**What changed**
+- **Start screen.** A new flow begins with "What should people be able to do?". The ticks are: See the schedule, Find an artist, Find a vendor, Badge pickup, FAQs, Getting here, Buy tickets, plus the merchant's own. They build the buttons, steps and empty lists through the existing requests: setup, data `create_table`, flow `save`. A template's own ticks, left as they are, send exactly today's requests. Unticking a festival section turns it off with the existing `toggleSection`. Files: `lib/custom-flow-builder/abilities.ts`, `components/custom-flows/FlowSetup.tsx`.
+- **Inline entries.** Every "Search my list" step shows its entries, with:
+  - "+ Add <item>", "Save and add another", Edit, and Delete after an inline confirmation;
+  - "Rename fields", which changes labels only and keeps column names;
+  - a "Not shown yet: add …" hint on incomplete entries.
+
+  Writes use only the existing `/api/custom-flows/data` actions. Files: `components/custom-flows/ListEntries.tsx`, `FlowBuilder.tsx`, `FlowMap.tsx`, and `TableEditor.tsx` (`reloadKey`).
+- **Edit in place.** Every step has Edit, including in guided flows. Outside the advanced editor only words change: messages, button names, prompts and replies. Adding, removing, moving and reconnecting steps stay behind the advanced editor. In guided flows the "Add a step" column becomes a short note with an "Open advanced editor" button. Renaming a guided section's button also updates its section label (`renameButton` in `templates.ts`), so turning the section off and on still works. A list or message step reached by one button is titled by that button (`stepLabel` in `block-label.ts`). Stored list names never change.
+- **Search, browse or both.** A list step has an optional `mode` (`types.ts`, `definition.ts`, the builder's `readDraft`, `engine.ts`, `LookupSettings.tsx`). Without `mode` the engine runs exactly as before. Browse sends the entries as a numbered list, and a number or code answers.
+- **Engine fix.** After someone picked from "I found a few matches", the session write used a stale version. They got the reply, but the menu never followed, and the step stayed stuck. `clearLookupCandidates` now returns the session at its new version (`engine.ts`).
+- **Live preview.** With a list step open, the phone shows its opening message (with the browse list) and the entry being typed as if someone searched for it. The composer tests a word against the saved entries in the browser, using the engine's matching rules (`live-preview.ts`, `WhatsAppPreview.tsx`).
+
+**What it affects:** the Custom Flows builder (Premium add-on #1013) and the custom flow engine's list step.
+
+**What could break**
+- Step titles in the builder now follow button names, for example "3. Say goodbye" instead of "3. Send a message".
+- A disambiguation pick now moves on to the next step, as the code always intended.
+- Entries save straight away to the live flow, the same as the Lists editor.
+- No stored definition, table, API action or migration changed.
+
+## 2026-11-17 — Expired card-PIN chats no longer hold the next-steps menu (#1101)
+
+- `lib/payments/abandoned-card-step.ts`: new `isUnexpiredSession()`; `hasActiveCardPin()` counts only PIN sessions that have not expired (a missing expiry still counts).
+- `lib/payments/transaction-followup.ts`: the card-step PIN check in `resumePaidTransactionFollowup()` uses the same rule.
+- Affects the paid follow-up chain (card step → opt-in → next-steps menu). Found on staging: a saved-card order got its receipt but no menu because an 18-hour-old, expired save-card PIN chat at another business was still marked active.
+- Tests: `lib/__tests__/abandoned-card-step-1070.test.ts`, `lib/payments/__tests__/transaction-followup.test.ts` (expired vs unexpired PIN, staging reproduction).
+- Could break: nothing expected. An unexpired PIN still holds the chain; lookup errors and missing expiry still hold.
+
+## 2026-11-17 — Admin money and trust fixes from the admin audit (#1108)
+
+- **Payments** (`admin/src/pages/Payments.tsx`): the headline now adds successful payments only, per currency, labelled "Collected: successful payments only". Failed and pending amounts are no longer counted.
+- **Finance** (`admin/src/pages/Finance.tsx`):
+  - "Active Paid Subscribers" and ARPU count paid plans only (`amount > 0`).
+  - Payouts use their own `business_payouts.currency`; legacy rows without one still use the business country.
+  - "Direct Transfer Revenue" is relabelled "Fees on merchant-held payments (not deducted from payouts)". These are fees on payments the merchant received directly (own gateway, Connect, bank transfer); depending on the route they are collected by the split or by the monthly invoice.
+- **Audit log (X1)**: new `POST /api/admin/audit` (service role, any platform role, actor is always the verified admin, rows marked `source: 'admin_panel'`). `admin/src/lib/auditLog.ts` calls it, returns `{ ok, error }`, and on failure shows `AuditFailureNotice` (in `AdminLayout`) instead of dropping the entry.
+- **Admin writes (X2)**: these now go through role-checked `/api/admin/*` routes that use the service client, report 404/409 when no row changed, and audit:
+  - Campaigns save: `campaigns/[id]` (admin).
+  - AI Marketplace verify/discovery: `businesses/[id]/marketplace` (admin).
+  - Tickets cancel: `tickets/[id]/cancel` (admin, support, operations). Status `valid → cancelled` only; no refund or booking change.
+  - Alerts read/unread, mark all read, dismiss: `alerts` (mark one: admin, support, operations; mark all and dismiss: admin).
+  - Bot Keywords list/create/edit/toggle/delete: `bot-keywords` (admin, operations). Create, edit and delete cover system and category keywords only; toggle works on any scope.
+  - Users: `users` (list status) and `users/[id]` (admin). Suspend/reactivate is a Supabase Auth ban. The account role is limited to `restaurant_owner`/`restaurant_staff`. Platform team members and the signed-in admin are refused here and sent to Admin Team.
+  - Each page shows the API's error and only updates its display after the API confirms.
+- **WhatsApp Channels Configs tab**: the Activate/Deactivate and webhook controls are removed, with an honest note. They wrote `whatsapp_config.status` and `.webhook_url`, which don't exist.
+- **Recurring Payments** (`admin/src/pages/RecurringPayments.tsx`): Pause, Resume, Retry and Cancel are disabled with an honest note. They matched 0 rows and looked successful, and doing them properly needs the payment gateway (out of scope, a money decision). Subscriptions extend/cancel already show their failure and are unchanged.
+- **Hidden reads (X3)**: Chat History (`chat-history`), Reports (`customer-reports`, no access token or file path) and Queue (`queue-entries`) read through admin routes. Failures show as errors, not empty lists. Chat History uses the real `direction` and `message_text` columns.
+- **Broadcast email**: `/api/email/send` with more than one recipient now sends each recipient a separate email (`sendEmailToEach` in `lib/email/client.ts`: Resend batch API, 100 per call, no retry). It returns accepted and failed counts. Broadcasts records the accepted count and reports a partial send. A single recipient is unchanged.
+- **#1109 follow-ups**:
+  - `Vary: Origin` on `adminCorsHeaders` and on the middleware admin CORS answers.
+  - `generate-sign-link` uses the new `supabase/functions/_shared/cors-origins.ts`, which adds admin-staging and fails closed for unknown origins.
+  - The demo and contact form errors have `role="alert"`.
+- **Helpers**: `lib/admin-route.ts` (responder, preflight, IP, JSON body, business names); `adminApiFetch` takes an optional method; `adminJson`; `delete()` in the test `memory-db`.
+- **Tests**:
+  - `lib/__tests__/admin-truthful-routes-1108.test.ts`
+  - `admin/src/__tests__/admin-truthful-actions-1108.test.tsx`
+  - `lib/__tests__/email-send-separate-recipients-1108.test.ts`
+  - `lib/__tests__/cors-vary-edge-origins-1109.test.ts`
+  - `app/(marketing)/contact/__tests__/contact-form-error-alert.test.tsx`
+  - Finance and Payments additions. The two #596 Finance tests that asserted "no payout currency column" now assert the column is used.
+- **No migration, and no RLS or grant change.**
+- **Could break:**
+  - Admin pages that relied on optimistic success now show errors when the server refuses.
+  - The Users page needs `/api/admin/users`, which lists Auth users (up to 20,000).
+  - Broadcast email now makes one provider call per 100 recipients.
+  - `generate-sign-link` no longer answers unknown origins with the main site's origin.
+
 ## 2026-11-17 — Stripe saved-card PIN prompt gets a "Not now" button (#1065, Owner Option A)
 
 - **Owner decision** (#1065, 2026-11-17): Option A. Keep Stripe Checkout's own "Save card" tick box as the consent. Add one translated "Not now" reply button to the WhatsApp PIN-activation message, doing exactly what typing `cancel` does.
