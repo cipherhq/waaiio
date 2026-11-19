@@ -232,6 +232,17 @@ describe('POST /api/admin/subscriptions stop_renewal', () => {
   it('requires a reason', async () => {
     expect((await send(body(bound(), { reason: ' ' }))).status).toBe(400);
   });
+
+  it('Paystack: a past_due plan is refused (it could never reach Free); Stripe past_due is allowed', async () => {
+    row('subscriptions', SUB).status = 'past_due';
+    const res = await send(body(bound()));
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('PAST_DUE_NOT_SUPPORTED');
+    expect(calls()).toEqual({});
+    Object.assign(row('subscriptions', SUB), { gateway: 'stripe', stripe_subscription_id: 'sub_platform' });
+    expect((await send(body(bound()))).status).toBe(200);
+    expect(row('subscriptions', SUB).status).toBe('past_due');
+  });
 });
 
 // ── Extend the feature trial ──

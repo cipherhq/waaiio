@@ -1837,6 +1837,74 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
+  // M554 (#1135): Paystack plans with a subscription code use the same evidence authority.
+  function m554PaystackSub(tag: string, periodEnd: string) {
+    const bizId = m380Biz(tag);
+    psql(`UPDATE businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'::uuid;`);
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, paystack_subscription_code, current_period_start, current_period_end, cancelled_at)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
+        '${currentVersion()}'::uuid, 'SUB_${tag}', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz, '2026-07-15T00:00:00Z'::timestamptz)
+      RETURNING id::text;
+    `);
+    const cleanup = () => {
+      psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+      psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+      psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+    };
+    return { bizId, subId, cleanup };
+  }
+
+  it('83b. paystack with a subscription code but no evidence → expired=false (authority_no_evidence)', () => {
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const { bizId, subId, cleanup } = m554PaystackSub('t83b', periodEnd);
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": false');
+    expect(result).toContain('authority_no_evidence');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+    expect(psql(`SELECT subscription_tier FROM businesses WHERE id='${bizId}'::uuid;`)).toBe('growth');
+    cleanup();
+  });
+
+  it('83c. paystack terminal_no_payment evidence for the exact boundary → expired, tier free', () => {
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const { bizId, subId, cleanup } = m554PaystackSub('t83c', periodEnd);
+    // Evidence for another boundary or another provider id does not count.
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83c', '2026-07-01T00:00:00Z'::timestamptz, 'terminal_no_payment', 'run_t83c_old');`);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_other', '${periodEnd}'::timestamptz, 'terminal_no_payment', 'run_t83c_other');`);
+    expect(psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`)).toContain('authority_no_evidence');
+
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83c', '${periodEnd}'::timestamptz, 'terminal_no_payment', 'renewal_recovery_paystack_t83c');`);
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": true');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('expired');
+    expect(psql(`SELECT subscription_tier FROM businesses WHERE id='${bizId}'::uuid;`)).toBe('free');
+    cleanup();
+  });
+
+  it('83d. paystack provider_active_or_retrying or ambiguous evidence → expired=false', () => {
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const { subId, cleanup } = m554PaystackSub('t83d', periodEnd);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83d', '${periodEnd}'::timestamptz, 'ambiguous', 'renewal_recovery_paystack_t83d');`);
+    expect(psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`)).toContain('authority_ambiguous');
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'paystack', 'SUB_t83d', '${periodEnd}'::timestamptz, 'provider_active_or_retrying', 'renewal_recovery_paystack_t83d');`);
+    expect(psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`)).toContain('authority_provider_active_or_retrying');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+    cleanup();
+  });
+
+  it('83e. M554 keeps SECURITY DEFINER, search_path and service_role-only EXECUTE', () => {
+    const attrs = psql(`SELECT p.prosecdef::text || '|' || array_to_string(p.proconfig, ',')
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'expire_subscription_with_authority';`);
+    expect(attrs).toBe('true|search_path=public, pg_temp');
+    for (const role of ['anon', 'authenticated']) {
+      expect(psql(`SELECT has_function_privilege('${role}', 'public.expire_subscription_with_authority(uuid, timestamptz)', 'EXECUTE')::text;`)).toBe('false');
+    }
+    expect(psql(`SELECT has_function_privilege('service_role', 'public.expire_subscription_with_authority(uuid, timestamptz)', 'EXECUTE')::text;`)).toBe('true');
+  });
+
   it('84. non-provider (null gateway) → expired=true (existing behavior)', () => {
     const bizId = m380Biz('t84');
     const periodEnd = '2026-08-01T00:00:00Z';

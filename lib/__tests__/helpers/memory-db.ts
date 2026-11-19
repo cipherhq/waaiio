@@ -31,6 +31,7 @@ function parseOr(expr: string): Pred {
     const val = rest.join('.');
     if (op === 'eq') return (r: Row) => String(r[col]) === val;
     if (op === 'is' && val === 'null') return (r: Row) => r[col] === null || r[col] === undefined;
+    if (op === 'lt') return (r: Row) => cmp(r[col], val) < 0;
     throw new Error(`memory-db: unsupported or() term ${p}`);
   });
   return r => parts.some(p => p(r));

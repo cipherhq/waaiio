@@ -2,8 +2,11 @@
  * Admin money actions on subscriptions (Owner decisions 2026-11-18).
  *
  * - Waaiio plan (subscriptions): cancel stops renewal at the gateway and keeps
- *   the plan until the paid period ends; the Paystack webhook and the expiry
- *   cron (or Stripe's own period-end deletion) then move it to Free. No refund.
+ *   the plan until the paid period ends, then it moves to Free. No refund.
+ *   Stripe: cancel_at_period_end, and Stripe's customer.subscription.deleted
+ *   downgrades. Paystack: disable; after the period the renewal-recovery cron
+ *   records evidence and the expiry cron's expire_subscription_with_authority
+ *   (Paystack branch, M554) downgrades. Flutterwave is refused (see below).
  * - Feature trial (businesses.feature_trial_ends_at, M525): extend by at most
  *   30 days, only for Free businesses that have never paid. No billing change.
  * - A merchant's customer (customer_subscriptions): pause/resume/cancel exactly
@@ -74,6 +77,9 @@ export async function cancelPlanRenewal(
     if (missing) return missing;
     call = () => cancelStripeAtPeriodEnd(sub.stripe_subscription_id);
   } else if (sub.gateway === 'paystack' && sub.paystack_subscription_code) {
+    // The expiry authority only expires 'active' plans, so a past_due Paystack
+    // plan would never reach Free after its renewal is stopped.
+    if (sub.status !== 'active') return refuse(409, 'This Paystack plan is past due, so its renewal cannot be stopped from here yet.', 'PAST_DUE_NOT_SUPPORTED');
     const token = emailToken(sub.metadata);
     if (!token) return refuse(422, 'This Paystack subscription has no email token, so renewal cannot be stopped from here.', 'MISSING_EMAIL_TOKEN');
     const missing = keyMissing('paystack');
