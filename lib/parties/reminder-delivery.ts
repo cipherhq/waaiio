@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendEmail } from '@/lib/email/client';
-import { sendSms } from '@/lib/sms/bulksms-ng';
+import { sendBusinessSms } from '@/lib/sms/send';
 import { fingerprint, scheduledOccurrence, loadReminderPreview, type ReminderPreview, type ReminderRecipient, type Variant, type ReminderChannel } from './reminder-preview';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 type Outcome='accepted'|'rejected'|'unknown'|'unavailable'|'dispatched'|'unattempted';
@@ -39,7 +39,7 @@ export async function deliverReminder(db:SupabaseClient,preview:ReminderPreview,
   for(const variant of recipient.variants) {
    if(variant.channel==='whatsapp_template' && !definitive(outcomes.whatsapp_text || 'unknown')) continue;
    if(variant.channel==='sms' && (!definitive(outcomes.whatsapp_text || 'unknown') || !definitive(outcomes.email || 'unknown'))) continue;
-   const result=await dispatchVariant(db,occurrence,recipient,variant,fresh.resolved);
+   const result=await dispatchVariant(db,occurrence,preview.businessId,recipient,variant,fresh.resolved);
    outcomes[variant.channel]=result.state; results.push(result);
   }
   if(outcomes.whatsapp_text==='accepted'||outcomes.whatsapp_template==='accepted'||preview.purpose==='followup'&&outcomes.email==='accepted') {
@@ -50,7 +50,7 @@ export async function deliverReminder(db:SupabaseClient,preview:ReminderPreview,
  const finished=await db.from('party_reminder_runs').update({state:'finished',results}).eq('id',occurrence).eq('fingerprint',preview.fingerprint).select('id').single();
  return {replay:false,state:finished.error||!finished.data?'dispatched':'finished',results,accepted:results.filter(r=>r.state==='accepted').length};
 }
-async function dispatchVariant(db:SupabaseClient,runId:string,recipient:ReminderRecipient,variant:Variant,resolved:ResolvedChannel|null):Promise<Result> {
+async function dispatchVariant(db:SupabaseClient,runId:string,businessId:string,recipient:ReminderRecipient,variant:Variant,resolved:ResolvedChannel|null):Promise<Result> {
  const base={inviteId:recipient.id,channel:variant.channel};
  if(!variant.available) return {...base,state:'unavailable',reason:variant.reason};
  const claim=await db.from('party_reminder_attempts').insert({run_id:runId,invite_id:recipient.id,channel:variant.channel,content:{phone:recipient.phone,...variant},state:'dispatched'});
@@ -67,8 +67,10 @@ async function dispatchVariant(db:SupabaseClient,runId:string,recipient:Reminder
    const result=await sendEmail({to:variant.address!,subject:variant.subject!,html:variant.html!,noRetry:true});
    if(result.success && !('dev' in result && result.dev) && 'id' in result && result.id) {state='accepted';providerId=result.id;}
   } else if(variant.channel==='sms') {
-   const result=await sendSms({to:recipient.phone,message:variant.text});
-   if(result.sent) state='accepted';
+   // Charged to the business's messaging credit; skipped (rejected) when credit is short (#1131).
+   const result=await sendBusinessSms(db,{businessId,phone:recipient.phone,text:variant.text,purpose:'reminder',idempotencyKey:`party-reminder:${runId}:${recipient.id}`});
+   if(result.status==='sent') state='accepted';
+   else if(result.status==='skipped'||result.status==='failed') state='rejected';
   }
  } catch(error) {
   // These named guards fail before emission; all other exceptions remain indeterminate.

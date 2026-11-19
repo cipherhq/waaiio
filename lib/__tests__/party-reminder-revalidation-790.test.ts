@@ -12,7 +12,7 @@ vi.mock('@/lib/bot/bot-intelligence',()=>({BotIntelligenceService:class{}}));
 vi.mock('@/lib/bot/standalone.service',()=>({StandaloneService:class{}}));
 vi.mock('@/lib/channels/send-or-email',()=>({findCustomerEmail:async()=>null}));
 vi.mock('@/lib/email/client',()=>({sendEmail:vi.fn()}));
-vi.mock('@/lib/sms/bulksms-ng',()=>({isSmsEligible:()=>false,sendSms:vi.fn()}));
+vi.mock('@/lib/sms/bulksms-ng',()=>({isSmsEligible:()=>false,isSmsConfigured:()=>false,sendSms:vi.fn()}));
 import { POST } from '@/app/api/webhook/meta-cloud/route';
 import { loadReminderPreview } from '@/lib/parties/reminder-preview';
 import { deliverScheduledReminders } from '@/lib/parties/reminder-delivery';

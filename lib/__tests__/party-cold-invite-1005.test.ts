@@ -9,7 +9,8 @@ vi.mock('@/lib/api-auth', () => ({ authenticateRequest: async () => ({ user: { i
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({}) }));
 vi.mock('@/lib/capabilities/api-guard', () => ({ requireCapability: async () => ({ allowed: true }) }));
 vi.mock('@/lib/security/check-optin', () => ({ checkOptInBatch: mocks.optIn }));
-vi.mock('@/lib/sms/bulksms-ng', async (orig) => ({ ...(await orig<object>()), sendSms: mocks.sms }));
+// #1131: SMS invites go through the charged business sender.
+vi.mock('@/lib/sms/send', () => ({ sendBusinessSms: mocks.sms }));
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class { resolveByBusinessId = mocks.resolve; } }));
 
 import { POST as hostInvite } from '@/app/api/events/invite/route';
@@ -41,7 +42,7 @@ function setup(optOutCount: number | null = 0, optOutError: unknown = null, cons
   sender = { sendTemplate: vi.fn().mockResolvedValue({ success: true }), sendButtons: vi.fn(), sendImage: vi.fn() };
   mocks.resolve.mockResolvedValue({ sender, channel: { phone_number: '+2349000000000' } });
   mocks.optIn.mockResolvedValue(new Map()); // the guest has never messaged the business
-  mocks.sms.mockResolvedValue({ sent: true });
+  mocks.sms.mockResolvedValue({ status: 'sent', pages: 1, priceMinor: 838, currency: 'NGN' });
   return tables;
 }
 const invite = (extra: Record<string, unknown>) => hostInvite(new Request('http://x/api/events/invite', {

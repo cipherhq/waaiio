@@ -14,7 +14,7 @@ function dbFixture(options:{legacy?:boolean;window?:boolean;table?:string;suspen
  }};return {db:db as never,trace};
 }
 beforeEach(()=>{
- vi.clearAllMocks();vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY','test-preview-key');vi.stubEnv('RESEND_API_KEY','test-email-key');vi.stubEnv('BULKSMS_NG_API_TOKEN','test-sms-key');
+ vi.clearAllMocks();vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY','test-preview-key');vi.stubEnv('RESEND_API_KEY','test-email-key');vi.stubEnv('BULKSMS_NG_API_TOKEN','test-sms-key');vi.stubEnv('BULKSMS_SENDER_ID','Waaiio');
  m.permission.mockResolvedValue(true);m.email.mockResolvedValue('guest@example.test');
  m.templates.mockResolvedValue({data:[{name:'waaiio_event_invite',language:'en_US',category:'MARKETING',status:'APPROVED',components:[{type:'BODY',text:'Invitation {{1}} RSVP {{2}}'},{type:'FOOTER',text:'Host footer'}]}]});
  m.resolve.mockResolvedValue({channel:{id:'channel',waba_id:'actual-waba'},cloud:{getTemplates:m.templates},sender:{}});

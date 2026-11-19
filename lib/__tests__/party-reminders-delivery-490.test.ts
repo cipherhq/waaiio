@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m=vi.hoisted(()=>({load:vi.fn(),email:vi.fn(),sms:vi.fn()}));
 vi.mock('@/lib/parties/reminder-preview',async()=>{const real=await vi.importActual<object>('@/lib/parties/reminder-preview');return {...real,loadReminderPreview:m.load};});
 vi.mock('@/lib/email/client',()=>({sendEmail:m.email}));
-vi.mock('@/lib/sms/bulksms-ng',()=>({sendSms:m.sms,isSmsEligible:()=>true}));
+// #1131: reminder SMS is charged through the business sender.
+vi.mock('@/lib/sms/send',()=>({sendBusinessSms:m.sms}));
 import { deliverReminder, deliverScheduledReminders } from '@/lib/parties/reminder-delivery';
 import type { ReminderPreview, Variant } from '@/lib/parties/reminder-preview';
 function harness(purpose:'chase'|'followup'='followup') {
@@ -23,8 +24,21 @@ function harness(purpose:'chase'|'followup'='followup') {
  }};
  return {db:db as never,preview,sender,runs,attempts,lose:()=>{loseOutcome=true;},zero:()=>{zeroRows=true;}};
 }
-beforeEach(()=>{vi.clearAllMocks();m.email.mockResolvedValue({success:true,id:'email-id'});m.sms.mockResolvedValue({sent:true});});
+beforeEach(()=>{vi.clearAllMocks();m.email.mockResolvedValue({success:true,id:'email-id'});m.sms.mockResolvedValue({status:'sent',pages:1,priceMinor:838,currency:'NGN'});});
 describe('Party durable reminder provider boundaries',()=>{
+ it('#1131: after definitive WhatsApp and email failures the SMS is charged to the business, once per run',async()=>{
+  const h=harness();h.sender.sendText.mockResolvedValue({success:false});m.email.mockResolvedValue({success:false});
+  h.preview.recipients[0].variants[0].available=false;h.preview.recipients[0].variants[1].available=false;
+  const result=await deliverReminder(h.db,h.preview,'run',null);expect(result.accepted).toBe(1);
+  expect(m.sms).toHaveBeenCalledTimes(1);
+  expect(m.sms).toHaveBeenCalledWith(h.db,expect.objectContaining({businessId:'business',phone:'15551234567',purpose:'reminder',idempotencyKey:'party-reminder:run:invite'}));
+ });
+ it('#1131: an SMS skipped for short credit is recorded as rejected, not accepted',async()=>{
+  const h=harness();h.preview.recipients[0].variants[0].available=false;h.preview.recipients[0].variants[1].available=false;
+  m.sms.mockResolvedValue({status:'skipped',reason:'insufficient_credit'});
+  const result=await deliverReminder(h.db,h.preview,'run',null);expect(result.accepted).toBe(0);
+  expect(result.results.find((r:{channel:string})=>r.channel==='sms')?.state).toBe('rejected');
+ });
  it('submits WhatsApp and scheduled dual email once and replays without submissions',async()=>{
   const h=harness();const first=await deliverReminder(h.db,h.preview,'run',null);expect(first.accepted).toBe(2);
   const replay=await deliverReminder(h.db,h.preview,'run',null);expect(replay.replay).toBe(true);
