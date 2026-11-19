@@ -1,0 +1,21 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (action_type = ANY (ARRAY['payout_approve'::text, 'payout_reject'::text, 'payout_generate'::text, 'payout_confirm_settlement'::text, 'payout_force_settle'::text, 'provider_config'::text, 'team_grant'::text, 'team_revoke'::text, 'impersonate'::text, 'refund'::text, 'reseller_payout_approve'::text, 'reseller_payout_reject'::text, 'reseller_payout_mark_paid'::text, 'reseller_payout_generate'::text, 'commercial_config'::text, 'messaging_config'::text, 'messaging_suspension'::text, 'business_status'::text, 'channel_change_execute'::text, 'passkey_approve'::text, 'passkey_remove'::text, 'customer_suspension'::text, 'admin_broadcast'::text, 'subscription_admin_action'::text]))",
+    "validated": true
+   },
+   "after_sha256": "b673535ee968b67746d961162c96c1c58fdde95ee3f59c5f0b322516e1536865",
+   "identity": "constraint:public.admin_step_up_authorizations.admin_step_up_authorizations_action_type_check",
+   "operation": "modify"
+  }
+ ],
+ "migration": "553_subscription_admin_action_step_up.sql",
+ "migration_sha256": "ed099ce0ebafc3c760a2db9ff2b1dfcad8ac4df190c9373344f7249092cbbda0",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
