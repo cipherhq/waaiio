@@ -276,11 +276,11 @@ describe('Launch page — announcement-driven date', () => {
 // ── F. QR code — no external dependency ──────────────────
 
 describe('QR code — local generation', () => {
-  it('uses qrcode.react for QR generation (no external API)', () => {
+  it('uses the shared local QR component (no external API)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
-    expect(src).toContain("from 'qrcode.react'");
-    expect(src).toContain('QRCodeSVG');
+    expect(src).toContain("from '@/components/ui/StyledQRCode'");
+    expect(src).toContain('<StyledQRCode value={waLink}');
     // Must NOT reference external QR services
     expect(src).not.toContain('api.qrserver.com');
     expect(src).not.toContain('chart.googleapis.com');

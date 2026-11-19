@@ -7,9 +7,10 @@ import { StepSuccess } from '../StepSuccess';
 import type { StepSuccessProps } from '../types';
 
 // Capture the value each QR code encodes.
-vi.mock('qrcode.react', () => ({
-  QRCodeSVG: (p: { value: string }) => <span data-testid="qr-svg" data-value={p.value} />,
-  QRCodeCanvas: (p: { value: string }) => <canvas data-testid="qr-canvas" data-value={p.value} />,
+vi.mock('@/components/ui/StyledQRCode', () => ({
+  StyledQRCode: (p: { value: string; renderAs?: string }) => p.renderAs === 'canvas'
+    ? <canvas data-testid="qr-canvas" data-value={p.value} />
+    : <span data-testid="qr-svg" data-value={p.value} />,
 }));
 
 const UUID_LINK = 'https://www.waaiio.com/m/123e4567-e89b-12d3-a456-426614174000';
@@ -41,7 +42,7 @@ describe('printed QR codes stay on the permanent link', () => {
   it('dashboard home: QR card encodes the permanent link, text uses the short link', () => {
     const src = readFileSync('app/dashboard/page.tsx', 'utf8');
     expect(src).toContain('const qrLink = buildMerchantLink(business.id);');
-    expect(src).toContain('<QRCodeCanvas value={qrLink}');
-    expect(src).not.toContain('<QRCodeCanvas value={whatsappLink}');
+    expect(src).toContain('<StyledQRCode value={qrLink}');
+    expect(src).not.toContain('<StyledQRCode value={whatsappLink}');
   });
 });

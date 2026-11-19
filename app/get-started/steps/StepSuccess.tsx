@@ -61,8 +61,8 @@ export function StepSuccess({
   const promotion = getPromotionGuidance(category, selectedCapabilities, safeWaLink);
 
   useEffect(() => {
-    import('qrcode.react').then(mod => {
-      qrRef.current = { SVG: mod.QRCodeSVG, Canvas: mod.QRCodeCanvas };
+    import('@/components/ui/StyledQRCode').then(mod => {
+      qrRef.current = { SVG: mod.StyledQRCode, Canvas: mod.StyledQRCode };
       setQrLoaded(true);
     }).catch(() => {});
   }, []);
@@ -162,6 +162,8 @@ export function StepSuccess({
                       value: qrValue,
                       size: 512,
                       level: 'M',
+                      renderAs: 'canvas',
+                      resolution: 1024,
                     })}
                   </div>
                 </>

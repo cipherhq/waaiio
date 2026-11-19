@@ -7,7 +7,7 @@ import { CONTRACT_TEMPLATES, COMMON_QUESTIONS, fillTemplatePlaceholders, generat
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
 import { getCountryList } from '@/lib/countries';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { SortableTh } from '@/components/dashboard/SortableTh';
 import { sortTime, useTableSort } from '@/lib/table-sort';
@@ -783,7 +783,7 @@ export default function ContractsPage() {
                   <div className="mt-3 flex items-start gap-4">
                     {/* QR Code */}
                     <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm">
-                      <QRCodeSVG value={signUrl} size={100} level="M" />
+                      <StyledQRCode value={signUrl} size={100} level="M" />
                     </div>
 
                     {/* Link + Actions */}

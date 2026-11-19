@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import {
   type LaunchRegion,
   type TimeLeft,
@@ -293,7 +293,7 @@ function LaunchModal({
               {/* QR code */}
               <div className="flex flex-col items-center gap-2">
                 <div className="rounded-2xl border-2 border-gray-100 bg-white p-3">
-                  <QRCodeSVG value={waLink} size={140} level="M" bgColor="#ffffff" fgColor="#1a1a2e" />
+                  <StyledQRCode value={waLink} size={140} level="M" bgColor="#ffffff" fgColor="#1a1a2e" />
                 </div>
                 <span className="text-[10px] text-gray-400">Scan with phone camera</span>
               </div>

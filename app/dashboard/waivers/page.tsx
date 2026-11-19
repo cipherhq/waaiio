@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { QRCodeCanvas } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -1035,7 +1035,7 @@ export default function WaiversPage() {
 
             <div className="mt-5 flex justify-center">
               <div className="rounded-xl border border-gray-100 p-4 dark:border-gray-700">
-                <QRCodeCanvas
+                <StyledQRCode
                   value={`${appUrl}/w/${qrModal.token}`}
                   size={220}
                   level="H"
@@ -1114,10 +1114,12 @@ export default function WaiversPage() {
 
             {/* Hidden high-res QR for download */}
             <div id="waiver-qr-download" className="hidden">
-              <QRCodeCanvas
+              <StyledQRCode
                 value={`${appUrl}/w/${qrModal.token}`}
                 size={600}
                 level="H"
+                renderAs="canvas"
+                resolution={1200}
               />
             </div>
 

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 
 import { useEffect, useState, useCallback } from 'react';
-import { QRCodeCanvas } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { useBusiness, useDashboard } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
@@ -312,7 +312,7 @@ export default function GivingPage() {
                 <p className="text-xs font-semibold text-brand uppercase">Share {cat.name}</p>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
                   <div id={`giving-qr-${cat.id}`} role="img" aria-label={`QR code for giving to ${cat.name}`} className="shrink-0 self-start rounded bg-white p-1.5 shadow-sm">
-                    <QRCodeCanvas value={link} size={120} level="H" />
+                    <StyledQRCode value={link} size={120} level="H" renderAs="canvas" resolution={1024} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-600 dark:text-gray-400">Scanning or tapping opens WhatsApp and starts giving to {cat.name}. Members only enter the amount.</p>

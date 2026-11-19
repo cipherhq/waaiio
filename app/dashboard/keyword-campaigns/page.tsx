@@ -5,7 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { useRouter } from 'next/navigation';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { buildMerchantCampaignLink } from '@/lib/url';
 import { SortableTh } from '@/components/dashboard/SortableTh';
@@ -807,8 +807,8 @@ export default function KeywordCampaignsPage() {
               {/* Share tools — uses permanent campaign link */}
               {campaign.is_active && (
                 <div className="mt-3 flex items-center gap-3 rounded-lg bg-gray-50 dark:bg-gray-700/30 p-3">
-                  <div className="shrink-0 rounded bg-white p-1">
-                    <QRCodeSVG value={getCampaignLink(campaign.id)} size={56} level="M" />
+                  <div className="shrink-0 rounded bg-white">
+                    <StyledQRCode value={getCampaignLink(campaign.id)} size={72} level="M" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] font-semibold text-gray-400 uppercase">Permanent Campaign Link</p>

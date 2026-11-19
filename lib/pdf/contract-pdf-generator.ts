@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import QRCode from 'qrcode';
+import { styledQrPng } from '@/lib/qr/styled-qr-png';
 
 interface SignerEntry {
   signerName: string;
@@ -247,7 +247,7 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   // ── Verification QR Code ──
   if (data.verifyUrl) {
     try {
-      const qrBuffer = await QRCode.toBuffer(data.verifyUrl, { width: 100, margin: 1 });
+      const qrBuffer = await styledQrPng(data.verifyUrl, 400);
       const qrY = footerEndY + 20;
       if (qrY + 120 > doc.page.height - 20) {
         doc.addPage();

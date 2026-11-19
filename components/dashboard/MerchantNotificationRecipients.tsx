@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import { StyledQRCode } from '@/components/ui/StyledQRCode';
 
 type Channel = 'whatsapp' | 'email';
 type Event = 'sale' | 'payment' | 'appointment' | 'booking';
@@ -173,7 +173,7 @@ function RecipientManager({ businessId }: { businessId: string }) {
                     <p className="text-sm text-gray-700 dark:text-gray-200">The recipient can open this link on their phone or scan the QR code, then press <strong>Send</strong> in WhatsApp to agree to these business alerts. Either option works; they do not need both.</p>
                     <a href={invitation.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white">Open WhatsApp to confirm</a>
                     <button type="button" className={`${buttonClass} ml-2`} onClick={() => void act(async () => { await navigator.clipboard.writeText(invitation.url!); if (alive.current) setNotice('Confirmation link copied. Share it privately with this recipient.'); })}>Copy confirmation link</button>
-                    <details className="mt-3"><summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200">Show QR code</summary><div className="mt-3 inline-block rounded-lg bg-white p-3"><QRCodeSVG value={invitation.url} size={168} title={`Confirm alerts for ${recipient.label}`} /></div></details>
+                    <details className="mt-3"><summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200">Show QR code</summary><div className="mt-3 inline-block rounded-lg bg-white p-3"><StyledQRCode value={invitation.url} size={168} title={`Confirm alerts for ${recipient.label}`} /></div></details>
                     <p className="mt-2 text-xs text-gray-500">Expires {new Date(invitation.expires_at).toLocaleString()}. Scanning or opening alone does not activate alerts.</p>
                   </div>}
                 </>}

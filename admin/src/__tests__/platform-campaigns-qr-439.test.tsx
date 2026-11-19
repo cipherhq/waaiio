@@ -2,11 +2,11 @@
  * Platform Campaigns — QR generation contract tests (#439)
  *
  * Proves:
- * - QR uses proven qrcode.react library (not a custom encoder)
+ * - QR uses the shared StyledQRCode (proven `qrcode` encoder, not a custom one)
  * - QR value is the canonical tracked URL (VITE_API_URL/go/<token>)
  * - QR does NOT encode direct wa.me URLs
  * - Copy Link and QR use the same tracked URL authority (getTrackedUrl)
- * - PNG download references the QRCodeCanvas element
+ * - PNG download references the StyledQRCode canvas element
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
@@ -18,9 +18,9 @@ const SRC = fs.readFileSync(
 );
 
 describe('Platform Campaigns — QR generation (#439)', () => {
-  it('imports QRCodeCanvas from qrcode.react (proven library)', () => {
-    expect(SRC).toContain("from 'qrcode.react'");
-    expect(SRC).toContain('QRCodeCanvas');
+  it('imports the shared StyledQRCode (proven qrcode encoder)', () => {
+    expect(SRC).toContain("from '@/components/StyledQRCode'");
+    expect(SRC).toMatch(/<StyledQRCode[\s\S]*?renderAs="canvas"/);
   });
 
   it('does NOT contain a custom generateQRMatrix function', () => {
@@ -31,9 +31,9 @@ describe('Platform Campaigns — QR generation (#439)', () => {
     expect(SRC).not.toContain('renderQRCode');
   });
 
-  it('QRCodeCanvas value is getTrackedUrl (canonical /go/<token>)', () => {
-    // The QRCodeCanvas component must use getTrackedUrl for its value prop
-    expect(SRC).toMatch(/QRCodeCanvas[\s\S]*?value=\{getTrackedUrl\(/);
+  it('StyledQRCode value is getTrackedUrl (canonical /go/<token>)', () => {
+    // The QR component must use getTrackedUrl for its value prop
+    expect(SRC).toMatch(/<StyledQRCode[\s\S]*?value=\{getTrackedUrl\(/);
   });
 
   it('getTrackedUrl produces canonical /go/<token> URL from VITE_API_URL', () => {
@@ -59,18 +59,18 @@ describe('Platform Campaigns — QR generation (#439)', () => {
   it('QR and Copy Link both derive from getTrackedUrl (single authority)', () => {
     // Count references to getTrackedUrl — QR value + Copy Link + display text
     const matches = SRC.match(/getTrackedUrl\(/g) || [];
-    // At least 3: QRCodeCanvas value, copyTrackedLink, and display text
+    // At least 3: StyledQRCode value, copyTrackedLink, and display text
     expect(matches.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('PNG download reads from the QRCodeCanvas element', () => {
-    // downloadQR must getElementById to find the canvas rendered by QRCodeCanvas
+  it('PNG download reads from the StyledQRCode canvas element', () => {
+    // downloadQR must getElementById to find the canvas rendered by StyledQRCode
     expect(SRC).toContain('getElementById');
     expect(SRC).toContain('toDataURL');
     expect(SRC).toContain('.png');
   });
 
-  it('QRCodeCanvas uses error correction level M', () => {
-    expect(SRC).toMatch(/QRCodeCanvas[\s\S]*?level="M"/);
+  it('StyledQRCode uses error correction level M', () => {
+    expect(SRC).toMatch(/<StyledQRCode[\s\S]*?level="M"/);
   });
 });

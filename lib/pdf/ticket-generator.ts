@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import QRCode from 'qrcode';
+import { styledQrPng } from '@/lib/qr/styled-qr-png';
 import { isWhiteLabel } from '@/lib/whitelabel';
 import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
 import { encodeCode128B } from './code128';
@@ -55,7 +55,6 @@ const CARD_RADIUS = 12;
 const STUB_W = 136;
 const PERF_X = CARD_X + STUB_W;
 const QR_BOX = 96;
-const QR_SIZE = 82;
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -322,14 +321,11 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     const qrBoxY = CARD_Y + 30;
     doc.roundedRect(qrBoxX, qrBoxY, QR_BOX, QR_BOX, 10).fillColor('#FFFFFF').fill();
     try {
-      const qrDataUrl = await QRCode.toDataURL(qrUrl, {
-        width: QR_SIZE * 3,
-        margin: 1,
-        color: { dark: BRAND_DARK, light: '#ffffff' },
-      });
-      const qrBuffer = Buffer.from(qrDataUrl.replace(/^data:image\/png;base64,/, ''), 'base64');
-      const qrOffset = (QR_BOX - QR_SIZE) / 2;
-      doc.image(qrBuffer, qrBoxX + qrOffset, qrBoxY + qrOffset, { width: QR_SIZE, height: QR_SIZE });
+      // The styled PNG has its own white quiet zone and corner frame, so it fills
+      // the box, inset just enough to stay inside the box's rounded corners.
+      const qrBuffer = await styledQrPng(qrUrl, QR_BOX * 4, { fgColor: BRAND_DARK });
+      const qrInset = 3;
+      doc.image(qrBuffer, qrBoxX + qrInset, qrBoxY + qrInset, { width: QR_BOX - qrInset * 2, height: QR_BOX - qrInset * 2 });
     } catch {
       doc.font('Helvetica').fontSize(6).fillColor(BRAND_DARK).text(qrUrl, qrBoxX + 6, qrBoxY + 6, { width: QR_BOX - 12 });
     }

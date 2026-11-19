@@ -15,14 +15,10 @@ const requireCjs = createRequire(import.meta.url);
 const Z = requireCjs('html5-qrcode/third_party/zxing-js.umd.js');
 
 const qrSpy = vi.hoisted(() => vi.fn());
-vi.mock('qrcode', async (importOriginal) => {
+vi.mock('@/lib/qr/styled-qr-png', async (importOriginal) => {
   const actual: any = await importOriginal();
-  const real = actual.default ?? actual;
   return {
-    default: {
-      ...real,
-      toDataURL: (text: string, o: unknown) => { qrSpy(text); return real.toDataURL(text, o); },
-    },
+    styledQrPng: (text: string, size: number, o: unknown) => { qrSpy(text); return actual.styledQrPng(text, size, o); },
   };
 });
 
