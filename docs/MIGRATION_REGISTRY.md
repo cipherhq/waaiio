@@ -425,3 +425,11 @@ schema application or deployment authority. Recheck collisions before SQL creati
 | 550 | fee_round_to_cent | claude/fee-round-to-cent-db | Reserved; not applied |
 
 Reserved 2026-11-18 after checking main through M548, open PR #1125 (M549) and local worktree and remote branch migration filenames. Owner decision 2026-11-18 (round the fee to the cent/kobo). Rewrites only the whole-unit fee statement in `bind_merchant_tax_fee_980`, `finalize_stripe_recurring_charge` and `finalize_refund_accounting_modern`, keeping schema, SECURITY DEFINER, search_path, owner and ACL. Applying it to staging or production needs separate Owner approval.
+
+### Reservation — secret confirmation code for property stays
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 552 | stay_confirmation_code | claude/stays-resend-link-099bfd | Reserved; not applied |
+
+Reserved 2026-11-18 after checking main through M550, open PR #1132 (M551) and local worktree and remote branch migration filenames. Follow-up to #1121 (Owner decision 2026-11-18, resend confirmation as a link). Adds `public.reservations.confirmation_code` (text NOT NULL, 32 random hex characters, format CHECK and UNIQUE) for the customer page `/stays/{code}`; no function, grant, RLS, policy or trigger change. Applying it to staging or production needs separate Owner approval, and must happen before the app code that reads the column is deployed.
