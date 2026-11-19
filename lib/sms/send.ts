@@ -28,7 +28,7 @@ export type BusinessSmsPurpose = 'campaign' | 'invite' | 'reminder' | 'notice';
 export type SmsSkipReason =
   | 'not_configured' | 'business_not_eligible' | 'not_sms_number' | 'other_country'
   | 'empty' | 'too_long' | 'suspended' | 'opted_out' | 'quiet_hours'
-  | 'insufficient_credit' | 'not_authorized';
+  | 'insufficient_credit' | 'not_authorized' | 'business_suspended';
 
 export type SmsOutcome =
   | { status: 'sent'; pages: number; priceMinor: number | null; currency: string | null }
@@ -69,11 +69,25 @@ async function settle(db: SupabaseClient, attemptId: string, outcome: 'charged' 
   }
 }
 
-/** Claim the send record. Returns the row id, or a duplicate/failed outcome. */
+/**
+ * Claim the send record. Returns the row id, or a duplicate/failed outcome.
+ * A key whose earlier try definitely failed (refused before sending, or
+ * refused by the provider; nothing was charged) can be claimed again, so
+ * "top up and send again" with the same request reaches only the people who
+ * did not get it. Accepted, sending and unknown keys are never sent again.
+ */
 async function claim(db: SupabaseClient, row: Record<string, unknown>): Promise<{ id: string } | SmsOutcome> {
   const { data, error } = await db.from('sms_sends').insert({ ...row, status: 'sending' }).select('id').single();
   if (!error && data) return { id: (data as { id: string }).id };
   if (error?.code === '23505') {
+    // Compare-and-set on status: only one retry can take a failed key back.
+    const { data: retried, error: retryError } = await db.from('sms_sends')
+      .update({ ...row, status: 'sending', attempt_id: null, error: null, price_minor: null, currency_code: null,
+        provider_message_id: null, provider_cost: null, provider_pages: null, updated_at: new Date().toISOString() })
+      .eq('idempotency_key', row.idempotency_key as string).eq('status', 'failed')
+      .select('id');
+    const again = !retryError && Array.isArray(retried) ? retried[0] as { id: string } | undefined : undefined;
+    if (again) return { id: again.id };
     const { data: prior } = await db.from('sms_sends').select('status').eq('idempotency_key', row.idempotency_key as string).maybeSingle();
     return { status: 'duplicate', previous: (prior as { status?: string } | null)?.status || 'unknown' };
   }
@@ -104,7 +118,9 @@ export async function sendBusinessSms(db: SupabaseClient, opts: {
   if (!recipient) return { status: 'skipped', reason: 'not_sms_number' };
   if (recipient.country !== businessCountry) return { status: 'skipped', reason: 'other_country' };
 
-  const segments = countSmsSegments(opts.text);
+  // Waaiio-written texts (invites, reminders, notices) drop decorative emoji,
+  // so they stay plain SMS; a merchant's own campaign text is sent as written.
+  const segments = countSmsSegments(opts.text, { stripEmoji: opts.purpose !== 'campaign' });
   if (!segments.text) return { status: 'skipped', reason: 'empty' };
   if (segments.pages > MAX_SMS_PAGES) return { status: 'skipped', reason: 'too_long' };
 
@@ -150,14 +166,29 @@ export async function sendBusinessSms(db: SupabaseClient, opts: {
   try {
     await assertMessagingAllowed(opts.businessId);
   } catch {
-    return refuse('messaging_suspended', { status: 'failed', reason: 'messaging_suspended' });
+    return refuse('messaging_suspended', { status: 'skipped', reason: 'business_suspended' });
   }
 
   const { data: auth, error: authError } = await db.rpc('check_or_authorize_send', { p_attempt_id: attemptId });
+  if (authError) {
+    // The reservation may have committed even though the answer was lost.
+    // Release it now; the expiry job never releases a refused attempt.
+    const { data: current, error: readError } = await db.from('message_send_attempts')
+      .select('financial_disposition').eq('id', attemptId).maybeSingle();
+    const disposition = (current as { financial_disposition?: string } | null)?.financial_disposition;
+    if (readError || !disposition) {
+      // Unknown: leave the attempt pending so the expiry job can release it,
+      // and never re-send this key.
+      await updateSend(db, sendId, { status: 'unknown', error: 'authorization_error' });
+      return { status: 'skipped', reason: 'not_authorized' };
+    }
+    if (disposition === 'reserved') await settle(db, attemptId, 'released');
+    return refuse('authorization_error', { status: 'skipped', reason: 'not_authorized' });
+  }
   const result = auth as { authorized?: boolean; enforcement_required?: boolean; reason?: string; cost_minor?: number; currency_code?: string } | null;
-  if (authError || !result || result.authorized !== true) {
+  if (!result || result.authorized !== true) {
     // Gate off (enforcement_required false) is a refusal too: no reservation, no send.
-    const reason = authError ? 'authorization_error' : result?.enforcement_required === false ? 'gate_off' : result?.reason || 'not_authorized';
+    const reason = result?.enforcement_required === false ? 'gate_off' : result?.reason || 'not_authorized';
     const short = reason === 'insufficient_allowance_balance' || reason === 'spend_cap_exceeded';
     return refuse(reason, { status: 'skipped', reason: short ? 'insufficient_credit' : 'not_authorized' });
   }

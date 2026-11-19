@@ -15,6 +15,7 @@ const m = vi.hoisted(() => ({
   blocksMarketing: vi.fn(async () => false),
   blocksReminder: vi.fn(async () => false),
   assertAllowed: vi.fn(async () => undefined),
+  permission: vi.fn(async () => true),
 }));
 
 vi.mock('@/lib/sms/bulksms-ng', async (orig) => ({
@@ -28,11 +29,13 @@ vi.mock('@/lib/customer-suspension', async (orig) => ({
   blocksReminder: m.blocksReminder,
 }));
 vi.mock('@/lib/channels/send-guard', () => ({ assertMessagingAllowed: m.assertAllowed }));
+vi.mock('@/lib/merchants/recipient-permission', () => ({ hasRecipientPermission: m.permission }));
 
 import { countSmsSegments, prepareSmsText } from '@/lib/sms/segments';
 import { isQuietHours, smsPricePerPage, smsRateFromPricing, smsRecipient } from '@/lib/sms/pricing';
 import { sendBusinessSms, sendPlatformSms } from '@/lib/sms/send';
 import { deliverSmsBroadcast } from '@/lib/admin-broadcast/sms';
+import { estimateSmsCampaign, sendSmsCampaign } from '@/lib/sms/campaign';
 
 // ── A small in-memory Supabase double ──
 
@@ -42,6 +45,11 @@ function fakeDb(opts: {
   optOuts?: number;
   auth?: Row | null;
   authError?: boolean;
+  /** Successive check_or_authorize_send answers (then `auth`). */
+  authSequence?: Row[];
+  pricing?: Row;
+  /** financial_disposition read back after an authorization error (undefined = read fails). */
+  disposition?: string;
 } = {}) {
   const state = {
     smsSends: [] as Row[],
@@ -55,6 +63,7 @@ function fakeDb(opts: {
       state.rpc.push({ name, args });
       if (name === 'check_or_authorize_send') {
         if (opts.authError) return { data: null, error: { message: 'boom' } };
+        if (opts.authSequence?.length) return { data: opts.authSequence.shift(), error: null };
         return { data: opts.auth === undefined ? { authorized: true, cost_minor: 838, currency_code: 'NGN' } : opts.auth, error: null };
       }
       if (name === 'settle_message_cost') return { data: { settled: true }, error: null };
@@ -86,9 +95,9 @@ function fakeDb(opts: {
             return { data: { id: row.id }, error: null };
           }
           if (q.op === 'update') {
-            const row = state.smsSends.find(r => r.id === q.filters.id);
-            if (row) Object.assign(row, q.payload);
-            return { data: null, error: null };
+            const rows = state.smsSends.filter(r => Object.entries(q.filters).every(([k, v]) => r[k] === v));
+            for (const row of rows) Object.assign(row, q.payload);
+            return { data: rows.map(r => ({ id: r.id })), error: null };
           }
           return { data: state.smsSends.find(r => r.idempotency_key === q.filters.idempotency_key) ?? null, error: null };
         }
@@ -98,8 +107,14 @@ function fakeDb(opts: {
             state.attempts.push(row);
             return { data: { id: row.id }, error: null };
           }
+          if (q.op === 'select') {
+            return opts.disposition ? { data: { financial_disposition: opts.disposition }, error: null } : { data: null, error: { message: 'down' } };
+          }
           state.attemptUpdates.push({ ...q.payload, id: q.filters.id });
           return { data: null, error: null };
+        }
+        if (table === 'platform_config_versions') {
+          return { data: { config_snapshot: { messaging_pricing: opts.pricing ?? { NGN: { rates: { NG: { sms_cost: 698 } } } } } }, error: null };
         }
         if (table === 'admin_broadcast_recipients') {
           if (q.op === 'upsert') {
@@ -129,6 +144,8 @@ beforeEach(() => {
   m.blocksMarketing.mockResolvedValue(false);
   m.blocksReminder.mockResolvedValue(false);
   m.sendSms.mockResolvedValue({ sent: true, messageId: 'bsng-1', cost: 6.49, pages: 1 });
+  m.permission.mockResolvedValue(true);
+  m.assertAllowed.mockResolvedValue(undefined);
 });
 
 describe('page counting', () => {
@@ -145,6 +162,21 @@ describe('page counting', () => {
     expect(countSmsSegments(`ẹ${'a'.repeat(69)}`).pages).toBe(1);
     expect(countSmsSegments(`ẹ${'a'.repeat(70)}`).pages).toBe(2);
     expect(countSmsSegments(`ẹ${'a'.repeat(134)}`).pages).toBe(3);
+  });
+
+  it('USSD codes, links and stray symbols are sent exactly as typed; only WhatsApp marker pairs are removed', () => {
+    expect(prepareSmsText('Pay with *737*1*5000#')).toBe('Pay with *737*1*5000#');
+    expect(prepareSmsText('Shop: https://x.co/p?utm_source=wa&my_shop=1')).toBe('Shop: https://x.co/p?utm_source=wa&my_shop=1');
+    expect(prepareSmsText('5 * 3 = 15, a_b')).toBe('5 * 3 = 15, a_b');
+    expect(prepareSmsText('*Big sale* and _today_ only.')).toBe('Big sale and today only.');
+  });
+
+  it('Waaiio-written texts drop decorative emoji (plain SMS); accents always stay', () => {
+    const reminder = '⏰ *Reminder*\nParty 🎉 📅 Sat\n📍 Lekki\nSee you there! 🙏';
+    expect(prepareSmsText(reminder, { stripEmoji: true })).toBe('Reminder\nParty Sat\nLekki\nSee you there!');
+    expect(countSmsSegments(reminder, { stripEmoji: true }).unicode).toBe(false);
+    expect(countSmsSegments(reminder).unicode).toBe(true); // a merchant's own emoji are kept
+    expect(prepareSmsText('Ẹ ku ọjọ́ ìbí 🎂', { stripEmoji: true })).toBe('Ẹ ku ọjọ́ ìbí');
   });
 
   it('curly quotes and dashes never force Unicode; WhatsApp markers are removed', () => {
@@ -250,9 +282,23 @@ describe('sendBusinessSms (charged to messaging credit)', () => {
     expect(m.sendSms).not.toHaveBeenCalled();
   });
 
-  it('refuses on an authorization error', async () => {
-    const { db } = fakeDb({ authError: true });
-    expect((await sendBusinessSms(db, { ...base, idempotencyKey: 'k-auth-err' })).status).toBe('skipped');
+  it('an authorization error never sends; a reservation that committed anyway is released at once', async () => {
+    const reserved = fakeDb({ authError: true, disposition: 'reserved' });
+    expect(await sendBusinessSms(reserved.db, { ...base, idempotencyKey: 'k-auth-err' })).toEqual({ status: 'skipped', reason: 'not_authorized' });
+    expect(reserved.state.rpc.map(r => r.name)).toEqual(['check_or_authorize_send', 'settle_message_cost']);
+    expect(reserved.state.rpc[1].args.p_outcome).toBe('released');
+    expect(reserved.state.smsSends[0].status).toBe('failed');
+
+    const none = fakeDb({ authError: true, disposition: 'pending_authorization' });
+    await sendBusinessSms(none.db, { ...base, idempotencyKey: 'k-auth-err-2' });
+    expect(none.state.rpc.map(r => r.name)).toEqual(['check_or_authorize_send']);
+
+    // Cannot tell: the attempt stays pending for the expiry job, and the key is never re-sent.
+    const unknown = fakeDb({ authError: true });
+    await sendBusinessSms(unknown.db, { ...base, idempotencyKey: 'k-auth-err-3' });
+    expect(unknown.state.attemptUpdates).not.toContainEqual(expect.objectContaining({ status: 'failed_send' }));
+    expect(unknown.state.smsSends[0].status).toBe('unknown');
+    expect(await sendBusinessSms(unknown.db, { ...base, idempotencyKey: 'k-auth-err-3' })).toEqual({ status: 'duplicate', previous: 'unknown' });
     expect(m.sendSms).not.toHaveBeenCalled();
   });
 
@@ -300,6 +346,40 @@ describe('sendBusinessSms (charged to messaging credit)', () => {
     expect(state.rpc.filter(r => r.name === 'settle_message_cost')).toHaveLength(1);
   });
 
+  it('a key whose earlier try was refused can be sent again (top up, send again); nothing is texted twice', async () => {
+    const { db, state } = fakeDb({ authSequence: [{ authorized: false, reason: 'insufficient_allowance_balance' }] });
+    const key = 'campaign:r3:2348031234567';
+    expect(await sendBusinessSms(db, { ...base, idempotencyKey: key })).toEqual({ status: 'skipped', reason: 'insufficient_credit' });
+    expect(state.smsSends[0].status).toBe('failed');
+    expect((await sendBusinessSms(db, { ...base, idempotencyKey: key })).status).toBe('sent');
+    expect(state.smsSends).toHaveLength(1);
+    expect(state.smsSends[0]).toMatchObject({ status: 'accepted', attempt_id: 'attempt-2' });
+    expect(await sendBusinessSms(db, { ...base, idempotencyKey: key })).toEqual({ status: 'duplicate', previous: 'accepted' });
+    expect(m.sendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it('a key with an unknown outcome is never sent again', async () => {
+    m.sendSms.mockResolvedValueOnce({ sent: false, ambiguous: true });
+    const { db } = fakeDb();
+    await sendBusinessSms(db, { ...base, idempotencyKey: 'k-unknown-again' });
+    expect(await sendBusinessSms(db, { ...base, idempotencyKey: 'k-unknown-again' })).toEqual({ status: 'duplicate', previous: 'unknown' });
+    expect(m.sendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it('a business whose messaging is paused is skipped before anything is reserved or sent', async () => {
+    m.assertAllowed.mockRejectedValue(new Error('suspended'));
+    const { db, state } = fakeDb();
+    expect(await sendBusinessSms(db, { ...base, idempotencyKey: 'k-biz-sus' })).toEqual({ status: 'skipped', reason: 'business_suspended' });
+    expect(state.rpc).toHaveLength(0);
+    expect(m.sendSms).not.toHaveBeenCalled();
+  });
+
+  it('reminders are sent without decorative emoji (plain SMS, fewer pages)', async () => {
+    const { db } = fakeDb();
+    await sendBusinessSms(db, { ...base, purpose: 'reminder', text: 'See you tomorrow at Shop 🙏', idempotencyKey: 'k-emoji' });
+    expect(m.sendSms).toHaveBeenCalledWith(expect.objectContaining({ message: 'See you tomorrow at Shop', unicode: false }));
+  });
+
   it('SMS stays off until a registered sender name is configured', async () => {
     m.configured.mockReturnValue(false);
     const { db, state } = fakeDb();
@@ -310,6 +390,41 @@ describe('sendBusinessSms (charged to messaging credit)', () => {
   it('refuses a message longer than 10 pages', async () => {
     const { db } = fakeDb();
     expect(await sendBusinessSms(db, { ...base, text: 'a'.repeat(1531), idempotencyKey: 'k-long' })).toEqual({ status: 'skipped', reason: 'too_long' });
+  });
+});
+
+describe('merchant SMS campaigns: estimate and send', () => {
+  it('estimate: pages x price per page x recipients in the business country only', async () => {
+    const { db } = fakeDb();
+    const e = await estimateSmsCampaign(db, { businessCountry: 'NG', phones: ['08031234567', '+2348039999999', '+233201234567', '+14155550100'], message: 'a'.repeat(200), now: NOON_UTC });
+    expect(e).toMatchObject({ available: true, pages: 2, unicode: false, currency: 'NGN', pricePerPageMinor: 838, recipients: 2, notSmsNumbers: 2, totalMinor: 3352, quietHoursNow: false });
+  });
+
+  it('estimate: refuses unsupported countries, missing prices and a switched-off channel', async () => {
+    expect(await estimateSmsCampaign(fakeDb().db, { businessCountry: 'US', phones: [], message: 'x' })).toMatchObject({ available: false, problem: 'country_not_supported' });
+    expect(await estimateSmsCampaign(fakeDb({ pricing: { NGN: { rates: { NG: { '*': 500 } } } } }).db, { businessCountry: 'NG', phones: [], message: 'x' }))
+      .toMatchObject({ available: false, problem: 'not_priced' });
+    m.configured.mockReturnValue(false);
+    expect(await estimateSmsCampaign(fakeDb().db, { businessCountry: 'NG', phones: [], message: 'x' })).toMatchObject({ available: false, problem: 'not_configured' });
+  });
+
+  it('send: needs SMS or WhatsApp marketing consent, dedupes numbers, sums the charge', async () => {
+    m.permission.mockImplementation((async (_db: unknown, _b: unknown, phone: string, _p: unknown, channel: string) =>
+      phone === '2348031234567' ? channel === 'whatsapp' : phone === '2348032222222' ? channel === 'sms' : false) as never);
+    const { db } = fakeDb();
+    const r = await sendSmsCampaign(db, { businessId: 'biz-1', businessCountry: 'NG', requestId: 'r9', phones: ['08031234567', '+2348031234567', '08032222222', '08033333333'], message: 'Sale', now: NOON_UTC });
+    expect(r).toMatchObject({ sent: 2, chargedMinor: 1676, currency: 'NGN', skipped: { no_consent: 1 } });
+    expect(m.sendSms).toHaveBeenCalledTimes(2);
+  });
+
+  it('send: stops when credit runs out and counts the rest as not attempted; sending again reaches only them', async () => {
+    const { db } = fakeDb({ authSequence: [{ authorized: true, cost_minor: 838, currency_code: 'NGN' }, { authorized: false, reason: 'insufficient_allowance_balance' }] });
+    const phones = ['08031111111', '08032222222', '08033333333', '08034444444'];
+    const first = await sendSmsCampaign(db, { businessId: 'biz-1', businessCountry: 'NG', requestId: 'r10', phones, message: 'Sale', now: NOON_UTC });
+    expect(first).toMatchObject({ sent: 1, skipped: { insufficient_credit: 1, not_attempted: 2 } });
+    const again = await sendSmsCampaign(db, { businessId: 'biz-1', businessCountry: 'NG', requestId: 'r10', phones, message: 'Sale', now: NOON_UTC });
+    expect(again).toMatchObject({ sent: 3, alreadySent: 1 });
+    expect(m.sendSms).toHaveBeenCalledTimes(4);
   });
 });
 

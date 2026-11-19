@@ -111,9 +111,12 @@ export default function BroadcastsPage() {
   const smsOffered = business.country_code === 'NG' || business.country_code === 'GH';
   const [channel, setChannel] = useState<'whatsapp' | 'sms'>('whatsapp');
   const [smsEstimate, setSmsEstimate] = useState<SmsEstimateData | null>(null);
-  // One id per composed campaign, so a retry never texts anyone twice.
+  // One id per composed campaign (message + recipients). Sending it again
+  // reaches only the people who did not get it; nobody is texted or charged twice.
   const [smsRequestId, setSmsRequestId] = useState(() => crypto.randomUUID());
   const smsMode = smsOffered && channel === 'sms';
+  const smsCampaignKey = `${message.trim()}\n${contacts.map(c => c.phone).join(',')}`;
+  useEffect(() => { setSmsRequestId(crypto.randomUUID()); }, [smsCampaignKey]);
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
@@ -345,26 +348,35 @@ export default function BroadcastsPage() {
         const sentCount = Number(data.sent) || 0;
         const charged = data.currency && data.chargedMinor ? ` ${formatMinor(Number(data.chargedMinor), data.currency)} taken from your messaging credit.` : '';
         const skipped = data.skipped || {};
+        // Why the rest were not reached, and whether sending again can help.
+        const stopped = skipped.insufficient_credit ? 'Your messaging credit ran out. Top up, then press Send again: only the people who did not get it will be texted.'
+          : skipped.quiet_hours ? 'SMS campaigns are not sent between 8pm and 8am. Press Send again after 8am: only the people who did not get it will be texted.'
+          : skipped.business_suspended ? 'Messaging is paused for your business, so no more SMS can be sent. Contact support.'
+          : skipped.not_authorized ? 'SMS billing is not available right now, so nothing more was sent and nothing was charged. Try again later.'
+          : skipped.not_configured ? 'SMS is not switched on yet.'
+          : '';
         const notes = [
-          skipped.insufficient_credit || skipped.not_attempted ? 'Your messaging credit ran out; top up to reach the rest.' : '',
+          stopped,
           skipped.no_consent ? `${skipped.no_consent} had not opted in.` : '',
           skipped.opted_out ? `${skipped.opted_out} opted out.` : '',
-          data.alreadySent ? `${data.alreadySent} already got this SMS.` : '',
-          data.unknown ? `${data.unknown} could not be confirmed and were not charged.` : '',
+          skipped.suspended ? `${skipped.suspended} can't receive messages.` : '',
+          data.alreadySent ? `${data.alreadySent} already got this SMS and were not charged again.` : '',
+          data.unconfirmed || data.unknown ? `${Number(data.unconfirmed || 0) + Number(data.unknown || 0)} could not be confirmed; they were not charged and will not be texted again by this campaign.` : '',
         ].filter(Boolean).join(' ');
         const summary = `${sentCount} of ${Number(data.total) || contacts.length} SMS sent.${charged}${notes ? ` ${notes}` : ''}`;
-        if (sentCount > 0) {
+        const reachedEveryone = !stopped && !data.failed;
+        if (sentCount > 0 && reachedEveryone) {
           setSent(true);
           setSendSummary(summary);
           setMessage('');
-          setSmsRequestId(crypto.randomUUID());
           setTimeout(() => setSent(false), 3000);
         } else {
+          // Keep the message and request id, so Send again reaches only the rest.
           setSendError(summary);
         }
       }
     } catch {
-      setSendError('Network error. Check History before retrying.');
+      setSendError('Network error. You can press Send again: anyone who already got this SMS will not be texted or charged again.');
     }
     setSending(false);
   }
@@ -951,12 +963,12 @@ export default function BroadcastsPage() {
             {smsOffered && (
               <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
                 <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Send by</h2>
-                <div className="mt-3 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1" role="radiogroup" aria-label="Send by">
+                <div className="mt-3 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1" role="group" aria-label="Send by">
                   {(['whatsapp', 'sms'] as const).map(c => (
                     <button
                       key={c}
-                      role="radio"
-                      aria-checked={channel === c}
+                      type="button"
+                      aria-pressed={channel === c}
                       onClick={() => { setChannel(c); if (c === 'sms') setSendMode('now'); }}
                       className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${channel === c ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}
                     >

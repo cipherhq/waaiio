@@ -26,13 +26,25 @@ const PLAIN_EQUIVALENTS: Array<[RegExp, string]> = [
   [/[   ]/g, ' '],
 ];
 
+// WhatsApp bold/italic markers, only as WhatsApp reads them: a marker pair
+// around text, opening after a start/space/bracket and closing before an
+// end/space/punctuation. "*737*1*5000#" and "utm_source" are left alone.
+const WHATSAPP_MARKERS = /(^|[\s(])([*_~])(?=\S)([^\n]*?\S)\2(?=$|[\s.,!?;:)])/gm;
+// Decorative emoji and the joiners/selectors that build them.
+const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u200D\uFE0E\uFE0F\u20E3]/gu;
+
 /**
- * The text that is actually sent: WhatsApp bold/italic markers removed and
- * typographic punctuation turned into plain characters.
+ * The text that is actually sent: WhatsApp formatting markers removed and
+ * typographic punctuation turned into plain characters. With stripEmoji
+ * (Waaiio-written texts), decorative emoji are dropped too, so they never
+ * force Unicode pages; accented letters are always kept.
  */
-export function prepareSmsText(text: string): string {
-  let out = text.replace(/\*/g, '').replace(/_/g, '');
+export function prepareSmsText(text: string, opts: { stripEmoji?: boolean } = {}): string {
+  let out = text;
+  let previous: string;
+  do { previous = out; out = out.replace(WHATSAPP_MARKERS, '$1$3'); } while (out !== previous);
   for (const [re, plain] of PLAIN_EQUIVALENTS) out = out.replace(re, plain);
+  if (opts.stripEmoji) out = out.replace(EMOJI, '').replace(/^[ \t]+/gm, '').replace(/[ \t]{2,}/g, ' ');
   return out.trim();
 }
 
@@ -47,8 +59,8 @@ export interface SmsSegments {
   perPage: number;
 }
 
-export function countSmsSegments(raw: string): SmsSegments {
-  const text = prepareSmsText(raw);
+export function countSmsSegments(raw: string, opts: { stripEmoji?: boolean } = {}): SmsSegments {
+  const text = prepareSmsText(raw, opts);
   let gsmLength = 0;
   let unicode = false;
   for (const ch of text) {

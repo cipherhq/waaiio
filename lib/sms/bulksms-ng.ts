@@ -38,9 +38,10 @@ interface SendSmsOpts {
 export interface SendSmsResult {
   sent: boolean;
   /**
-   * True when the outcome is unknown (timeout, network error, provider 5xx):
-   * the message may have gone out, so it must not be retried or released as
-   * a definite failure.
+   * True when the outcome is unknown (timeout, network error, provider 5xx,
+   * unreadable 2xx): the message may have gone out, so it must never be
+   * retried. Merchant credit is still released (charged only on confirmed
+   * acceptance, #1131) and the attempt is flagged for reconciliation.
    */
   ambiguous?: boolean;
   error?: string;
@@ -127,6 +128,11 @@ export async function sendSms(opts: SendSmsOpts): Promise<SendSmsResult> {
     logger.withContext({ op: 'sms.send', provider: 'bulksms', httpStatus: response.status }).error('[BULKSMS] API error');
     return { sent: false, ambiguous: true, error: `SMS API error: ${response.status}` };
   }
+  if (response.ok && !payload) {
+    // A 2xx we cannot read: the message may have gone out.
+    logger.withContext({ op: 'sms.send', provider: 'bulksms', httpStatus: response.status }).error('[BULKSMS] Unreadable response');
+    return { sent: false, ambiguous: true, error: 'SMS provider response unreadable' };
+  }
   if (!response.ok || payload?.status !== 'success') {
     // BulkSMS: an error response means the message was not sent and not charged.
     const code = typeof payload?.code === 'string' && /^BSNG-\d{4}$/.test(payload.code) ? payload.code : null;
@@ -135,7 +141,7 @@ export async function sendSms(opts: SendSmsOpts): Promise<SendSmsResult> {
     return { sent: false, error: code ? `SMS refused (${code})` : `SMS API error: ${response.status}` };
   }
 
-  const data = payload.data || {};
+  const data = payload!.data || {};
   logger.info('[BULKSMS] SMS sent');
   return {
     sent: true,

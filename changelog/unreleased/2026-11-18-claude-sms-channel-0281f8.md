@@ -18,6 +18,11 @@
 - **Charge only on acceptance:** the credit is reserved before sending and charged only when BulkSMS accepts.
   - A refusal or an unknown outcome releases the reservation (the unknown outcome is flagged for reconciliation).
   - While the financial gate is off, merchant SMS is refused, never sent free.
+- **One SMS per person per campaign:** each recipient gets at most one SMS per campaign (request id).
+  - Pressing Send again after a top-up or after 8am reaches only the people whose earlier try definitely failed.
+  - Accepted or unconfirmed recipients are never texted or charged twice.
+- **Text is kept as written:** only WhatsApp `*bold*`/`_italic_` marker pairs are removed, so USSD codes like `*737*1*5000#` and links survive.
+- **Waaiio-written texts drop decorative emoji:** reminder, invite and notice texts no longer carry emoji, so they stay plain 160-character SMS and are not charged as Unicode. Accents are kept.
 - **BulkSMS client moved to API v2** (`lib/sms/bulksms-ng.ts`):
   - Unicode is used only when the text needs it;
   - it records the provider's real cost, page count and message id;

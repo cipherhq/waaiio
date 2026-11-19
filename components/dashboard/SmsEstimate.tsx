@@ -74,7 +74,7 @@ export function SmsEstimate({ businessId, message, phones, onChange }: {
 
   if (!message.trim()) return null;
   if (error) {
-    return <p className="mt-3 text-xs text-red-600 dark:text-red-400">We couldn&apos;t work out the SMS cost. Try again in a moment.</p>;
+    return <p role="alert" className="mt-3 text-xs text-red-600 dark:text-red-400">We couldn&apos;t work out the SMS cost. Try again in a moment.</p>;
   }
   if (!estimate) return <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">Working out the SMS cost…</p>;
 

@@ -8,7 +8,9 @@
  * - Only NG/GH businesses, only numbers in the business's own country.
  * - Only people who opted in to this business's marketing (SMS or WhatsApp
  *   consent); any opt-out, a suspension, or quiet hours (20:00-08:00) skips.
- * - Each recipient is sent at most once per request id.
+ * - Each recipient is sent at most once per request id. Sending the same
+ *   request again (after a top-up, say) reaches only the people whose
+ *   earlier try definitely failed; nobody is texted or charged twice.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
@@ -81,7 +83,10 @@ export interface SmsCampaignResult {
   currency: string | null;
   failed: number;
   unknown: number;
+  /** Already accepted for this request: not sent or charged again. */
   alreadySent: number;
+  /** Already started for this request with an unconfirmed outcome: not sent again. */
+  unconfirmed: number;
   skipped: Partial<Record<SmsSkipReason | 'no_consent' | 'not_attempted', number>>;
 }
 
@@ -94,7 +99,7 @@ export async function sendSmsCampaign(db: SupabaseClient, opts: {
   message: string;
   now?: Date;
 }): Promise<SmsCampaignResult> {
-  const result: SmsCampaignResult = { sent: 0, chargedMinor: 0, currency: null, failed: 0, unknown: 0, alreadySent: 0, skipped: {} };
+  const result: SmsCampaignResult = { sent: 0, chargedMinor: 0, currency: null, failed: 0, unknown: 0, alreadySent: 0, unconfirmed: 0, skipped: {} };
   const skip = (reason: keyof SmsCampaignResult['skipped'], n = 1) => { result.skipped[reason] = (result.skipped[reason] || 0) + n; };
   const seen = new Set<string>();
   const phones = opts.phones.map(p => smsRecipient(p, opts.businessCountry)?.phone ?? p);
@@ -107,20 +112,23 @@ export async function sendSmsCampaign(db: SupabaseClient, opts: {
     if (!consented) { skip('no_consent'); continue; }
     const outcome = await sendBusinessSms(db, {
       businessId: opts.businessId, phone, text: opts.message, purpose: 'campaign',
-      idempotencyKey: `campaign:${opts.requestId}:${phone}`, now: opts.now,
+      idempotencyKey: `campaign:${opts.businessId}:${opts.requestId}:${phone}`, now: opts.now,
     });
     if (outcome.status === 'sent') {
       result.sent++;
       result.chargedMinor += outcome.priceMinor ?? 0;
       result.currency = outcome.currency ?? result.currency;
-    } else if (outcome.status === 'duplicate') result.alreadySent++;
+    } else if (outcome.status === 'duplicate') {
+      if (outcome.previous === 'accepted') result.alreadySent++;
+      else result.unconfirmed++;
+    }
     else if (outcome.status === 'unknown') result.unknown++;
     else if (outcome.status === 'failed') result.failed++;
     else {
       skip(outcome.reason);
       // Every later recipient would be refused the same way: stop here.
       if (outcome.reason === 'insufficient_credit' || outcome.reason === 'not_authorized'
-        || outcome.reason === 'quiet_hours' || outcome.reason === 'not_configured') {
+        || outcome.reason === 'quiet_hours' || outcome.reason === 'not_configured' || outcome.reason === 'business_suspended') {
         const rest = new Set(phones.slice(i + 1).filter(p => !seen.has(p))).size;
         if (rest) skip('not_attempted', rest);
         break;

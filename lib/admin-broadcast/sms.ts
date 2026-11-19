@@ -162,7 +162,8 @@ export async function deliverSmsBroadcast(db: SupabaseClient, opts: {
     const { data: claimed, error: claimError } = await table()
       .upsert({ broadcast_id: opts.broadcastId, phone, status: 'sending' }, { onConflict: 'broadcast_id,phone', ignoreDuplicates: true })
       .select('id');
-    if (claimError || !claimed?.length) { summary.failed++; continue; }
+    // Already handled for this broadcast (or the claim could not be written): never send, outcome not known here.
+    if (claimError || !claimed?.length) { summary.unknown++; continue; }
 
     if (!first && interval > 0) await new Promise(r => setTimeout(r, interval));
     first = false;
