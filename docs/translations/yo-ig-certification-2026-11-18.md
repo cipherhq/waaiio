@@ -57,7 +57,7 @@ Applied as the Owner wrote them, with standard tone marks added:
 | Key | English | Yoruba (Owner) |
 |---|---|---|
 | `payment.received_processing` | Payment received! Your booking is being processed… tap *I've Paid* again | ✅ A ti rí owó tí ẹ san! A ń ṣiṣẹ́ lórí ìforúkọsílẹ̀ yín.<br><br>Ẹ óò gba ìjẹ́rìísí láìpẹ́. Bí kò bá dé, tẹ *Mo Ti San* lẹ́ẹ̀kan sí. |
-| `ordering.order_received`, `notification.catalog_order_received` | Order Received! | A Ti Gba Ọjà Tí O Rà! |
+| `ordering.order_received`, `notification.catalog_order_received` | Order Received! | A Ti Gba Ọjà Tí Ẹ Rà! |
 | `greeting.welcome_default` | Welcome! How can I help you today? | Ẹ káàbọ̀! Báwo ni mo ṣe lè ràn yín lọ́wọ́ lónìí? |
 | `booking.book_for_hint` | Type *myself* or *someone else*, or tap a button | Tẹ *fún ara mi* tàbí *ẹlòmíràn*, tàbí tẹ bọ́tìnì. |
 
