@@ -231,6 +231,67 @@ describe('Countries page — Messaging Financial Controls restored', () => {
     expect(configSaves()).toHaveLength(0);
   });
 
+  // A currency saved in the config whose market is not in the country list (hidden or removed)
+  // has no row on the form; a save must carry all of its values through unchanged.
+  const UNLISTED_GHS = {
+    ...SNAPSHOT,
+    messaging_pricing: {
+      ...SNAPSHOT.messaging_pricing,
+      GHS: { rates: { GH: { '*': 0, utility: 7, marketing: 40, service: 0 } }, default_cost_minor: 7, default_spend_cap_minor: 750000 },
+    },
+    trial_credit_minor_by_currency: { ...SNAPSHOT.trial_credit_minor_by_currency, GHS: 5000 },
+    subscription_included_minor_by_tier_currency: {
+      growth: { ...SNAPSHOT.subscription_included_minor_by_tier_currency.growth, GHS: 1500 },
+      business: { ...SNAPSHOT.subscription_included_minor_by_tier_currency.business, GHS: 4500 },
+    },
+  };
+
+  it('a currency with no listed country is saved unchanged, with the service replies rate at 0', async () => {
+    h.config.mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: UNLISTED_GHS }], error: null });
+    render(<Countries />); await loaded();
+    expect(screen.queryByLabelText('GHS spend cap')).toBeNull();
+    for (const code of ['NG', 'US']) {
+      fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
+      fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
+      fireEvent.change(input(`${code} service replies rate`), { target: { value: '0' } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText('Confirm operation');
+    const expectedPricing = {
+      NGN: { rates: { NG: { '*': 2100, utility: 5, marketing: 9, service: 0 } }, default_cost_minor: 2100, default_spend_cap_minor: 7500000 },
+      USD: { rates: { US: { '*': 1, utility: 5, marketing: 9, service: 0 } }, default_cost_minor: 1, default_spend_cap_minor: 5000 },
+      GHS: UNLISTED_GHS.messaging_pricing.GHS,
+    };
+    const params = body(requests('/prepare')[0]).params;
+    expect(params.messaging_pricing).toEqual(expectedPricing);
+    expect(params.trial_credit).toEqual(UNLISTED_GHS.trial_credit_minor_by_currency);
+    expect(params.subscription_included).toEqual(UNLISTED_GHS.subscription_included_minor_by_tier_currency);
+    fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize' }));
+    await screen.findByText('Messaging configuration saved successfully');
+    const saved = body(configSaves()[0]);
+    expect(JSON.stringify(saved.messagingPricing.GHS)).toBe(JSON.stringify(UNLISTED_GHS.messaging_pricing.GHS));
+    expect(saved.trialCreditMinorByCurrency.GHS).toBe(5000);
+    expect(saved.subscriptionIncludedMinorByTierCurrency.growth.GHS).toBe(1500);
+    expect(saved.subscriptionIncludedMinorByTierCurrency.business.GHS).toBe(4500);
+    expect(saved.messagingPricing.NGN.rates.NG.service).toBe(0);
+    expect(saved.messagingPricing.USD.rates.US.service).toBe(0);
+  });
+
+  it('with an unlisted currency present, a listed currency with an empty spend cap is still refused', async () => {
+    h.config.mockResolvedValue({ data: [{ id: 'synthetic-version-1', config_snapshot: UNLISTED_GHS }], error: null });
+    render(<Countries />); await loaded();
+    for (const code of ['NG', 'US']) {
+      fireEvent.change(input(`${code} utility rate`), { target: { value: '5' } });
+      fireEvent.change(input(`${code} marketing rate`), { target: { value: '9' } });
+    }
+    fireEvent.change(input('USD spend cap'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Messaging Config/ }));
+    await screen.findByText("USD: Spend Cap is required. Saving without it would remove that currency's message prices and credit.");
+    expect(requests('/prepare')).toHaveLength(0);
+    expect(configSaves()).toHaveLength(0);
+  });
+
   it('does not load before the country list arrives, and loads once for it', async () => {
     render(<Countries />); await loaded();
     expect(h.config).toHaveBeenCalledTimes(1);
