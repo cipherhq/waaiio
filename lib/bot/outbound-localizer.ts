@@ -82,17 +82,18 @@ async function localizeButtons(
   tCtx: TranslationContext,
   tOpts?: TranslateOptions,
 ): Promise<PromptButtons> {
-  return {
-    ...msg,
-    body: await translateBotResponse(msg.body, lang, tCtx, tOpts),
+  // Bot latency 2026-11-19: the parts of one message are translated together, not one by one.
+  const [body, footer, buttons] = await Promise.all([
+    translateBotResponse(msg.body, lang, tCtx, tOpts),
     // Footer is navigation commands — translate as Waaiio-owned UI
-    footer: msg.footer ? await translateBotResponse(msg.footer, lang, tCtx, tOpts) : msg.footer,
-    buttons: await Promise.all(msg.buttons.map(async b => ({
+    msg.footer ? translateBotResponse(msg.footer, lang, tCtx, tOpts) : Promise.resolve(msg.footer),
+    Promise.all(msg.buttons.map(async b => ({
       ...b,
       // ID is machine authority — NEVER translated
       title: await translateBotResponse(b.title, lang, tCtx, tOpts),
     }))),
-  };
+  ]);
+  return { ...msg, body, footer, buttons };
 }
 
 async function localizeList(
@@ -102,7 +103,8 @@ async function localizeList(
   tOpts?: TranslateOptions,
   waaiioOwnedItemTitles?: boolean,
 ): Promise<PromptList> {
-  const localizedItems = await Promise.all(msg.items.map(async item => ({
+  // Bot latency 2026-11-19: the parts of one message are translated together, not one by one.
+  const localizedItemsPromise = Promise.all(msg.items.map(async item => ({
     ...item,
     // postbackText is machine authority — NEVER translated
     title: waaiioOwnedItemTitles
@@ -113,8 +115,8 @@ async function localizeList(
       : item.description,
   })));
 
-  const localizedSections = msg.sections
-    ? await Promise.all(msg.sections.map(async section => ({
+  const localizedSectionsPromise = msg.sections
+    ? Promise.all(msg.sections.map(async section => ({
         ...section,
         title: await translateBotResponse(section.title, lang, tCtx, tOpts),
         items: await Promise.all(section.items.map(async item => ({
@@ -128,17 +130,17 @@ async function localizeList(
             : item.description,
         }))),
       })))
-    : msg.sections;
+    : Promise.resolve(msg.sections);
 
-  return {
-    ...msg,
-    title: await translateBotResponse(msg.title, lang, tCtx, tOpts),
-    body: await translateBotResponse(msg.body, lang, tCtx, tOpts),
-    buttonLabel: await translateBotResponse(msg.buttonLabel, lang, tCtx, tOpts),
-    footer: msg.footer ? await translateBotResponse(msg.footer, lang, tCtx, tOpts) : msg.footer,
-    items: localizedItems,
-    sections: localizedSections,
-  };
+  const [title, body, buttonLabel, footer, items, sections] = await Promise.all([
+    translateBotResponse(msg.title, lang, tCtx, tOpts),
+    translateBotResponse(msg.body, lang, tCtx, tOpts),
+    translateBotResponse(msg.buttonLabel, lang, tCtx, tOpts),
+    msg.footer ? translateBotResponse(msg.footer, lang, tCtx, tOpts) : Promise.resolve(msg.footer),
+    localizedItemsPromise,
+    localizedSectionsPromise,
+  ]);
+  return { ...msg, title, body, buttonLabel, footer, items, sections };
 }
 
 /**

@@ -8,7 +8,8 @@ import { translateBotResponse, type TranslationContext } from '@/lib/bot/transla
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
 import { getPoweredByInteractiveFooter } from '@/lib/whitelabel';
 import { paymentNextStepsMenuSent } from '@/lib/payments/next-steps-menu';
-import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
+import { getEffectiveLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
+import { createAiConfigReader, type AiConfigReader } from '@/lib/bot/ai-config-reader';
 import type { SupportedLanguage } from '@/lib/bot/languages';
 import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
 import {
@@ -68,6 +69,8 @@ export class FlowExecutor {
     private readonly sender: MessageSender,
     private readonly standalone: StandaloneService,
     private readonly intelligence: BotIntelligenceService,
+    /** ai_conversation_config read once per business for the inbound message (bot latency 2026-11-19). */
+    private readonly aiConfig: AiConfigReader = createAiConfigReader(supabase),
   ) {}
 
   /**
@@ -195,18 +198,15 @@ export class FlowExecutor {
 
     // Resolve language entitlement once per execute() — before any translation call.
     // Must precede step-not-found error path which also needs translation.
-    const configuredLangs = session.business_id
-      ? await loadBusinessLanguages(this.supabase, session.business_id)
-      : null;
+    // Bot latency 2026-11-19: the read starts now and is awaited together with the
+    // prechecks below, which do not depend on it.
+    const configuredLangsPromise = session.business_id
+      ? this.aiConfig.languages(session.business_id)
+      : Promise.resolve(null);
     const tier = business?.subscription_tier || 'free';
-    const entitlement = getEffectiveLanguages(tier, configuredLangs);
-    const translationCtx: TranslationContext = {
-      entitlement,
-      businessId: session.business_id || '',
-      supabase: this.supabase,
-    };
 
     if (!step) {
+      const entitlement = getEffectiveLanguages(tier, await configuredLangsPromise);
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
       const errLang = this.resolveCopyLang(session, entitlement);
       const errMsg = getFlowCopy(errLang, 'error.generic');
@@ -255,9 +255,15 @@ export class FlowExecutor {
       );
     }
 
-    // Wait for all required prechecks (not last_active_at)
-    await Promise.all(prechecks);
+    // Wait for all required prechecks (not last_active_at) and the language read
+    const [configuredLangs] = await Promise.all([configuredLangsPromise, ...prechecks]);
     _fmark('prechecks_done');
+    const entitlement = getEffectiveLanguages(tier, configuredLangs);
+    const translationCtx: TranslationContext = {
+      entitlement,
+      businessId: session.business_id || '',
+      supabase: this.supabase,
+    };
 
     // Check conversation limit result
     if (!convLimitResult.allowed) {
@@ -785,7 +791,7 @@ export class FlowExecutor {
               // Check entitlement for static copy
               const langEntitlement = getEffectiveLanguages(
                 business?.subscription_tier || 'free',
-                await loadBusinessLanguages(this.supabase, session.business_id!),
+                await this.aiConfig.languages(session.business_id!),
               );
               const copyLang = effectiveLang && langEntitlement.allowedLanguages.includes(effectiveLang)
                 ? effectiveLang : 'en';
@@ -833,7 +839,7 @@ export class FlowExecutor {
       const effectiveLang = session.session_data._detected_language as string | undefined;
       const langEntitlement = getEffectiveLanguages(
         business?.subscription_tier || 'free',
-        await loadBusinessLanguages(this.supabase, session.business_id!),
+        await this.aiConfig.languages(session.business_id!),
       );
       const copyLang = effectiveLang && langEntitlement.allowedLanguages.includes(effectiveLang)
         ? effectiveLang : 'en';

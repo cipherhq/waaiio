@@ -48,7 +48,7 @@ vi.mock('@/lib/channels/send-guard', () => ({
   }),
 }));
 
-let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }> } = { businessId: null, suggestions: [] };
+let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }>; authority?: 'exact' | 'suggestion' } = { businessId: null, suggestions: [] };
 let mockReturningBusinesses: Array<{ id: string; name: string; bot_code: string }> = [];
 vi.mock('@/lib/bot/handlers/bot-code-detection', () => ({
   detectBotCode: vi.fn().mockResolvedValue(null),
@@ -456,7 +456,9 @@ describe('Stale null-business session fix', () => {
     const spyPlatformText = vi.spyOn(sender, 'sendPlatformText');
 
     // Detection resolves biz-S
-    mockDetectionResult = { businessId: 'biz-S', suggestions: [] };
+    // Exact bot-code match, as detectBotCodeWithSuggestions returns it in production (the
+    // removed businesses.whatsapp_phone_number_id lookup used to bind it here; bot latency 2026-11-19).
+    mockDetectionResult = { businessId: 'biz-S', suggestions: [], authority: 'exact' };
 
     const bizS = { id: 'biz-S', name: 'Suspended Biz', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'SUSBIZ', is_whitelabel: false };
 
@@ -510,7 +512,9 @@ describe('Stale null-business session fix', () => {
     const spyPlatformButtons = vi.spyOn(sender, 'sendPlatformButtons');
 
     // Detection resolves biz-A (not suspended)
-    mockDetectionResult = { businessId: 'biz-A', suggestions: [] };
+    // Exact bot-code match, as detectBotCodeWithSuggestions returns it in production (the
+    // removed businesses.whatsapp_phone_number_id lookup used to bind it here; bot latency 2026-11-19).
+    mockDetectionResult = { businessId: 'biz-A', suggestions: [], authority: 'exact' };
 
     const bizA = { id: 'biz-A', name: 'Active Biz', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'ACTBIZ', is_whitelabel: false };
 

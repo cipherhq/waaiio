@@ -90,7 +90,7 @@ describe('#1103 webhook: suspended customer', { timeout: 60_000 }, () => {
     }));
     vi.doMock('@/lib/channels/inbound-receipts', () => ({ recordInboundReceipt: vi.fn(async () => undefined) }));
     vi.doMock('@/lib/messaging/customer-message-guard', () => ({ installCustomerReplyGuard: () => ({ finish: async () => undefined }) }));
-    vi.doMock('@/lib/bot/bot.service', () => ({ BotService: class { handleMessage = handleMessage; setInboundLocation() {} } }));
+    vi.doMock('@/lib/bot/bot.service', () => ({ BotService: class { handleMessage = handleMessage; setInboundLocation() {} markSuspensionGated() {} } }));
     vi.doMock('@/lib/whatsapp-forms/webhook', async () => {
       const actual = await vi.importActual<typeof import('@/lib/whatsapp-forms/webhook')>('@/lib/whatsapp-forms/webhook');
       return { ...actual, handleNativeFormWebhook: nativeForm };

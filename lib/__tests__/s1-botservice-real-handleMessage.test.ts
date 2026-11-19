@@ -46,7 +46,7 @@ vi.mock('@/lib/channels/send-guard', () => ({
   }),
 }));
 
-let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }> } = { businessId: null, suggestions: [] };
+let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }>; authority?: 'exact' | 'suggestion' } = { businessId: null, suggestions: [] };
 vi.mock('@/lib/bot/handlers/bot-code-detection', () => ({
   detectBotCode: vi.fn().mockResolvedValue(null),
   detectBotCodeWithSuggestions: vi.fn().mockImplementation(async () => mockDetectionResult),
@@ -248,8 +248,10 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
       business: { id: 'biz-A', name: 'Biz A', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, is_whitelabel: false },
     });
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
-    // Send 'menu' — not a greeting, not a restart trigger, flows into capability selection handler
-    await bot.handleMessage('+234800', 'menu', 'text', 'pnid-1');
+    // Send 'menu' — not a greeting, not a restart trigger, flows into capability selection handler.
+    // The webhook supplies the dedicated channel's business (preResolvedBusinessId); there is no
+    // businesses.whatsapp_phone_number_id lookup in production (bot latency 2026-11-19).
+    await bot.handleMessage('+234800', 'menu', 'text', 'pnid-1', 'biz-A');
     // A is bound
     expect(sender.boundBusinessId).toBe('biz-A');
     // A authorization was evaluated through the actual flow (not generic fallback)
@@ -313,7 +315,8 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Configure detection to resolve biz-B when the recursive call sends bot_code 'SPAB'
-    mockDetectionResult = { businessId: 'biz-B', suggestions: [] };
+    // Exact bot-code match, as detectBotCodeWithSuggestions returns it in production.
+    mockDetectionResult = { businessId: 'biz-B', suggestions: [], authority: 'exact' };
 
     const bizB = { id: 'biz-B', name: 'Spa B', status: 'active', category: 'spa', subscription_tier: 'free', country_code: 'NG', metadata: {}, bot_code: 'SPAB', is_whitelabel: false };
     const newBSession = { id: 'sess-B', business_id: 'biz-B', current_step: 'select_capability', is_active: true, session_data: { capabilities: ['scheduling'] }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 };

@@ -24,7 +24,22 @@ const cache = new Map<string, { text: string; expiry: number }>();
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 /** @internal Test-only: clear the translation cache between test runs */
-export function _clearTranslationCache(): void { cache.clear(); }
+export function _clearTranslationCache(): void { cache.clear(); flagCache.clear(); }
+
+// Bot latency 2026-11-19: the translation flag is a remote PostHog call. It was made
+// for every string of every message (a list message has 4+). Each language's answer
+// is now reused for 60 seconds, so turning the flag off takes effect within a minute.
+const flagCache = new Map<string, { enabled: Promise<boolean>; expiry: number }>();
+const FLAG_CACHE_TTL = 60_000;
+
+function translationFlagEnabled(language: string): Promise<boolean> {
+  const hit = flagCache.get(language);
+  if (hit && hit.expiry > Date.now()) return hit.enabled;
+  const enabled = isFeatureEnabledServer(FLAGS.BOT_TRANSLATION_ENABLED, language)
+    .catch(err => { logger.warn('[TRANSLATE] Feature flag check failed (defaulting to enabled):', err); return true; });
+  flagCache.set(language, { enabled, expiry: Date.now() + FLAG_CACHE_TTL });
+  return enabled;
+}
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -94,10 +109,6 @@ export async function translateBotResponse(
   // Certified phrase-book copy is already in this language — send it as written.
   if (isPhraseBookText(language, text)) return text;
 
-  // Check feature flag (defaults to true if PostHog not configured)
-  const enabled = await isFeatureEnabledServer(FLAGS.BOT_TRANSLATION_ENABLED, language).catch(err => { logger.warn('[TRANSLATE] Feature flag check failed (defaulting to enabled):', err); return true; });
-  if (!enabled) return text;
-
   // Skip very short messages or messages that are mostly formatting/emoji
   if (text.length < 5) return text;
 
@@ -125,6 +136,11 @@ export async function translateBotResponse(
 
   // Only protected values (names, amounts, references) and symbols left: nothing to translate.
   if (!/\p{L}/u.test(templateText.replace(/__V\d+__/g, ''))) return text;
+
+  // Check feature flag (defaults to true if PostHog not configured). Checked after the
+  // pure skips above, which return the text unchanged whether the flag is on or off.
+  const enabled = await translationFlagEnabled(language);
+  if (!enabled) return text;
 
   const cacheKey = `${language}:${templateText}`;
   const cached = cache.get(cacheKey);

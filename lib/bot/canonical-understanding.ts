@@ -67,14 +67,18 @@ export async function understandCanonicalMessage(params: {
   timezone?: string;
   /** Regex only — the text is a selection or a typed answer, so the LLM fallback cannot help. */
   skipLLM?: boolean;
+  /** The caller's per-message reader of the business's configured languages (one read per message). */
+  loadConfiguredLanguages?: (businessId: string) => Promise<string[] | null>;
 }): Promise<CanonicalUnderstanding> {
-  const { text, businessId, businessCategory, subscriptionTier, supabase, timezone, skipLLM } = params;
+  const { text, businessId, businessCategory, subscriptionTier, supabase, timezone, skipLLM, loadConfiguredLanguages } = params;
 
   if (!text || text.length < 2) return EMPTY_RESULT;
 
   try {
     // 1. Language entitlement
-    const configuredLangs = await loadBusinessLanguages(supabase, businessId);
+    const configuredLangs = loadConfiguredLanguages
+      ? await loadConfiguredLanguages(businessId)
+      : await loadBusinessLanguages(supabase, businessId);
     const langEntitlement = getEffectiveLanguages(subscriptionTier, configuredLangs);
     const allowedNames = langEntitlement.allowedLanguages.map(c => LANGUAGE_NAMES[c] || c);
 

@@ -71,7 +71,7 @@ vi.mock('@/lib/channels/channel-resolver', () => ({
     }
   },
 }));
-vi.mock('@/lib/bot/bot.service', () => ({ BotService: class { handleMessage = (...args: unknown[]) => m.bot(...args); } }));
+vi.mock('@/lib/bot/bot.service', () => ({ BotService: class { handleMessage = (...args: unknown[]) => m.bot(...args); markSuspensionGated() {} } }));
 vi.mock('@/lib/bot/bot-intelligence', () => ({ BotIntelligenceService: class {} }));
 vi.mock('@/lib/bot/standalone.service', () => ({ StandaloneService: class {} }));
 
