@@ -1,5 +1,5 @@
 import { isMenuSelectionToken } from './flows/capability-selection.flow';
-import { isSharedConversation, repeatSessionData, persistDirectoryEntry, parseViewOptionsPostback, isNextStepsNavigation, viewOptionsPostback } from './flows/shared/navigation';
+import { isSharedConversation, repeatSessionData, persistDirectoryEntry, parseViewOptionsPostback, isNextStepsNavigation, viewOptionsPostback, type HistoryKind } from './flows/shared/navigation';
 import { matchBookForAnswer } from './flows/shared/book-for-answer';
 import { completePartyRsvp } from '@/lib/parties/rsvp-completion';
 import { currentAnswers } from '@/lib/parties/rsvp-questions';
@@ -1978,8 +1978,8 @@ export class BotService {
       // the button names when it is one of this customer's businesses; otherwise offer
       // the businesses they used before (the "home" picker).
       if (!businessId && isNextStepsNavigation(text)) {
-        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
-          (await getProfile())?.id || null, null, sharedConversation);
+        return this.resumeStaleNextSteps(text, from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, null, sharedConversation, viewOptionsTap?.historyKind);
       }
 
       // Bot code routing + profile lookup in parallel (independent queries)
@@ -4137,8 +4137,8 @@ export class BotService {
       // An old next-steps button (View Options, Book again, My orders…) is navigation,
       // never a search for its own id.
       if (isNextStepsNavigation(text)) {
-        return this.resumeStaleNextSteps(from, messageType, destinationPhone, viewOptionsTap?.businessId,
-          (await getProfile())?.id || null, session, sharedConversation);
+        return this.resumeStaleNextSteps(text, from, messageType, destinationPhone, viewOptionsTap?.businessId,
+          (await getProfile())?.id || null, session, sharedConversation, viewOptionsTap?.historyKind);
       }
 
       // Navigation commands → restart directory
@@ -5311,13 +5311,31 @@ export class BotService {
    * A next-steps button tapped with no business chat open (Owner bug 2026-11-18).
    * Goes back to the business the button names when it is one of this customer's
    * past businesses; otherwise to the past-business picker ("home"). Never searches.
+   * "My bookings / My orders / My giving" (pc_history:<kind>:<business>) opens this number's
+   * own history, sent as that business (Owner bug 2026-11-20); older bare buttons: picker.
    */
   private async resumeStaleNextSteps(
-    from: string, messageType: string, destinationPhone: string | undefined,
+    id: string, from: string, messageType: string, destinationPhone: string | undefined,
     namedBusinessId: string | undefined, userId: string | null,
     directorySession: BotSession | null,
     sharedConversation: { version: number } | null,
+    historyKind?: HistoryKind,
   ): Promise<void> {
+    if (id.toLowerCase() === 'pc_history') {
+      const owner = namedBusinessId && historyKind
+        ? (await this.findReturningCustomerBusinesses(from, userId, null)).find(b => b.id === namedBusinessId)
+        : undefined;
+      if (owner) {
+        // The reply is sent as the business the button came from; the history itself is
+        // looked up from this number's own profile, exactly as when the customer types it.
+        if (directorySession) await this.deactivateSession(directorySession.id);
+        if (this.messageSender.bindBusiness) this.messageSender.bindBusiness(owner.id);
+        const typed = historyKind === 'orders' ? 'my orders' : historyKind === 'giving' ? 'my giving' : 'my bookings';
+        return this.handleMessage(from, typed, messageType, destinationPhone);
+      }
+      if (directorySession) await this.deactivateSession(directorySession.id);
+      return this.handleMessage(from, 'home', messageType, destinationPhone);
+    }
     if (namedBusinessId) {
       const owner = (await this.findReturningCustomerBusinesses(from, userId, null)).find(b => b.id === namedBusinessId);
       // An open directory session is closed with the selection, as a directory pick does.

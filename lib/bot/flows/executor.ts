@@ -1,5 +1,5 @@
 import { checkoutProgress, forwardCheckoutProgress, withCheckoutReply, type CheckoutProgress } from '@/lib/messaging/checkout-reply-progress';
-import { isSharedConversation, DIRECTORY_ACTION, transactionNextSteps, viewOptionsPostback } from './shared/navigation';
+import { isSharedConversation, DIRECTORY_ACTION, transactionNextSteps, viewOptionsPostback, historyPostback, type HistoryKind } from './shared/navigation';
 import { redactPrivateLinkPath } from '@/lib/sentry-redact';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
@@ -1345,37 +1345,38 @@ export class FlowExecutor {
     let buttons: Array<{ id: string; title: string }>;
     // Names the business, so a tap after this session expires can go back to it.
     const viewOptions = viewOptionsPostback('pc_options', session.business_id || ctx.business?.id);
+    const history = (kind: HistoryKind) => historyPostback(kind, session.business_id || ctx.business?.id);
 
     const cl = ctx.copyLang;
     if (cap === 'giving' || cap === 'crowdfunding') {
       buttons = [
         { id: 'pc_again', title: getFlowCopy(cl, 'post.give_again') },
-        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_giving') },
+        { id: history('giving'), title: getFlowCopy(cl, 'post.my_giving') },
         { id: viewOptions, title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'ticketing') {
       buttons = [
         { id: 'pc_again', title: getFlowCopy(cl, 'post.buy_more_tickets') },
-        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_tickets') },
+        { id: history('bookings'), title: getFlowCopy(cl, 'post.my_tickets') },
         { id: viewOptions, title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'ordering') {
       buttons = [
         { id: 'pc_again', title: getFlowCopy(cl, 'post.order_again') },
-        { id: 'pc_history', title: getFlowCopy(cl, 'account.my_orders') },
+        { id: history('orders'), title: getFlowCopy(cl, 'account.my_orders') },
         { id: viewOptions, title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'reservation') {
       buttons = [
         { id: 'pc_again', title: getFlowCopy(cl, 'post.book_again') },
-        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_bookings') },
+        { id: history('bookings'), title: getFlowCopy(cl, 'post.my_bookings') },
         { id: viewOptions, title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else {
       // scheduling, appointment, payment, default
       buttons = [
         { id: 'pc_again', title: getFlowCopy(cl, 'post.book_again') },
-        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_bookings') },
+        { id: history('bookings'), title: getFlowCopy(cl, 'post.my_bookings') },
         { id: viewOptions, title: getFlowCopy(cl, 'nav.view_options') },
       ];
     }

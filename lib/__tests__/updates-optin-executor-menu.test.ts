@@ -131,7 +131,7 @@ describe('Chat next-steps menu: updates opt-in', () => {
     expect(sender.sendList).not.toHaveBeenCalled();
     expect(sender.sendButtons).toHaveBeenCalledTimes(1);
     const menu = sender.sendButtons.mock.calls[0][0];
-    expect(menu.buttons.map((b: { id: string }) => b.id)).toEqual(['pc_again', 'pc_history', `pc_options:${BIZ}`]);
+    expect(menu.buttons.map((b: { id: string }) => b.id)).toEqual(['pc_again', `pc_history:bookings:${BIZ}`, `pc_options:${BIZ}`]);
     expect(menu.footer).toBe('Powered by Waaiio.com');
     expect(menu.body).toBe('What would you like to do next?');
   });
@@ -147,7 +147,7 @@ describe('Chat next-steps menu: updates opt-in', () => {
     const sender = await complete(db);
     expect(sender.sendList).not.toHaveBeenCalled();
     expect(sender.sendButtons).toHaveBeenCalledTimes(1);
-    expect(sender.sendButtons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['pc_again', 'pc_history', `pc_options:${BIZ}`]);
+    expect(sender.sendButtons.mock.calls[0][0].buttons.map((b: { id: string }) => b.id)).toEqual(['pc_again', `pc_history:bookings:${BIZ}`, `pc_options:${BIZ}`]);
   });
 
   it('opted out of this business → no opt-in', async () => {
