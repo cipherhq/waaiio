@@ -232,6 +232,13 @@ suite('M556 weekly menu upload (real PostgreSQL)', () => {
     expect((await q(`SELECT has_function_privilege('authenticated', 'public.save_weekly_menu(uuid, date, jsonb)', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
   });
 
+  it('an ordinary item that is switched off or limited to some days is skipped and left exactly as it is', async () => {
+    const egusi = await insertProduct('Egusi', { is_active: false, available_days: '{5}' });
+    const result = await save(BIZ, THIS_MONDAY, [{ name: 'Egusi', price: 9, days: [3] }, { name: 'Jollof', price: 2600, days: [5] }]);
+    expect(result.skipped).toEqual(['Egusi']);
+    expect((await product('Egusi'))[0]).toMatchObject({ id: egusi, price: 1000, is_active: false, available_days: [5], weekly_menu_week: null });
+  });
+
   it('only touches the given business', async () => {
     await q(`INSERT INTO public.products (business_id, name, price, weekly_menu_week) VALUES ($1, 'Other dish', 10, $2)`, [OTHER, LAST_MONDAY]);
     await save(BIZ, THIS_MONDAY, [{ name: 'Jollof', price: 2600, days: [5] }]);

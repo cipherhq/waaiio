@@ -96,6 +96,8 @@ export default function WeeklyMenuUpload({ businessId, curr, setView, onSaved }:
   const toggleDay = (dish: Dish, day: number) => {
     const days = dish.days.includes(day) ? dish.days.filter(d => d !== day) : [...dish.days, day].sort((a, b) => a - b);
     update(dish.key, { days: days.length === 7 ? [] : days });
+    // The dish moves to another day group (remount): keep keyboard focus on the chip pressed.
+    setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-chip="${dish.key}-${day}"]`)?.focus(), 0);
   };
 
   const handleFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -220,7 +222,7 @@ export default function WeeklyMenuUpload({ businessId, curr, setView, onSaved }:
             {saved.hidden ? ` ${saved.hidden} dish${saved.hidden === 1 ? '' : 'es'} from your last menu ${saved.hidden === 1 ? 'is' : 'are'} now hidden from customers (not deleted).` : ''}
           </p>
           {saved.skipped && saved.skipped.length > 0 && (
-            <p>Already on your menu every day, so left as they are: {saved.skipped.join(', ')}.</p>
+            <p>Not added, because you already have an item with this name (left exactly as it is): {saved.skipped.join(', ')}. To change its days, edit that item.</p>
           )}
           <button onClick={() => setView('list')} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600">Back to products</button>
         </div>
@@ -264,7 +266,7 @@ export default function WeeklyMenuUpload({ businessId, curr, setView, onSaved }:
                           placeholder="Dish name" aria-label="Dish name" aria-invalid={!d.name.trim()}
                           className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
                         <span className="text-sm text-gray-500" aria-hidden="true">{curr}</span>
-                        <input type="number" min={0} value={d.price ?? ''} onChange={e => update(d.key, { price: e.target.value === '' ? null : Number(e.target.value) })}
+                        <input type="number" min={0} value={d.price ?? ''} onChange={e => update(d.key, { price: e.target.value === '' || Number(e.target.value) < 0 ? null : Number(e.target.value) })}
                           placeholder="Add price" aria-label={`Price for ${d.name || 'dish'}`} aria-invalid={d.price === null}
                           className={`w-24 rounded border px-2 py-1.5 text-sm dark:bg-gray-700 dark:text-gray-100 ${d.price === null ? 'border-red-500 bg-red-50 dark:border-red-500 dark:bg-red-900/20' : 'border-gray-200 dark:border-gray-600'}`} />
                         <button onClick={() => setDishes(prev => prev.filter(x => x.key !== d.key))} aria-label={`Remove ${d.name || 'dish'}`} className="min-h-[36px] min-w-[36px] text-red-400 hover:text-red-600">
@@ -272,9 +274,9 @@ export default function WeeklyMenuUpload({ businessId, curr, setView, onSaved }:
                         </button>
                       </div>
                       <div role="group" aria-label={`Days for ${d.name || 'dish'}`} className="flex flex-wrap gap-1">
-                        <button type="button" aria-pressed={d.days.length === 0} onClick={() => update(d.key, { days: [] })} className={chip(d.days.length === 0)}>Every day</button>
+                        <button type="button" aria-pressed={d.days.length === 0} data-chip={`${d.key}-0`} onClick={() => update(d.key, { days: [] })} className={chip(d.days.length === 0)}>Every day</button>
                         {WEEKDAY_SHORT.map((day, i) => (
-                          <button key={day} type="button" aria-pressed={d.days.includes(i + 1)} onClick={() => toggleDay(d, i + 1)} className={chip(d.days.includes(i + 1))}>{day}</button>
+                          <button key={day} type="button" data-chip={`${d.key}-${i + 1}`} aria-pressed={d.days.includes(i + 1)} onClick={() => toggleDay(d, i + 1)} className={chip(d.days.includes(i + 1))}>{day}</button>
                         ))}
                       </div>
                     </div>

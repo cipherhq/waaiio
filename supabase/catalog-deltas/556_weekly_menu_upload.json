@@ -1,0 +1,312 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.menu_photo_reads.business_id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "integer"
+   },
+   "after_sha256": "f6282d5dfbab4063a71d5ce7f9ac1632a87d79417d7dcacaced8e4a2e9509127",
+   "identity": "column:public.menu_photo_reads.read_count",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "date"
+   },
+   "after_sha256": "418ba098cfcaddf294a1be9a7dd3359c92ea1a38e2a8045f8bc6a220febb984a",
+   "identity": "column:public.menu_photo_reads.read_date",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "date"
+   },
+   "after_sha256": "ab83b5c2a104f307305d30f64e5eb7257fbb7d06eb9ccac9b2a79aa9824532df",
+   "identity": "column:public.products.weekly_menu_week",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE",
+    "validated": true
+   },
+   "after_sha256": "599b555b0623c7fac3c77b88ecb6c26d33d87e0c63320beb83966ecc4cf8d1a7",
+   "identity": "constraint:public.menu_photo_reads.menu_photo_reads_business_id_fkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (business_id, read_date)",
+    "validated": true
+   },
+   "after_sha256": "fa686d50f97a4e6c45ee3f2bf20c966e71bbeb85b09fffb5c16ba8dc50b0bbc6",
+   "identity": "constraint:public.menu_photo_reads.menu_photo_reads_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (read_count > 0)",
+    "validated": true
+   },
+   "after_sha256": "6a988789efd5cc72d69b4de2aba98150df4f130cbd596518b08a58dab76ca846",
+   "identity": "constraint:public.menu_photo_reads.menu_photo_reads_read_count_check",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (weekly_menu_week IS NULL OR EXTRACT(isodow FROM weekly_menu_week) = 1::numeric)",
+    "validated": true
+   },
+   "after_sha256": "b7b42fb71fdd0253d30ef7b1b7f4163ef3747832203c6a84b288e14ddc9b1814",
+   "identity": "constraint:public.products.products_weekly_menu_week_monday",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_read_date date, p_daily_limit integer",
+    "body_sha256": "fb0c938a1adb7054b572a17e47553fb9a199e0a1426e0c3da9931e52c3af4882",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "sql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "integer",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "664472f4eab89a5038d232833ec7addddd2d7c38970c800019ac2b76a61d6571",
+   "identity": "function:public.consume_menu_photo_read(p_business_id uuid, p_read_date date, p_daily_limit integer)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_business_id uuid, p_week_start date, p_items jsonb",
+    "body_sha256": "2653bca330af61d9f6fd11fe2ec897758c713d992eb10a1525d2ad711360cf2a",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "c86f564436ec6fec1ca7c9fa335f520084c16ac4cd6393fce6a351201ae16b9c",
+   "identity": "function:public.save_weekly_menu(p_business_id uuid, p_week_start date, p_items jsonb)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX menu_photo_reads_pkey ON public.menu_photo_reads USING btree (business_id, read_date)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "49a5761ed8e5fd95de27a6db5e53ac8efda223b4f8aa62c68a2c8fbbf4eda454",
+   "identity": "index:public.menu_photo_reads.menu_photo_reads_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX idx_products_weekly_menu ON public.products USING btree (business_id) WHERE (weekly_menu_week IS NOT NULL)",
+    "predicate": "(weekly_menu_week IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "132688492e1e682b1966d0e73b7f22c6d7be8d3388b7feba3bc0dfe0f24ef31b",
+   "identity": "index:public.products.idx_products_weekly_menu",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.menu_photo_reads",
+   "operation": "add"
+  }
+ ],
+ "migration": "556_weekly_menu_upload.sql",
+ "migration_sha256": "a7a2ab4a1b2e8707eea830213367e486475adebd8df34dd915f561410b4caf0e",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

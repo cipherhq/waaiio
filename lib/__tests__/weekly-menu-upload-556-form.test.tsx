@@ -76,6 +76,10 @@ describe('weekly menu upload screen', () => {
     fireEvent.change(screen.getByLabelText('Price for Zobo'), { target: { value: '500' } });
     // Move Salmon to Thursday too.
     fireEvent.click(within(screen.getByRole('group', { name: 'Days for Salmon' })).getByRole('button', { name: 'Thu' }));
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Thu')); // focus stays on the chip after the dish moves group
+    fireEvent.change(screen.getByLabelText('Price for Zobo'), { target: { value: '-5' } });
+    expect((screen.getByRole('button', { name: 'Save menu' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Price for Zobo'), { target: { value: '500' } });
     expect(screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent)).toEqual(['Every day this week (1)', 'Mon (1)', 'Tue, Thu (1)']);
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
@@ -99,7 +103,7 @@ describe('weekly menu upload screen', () => {
     fetchMock
       .mockResolvedValueOnce(json(200, allowance()))
       .mockResolvedValueOnce(json(200, { mode: 'weekly_menu', reads_left: 1, items: [{ name: 'Salmon', price: 5000, days: [2] }, { name: 'Typo', price: 1, days: [2] }] }))
-      .mockResolvedValueOnce(json(200, { success: true, created: 2, updated: 0, hidden: 0, skipped: [] }));
+      .mockResolvedValueOnce(json(200, { success: true, created: 2, updated: 0, hidden: 0, skipped: ['Egusi'] }));
     renderScreen();
     await screen.findByText('2 of 5 menu reads left today');
     await upload();
@@ -116,6 +120,7 @@ describe('weekly menu upload screen', () => {
     await screen.findByText(/Menu saved/);
     const body = JSON.parse(calls('/api/products/weekly-menu').find(([, i]) => i?.method === 'POST')![1]!.body as string);
     expect(body.items.map((i: { name: string; days: number[] }) => [i.name, i.days])).toEqual([['Salmon', [2]], ['Bass fish', [3]]]);
+    expect(screen.getByText(/Not added, because you already have an item with this name \(left exactly as it is\): Egusi/)).toBeTruthy();
   });
 
   it('no reads left on Free: upload is off, "upload again tomorrow" and an upgrade hint', async () => {
