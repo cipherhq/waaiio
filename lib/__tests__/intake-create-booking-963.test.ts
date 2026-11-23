@@ -188,3 +188,27 @@ describe('bot reschedule', () => {
     expect(intake.link).not.toHaveBeenCalled();
   });
 });
+
+describe('pre-booking answers reach the owner new-booking notification (#1151)', () => {
+  it('passes the answers, labelled with the current questions, to notifyOwnerNewBooking', async () => {
+    const notify = await import('@/lib/bot/flows/shared/notify-owner');
+    const create = await createStep();
+    const ctx = ctxFor({ _pbq_answers: { q_diet: 'No nuts', q_gone: 'Window seat' }, _pbq_index: 1 });
+    ctx.business!.metadata = { ...ctx.business!.metadata, pre_booking_questions: [{ id: 'q_diet', question: 'Any allergies?', required: false }] };
+    await create.prompt(ctx);
+    expect(notify.notifyOwnerNewBooking).toHaveBeenCalledWith(expect.objectContaining({
+      referenceCode: 'REF12',
+      preBookingAnswers: [
+        { label: 'Any allergies?', answer: 'No nuts' },
+        { label: 'Earlier question', answer: 'Window seat' },
+      ],
+    }));
+  });
+
+  it('passes no answers when the customer gave none', async () => {
+    const notify = await import('@/lib/bot/flows/shared/notify-owner');
+    const create = await createStep();
+    await create.prompt(ctxFor());
+    expect(notify.notifyOwnerNewBooking).toHaveBeenCalledWith(expect.objectContaining({ preBookingAnswers: [] }));
+  });
+});
