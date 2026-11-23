@@ -356,6 +356,25 @@ describe('#731: actual BookingsPage', () => {
     } else expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('M557: a table booking shows its package and minimum spend in the details; others show none', async () => {
+    pageFixture.bookings = [booking('table-one', 'table_reservation', {
+      deposit_amount: 650000, total_amount: 650000,
+      metadata: { duration_minutes: 120, table_offer: { payment_mode: 'full', minimum_spend: 500000, package: { id: 'g', name: 'Gold', includes: '2 Hennessy VS + 1 Moët', price: 650000 } } },
+    }), booking('table-two', 'table_reservation', { metadata: { duration_minutes: 90 } })];
+    await mount();
+    fireEvent.click(tab('Tables & Sections'));
+    expect(pageFixture.reads.find(r => r.table === 'bookings')?.select).toContain('metadata');
+    fireEvent.click(within(row('table-one')).getByText('table-one'));
+    const panel = await screen.findByTestId('table-offer');
+    expect(panel.textContent).toContain('Gold – ₦650,000');
+    expect(panel.textContent).toContain('2 Hennessy VS + 1 Moët');
+    expect(panel.textContent).toContain('Minimum spend: ₦500,000');
+    expect(panel.textContent).toContain('Paid in full when booking');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(within(row('table-two')).getByText('table-two'));
+    await waitFor(() => expect(screen.queryByTestId('table-offer')).toBeNull());
+  });
+
   it('lodging-primary plus tables still loads and displays both data sources', async () => {
     pageFixture.business.flow_type = 'reservation';
     pageFixture.business.category = 'hotel';

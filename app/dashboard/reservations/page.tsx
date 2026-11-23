@@ -73,6 +73,8 @@ interface Booking {
   service_id: string | null;
   refund_amount: number | null;
   guest_list: Array<{ name: string }> | null;
+  /** M557: table bookings keep the offer the customer chose (table_offer). */
+  metadata?: { table_offer?: { payment_mode?: string; minimum_spend?: number | null; package?: { name: string; includes: string; price: number } | null } } | null;
   flow_type: string | null;
   seating_resource_id: string | null;
   seating_resource_name: string | null;
@@ -482,7 +484,7 @@ export default function BookingsPage() {
       // Query bookings table (appointments + on-demand services)
       let query = supabase
         .from('bookings')
-        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id, seating_resources(name)')
+        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id, seating_resources(name), metadata')
         .eq('business_id', business.id)
         .neq('flow_type', 'payment')
         .order('date', { ascending: false })
@@ -1551,6 +1553,30 @@ export default function BookingsPage() {
                   })()
                 )}
               </div>
+
+              {/* Table package and minimum spend (M557) */}
+              {(() => {
+                const offer = (selected as Booking).metadata?.table_offer;
+                if (!offer) return null;
+                const cc = (business.country_code || 'NG') as CountryCode;
+                return (
+                  <div className="rounded-lg bg-purple-50 border border-purple-200 p-4 dark:bg-purple-900/20 dark:border-purple-800" data-testid="table-offer">
+                    <h3 className="text-xs font-semibold uppercase text-purple-700 dark:text-purple-300 mb-2">Package</h3>
+                    {offer.package ? (
+                      <>
+                        <p className="text-sm font-medium">{offer.package.name} – {formatCurrency(offer.package.price, cc)}</p>
+                        {offer.package.includes && <p className="text-sm text-gray-600 dark:text-gray-400">{offer.package.includes}</p>}
+                      </>
+                    ) : <p className="text-sm">No package</p>}
+                    {typeof offer.minimum_spend === 'number' && (
+                      <p className="text-sm mt-1">Minimum spend: {formatCurrency(offer.minimum_spend, cc)}</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      {offer.payment_mode === 'full' ? 'Paid in full when booking' : 'Deposit when booking; the rest is paid at the venue'}
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Special Requests */}
               {selected.special_requests && (

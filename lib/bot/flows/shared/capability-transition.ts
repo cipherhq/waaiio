@@ -27,6 +27,11 @@ const TABLE_RESERVATION_KEYS = [
   '_seating_available_days',
   '_seating_available_from',
   '_seating_available_to',
+  // M557 minimum spend and packages
+  '_seating_minimum_spend',
+  '_seating_payment_mode',
+  '_seating_packages',
+  '_seating_package_id',
 ] as const;
 
 /** Shared financial/selection keys that table reservations overwrite */
