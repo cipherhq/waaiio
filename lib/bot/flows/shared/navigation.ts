@@ -15,14 +15,26 @@ export const DIRECTORY_ACTION = { id: 'nav_directory', title: 'Search directory'
 // Older menus sent the bare ids ('menu', 'pc_options'); both forms are accepted.
 const VIEW_OPTIONS_POSTBACK = /^(menu|pc_options):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const STALE_NEXT_STEPS_IDS = /^(menu|pc_options|pc_done|pc_again|pc_history)$/i;
+// "My bookings / My orders / My giving" names its business and which list it opens, so a
+// tap after the chat has expired can show that history (Owner bug 2026-11-20).
+const HISTORY_POSTBACK = /^pc_history:(bookings|orders|giving):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+export type HistoryKind = 'bookings' | 'orders' | 'giving';
 
 /** Button id for a next-steps "View Options" tap that names its business. */
 export function viewOptionsPostback(id: 'menu' | 'pc_options', businessId: string | null | undefined): string {
   return businessId ? `${id}:${businessId}` : id;
 }
 
-/** Splits "menu:<businessId>" into the bare id and the business it names (unverified). */
-export function parseViewOptionsPostback(text: string): { id: string; businessId: string } | null {
+/** Button id for a next-steps "My bookings / My orders / My giving" tap that names its business. */
+export function historyPostback(kind: HistoryKind, businessId: string | null | undefined): string {
+  return businessId ? `pc_history:${kind}:${businessId}` : 'pc_history';
+}
+
+/** Splits "menu:<businessId>" / "pc_history:<kind>:<businessId>" into the bare id and the business it names (unverified). */
+export function parseViewOptionsPostback(text: string): { id: string; businessId: string; historyKind?: HistoryKind } | null {
+  const history = text.match(HISTORY_POSTBACK);
+  if (history) return { id: 'pc_history', businessId: history[2].toLowerCase(), historyKind: history[1].toLowerCase() as HistoryKind };
   const match = text.match(VIEW_OPTIONS_POSTBACK);
   return match ? { id: match[1].toLowerCase(), businessId: match[2].toLowerCase() } : null;
 }

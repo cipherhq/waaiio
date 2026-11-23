@@ -11,6 +11,8 @@
  * 5. With a chat still open, "pc_options:<id>" behaves exactly like "pc_options".
  * 6. With a directory search open (e.g. after the picker), the same taps are navigation too.
  * 7. On the shared number the re-entry binds the conversation to the named business.
+ * 8. "My bookings / orders / giving" naming its business opens this number's own history,
+ *    sent as that business (Owner bug 2026-11-20). A business this customer never used: picker.
  * No reply ever says "No businesses found".
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -407,5 +409,120 @@ describe('Next-steps button tapped after the chat expired', () => {
     expect(reentry?.[8]).toEqual({ conversationVersion: 4, businessId: TESTBIZ_ID });
     const select = (supabase.rpc as any).mock.calls.find((c: any[]) => c[0] === 'select_shared_conversation');
     expect(select?.[1]).toMatchObject({ p_channel_id: 'ch-shared', p_expected_version: 4 });
+  });
+
+  /** Profile lookup for this phone answers with `profileId` (null: no account yet). */
+  function withProfile(supabase: ReturnType<typeof createSupabase>, profileId: string | null) {
+    const base = supabase.from;
+    const profileLookups: unknown[][] = [];
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        const c: any = base('other');
+        const eq = c.eq;
+        c.eq = vi.fn().mockImplementation((...args: unknown[]) => { profileLookups.push(args); return eq(...args); });
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: profileId ? { id: profileId } : null, error: null });
+        c.single = vi.fn().mockResolvedValue({ data: profileId ? { id: profileId } : null, error: null });
+        return c;
+      }
+      return base(table);
+    });
+    return profileLookups;
+  }
+
+  it.each([
+    ['bookings', 'my bookings'], ['orders', 'my orders'], ['giving', 'my giving'],
+  ])('8a. no chat: "pc_history:%s:<business>" opens this number\'s own history as that business', async (kind, typed) => {
+    const supabase = createSupabase();
+    withProfile(supabase, 'profile-1');
+    const { bot, cloud, sender } = makeBot(supabase);
+    const spy = vi.spyOn(bot, 'handleMessage');
+
+    await bot.handleMessage(PHONE, `pc_history:${kind}:${TESTBIZ_ID}`, 'button');
+
+    neverSearched(cloud);
+    expect(sentBodies(cloud).some(s => s.body.includes("You've used these businesses before"))).toBe(false);
+    expect((sender as any).boundBusinessId).toBe(TESTBIZ_ID);
+    // Re-entered exactly as the customer typing it, with no business authority passed.
+    const reentry = spy.mock.calls.find(c => c[1] === typed);
+    expect(reentry).toBeDefined();
+    expect(reentry?.[4]).toBeUndefined();
+    expect(supabase._inserted.some(r => r.current_step === 'directory_search')).toBe(false);
+  });
+
+  it('8b. no chat: "My bookings" lists this number\'s own bookings, and the reply is sent', async () => {
+    const supabase = createSupabase();
+    withProfile(supabase, 'profile-1');
+    const { bot, cloud } = makeBot(supabase);
+
+    await bot.handleMessage(PHONE, `pc_history:bookings:${TESTBIZ_ID}`, 'button');
+
+    // The history session belongs to the profile resolved for this phone, never the button.
+    expect(supabase._inserted.find(r => r.current_step === 'my_bookings'))
+      .toMatchObject({ whatsapp_number: PHONE, user_id: 'profile-1', business_id: null });
+    const sent = sentBodies(cloud);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toContain("You don't have any upcoming bookings, tickets, or stays.");
+  });
+
+  it('8c. directory search open: "pc_history:bookings:<business>" closes it and opens the bookings', async () => {
+    const supabase = createSupabase(dirSession);
+    withProfile(supabase, 'profile-1');
+    const { bot, cloud } = makeBot(supabase);
+
+    await bot.handleMessage(PHONE, `pc_history:bookings:${TESTBIZ_ID}`, 'list');
+
+    neverSearched(cloud);
+    expect(sentBodies(cloud).some(s => s.body.includes("You've used these businesses before"))).toBe(false);
+    const deactivated = (supabase.rpc as any).mock.calls.some((c: any[]) => c[0] === 'deactivate_session_atomic' && c[1]?.p_session_id === 'sess-dir');
+    expect(deactivated).toBe(true);
+    expect(supabase._inserted.find(r => r.current_step === 'my_bookings')).toMatchObject({ user_id: 'profile-1', business_id: null });
+  });
+
+  it('8d. a "My bookings" button naming a business this customer never used is not trusted: picker', async () => {
+    const supabase = createSupabase();
+    withProfile(supabase, 'profile-1');
+    const { bot, cloud, sender } = makeBot(supabase);
+
+    await bot.handleMessage(PHONE, `pc_history:bookings:${STRANGER_ID}`, 'button');
+
+    neverSearched(cloud);
+    expect((sender as any).boundBusinessId).not.toBe(STRANGER_ID);
+    expect(supabase._inserted.some(r => r.current_step === 'my_bookings')).toBe(false);
+    const sent = sentBodies(cloud);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toContain("You've used these businesses before");
+  });
+
+  it('8e. no account for this number: says so and shows no one\'s history', async () => {
+    const supabase = createSupabase();
+    withProfile(supabase, null);
+    const { bot, cloud } = makeBot(supabase);
+
+    await bot.handleMessage(PHONE, `pc_history:bookings:${TESTBIZ_ID}`, 'button');
+
+    neverSearched(cloud);
+    const sent = sentBodies(cloud);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toContain("We don't have an account for this number yet");
+    expect(supabase._inserted.some(r => r.current_step === 'my_bookings')).toBe(false);
+  });
+
+  it('8f. with the chat still open, "pc_history:bookings:<business>" behaves exactly like "pc_history"', async () => {
+    const postCompletion = {
+      id: 'sess-pc', business_id: TESTBIZ_ID, current_step: 'post_completion', is_active: true, version: 2,
+      whatsapp_number: PHONE, user_id: 'profile-1', expires_at: new Date(Date.now() + 3600000).toISOString(),
+      session_data: { _post_completion_cap: 'scheduling' },
+    };
+    const supabase = createSupabase(postCompletion, testBizRecord);
+    const { bot, cloud } = makeBot(supabase);
+    const spy = vi.spyOn(bot, 'handleMessage');
+
+    await bot.handleMessage(PHONE, `pc_history:bookings:${TESTBIZ_ID}`, 'button');
+
+    neverSearched(cloud);
+    // The in-chat handler ran: no re-entry, no new session, the bookings list was answered.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(supabase._inserted).toHaveLength(0);
+    expect(sentBodies(cloud).some(s => s.body.includes("You don't have any upcoming bookings"))).toBe(true);
   });
 });
