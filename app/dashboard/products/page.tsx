@@ -27,9 +27,10 @@ import {
 } from './components/types';
 import ProductForm from './components/ProductForm';
 import { parseItemTax } from '@/lib/tax/settings';
-import { normaliseAvailability } from '@/lib/products/availability';
+import { hasAvailabilityLimit, normaliseAvailability } from '@/lib/products/availability';
 import ProductList from './components/ProductList';
 import BulkUpload from './components/BulkUpload';
+import WeeklyMenuUpload from './components/WeeklyMenuUpload';
 
 export default function ProductsPage() {
   const business = useBusiness();
@@ -485,6 +486,9 @@ export default function ProductsPage() {
       min_order_qty: form.min_order_qty || 1,
       // M555: every day / no dates is stored as NULL
       ...normaliseAvailability(form),
+      // M556: an item set to every day with no dates is an ordinary item again,
+      // so a later weekly-menu save leaves it alone.
+      ...(hasAvailabilityLimit(normaliseAvailability(form)) ? {} : { weekly_menu_week: null }),
     };
 
     // Only include variant_options if the column exists (migration 032)
@@ -828,6 +832,10 @@ export default function ProductsPage() {
         fileInputRef={fileInputRef}
       />
     );
+  }
+
+  if (view === 'weekly') {
+    return <WeeklyMenuUpload businessId={business.id} curr={curr} setView={setView} onSaved={fetchProducts} />;
   }
 
   // ═══════════════════════════════════════════

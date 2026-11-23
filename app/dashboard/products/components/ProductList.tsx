@@ -92,6 +92,12 @@ export default function ProductList({
             </button>
           )}
           <button
+            onClick={() => setView('weekly')}
+            className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
+          >
+            Upload this week&apos;s menu
+          </button>
+          <button
             onClick={() => setView('bulk')}
             className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           >
