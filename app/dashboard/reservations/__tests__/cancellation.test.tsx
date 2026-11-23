@@ -26,7 +26,10 @@ vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({
   channel: () => { const channel = { on: (_event: string, _filter: unknown, callback: () => void) => { state.refresh = callback; return channel; }, subscribe: () => channel }; return channel; }, removeChannel: vi.fn(),
 }) }));
 import BookingsPage from '../page';
-const booking = (id: string) => ({ id, business_id: 'biz', reference_code: `REF-${id}`, guest_name: `Guest ${id}`, date: '2026-11-20', time: '14:00', status: 'confirmed', flow_type: 'appointment', party_size: 1, total_amount: 0, guest_phone: '2348000000000', created_at: '2026-11-01T00:00:00Z', deposit_status: 'pending', staff_id: null });
+// Fixture dates sit 30+ days ahead: on the booking's own date the page also lists it under
+// "Today's Schedule", so a fixed date made these tests fail on that one day (2026-11-20).
+const daysAhead = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().split('T')[0];
+const booking = (id: string) => ({ id, business_id: 'biz', reference_code: `REF-${id}`, guest_name: `Guest ${id}`, date: daysAhead(30), time: '14:00', status: 'confirmed', flow_type: 'appointment', party_size: 1, total_amount: 0, guest_phone: '2348000000000', created_at: '2026-11-01T00:00:00Z', deposit_status: 'pending', staff_id: null });
 beforeEach(() => {
   state.business.capabilities = ['scheduling']; state.business.flow_type = 'appointment';
   state.rows = { bookings: [booking('one'), booking('two')] }; state.updates = []; state.zero = false;
@@ -60,7 +63,7 @@ describe('Bookings page cancellation entrypoints', () => {
   });
   it('requires a returned reservation row, uses captured kind and scopes the cancellation to its business', async () => {
     state.business.capabilities = ['reservation']; state.business.flow_type = 'reservation';
-    state.rows = { reservations: [{ ...booking('one'), check_in: '2026-11-20', check_out: '2026-11-21', nights: 1, guests: 1 }] };
+    state.rows = { reservations: [{ ...booking('one'), check_in: daysAhead(30), check_out: daysAhead(31), nights: 1, guests: 1 }] };
     state.zero = true;
     await ready();
     fireEvent.click(within(screen.getByText('Guest one').closest('tr')!).getByRole('button', { name: 'Cancel' }));
