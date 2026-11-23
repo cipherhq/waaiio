@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { availabilityLabel } from '@/lib/products/availability';
 import Image from 'next/image';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -66,6 +67,8 @@ export default function ProductList({
   setShowSyncHistory,
   orderStats,
 }: ProductListProps) {
+  // M555 label ("Mon, Tue", "this week"): merchant's own calendar date is enough here.
+  const todayLocal = new Date().toLocaleDateString('en-CA');
   return (
     <div>
       {/* Header */}
@@ -194,6 +197,9 @@ export default function ProductList({
                     <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{product.name}</h3>
                     {product.category && (
                       <span className="mt-0.5 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500 dark:text-gray-400">{product.category}</span>
+                    )}
+                    {availabilityLabel(product, todayLocal) && (
+                      <span className="mt-0.5 ml-1 inline-block rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">{availabilityLabel(product, todayLocal)}</span>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">

@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { hasAvailabilityLimit, isAvailableOn } from '@/lib/products/availability';
+import { businessToday } from '@/lib/products/availability-today';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { CatalogService, getCurrencyForCountry, assertDedicatedCatalogAccess } from '@/lib/channels/catalog';
@@ -59,13 +61,15 @@ export async function GET(request: NextRequest) {
       // Get active products
       const { data: products } = await supabase
         .from('products')
-        .select('id, name, description, price, image_url, category, stock_quantity, track_inventory, is_active')
+        .select('id, name, description, price, image_url, category, stock_quantity, track_inventory, is_active, available_days, available_from, available_until')
         .eq('business_id', biz.id)
         .eq('is_active', true)
         .is('deleted_at', null);
 
       if (!products || products.length === 0) continue;
 
+      // M555: items not on sale today (business timezone) are synced as out of stock
+      const today = products.some(hasAvailabilityLimit) ? await businessToday(supabase, biz.id, biz.country_code) : null;
       const currency = getCurrencyForCountry(biz.country_code || 'NG');
       const catalogService = new CatalogService(accessToken, wabaId);
 
@@ -77,7 +81,7 @@ export async function GET(request: NextRequest) {
         currency,
         image_url: p.image_url || undefined,
         url: `https://www.waaiio.com/b/${biz.id}`,
-        availability: (!p.track_inventory || (p.stock_quantity === null || p.stock_quantity > 0))
+        availability: (!p.track_inventory || (p.stock_quantity === null || p.stock_quantity > 0)) && (!today || isAvailableOn(p, today))
           ? 'in stock' as const
           : 'out of stock' as const,
       })));

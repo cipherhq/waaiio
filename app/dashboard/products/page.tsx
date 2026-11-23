@@ -27,6 +27,7 @@ import {
 } from './components/types';
 import ProductForm from './components/ProductForm';
 import { parseItemTax } from '@/lib/tax/settings';
+import { normaliseAvailability } from '@/lib/products/availability';
 import ProductList from './components/ProductList';
 import BulkUpload from './components/BulkUpload';
 
@@ -103,7 +104,7 @@ export default function ProductsPage() {
         .from('products')
         // NOTE: gallery_urls requires migration 462. Apply migration before deploying this code.
         // If the column doesn't exist, PostgREST returns 400 and the page shows an error state.
-        .select('id, name, description, price, image_url, gallery_urls, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
+        .select('id, name, description, price, image_url, gallery_urls, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at, available_days, available_from, available_until')
         .eq('business_id', business.id)
         .is('deleted_at', null)
         .order('sort_order', { ascending: true });
@@ -451,6 +452,10 @@ export default function ProductsPage() {
   // ── Save (create or update) ──
   async function handleSave() {
     if (!form.name.trim()) return;
+    if (form.available_from && form.available_until && form.available_from > form.available_until) {
+      alert('The "Until" date must be on or after the "From" date.');
+      return;
+    }
     let taxFields: ReturnType<typeof parseItemTax> | undefined;
     try { taxFields = form.tax_treatment === undefined ? undefined : parseItemTax(form); }
     catch (error) { alert(error instanceof Error ? error.message : 'Invalid tax settings'); return; }
@@ -478,6 +483,8 @@ export default function ProductsPage() {
       has_variants: form.has_variants,
       shipping_cost: form.shipping_cost || null,
       min_order_qty: form.min_order_qty || 1,
+      // M555: every day / no dates is stored as NULL
+      ...normaliseAvailability(form),
     };
 
     // Only include variant_options if the column exists (migration 032)

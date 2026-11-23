@@ -10,6 +10,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { isAvailableOn } from '@/lib/products/availability';
+import { availabilityTimezone, localDayIn } from '@/lib/products/availability-today';
 
 interface BusinessKnowledge {
   name: string;
@@ -116,7 +118,7 @@ export async function loadBusinessKnowledge(
     const [bizResult, servicesResult, productsResult, faqResult] = await Promise.all([
       supabase
         .from('businesses')
-        .select('name, description, category, address, phone, website, operating_hours, metadata, country_code, supports_delivery, delivery_radius_km')
+        .select('name, description, category, address, phone, website, operating_hours, metadata, country_code, timezone, supports_delivery, delivery_radius_km')
         .eq('id', businessId)
         .maybeSingle(),
       supabase
@@ -128,7 +130,7 @@ export async function loadBusinessKnowledge(
         .limit(20),
       supabase
         .from('products')
-        .select('name, price, stock_quantity, track_inventory')
+        .select('name, price, stock_quantity, track_inventory, available_days, available_from, available_until')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .order('sort_order')
@@ -144,6 +146,7 @@ export async function loadBusinessKnowledge(
 
     const biz = bizResult.data;
     if (!biz) return null;
+    const today = localDayIn(availabilityTimezone(biz.timezone, biz.country_code));
 
     const hours = biz.operating_hours as Record<string, { open: string; close: string; closed?: boolean }> | null;
 
@@ -192,7 +195,8 @@ export async function loadBusinessKnowledge(
         price: s.price,
         duration: s.duration_minutes,
       })),
-      products: (productsResult.data || []).map(p => ({
+      // M555: only items on sale today (business timezone)
+      products: (productsResult.data || []).filter(p => isAvailableOn(p, today)).map(p => ({
         name: p.name,
         price: p.price,
         inStock: p.track_inventory ? (p.stock_quantity || 0) > 0 : true,

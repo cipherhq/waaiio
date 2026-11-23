@@ -867,14 +867,18 @@ export async function matchProductsFromKeywords(
 ): Promise<ProductMatch[]> {
   if (keywords.length === 0) return [];
 
-  const { data: rawProducts } = await supabase
+  const { data: queriedProducts } = await supabase
     .from('products')
-    .select('id, name, price, has_variants, track_inventory, stock_quantity')
+    .select('id, name, price, has_variants, track_inventory, stock_quantity, available_days, available_from, available_until')
     .eq('business_id', businessId)
     .eq('is_active', true)
     .is('deleted_at', null)
     .order('sort_order')
     .limit(100);
+
+  // M555: only items on sale today (business timezone)
+  const { filterAvailableToday } = await import('@/lib/products/availability-today');
+  const rawProducts = await filterAvailableToday(supabase, businessId, queriedProducts || []);
 
   if (!rawProducts || rawProducts.length === 0) return [];
 
