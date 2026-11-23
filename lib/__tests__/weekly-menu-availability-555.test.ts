@@ -31,9 +31,12 @@ function makeSupabase(tables: Record<string, unknown>, opts: { count?: number } 
   const calls: string[] = [];
   const from = vi.fn((table: string) => {
     calls.push(table);
-    const result = () => Promise.resolve({ data: tables[table] ?? null, error: null, count: opts.count ?? (Array.isArray(tables[table]) ? (tables[table] as Rows[]).length : 0) });
+    let limit = Infinity; // honour .limit() like PostgREST, so a too-small limit shows up in the tests
+    const rows = () => (Array.isArray(tables[table]) ? (tables[table] as Rows[]).slice(0, limit) : tables[table] ?? null);
+    const result = () => Promise.resolve({ data: rows(), error: null, count: opts.count ?? (Array.isArray(tables[table]) ? (tables[table] as Rows[]).length : 0) });
     const b: Record<string, unknown> = {};
-    for (const m of ['select', 'in', 'is', 'order', 'limit', 'neq', 'not', 'gte', 'lte', 'eq', 'or']) b[m] = vi.fn(() => b);
+    for (const m of ['select', 'in', 'is', 'order', 'neq', 'not', 'gte', 'lte', 'eq', 'or']) b[m] = vi.fn(() => b);
+    b.limit = vi.fn((n: number) => { limit = n; return b; });
     b.single = vi.fn(result);
     b.maybeSingle = vi.fn(result);
     b.then = (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => result().then(res, rej);

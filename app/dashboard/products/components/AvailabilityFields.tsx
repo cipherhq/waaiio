@@ -19,7 +19,9 @@ export default function AvailabilityFields({ availableDays, availableFrom, avail
   const current = { available_days: days.length ? days : null, available_from: availableFrom || null, available_until: availableUntil || null };
 
   function toggleDay(day: number) {
-    const next = days.includes(day) ? days.filter(d => d !== day) : [...days, day].sort((a, b) => a - b);
+    // All seven days is shown as "Every day": tapping a day then starts a fresh pick.
+    const picked = everyDay ? [] : days;
+    const next = picked.includes(day) ? picked.filter(d => d !== day) : [...picked, day].sort((a, b) => a - b);
     onChange({ ...current, available_days: next.length ? next : null });
   }
 

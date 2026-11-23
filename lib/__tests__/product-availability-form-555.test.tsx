@@ -59,4 +59,11 @@ describe('AvailabilityFields', () => {
     expect(screen.getByRole('button', { name: 'Tue' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Every day' }).getAttribute('aria-pressed')).toBe('false');
   });
+
+  it('all seven days shows as Every day; tapping a day starts a fresh pick', () => {
+    render(<Harness initial={{ available_days: [1, 2, 3, 4, 5, 6, 7], available_from: null, available_until: null }} />);
+    expect(screen.getByRole('button', { name: 'Every day' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Mon' }));
+    expect(latest.available_days).toEqual([1]);
+  });
 });
