@@ -3842,7 +3842,7 @@ export const schedulingFlow: FlowDefinition = {
           const { data: committed, error: committedError } = await ctx.supabase.from('bookings')
             .select('deposit_amount, total_amount, metadata')
             .eq('id', booking.id).eq('business_id', ctx.business!.id).eq('bot_session_id', ctx.session.id)
-            .single();
+            .in('status', ['pending', 'confirmed', 'in_progress']).single();
           const committedPackageId = ((committed?.metadata as { table_offer?: { package?: { id?: string } | null } } | null)?.table_offer?.package?.id) ?? null;
           if (committedError || !committed || Number(committed.deposit_amount) !== totalDeposit
               || committedPackageId !== (tableOffer(d).selectedPackage?.id ?? null)) {
@@ -4185,11 +4185,15 @@ export const schedulingFlow: FlowDefinition = {
         // M557: the confirmation names the package and minimum spend (empty without an offer).
         const offerLines = d._is_table_reservation ? tableOfferLines(tableOffer(d), (ctx.business?.country_code || 'NG') as CountryCode) : [];
         if (offerLines.length > 0) {
-          // Above the reference line, so the footer stays last; at the end if a custom template has none.
+          // Above the reference line so the footer stays last; a custom template without one
+          // gets them above its "Powered by" footer, or at the end.
           const refAt = message.indexOf('\n🔑');
+          const footerAt = message.indexOf('\n\n_Powered by');
           message = refAt >= 0
             ? `${message.slice(0, refAt)}\n${offerLines.join('\n')}${message.slice(refAt)}`
-            : `${message}\n\n${offerLines.join('\n')}`;
+            : footerAt >= 0
+              ? `${message.slice(0, footerAt)}\n\n${offerLines.join('\n')}${message.slice(footerAt)}`
+              : `${message}\n\n${offerLines.join('\n')}`;
         }
 
         // Create notification

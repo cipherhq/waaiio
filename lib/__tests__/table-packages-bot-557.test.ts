@@ -320,6 +320,23 @@ describe('create_booking: amount, RPC terms, payment and confirmation', () => {
     expect(initializePayment).not.toHaveBeenCalled();
   });
 
+  it('a reused booking that is no longer active is never paid', async () => {
+    const { schedulingFlow } = await flows();
+    const ctx = context();
+    await pickTable(ctx, { ...vip, payment_mode: 'full' });
+    Object.assign(ctx.session.session_data, { booking_id: 'booking-vip', reference_code: 'VIP001' });
+    await choosePackage(ctx, `tpkg:${GOLD.id}`);
+    // A cancelled or expired booking is filtered out by status, so nothing comes back.
+    const bookings = query(null);
+    bookings.single = vi.fn(async () => ({ data: null, error: { code: 'PGRST116' } }));
+    vi.mocked(ctx.supabase.from).mockImplementation(((t: string) => t === 'bookings' ? bookings : query()) as any);
+    const out = text(await getStep(schedulingFlow, 'create_booking').prompt(ctx));
+    expect(bookings.in).toHaveBeenCalledWith('status', ['pending', 'confirmed', 'in_progress']);
+    expect(out).toContain('Your booking terms could not be verified');
+    const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
+    expect(initializePayment).not.toHaveBeenCalled();
+  });
+
   it('a reused booking that matches is paid at the committed amount', async () => {
     const { schedulingFlow } = await flows();
     const ctx = context();

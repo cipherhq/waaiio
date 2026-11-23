@@ -1572,7 +1572,8 @@ export default function BookingsPage() {
                       <p className="text-sm mt-1">Minimum spend: {formatCurrency(offer.minimum_spend, cc)}</p>
                     )}
                     <p className="text-xs text-gray-500 mt-1">
-                      {offer.payment_mode === 'full' ? 'Paid in full when booking' : 'Deposit when booking; the rest is paid at the venue'}
+                      {offer.payment_mode === 'full' ? 'Paid in full when booking'
+                        : Number((selected as Booking).deposit_amount) > 0 ? 'Deposit when booking; the rest is paid at the venue' : 'Paid at the venue'}
                     </p>
                   </div>
                 );
