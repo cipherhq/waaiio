@@ -26,6 +26,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
+import { filterAvailableToday } from '@/lib/products/availability-today';
 
 
 interface OptionGroup {
@@ -147,7 +148,7 @@ export const orderingFlow: FlowDefinition = {
 
         let query = ctx.supabase
           .from('products')
-          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options, min_order_qty')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options, min_order_qty, available_days, available_from, available_until')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .is('deleted_at', null)
@@ -160,7 +161,9 @@ export const orderingFlow: FlowDefinition = {
           query = query.in('id', matchedIds);
         }
 
-        const { data: rawProducts } = await query;
+        const { data: queriedProducts } = await query;
+        // M555: only items on sale today (business timezone)
+        const rawProducts = await filterAvailableToday(ctx.supabase, ctx.business.id, queriedProducts || [], ctx.business.country_code);
 
         // Build variant availability map for variable products
         const variableProductIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
@@ -361,15 +364,17 @@ export const orderingFlow: FlowDefinition = {
         const selectedCat = d._selected_category as string;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
-        const { data: rawProducts } = await ctx.supabase
+        const { data: queriedCatProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, available_days, available_from, available_until')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
           .eq('category', selectedCat)
           .is('deleted_at', null)
           .order('sort_order')
-          .limit(10);
+          .limit(100);
+        // M555: only items on sale today, then the same first 10 as before
+        const rawProducts = (await filterAvailableToday(ctx.supabase, ctx.business!.id, queriedCatProducts || [], ctx.business?.country_code)).slice(0, 10);
 
         // Variant availability for variable products
         const catVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
@@ -1335,14 +1340,16 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // All-at-once mode: show integrated catalog+checkout list
-        const { data: rawProducts } = await ctx.supabase
+        const { data: queriedAaoProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category, has_variants, track_inventory, stock_quantity')
+          .select('id, name, price, category, has_variants, track_inventory, stock_quantity, available_days, available_from, available_until')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('sort_order')
           .limit(100);
+        // M555: only items on sale today (business timezone)
+        const rawProducts = await filterAvailableToday(ctx.supabase, ctx.business!.id, queriedAaoProducts || [], ctx.business?.country_code);
 
         const aaoVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
         let aaoVarAvail = new Map<string, boolean>();
@@ -1449,14 +1456,16 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // All-at-once mode: product list
-        const { data: rawProducts } = await ctx.supabase
+        const { data: queriedAaoProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category, has_variants, track_inventory, stock_quantity')
+          .select('id, name, price, category, has_variants, track_inventory, stock_quantity, available_days, available_from, available_until')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('sort_order')
           .limit(100);
+        // M555: only items on sale today (business timezone)
+        const rawProducts = await filterAvailableToday(ctx.supabase, ctx.business!.id, queriedAaoProducts || [], ctx.business?.country_code);
 
         const cocVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
         let cocVarAvail = new Map<string, boolean>();

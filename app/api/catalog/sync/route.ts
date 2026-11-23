@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { hasAvailabilityLimit, isAvailableOn } from '@/lib/products/availability';
+import { businessToday } from '@/lib/products/availability-today';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { CatalogService, getCurrencyForCountry, assertDedicatedCatalogAccess } from '@/lib/channels/catalog';
@@ -54,7 +56,7 @@ export async function POST(request: NextRequest) {
   // Load products
   const { data: products } = await service
     .from('products')
-    .select('id, name, description, price, category, image_url, stock_quantity, is_active')
+    .select('id, name, description, price, category, image_url, stock_quantity, is_active, available_days, available_from, available_until')
     .eq('business_id', business_id)
     .eq('is_active', true);
 
@@ -62,6 +64,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No active products to sync' }, { status: 400 });
   }
 
+  // M555: items not on sale today (business timezone) are synced as out of stock
+  const today = products.some(hasAvailabilityLimit) ? await businessToday(service, business_id, biz.country_code) : null;
   const currency = getCurrencyForCountry(biz.country_code || 'NG');
   const catalog = new CatalogService(accessToken, wabaId);
 
@@ -80,7 +84,7 @@ export async function POST(request: NextRequest) {
     currency,
     image_url: p.image_url || undefined,
     category: p.category || undefined,
-    availability: (p.stock_quantity === null || p.stock_quantity > 0) ? 'in stock' as const : 'out of stock' as const,
+    availability: (p.stock_quantity === null || p.stock_quantity > 0) && (!today || isAvailableOn(p, today)) ? 'in stock' as const : 'out of stock' as const,
   })));
 
   // Store whatsapp_catalog_id on the business record

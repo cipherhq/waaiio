@@ -90,6 +90,11 @@ export interface Product extends ItemTaxFieldsValue {
   min_order_qty: number;
   variant_options?: OptionGroup[];
   catalog_synced_at?: string | null;
+  /** M555: ISO weekdays on sale (1 = Mon ... 7 = Sun); null/empty = every day */
+  available_days?: number[] | null;
+  /** M555: first / last day on sale (YYYY-MM-DD); null = no limit */
+  available_from?: string | null;
+  available_until?: string | null;
 }
 
 export interface CatalogSyncLog {
@@ -120,6 +125,9 @@ export const EMPTY_PRODUCT: Omit<Product, 'id'> = {
   shipping_cost: null,
   min_order_qty: 1,
   variant_options: [],
+  available_days: null,
+  available_from: null,
+  available_until: null,
 };
 
 export const EMPTY_VARIANT: ProductVariant = {

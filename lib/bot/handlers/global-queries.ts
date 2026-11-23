@@ -1,4 +1,6 @@
 import { repeatSessionData } from '../flows/shared/navigation';
+import { hasAvailabilityLimit, isAvailableOn, type LocalDay } from '@/lib/products/availability';
+import { businessToday } from '@/lib/products/availability-today';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import type { FlowExecutor } from '../flows/executor';
@@ -419,9 +421,10 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
       return { handled: true, session };
     }
     const cart = [];
+    let today: LocalDay | null = null;
     for (const item of items) {
       const { data: product } = await supabase.from('products')
-        .select('id, name, price, is_active, deleted_at, has_variants, min_order_qty, track_inventory, stock_quantity')
+        .select('id, name, price, is_active, deleted_at, has_variants, min_order_qty, track_inventory, stock_quantity, available_days, available_from, available_until')
         .eq('id', item.product_id).eq('business_id', session.business_id).maybeSingle();
       const { data: variant } = item.variant_id
         ? await supabase.from('product_variants').select('id, price, is_active, stock_quantity')
@@ -434,7 +437,9 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
         await sendText(from, 'This item needs its options selected again. Type *order* to review the current catalogue.');
         return { handled: true, session };
       }
-      if (!product?.is_active || product.deleted_at || item.quantity < (product.min_order_qty || 1) || (product.has_variants && !item.variant_id)
+      // M555: a reorder is a new order, so a dish not on sale today is unavailable.
+      if (product && hasAvailabilityLimit(product)) today ??= await businessToday(supabase, session.business_id);
+      if (!product?.is_active || product.deleted_at || (today && !isAvailableOn(product, today)) || item.quantity < (product.min_order_qty || 1) || (product.has_variants && !item.variant_id)
           || (item.variant_id && !variant?.is_active)
           || !Number.isInteger(item.quantity) || item.quantity <= 0
           || (variant && variant.stock_quantity !== null && variant.stock_quantity < item.quantity)

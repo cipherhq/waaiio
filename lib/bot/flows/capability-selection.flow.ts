@@ -1,4 +1,6 @@
 import { bookingHistoryStatus, bookingHistoryPages, mergeBookingHistory } from '../booking-history-status';
+import { AVAILABILITY_COLUMNS, type ProductAvailability } from '@/lib/products/availability';
+import { filterAvailableToday } from '@/lib/products/availability-today';
 import { FLOW_START_PREFIX, publishedFlowChoices, rememberFlowMenu, resolveFlowMenuSelection, type PublishedFlowChoice } from '../custom-flow/menu';
 import { isSharedConversation, DIRECTORY_ACTION } from './shared/navigation';
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
@@ -81,8 +83,13 @@ async function loadCapabilityMenuData(
     const checks = await Promise.all(userFacing.map(async (cap): Promise<[CapabilityId, boolean]> => {
       switch (cap) {
         case 'ordering': {
-          const { count } = await ctx.supabase.from('products').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true).is('deleted_at', null);
+          // M555: ordering shows only when something is on sale today.
+          const { data, count } = await ctx.supabase.from('products').select(AVAILABILITY_COLUMNS, { count: 'exact' })
+            .eq('business_id', businessId).eq('is_active', true).is('deleted_at', null).limit(500);
+          if (Array.isArray(data) && data.length > 0) {
+            const onSale = await filterAvailableToday(ctx.supabase, businessId, data as ProductAvailability[], ctx.business?.country_code);
+            return [cap, onSale.length > 0];
+          }
           return [cap, (count || 0) > 0];
         }
         case 'giving': {

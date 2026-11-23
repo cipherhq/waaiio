@@ -19,6 +19,7 @@ import {
   generateCombinations,
 } from './types';
 import ToggleRow from './ToggleRow';
+import AvailabilityFields from './AvailabilityFields';
 import OptionValueInput from './OptionValueInput';
 import { ItemTaxFields } from '@/components/dashboard/ItemTaxFields';
 
@@ -338,6 +339,14 @@ export default function ProductForm({
               </datalist>
             )}
           </div>
+
+          {/* Days available (M555) */}
+          <AvailabilityFields
+            availableDays={form.available_days}
+            availableFrom={form.available_from}
+            availableUntil={form.available_until}
+            onChange={next => setForm({ ...form, ...next })}
+          />
 
           {/* Shipping Cost */}
           <div>
