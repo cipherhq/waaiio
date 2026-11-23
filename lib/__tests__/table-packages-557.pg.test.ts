@@ -188,6 +188,19 @@ describe('M557 changed terms fail closed', () => {
     await expect(book(client, t, { expectedDeposit: 50000, packageId: gold.id, expectedPayable: 50000, expectedPackagePrice: 650000 })).rejects.toThrow('deposit_changed');
   });
 
+  it('a caller that names the offer but no expected deposit still gets the database amount, never its own', async () => {
+    const gold = pkg('Gold', 300000);
+    const t = await table({ deposit: 50000, minimumSpend: 200000, mode: 'full', packages: [gold] });
+    const args = [t.business, customer, t.id, nextDate()];
+    const withPayable = (await client.query(`SELECT * FROM book_table_atomic(p_bot_session_id=>NULL,p_business_id=>$1,p_user_id=>$2,p_seating_resource_id=>$3,
+      p_date=>$4::date,p_time=>'18:00',p_party_size=>4,p_deposit_amount=>1,p_total_amount=>1,p_expected_deposit=>NULL,
+      p_package_id=>$5::uuid,p_expected_payable=>300000,p_expected_minimum_spend=>200000,p_expected_package_price=>300000)`, [...args, gold.id])).rows[0];
+    const onlyPackage = (await client.query(`SELECT * FROM book_table_atomic(p_bot_session_id=>NULL,p_business_id=>$1,p_user_id=>$2,p_seating_resource_id=>$3,
+      p_date=>$4::date,p_time=>'18:00',p_party_size=>4,p_deposit_amount=>1,p_total_amount=>1,p_package_id=>$5::uuid)`, [t.business, customer, t.id, nextDate(), gold.id])).rows[0];
+    const rows = (await client.query('SELECT id,deposit_amount,total_amount FROM bookings WHERE id = ANY($1::uuid[]) ORDER BY id', [[withPayable.booking_id, onlyPackage.booking_id]])).rows;
+    expect(rows.map(r => [r.deposit_amount, r.total_amount])).toEqual([[300000, 300000], [300000, 300000]]);
+  });
+
   it('old app call on a table that charges more than the deposit is refused', async () => {
     const t = await table({ deposit: 50000, minimumSpend: 500000, mode: 'full' });
     await expect(book(client, t, { legacy: true, expectedDeposit: 50000 })).rejects.toThrow('deposit_changed');
@@ -248,6 +261,7 @@ describe('M557 package list and payment mode checks', () => {
     ['a text price', { ...pkg('Gold', 1), price: '650000' }],
     ['a price above 999,999,999', { ...pkg('Gold', 1), price: 1_000_000_000 }],
     ['an empty name', { ...pkg('Gold', 1), name: '   ' }],
+    ['a name of tabs and newlines', { ...pkg('Gold', 1), name: '\n\t ' }],
     ['a 61-character name', { ...pkg('Gold', 1), name: 'x'.repeat(61) }],
     ['includes over 300 characters', { ...pkg('Gold', 1), includes: 'x'.repeat(301) }],
     ['a missing includes', (({ includes: _i, ...rest }) => rest)(pkg('Gold', 1))],
@@ -266,6 +280,8 @@ describe('M557 package list and payment mode checks', () => {
   it('pay in full needs a minimum spend or a package; minimum spend must be positive', async () => {
     await expect(table({ mode: 'full' })).rejects.toThrow('seating_full_payment_needs_offer');
     await expect(table({ minimumSpend: 0 })).rejects.toThrow('seating_minimum_spend_positive');
+    await expect(table({ minimumSpend: 1_000_000_000 })).rejects.toThrow('seating_minimum_spend_positive');
+    expect((await table({ minimumSpend: 999_999_999 })).id).toBeTruthy();
     await expect(client.query("UPDATE seating_resources SET payment_mode='later' WHERE id=$1", [(await table({ minimumSpend: 1000 })).id])).rejects.toThrow('seating_payment_mode_valid');
   });
 });

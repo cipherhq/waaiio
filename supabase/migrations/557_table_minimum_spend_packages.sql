@@ -6,7 +6,7 @@
 -- with a minimum spend and bottle packages ("Gold: 2 Hennessy VS + 1 Moët").
 --
 -- What it changes, on public.seating_resources:
---   * minimum_spend INTEGER NULL (> 0): shown to the customer; NULL = none;
+--   * minimum_spend INTEGER NULL (1..999999999): shown to the customer; NULL = none;
 --   * payment_mode TEXT NOT NULL DEFAULT 'deposit': what the customer pays
 --     now. 'deposit' = the existing deposit_amount (the rest at the venue);
 --     'full' = the chosen package price, or the minimum spend when no
@@ -30,7 +30,9 @@
 -- M542; nothing ever ALTERed it). It works out the amount to pay now from
 -- the locked table row, refuses a changed amount, minimum spend or package
 -- price with deposit_changed, refuses an unknown package with
--- package_unavailable, and stores the offer in bookings.metadata.table_offer
+-- package_unavailable, commits that amount for every caller that passes an
+-- expected amount or a package (only the legacy unchecked call, which passes
+-- none, still trusts p_deposit_amount as in M542), and stores the offer in bookings.metadata.table_offer
 -- ({payment_mode, minimum_spend, package}). A caller without
 -- p_expected_payable (the app before this change) can still book every table
 -- that has no package and pays only the deposit; any other table is refused
@@ -54,7 +56,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
     WHERE conrelid = 'public.seating_resources'::regclass AND conname = 'seating_minimum_spend_positive') THEN
     ALTER TABLE public.seating_resources ADD CONSTRAINT seating_minimum_spend_positive
-      CHECK (minimum_spend IS NULL OR minimum_spend > 0);
+      CHECK (minimum_spend IS NULL OR (minimum_spend > 0 AND minimum_spend <= 999999999));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
     WHERE conrelid = 'public.seating_resources'::regclass AND conname = 'seating_payment_mode_valid') THEN
@@ -91,7 +93,7 @@ BEGIN
       OR NOT (v_e ->> 'id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       OR (v_e ->> 'id') = ANY (v_ids)
       OR jsonb_typeof(v_e -> 'name') IS DISTINCT FROM 'string'
-      OR length(btrim(v_e ->> 'name')) < 1 OR length(v_e ->> 'name') > 60
+      OR (v_e ->> 'name') !~ '\S' OR length(v_e ->> 'name') > 60
       OR jsonb_typeof(v_e -> 'includes') IS DISTINCT FROM 'string'
       OR length(v_e ->> 'includes') > 300
       OR jsonb_typeof(v_e -> 'price') IS DISTINCT FROM 'number'
@@ -285,7 +287,10 @@ BEGIN
 
   -- DB-authoritative values: flat deposit per reservation (Owner decision 2026-10-27),
   -- or the M557 amount to pay now.
-  v_committed_deposit := CASE WHEN p_expected_deposit IS NOT NULL
+  -- Any caller that names the offer (M557 parameters) gets the database
+  -- amount; only the legacy unchecked call trusts p_deposit_amount, as M542 did.
+  v_committed_deposit := CASE WHEN p_expected_deposit IS NOT NULL OR p_expected_payable IS NOT NULL
+      OR p_package_id IS NOT NULL
     THEN v_payable ELSE p_deposit_amount END;
   v_committed_duration := CASE WHEN p_expected_duration IS NOT NULL
     THEN v_resource.reservation_duration_minutes ELSE COALESCE(p_duration_minutes, v_resource.reservation_duration_minutes) END;

@@ -88,6 +88,8 @@ describe('Seating form: minimum spend and packages', () => {
     addPackage(1, '  Gold ', '650000', ' 2 Hennessy VS + 1 Moët ');
     addPackage(2, 'Silver', '400000');
     expect(fullRadio().disabled).toBe(false);
+    expect(screen.getByRole('group', { name: 'What the customer pays now' })).toBeTruthy();
+    expect(fullRadio().getAttribute('aria-describedby')).toBe('payment_mode_hint');
     fireEvent.click(fullRadio());
     save();
     await waitFor(() => expect(state.writes).toHaveLength(1));
@@ -144,6 +146,10 @@ describe('Seating form: minimum spend and packages', () => {
     fireEvent.click(fullRadio());
     fireEvent.click(screen.getByRole('button', { name: 'Remove package 1' }));
     expect(depositRadio().checked).toBe(true);
+    // Adding a package again does not switch back to pay in full by itself.
+    addPackage(1, 'Silver', '400000');
+    expect(depositRadio().checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove package 1' }));
     save();
     await waitFor(() => expect(state.writes).toHaveLength(1));
     expect(state.writes[0].payload).toMatchObject({ minimum_spend: null, payment_mode: 'deposit', packages: [] });

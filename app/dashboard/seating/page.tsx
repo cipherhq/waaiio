@@ -97,6 +97,11 @@ const defaultForm = {
   packages: [] as Array<{ id: string; name: string; includes: string; price: string }>,
 };
 
+/** Without a minimum spend or a package there is nothing to pay in full, so the choice goes back to the deposit. */
+function keepPaymentModeValid<T extends { minimum_spend: string; packages: unknown[]; payment_mode: 'deposit' | 'full' }>(f: T): T {
+  return Number(f.minimum_spend) > 0 || f.packages.length > 0 ? f : { ...f, payment_mode: 'deposit' };
+}
+
 /** The database's own error names for the M557 checks, shown as plain guidance. */
 function packageErrorMessage(message: string | undefined): string | null {
   if (message?.includes('seating_packages_too_many')) return `A table can have at most ${MAX_PACKAGES} packages.`;
@@ -357,8 +362,8 @@ export default function SeatingPage() {
             <legend className="px-1 text-sm font-medium">Minimum spend &amp; bottle packages (optional)</legend>
             <div>
               <label htmlFor="minimum_spend" className="block text-sm font-medium mb-1">Minimum spend ({country})</label>
-              <input id="minimum_spend" type="number" min={1} step={1000} value={form.minimum_spend} placeholder="No minimum spend"
-                onChange={e => setForm(f => ({ ...f, minimum_spend: e.target.value }))}
+              <input id="minimum_spend" type="number" min={1} step={1} value={form.minimum_spend} placeholder="No minimum spend"
+                onChange={e => setForm(f => keepPaymentModeValid({ ...f, minimum_spend: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
               <p className="text-xs text-gray-500 mt-1">
                 {Number(form.minimum_spend) > 0 ? `Customers see "${formatCurrency(Number(form.minimum_spend), country)} minimum spend" on WhatsApp.` : 'Leave empty for no minimum spend.'}
@@ -377,7 +382,7 @@ export default function SeatingPage() {
                         <input type="text" aria-label={`Package ${i + 1} name`} value={p.name} maxLength={60} placeholder="e.g. Gold"
                           onChange={e => setForm(f => ({ ...f, packages: f.packages.map(x => x.id === p.id ? { ...x, name: e.target.value } : x) }))}
                           className="col-span-2 px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
-                        <input type="number" aria-label={`Package ${i + 1} price`} min={1} step={1000} value={p.price} placeholder={`Price (${country})`}
+                        <input type="number" aria-label={`Package ${i + 1} price`} min={1} step={1} value={p.price} placeholder={`Price (${country})`}
                           onChange={e => setForm(f => ({ ...f, packages: f.packages.map(x => x.id === p.id ? { ...x, price: e.target.value } : x) }))}
                           className="px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
                       </div>
@@ -385,8 +390,8 @@ export default function SeatingPage() {
                         onChange={e => setForm(f => ({ ...f, packages: f.packages.map(x => x.id === p.id ? { ...x, includes: e.target.value } : x) }))}
                         className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
                       <div className="flex items-center justify-between">
-                        <p className="text-xs text-amber-600 dark:text-amber-400">{belowMinimum ? 'This package costs less than the minimum spend.' : ''}</p>
-                        <button type="button" onClick={() => setForm(f => ({ ...f, packages: f.packages.filter(x => x.id !== p.id) }))}
+                        <p className="text-xs text-amber-600 dark:text-amber-400" aria-live="polite">{belowMinimum ? 'This package costs less than the minimum spend.' : ''}</p>
+                        <button type="button" onClick={() => setForm(f => keepPaymentModeValid({ ...f, packages: f.packages.filter(x => x.id !== p.id) }))}
                           className="text-xs text-red-600 hover:underline">Remove package {i + 1}</button>
                       </div>
                     </div>
@@ -399,20 +404,24 @@ export default function SeatingPage() {
               )}
             </div>
 
-            <div>
-              <p className="block text-sm font-medium mb-1">What the customer pays now</p>
+            <fieldset>
+              <legend className="block text-sm font-medium mb-1">What the customer pays now</legend>
               <div className="space-y-1 text-sm">
                 <label className="flex items-center gap-2">
                   <input type="radio" name="payment_mode" checked={!paysInFull} onChange={() => setForm(f => ({ ...f, payment_mode: 'deposit' }))} />
                   Deposit only (the rest is paid at the venue)
                 </label>
                 <label className={`flex items-center gap-2 ${hasOffer ? '' : 'opacity-50'}`}>
-                  <input type="radio" name="payment_mode" checked={paysInFull} disabled={!hasOffer} onChange={() => setForm(f => ({ ...f, payment_mode: 'full' }))} />
+                  <input type="radio" name="payment_mode" checked={paysInFull} disabled={!hasOffer} aria-describedby="payment_mode_hint" onChange={() => setForm(f => ({ ...f, payment_mode: 'full' }))} />
                   Pay in full now (the package price, or the minimum spend if no package)
                 </label>
-                {!hasOffer && <p className="text-xs text-gray-500">Add a minimum spend or a package to ask for payment in full.</p>}
+                <p id="payment_mode_hint" className="text-xs text-gray-500">
+                  {hasOffer
+                    ? 'With pay in full, a customer who picks no package pays the minimum spend, or the deposit if there is no minimum spend.'
+                    : 'Add a minimum spend or a package to ask for payment in full.'}
+                </p>
               </div>
-            </div>
+            </fieldset>
           </fieldset>
 
           <div>

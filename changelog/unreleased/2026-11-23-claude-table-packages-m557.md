@@ -5,7 +5,7 @@
   - Migration `supabase/migrations/557_table_minimum_spend_packages.sql`:
     - `seating_resources` gains `minimum_spend`, `payment_mode` and `packages`, plus CHECKs and the trigger `private.seating_packages_valid` (SECURITY INVOKER).
     - `book_table_atomic` is re-created with four optional parameters. The old 18-argument signature is dropped and EXECUTE stays service_role only.
-    - The function works out the amount to pay now from the locked table row and refuses changed terms (`deposit_changed`) or another table's package (`package_unavailable`).
+    - The function works out the amount to pay now from the locked table row. It saves that amount for every caller that passes an expected amount or a package, and refuses changed terms (`deposit_changed`) or another table's package (`package_unavailable`).
     - The booking stores the offer in `bookings.metadata.table_offer`.
     - No RLS, policy or grant change.
   - `app/dashboard/seating/page.tsx`:
