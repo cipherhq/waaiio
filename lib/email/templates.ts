@@ -439,9 +439,11 @@ export function newBookingOwnerEmail(details: {
   quantity: number;
   quantityLabel: string;
   amount?: string;
+  preBookingAnswers?: Array<{ label: string; answer: string }>;
   dashboardUrl: string;
 }) {
   const { businessName, referenceCode, customerName, date, time, quantity, quantityLabel, amount, dashboardUrl } = details;
+  const answers = details.preBookingAnswers || [];
   return {
     subject: `New booking — ${referenceCode}`,
     html: wrap(`
@@ -453,7 +455,8 @@ export function newBookingOwnerEmail(details: {
         kv('Date', esc(date)) +
         kv('Time', esc(time)) +
         kv(esc(quantityLabel), String(quantity)) +
-        (amount ? kv('Amount', esc(amount)) : '')
+        (amount ? kv('Amount', esc(amount)) : '') +
+        answers.map(a => kv(esc(a.label), esc(a.answer))).join('')
       )}
       ${btn('View Bookings', dashboardUrl)}
       ${p('Log in to your dashboard to manage this booking.')}

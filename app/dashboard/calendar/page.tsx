@@ -5,6 +5,7 @@ import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardPr
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { PreBookingAnswers } from '@/components/dashboard/PreBookingAnswers';
 import { calendarHourRange, hoursIncludingEntries } from '@/lib/calendar/hour-range';
 
 interface Booking {
@@ -33,6 +34,7 @@ interface Booking {
   checkout_notes: string | null;
   no_show_at: string | null;
   no_show_reason: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface Reservation {
@@ -260,7 +262,7 @@ export default function CalendarPage() {
     // Fetch bookings
     const { data: bookingData } = await supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, flow_type, guest_name, guest_phone, guest_email, special_requests, staff_id, staff_name, deposit_amount, deposit_status, total_amount, channel, notes, payment_id, checked_in_at, check_in_notes, checked_out_at, checkout_notes, no_show_at, no_show_reason')
+      .select('id, reference_code, date, time, party_size, status, flow_type, guest_name, guest_phone, guest_email, special_requests, staff_id, staff_name, deposit_amount, deposit_status, total_amount, channel, notes, payment_id, checked_in_at, check_in_notes, checked_out_at, checkout_notes, no_show_at, no_show_reason, metadata')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .gte('date', startStr)
@@ -814,6 +816,7 @@ export default function CalendarPage() {
                       <p className="mt-1 text-sm text-yellow-700">{b.special_requests}</p>
                     </div>
                   )}
+                  <PreBookingAnswers metadata={b.metadata} questions={(business.metadata as Record<string, unknown> | null)?.pre_booking_questions} />
                   {nextActions[selectedEntry.status] && nextActions[selectedEntry.status].length > 0 && (
                     <div>
                       <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Actions</h3>

@@ -10,6 +10,8 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { BookingCancelConfirmation, type CancellationBooking } from '@/components/dashboard/BookingCancelConfirmation';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { BookingIntakePanel } from '@/components/dashboard/BookingIntakePanel';
+import { PreBookingAnswers } from '@/components/dashboard/PreBookingAnswers';
+import { bookingCustomAnswers, preBookingAnswerLines, preBookingAnswersText } from '@/lib/bookings/pre-booking-answers';
 import { CustomerLinkActions } from '@/components/dashboard/CustomerLinkActions';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -76,6 +78,7 @@ interface Booking {
   flow_type: string | null;
   seating_resource_id: string | null;
   seating_resource_name: string | null;
+  metadata?: Record<string, unknown> | null;
   _isReservation?: boolean;
 }
 
@@ -108,6 +111,7 @@ export default function BookingsPage() {
   const business = useBusiness();
   const { labels } = useCategoryConfig(business.category);
   const statuses = allStatuses.filter(s => !labels.hiddenStatuses.includes(s));
+  const preBookingQuestions = (business.metadata as Record<string, unknown> | null)?.pre_booking_questions;
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -482,7 +486,7 @@ export default function BookingsPage() {
       // Query bookings table (appointments + on-demand services)
       let query = supabase
         .from('bookings')
-        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id, seating_resources(name)')
+        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list, flow_type, seating_resource_id, seating_resources(name), metadata')
         .eq('business_id', business.id)
         .neq('flow_type', 'payment')
         .order('date', { ascending: false })
@@ -847,6 +851,7 @@ export default function BookingsPage() {
             Amount: b.total_amount || b.deposit_amount || 0,
             'Deposit Status': b.deposit_status || '',
             'Special Requests': b.special_requests || '',
+            'Pre-booking Answers': preBookingAnswersText(preBookingAnswerLines(bookingCustomAnswers(b.metadata), preBookingQuestions)),
             Notes: b.notes || '',
             Created: b.created_at?.slice(0, 10) || '',
           }))}
@@ -1559,6 +1564,9 @@ export default function BookingsPage() {
                   <p className="text-sm text-yellow-800 whitespace-pre-line">{selected.special_requests}</p>
                 </div>
               )}
+
+              {/* Pre-booking answers (bookings.metadata.custom_answers) */}
+              <PreBookingAnswers metadata={selected.metadata} questions={preBookingQuestions} />
 
               {/* Notes */}
               <div>

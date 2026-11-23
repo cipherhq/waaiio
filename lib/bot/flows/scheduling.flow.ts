@@ -21,6 +21,7 @@ import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt, getBusinessTermsUrl } from './shared/terms';
 import { notifyOwnerNewBooking, notifyOwnerNewPayment } from './shared/notify-owner';
+import { preBookingAnswerLines } from '@/lib/bookings/pre-booking-answers';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, submitTransferProof, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
@@ -404,6 +405,8 @@ async function dateHasRoom(ctx: FlowContext, dateStr: string, rows: SlotBookingR
 
 /** Times a final claim may be refused in one session before the old "Send Hi" message (no loop). */
 const MAX_SLOT_TAKEN_RETRIES = 2;
+/** Postback id of the Skip button on optional pre-booking questions. */
+const PBQ_SKIP_ID = 'pbq_skip';
 
 /**
  * create_booking was reached while a new time is still to be picked and
@@ -2561,10 +2564,21 @@ export const schedulingFlow: FlowDefinition = {
         if (!questions || idx >= questions.length) return [];
         const q = questions[idx];
         const progress = questions.length > 1 ? ` (${idx + 1}/${questions.length})` : '';
-        return [{
-          type: 'text',
-          text: `📋 ${q.question}${progress}${q.required === false ? '\n\n_Type *skip* to skip this question_' : ''}`,
-        }];
+        const body = `📋 ${q.question}${progress}`;
+        // Optional questions get a Skip button; typing "skip" still works.
+        // A button body is capped at 1024 characters, so a very long question
+        // keeps the plain-text hint instead.
+        if (q.required === false && body.length > 1024) {
+          return [{ type: 'text', text: `${body}\n\n_Type *skip* to skip this question_` }];
+        }
+        if (q.required === false) {
+          return [{
+            type: 'buttons',
+            body,
+            buttons: [{ id: PBQ_SKIP_ID, title: getFlowCopy(ctx.copyLang, 'booking.skip') }],
+          }];
+        }
+        return [{ type: 'text', text: body }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const questions = (ctx.business?.metadata as Record<string, unknown>)?.pre_booking_questions as Array<{ id: string; question: string; required?: boolean }>;
@@ -2572,12 +2586,13 @@ export const schedulingFlow: FlowDefinition = {
         if (!questions || idx >= questions.length) return { valid: true, data: {} };
         const q = questions[idx];
         const answer = input.trim();
-        if (!answer && q.required !== false) {
+        const isSkip = answer === PBQ_SKIP_ID || answer.toLowerCase() === 'skip';
+        if ((!answer || isSkip) && q.required !== false) {
           return { valid: false, errorMessage: 'Please answer this question to continue.' };
         }
-        // Store answer
+        // Store answer (a skipped question stores nothing)
         const answers = (ctx.session.session_data._pbq_answers as Record<string, string>) || {};
-        if (answer.toLowerCase() !== 'skip') {
+        if (!isSkip) {
           answers[q.id] = answer;
         }
         return { valid: true, data: { _pbq_answers: answers, _pbq_index: idx + 1 } };
@@ -4120,6 +4135,10 @@ export const schedulingFlow: FlowDefinition = {
             quantity: partySize,
             quantityLabel: labels.quantityLabel,
             amount: totalDeposit > 0 ? totalDeposit : undefined,
+            preBookingAnswers: preBookingAnswerLines(
+              d._pbq_answers,
+              (ctx.business.metadata as Record<string, unknown> | null)?.pre_booking_questions,
+            ),
           }).catch(err => logger.withContext({ op: 'scheduling.owner-notify', ...safeLogErrorContext(err) }).error('[SCHEDULING] Owner notification error'));
 
           // Notify assigned staff member
