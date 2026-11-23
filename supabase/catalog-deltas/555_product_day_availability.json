@@ -1,0 +1,71 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "smallint[]"
+   },
+   "after_sha256": "db5012277de50e3b05c8f8dec6f0293caed40812f02ddff6b555d9203743a1a0",
+   "identity": "column:public.products.available_days",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "date"
+   },
+   "after_sha256": "ab83b5c2a104f307305d30f64e5eb7257fbb7d06eb9ccac9b2a79aa9824532df",
+   "identity": "column:public.products.available_from",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "date"
+   },
+   "after_sha256": "ab83b5c2a104f307305d30f64e5eb7257fbb7d06eb9ccac9b2a79aa9824532df",
+   "identity": "column:public.products.available_until",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (available_from IS NULL OR available_until IS NULL OR available_from <= available_until)",
+    "validated": true
+   },
+   "after_sha256": "3375da2ad784a3ba53594b55cf6d2a6978b437e107d0d5ac8ffd77f87e5cdbc5",
+   "identity": "constraint:public.products.products_available_dates_order",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (available_days IS NULL OR available_days <@ ARRAY[1::smallint, 2::smallint, 3::smallint, 4::smallint, 5::smallint, 6::smallint, 7::smallint])",
+    "validated": true
+   },
+   "after_sha256": "b04e315447f55c7df91bd63030f80151af29e52e24f30fa17105a2122270d9f1",
+   "identity": "constraint:public.products.products_available_days_valid",
+   "operation": "add"
+  }
+ ],
+ "migration": "555_product_day_availability.sql",
+ "migration_sha256": "04e073db35607129d3946d7c7793dad7258ee33a1f3b796ce018787c067cac9e",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
