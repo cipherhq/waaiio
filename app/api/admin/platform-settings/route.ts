@@ -87,7 +87,8 @@ export async function PUT(request: NextRequest) {
     actorId: admin.userId,
     action: 'update_platform_setting',
     entityType: 'platform_setting',
-    entityId: key,
+    // entity_id is a UUID column; the setting key is recorded in details.
+    entityId: null,
     details: { key, new_value: value },
   });
   if (auditError) {
@@ -148,7 +149,8 @@ export async function POST(request: NextRequest) {
     actorId: admin.userId,
     action: 'create_platform_setting',
     entityType: 'platform_setting',
-    entityId: key,
+    // entity_id is a UUID column; the setting key is recorded in details.
+    entityId: null,
     details: { key, value, description: typeof description === 'string' ? description : null },
   });
   if (auditError) {
@@ -203,7 +205,8 @@ export async function DELETE(request: NextRequest) {
     actorId: admin.userId,
     action: 'delete_platform_setting',
     entityType: 'platform_setting',
-    entityId: key,
+    // entity_id is a UUID column; the setting key is recorded in details.
+    entityId: null,
     details: { key },
   });
   if (auditError) {
