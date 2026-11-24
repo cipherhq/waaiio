@@ -36,6 +36,8 @@ export function pageListRows<T>(
 ): { rows: T[]; page: number; totalPages: number } {
   const fixed = nav.fixed || [];
   const capacity = LIST_MAX_ROWS - fixed.length;
+  // A page needs room for Previous, More and at least one row
+  if (capacity < 3) throw new Error(`pageListRows: ${fixed.length} fixed rows leave no room to page`);
   if (rows.length <= capacity) return { rows: [...fixed, ...rows], page: 0, totalPages: 1 };
 
   const pages: Array<[number, number]> = [];

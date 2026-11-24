@@ -407,18 +407,21 @@ export const orderingFlow: FlowDefinition = {
         const selectedCat = d._selected_category as string;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
-        const { data: queriedCatProducts } = await ctx.supabase
+        let catQuery = ctx.supabase
           .from('products')
           .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, available_days, available_from, available_until')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
-          .is('deleted_at', null)
+          .is('deleted_at', null);
+        // Same grouping as browse_catalog: products with no category are listed under 'Menu'
+        catQuery = selectedCat === 'Menu'
+          ? catQuery.or('category.is.null,category.eq.Menu')
+          : catQuery.eq('category', selectedCat);
+        const { data: queriedCatProducts } = await catQuery
           .order('sort_order')
           .limit(100);
-        // Same grouping as browse_catalog: products with no category are listed under 'Menu'
-        const inCategory = (queriedCatProducts || []).filter(p => (p.category || 'Menu') === selectedCat);
         // M555: only items on sale today; every one stays reachable through pages
-        const rawProducts = await filterAvailableToday(ctx.supabase, ctx.business!.id, inCategory, ctx.business?.country_code);
+        const rawProducts = await filterAvailableToday(ctx.supabase, ctx.business!.id, queriedCatProducts || [], ctx.business?.country_code);
 
         // Variant availability for variable products
         const catVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);

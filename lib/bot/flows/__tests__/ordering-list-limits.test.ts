@@ -32,13 +32,29 @@ const SIMI = [
   ...Array.from({ length: 7 }, (_, i) => product(i + 16, 'Diffusers')),
 ];
 
-/** Stub: products queries honour eq() filters; everything else is empty. */
-function makeSupabase(products: Product[]) {
+/** Every products query, with its filters, for tenant-scoping assertions. */
+type ProductsQuery = { eqs: Array<[string, unknown]>; is: Array<[string, unknown]>; or: string[]; limit?: number };
+
+/**
+ * Stub: products queries honour eq(), the "Menu" or() filter and limit();
+ * everything else is empty.
+ */
+function makeSupabase(products: Product[], queries: ProductsQuery[] = []) {
   const from = vi.fn((table: string) => {
-    const eqs: Array<[string, unknown]> = [];
-    const rows = () => (table === 'products' ? products.filter(p => eqs.every(([c, v]) => c === 'business_id' || c === 'is_active' || (p as Record<string, unknown>)[c] === v)) : []);
+    const q: ProductsQuery = { eqs: [], is: [], or: [] };
+    if (table === 'products') queries.push(q);
+    const eqs = q.eqs;
+    const rows = () => {
+      if (table !== 'products') return [];
+      const matched = products.filter(p => eqs.every(([c, v]) => c === 'business_id' || c === 'is_active' || (p as Record<string, unknown>)[c] === v)
+        && q.or.every(f => f === 'category.is.null,category.eq.Menu' && (p.category === null || p.category === 'Menu')));
+      return q.limit === undefined ? matched : matched.slice(0, q.limit);
+    };
     const b: Record<string, unknown> = {};
-    for (const m of ['select', 'in', 'is', 'order', 'limit', 'neq', 'not', 'gte', 'lte']) b[m] = vi.fn(() => b);
+    for (const m of ['select', 'in', 'order', 'neq', 'not', 'gte', 'lte']) b[m] = vi.fn(() => b);
+    b.is = vi.fn((c: string, v: unknown) => { q.is.push([c, v]); return b; });
+    b.or = vi.fn((f: string) => { q.or.push(f); return b; });
+    b.limit = vi.fn((n: number) => { q.limit = n; return b; });
     b.eq = vi.fn((c: string, v: unknown) => { eqs.push([c, v]); return b; });
     b.single = vi.fn(async () => ({ data: rows()[0] ?? null, error: null }));
     b.maybeSingle = b.single;
@@ -182,6 +198,37 @@ describe('ordering lists: Meta limits and every product reachable', () => {
     const mixed = [...Array.from({ length: 8 }, (_, i) => product(i + 1, null)), ...Array.from({ length: 8 }, (_, i) => product(i + 9, 'Drinks'))];
     const seen = await reachableProducts(mixed, {}, 'browse_catalog');
     expect(seen.size).toBe(16);
+  });
+
+  it('category view still filters by category in the database, scoped to this business (100-row cap applies per category)', async () => {
+    // 'Oils' products sit at catalog positions 1-5 and 116-120: past the first 100 of the whole catalog
+    const big = [
+      ...Array.from({ length: 5 }, (_, i) => product(i + 1, 'Oils')),
+      ...Array.from({ length: 110 }, (_, i) => product(i + 6, 'Other')),
+      ...Array.from({ length: 5 }, (_, i) => product(i + 116, 'Oils')),
+    ];
+    const queries: ProductsQuery[] = [];
+    const base = makeCtx(big, {}, { _selected_category: 'Oils' });
+    const ctx = createMockContext({ ...base, supabase: makeSupabase(big, queries) as unknown as FlowContext['supabase'] });
+    const list = await show(ctx, 'browse_category_items');
+    expect(list.items.map(r => r.postbackText)).toEqual(['back_to_categories', 'p1', 'p2', 'p3', 'p4', 'p5', 'p116', 'p117', 'p118', 'p119', 'p120'].slice(0, 9).concat(LIST_PAGE_MORE));
+    const seen = await reachableProducts(big, {}, 'browse_category_items', { _selected_category: 'Oils' });
+    expect(seen.size).toBe(10);
+    const q = queries[0];
+    expect(q.eqs).toEqual(expect.arrayContaining([['business_id', 'biz-1'], ['is_active', true], ['category', 'Oils']]));
+    expect(q.is).toContainEqual(['deleted_at', null]);
+
+    // 'Menu' (no category) uses the constant or() filter, still business-scoped
+    const menuQueries: ProductsQuery[] = [];
+    const menuCtx = createMockContext({ ...makeCtx(big, {}, { _selected_category: 'Menu' }), supabase: makeSupabase(big, menuQueries) as unknown as FlowContext['supabase'] });
+    await getStep(orderingFlow, 'browse_category_items').prompt(menuCtx);
+    expect(menuQueries[0].or).toEqual(['category.is.null,category.eq.Menu']);
+    expect(menuQueries[0].eqs).toEqual(expect.arrayContaining([['business_id', 'biz-1'], ['is_active', true]]));
+    expect(menuQueries[0].is).toContainEqual(['deleted_at', null]);
+  });
+
+  it('pageListRows refuses a layout with no room to page', () => {
+    expect(() => pageListRows(['a', 'b'], 0, { prev: 'P', more: 'M', fixed: Array(8).fill('F') })).toThrow(/no room to page/);
   });
 
   it('more than 10 categories: category list is paged and every product is reachable', async () => {
