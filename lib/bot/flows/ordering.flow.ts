@@ -27,6 +27,7 @@ import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-f
 import { safeButtons } from './shared/safe-interactive';
 import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
 import { filterAvailableToday } from '@/lib/products/availability-today';
+import { pageListRows, isListPageNav, nextListPage, LIST_PAGE_MORE, LIST_PAGE_PREV } from './shared/list-pages';
 
 
 interface OptionGroup {
@@ -130,6 +131,49 @@ async function productGalleryMessages(ctx: FlowContext, shownImageUrl?: string |
   return picked.map(url => ({ type: 'image' as const, imageUrl: url }));
 }
 
+type ListRow = { title: string; description?: string; postbackText: string };
+
+/** "More" / "Previous" rows for a paged list, in the customer's language. */
+function listPageNav(lang: FlowContext['copyLang']): { prev: ListRow; more: ListRow } {
+  return {
+    prev: { title: getFlowCopy(lang, 'nav.previous_page'), description: getFlowCopy(lang, 'nav.previous_desc'), postbackText: LIST_PAGE_PREV },
+    more: { title: getFlowCopy(lang, 'nav.more_options'), description: getFlowCopy(lang, 'nav.more_desc'), postbackText: LIST_PAGE_MORE },
+  };
+}
+
+/**
+ * Rows for the "add more items or checkout" list. Checkout opens every page.
+ * Up to 9 products fit beside it as before; a bigger catalog lists its
+ * categories (several) or pages its products (one), so no list passes
+ * Meta's 10-row limit and every product stays reachable.
+ */
+function addMoreListRows(
+  ctx: FlowContext,
+  products: Array<{ id: string; name: string; price: number; category: string | null; has_variants: boolean | null }>,
+  checkoutItem: ListRow,
+): ListRow[] {
+  const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+  const d = ctx.session.session_data;
+  const productRows = products.map(p => ({
+    title: truncTitle(p.name, 24),
+    description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
+    postbackText: p.id,
+  }));
+  if (productRows.length <= 9) return [checkoutItem, ...productRows];
+
+  const categoryCounts = new Map<string, number>();
+  for (const p of products) {
+    const cat = p.category || 'Menu';
+    categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
+  }
+  const rows = categoryCounts.size > 1
+    ? Array.from(categoryCounts, ([cat, n]) => ({ title: truncTitle(cat, 24), description: `${n} item${n !== 1 ? 's' : ''}`, postbackText: `cat:${cat}` }))
+    : productRows;
+  const paged = pageListRows<ListRow>(rows, d._cart_page, { ...listPageNav(ctx.copyLang), fixed: [checkoutItem] });
+  d._cart_page = paged.page;
+  return paged.rows;
+}
+
 export const orderingFlow: FlowDefinition = {
   type: 'ordering',
   steps: [
@@ -226,54 +270,47 @@ export const orderingFlow: FlowDefinition = {
         }
         const categories = Array.from(categoryMap.entries());
 
-        // Browse-by-category mode: show category list first
-        if (browseByCategory && categories.length > 1) {
+        const nav = listPageNav(ctx.copyLang);
+
+        // Category list first: in browse-by-category mode, and whenever a
+        // multi-category catalog does not fit in one list (Meta: 10 rows total)
+        if (categories.length > 1 && (browseByCategory || products.length > 10)) {
           ctx.session.session_data._category_list = categories.map(([cat, items]) => cat);
+          const paged = pageListRows<ListRow>(categories.map(([cat, items]) => ({
+            title: truncTitle(cat, 24),
+            description: `${items.length} item${items.length !== 1 ? 's' : ''}`,
+            postbackText: `cat:${cat}`,
+          })), ctx.session.session_data._browse_page, nav);
+          ctx.session.session_data._browse_page = paged.page;
           return [...cartExpiredNotice, {
             type: 'list',
             title: getFlowCopy(ctx.copyLang, 'ordering.categories_title'),
             body: fillFlowCopy(ctx.copyLang, 'ordering.welcome_categories', { businessName: ctx.business.name, emoji: '🛍️' }),
             buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.view_categories'),
-            items: categories.slice(0, 10).map(([cat, items]) => ({
-              title: truncTitle(cat, 24),
-              description: `${items.length} item${items.length !== 1 ? 's' : ''}`,
-              postbackText: `cat:${cat}`,
-            })),
+            items: paged.rows,
           }];
         }
 
-        // All-at-once mode: show products with sections
-        const needsSections = categories.length > 1 && products.length > 10;
-
-        if (needsSections) {
-          const sections = categories.slice(0, 10).map(([cat, items]) => ({
-            title: truncTitle(cat, 24),
-            items: items.slice(0, 10).map(formatItem),
-          }));
-
-          return [...cartExpiredNotice, {
-            type: 'list' as const,
-            title: getFlowCopy(ctx.copyLang, 'ordering.our_catalog'),
-            body: fillFlowCopy(ctx.copyLang, 'ordering.welcome', { businessName: ctx.business.name, emoji: '🛍️', noun: getFlowCopy(ctx.copyLang, 'ordering.our_catalog').toLowerCase() }),
-            buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.browse'),
-            items: products.slice(0, 10).map(formatItem),
-            sections,
-          }];
-        }
-
+        // One category (or a catalog that fits): products, paged past 10
+        const paged = pageListRows<ListRow>(products.map(formatItem), ctx.session.session_data._browse_page, nav);
+        ctx.session.session_data._browse_page = paged.page;
         return [...cartExpiredNotice, {
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'ordering.our_catalog'),
           body: fillFlowCopy(ctx.copyLang, 'ordering.welcome', { businessName: ctx.business.name, emoji: '🛍️', noun: getFlowCopy(ctx.copyLang, 'ordering.our_catalog').toLowerCase() }),
           buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.browse'),
-          items: products.slice(0, 10).map(formatItem),
+          items: paged.rows,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (isListPageNav(input)) {
+          return { valid: true, data: { _browse_page: nextListPage(ctx.session.session_data._browse_page, input), _list_page_nav: true } };
+        }
+
         // Handle category selection in browse-by-category mode
         if (input.startsWith('cat:')) {
           const selectedCat = input.slice(4);
-          return { valid: true, data: { _selected_category: selectedCat } };
+          return { valid: true, data: { _selected_category: selectedCat, _category_page: 0 } };
         }
 
         const { data: product } = await ctx.supabase
@@ -307,6 +344,12 @@ export const orderingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+
+        // "More" / "Previous" — show the other page of this list
+        if (d._list_page_nav) {
+          delete d._list_page_nav;
+          return 'browse_catalog';
+        }
 
         // Smart intent auto-added product to cart → skip to checkout
         if (d._auto_added_to_cart) {
@@ -369,12 +412,13 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, available_days, available_from, available_until')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
-          .eq('category', selectedCat)
           .is('deleted_at', null)
           .order('sort_order')
           .limit(100);
-        // M555: only items on sale today, then the same first 10 as before
-        const rawProducts = (await filterAvailableToday(ctx.supabase, ctx.business!.id, queriedCatProducts || [], ctx.business?.country_code)).slice(0, 10);
+        // Same grouping as browse_catalog: products with no category are listed under 'Menu'
+        const inCategory = (queriedCatProducts || []).filter(p => (p.category || 'Menu') === selectedCat);
+        // M555: only items on sale today; every one stays reachable through pages
+        const rawProducts = await filterAvailableToday(ctx.supabase, ctx.business!.id, inCategory, ctx.business?.country_code);
 
         // Variant availability for variable products
         const catVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
@@ -404,16 +448,15 @@ export const orderingFlow: FlowDefinition = {
           }];
         }
 
-        const items = [
-          { title: getFlowCopy(ctx.copyLang, 'ordering.back_to_categories'), description: getFlowCopy(ctx.copyLang, 'ordering.browse_other'), postbackText: 'back_to_categories' },
-          ...products.map(p => {
-            let desc = p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc);
-            if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
-              desc += ` (${p.stock_quantity} left)`;
-            }
-            return { title: truncTitle(p.name, 24), description: desc, postbackText: p.id };
-          }),
-        ];
+        const backRow = { title: getFlowCopy(ctx.copyLang, 'ordering.back_to_categories'), description: getFlowCopy(ctx.copyLang, 'ordering.browse_other'), postbackText: 'back_to_categories' };
+        const paged = pageListRows<ListRow>(products.map(p => {
+          let desc = p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc);
+          if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
+            desc += ` (${p.stock_quantity} left)`;
+          }
+          return { title: truncTitle(p.name, 24), description: desc, postbackText: p.id };
+        }), d._category_page, { ...listPageNav(ctx.copyLang), fixed: [backRow] });
+        d._category_page = paged.page;
 
         const cart = (d.cart as CartItem[]) || [];
         const cartInfo = cart.length > 0
@@ -425,10 +468,14 @@ export const orderingFlow: FlowDefinition = {
           title: truncTitle(selectedCat, 24),
           body: `*${selectedCat}*${cartInfo}\n\n${getFlowCopy(ctx.copyLang, 'ordering.select_an_item')}`,
           buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.view_items'),
-          items: items.slice(0, 10),
+          items: paged.rows,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (isListPageNav(input)) {
+          return { valid: true, data: { _category_page: nextListPage(ctx.session.session_data._category_page, input), _list_page_nav: true } };
+        }
+
         if (input === 'back_to_categories') {
           delete ctx.session.session_data._selected_category;
           return { valid: true, data: { _back_to_categories: true } };
@@ -475,6 +522,12 @@ export const orderingFlow: FlowDefinition = {
 
         if (d._cancel_order) {
           return null;
+        }
+
+        // "More" / "Previous" — show the other page of this category
+        if (d._list_page_nav) {
+          delete d._list_page_nav;
+          return 'browse_category_items';
         }
 
         if (d._back_to_categories) {
@@ -1366,48 +1419,9 @@ export const orderingFlow: FlowDefinition = {
         // ACC-008: session_data mutated in-memory; executor persists via CAS
         // Step transition to 'continue_or_checkout' handled by nextAfterPrompt
 
-        // Group by category into sections
-        const catMap = new Map<string, typeof products>();
-        for (const p of products) {
-          const cat = p.category || 'Menu';
-          if (!catMap.has(cat)) catMap.set(cat, []);
-          catMap.get(cat)!.push(p);
-        }
-        const cats = Array.from(catMap.entries());
-        const useSections = cats.length > 1 && products.length > 9;
-
-        const formatProd = (p: typeof products[0]) => ({
-          title: truncTitle(p.name, 24),
-          description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
-          postbackText: p.id,
-        });
-
-        if (useSections) {
-          const sections = [
-            { title: getFlowCopy(ctx.copyLang, 'ordering.your_order'), items: [checkoutItem] },
-            ...cats.slice(0, 9).map(([cat, items]) => ({
-              title: truncTitle(cat, 24),
-              items: items.slice(0, 10).map(formatProd),
-            })),
-          ];
-
-          return [
-            { type: 'text' as const, text: addedText },
-            {
-              type: 'list' as const,
-              title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'),
-              body: getFlowCopy(ctx.copyLang, 'ordering.add_more_items'),
-              buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
-              items: [checkoutItem, ...products.slice(0, 9).map(formatProd)],
-              sections,
-            },
-          ];
-        }
-
-        const listItems = [
-          checkoutItem,
-          ...products.slice(0, 9).map(formatProd),
-        ];
+        // A new item was added: lists start again from their first page
+        delete d._browse_page;
+        d._cart_page = 0;
 
         return [
           { type: 'text' as const, text: addedText },
@@ -1416,7 +1430,7 @@ export const orderingFlow: FlowDefinition = {
             title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'),
             body: getFlowCopy(ctx.copyLang, 'ordering.add_more_items'),
             buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
-            items: listItems.slice(0, 10),
+            items: addMoreListRows(ctx, products, checkoutItem),
           },
         ];
       },
@@ -1479,59 +1493,12 @@ export const orderingFlow: FlowDefinition = {
 
         const checkoutItem = { title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'), description: fillFlowCopy(ctx.copyLang, 'ordering.total_label', { amount: formatCurrency(total, cc) }).slice(0, 72), postbackText: 'checkout' };
 
-        // Group by category into sections
-        const categoryMap = new Map<string, typeof products>();
-        for (const p of products) {
-          const cat = p.category || 'Menu';
-          if (!categoryMap.has(cat)) categoryMap.set(cat, []);
-          categoryMap.get(cat)!.push(p);
-        }
-
-        const categories = Array.from(categoryMap.entries());
-        const needsSections = categories.length > 1 && products.length > 9;
-
-        if (needsSections) {
-          const sections = [
-            { title: getFlowCopy(ctx.copyLang, 'ordering.your_order'), items: [checkoutItem] },
-            ...categories.slice(0, 9).map(([cat, items]) => ({
-              title: truncTitle(cat, 24),
-              items: items.slice(0, 10).map(p => ({
-                title: truncTitle(p.name, 24),
-                description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
-                postbackText: p.id,
-              })),
-            })),
-          ];
-
-          return [{
-            type: 'list' as const,
-            title: getFlowCopy(ctx.copyLang, 'ordering.your_cart'),
-            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
-            buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
-            items: [checkoutItem, ...products.slice(0, 9).map(p => ({
-              title: truncTitle(p.name, 24),
-              description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
-              postbackText: p.id,
-            }))],
-            sections,
-          }];
-        }
-
-        const listItems = [
-          checkoutItem,
-          ...products.slice(0, 9).map(p => ({
-            title: truncTitle(p.name, 24),
-            description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
-            postbackText: p.id,
-          })),
-        ];
-
         return [{
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'ordering.your_cart'),
           body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
           buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
-          items: listItems.slice(0, 10),
+          items: addMoreListRows(ctx, products, checkoutItem),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -1539,7 +1506,14 @@ export const orderingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'checkout' } };
         }
         if (input === 'browse_more') {
-          return { valid: true, data: { _action: 'browse_more' } };
+          return { valid: true, data: { _action: 'browse_more', _browse_page: 0 } };
+        }
+        if (isListPageNav(input)) {
+          return { valid: true, data: { _action: 'list_page', _cart_page: nextListPage(ctx.session.session_data._cart_page, input) } };
+        }
+        // A category row from a catalog too big for one list
+        if (input.startsWith('cat:')) {
+          return { valid: true, data: { _action: 'category', _selected_category: input.slice(4), _category_page: 0 } };
         }
 
         // Treat as product selection
@@ -1577,6 +1551,8 @@ export const orderingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         if (d._action === 'checkout') return 'apply_promo';
         if (d._action === 'browse_more') return 'browse_catalog';
+        if (d._action === 'list_page') return 'continue_or_checkout';
+        if (d._action === 'category') return 'browse_category_items';
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const quickAdd = meta.ordering_quick_add !== false;

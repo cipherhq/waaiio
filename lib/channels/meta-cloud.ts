@@ -238,14 +238,36 @@ export class MetaCloudService {
 
   async sendList(message: CloudInteractiveListMessage): Promise<{ messageId: string }> {
     // Enforce Meta WhatsApp API limits to prevent #131009 parameter errors
-    const safeSections = message.sections.slice(0, 10).map(section => ({
-      ...section,
-      rows: section.rows.slice(0, 10).map(row => ({
-        ...row,
-        title: row.title.slice(0, 24),
-        description: row.description ? row.description.slice(0, 72) : undefined,
-      })),
-    }));
+    // Backstop only: Meta also caps rows at 10 in total across sections and
+    // requires unique row ids. Callers must page their lists (see
+    // lib/bot/flows/shared/list-pages.ts); anything cut here is logged loudly.
+    let rowBudget = 10;
+    const seenIds = new Set<string>();
+    const safeSections = message.sections.slice(0, 10).map(section => {
+      const rows = section.rows.slice(0, 10).filter(row => {
+        if (seenIds.has(row.id) || rowBudget <= 0) return false;
+        seenIds.add(row.id);
+        rowBudget--;
+        return true;
+      });
+      return {
+        ...section,
+        rows: rows.map(row => ({
+          ...row,
+          title: row.title.slice(0, 24),
+          description: row.description ? row.description.slice(0, 72) : undefined,
+        })),
+      };
+    }).filter(section => section.rows.length > 0);
+    const totalRows = message.sections.reduce((n, s) => n + s.rows.length, 0);
+    const droppedRows = totalRows - safeSections.reduce((n, s) => n + s.rows.length, 0);
+    if (droppedRows > 0) {
+      logger.error('[META-CLOUD] sendList over WhatsApp list limits; rows dropped — caller must page this list', {
+        sections: message.sections.length,
+        totalRows,
+        droppedRows,
+      });
+    }
 
     const interactive: Record<string, unknown> = {
       type: 'list',
