@@ -75,6 +75,20 @@ const SHARED_SELECTION_KEYS = [
 const ADDON_KEYS = ['_available_addons', '_selected_addons'] as const;
 
 /**
+ * Pre-booking question answers and position (scheduling's pre_booking_questions).
+ * They belong to one booking: a kept position skips the questions and the kept
+ * answers are saved on the next booking.
+ */
+const PRE_BOOKING_QUESTION_KEYS = ['_pbq_answers', '_pbq_index'] as const;
+
+/** Clear pre-booking question state. Call whenever a new booking starts. */
+export function clearPreBookingQuestionState(sessionData: Record<string, unknown>): void {
+  for (const key of PRE_BOOKING_QUESTION_KEYS) {
+    delete sessionData[key];
+  }
+}
+
+/**
  * Clear stale transactional state when switching capabilities.
  *
  * Call this BEFORE setting the new active_capability.
@@ -86,6 +100,9 @@ export function clearStaleCapabilityState(
   fromCapability: string | undefined,
   toCapability: string,
 ): void {
+  // Every caller starts a new interaction, even for the same capability.
+  clearPreBookingQuestionState(sessionData);
+
   if (fromCapability === toCapability) return;
 
   // Add-ons belong to the earlier booking. Clear them even with no known prior
