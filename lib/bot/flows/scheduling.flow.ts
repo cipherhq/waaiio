@@ -37,6 +37,7 @@ import { parseTypedDate, isCalendarDate } from './shared/typed-date';
 import { matchBookForAnswer } from './shared/book-for-answer';
 import { openTimesOnDate, tableTimeInsideBusinessHours, type OpenTime, type SlotBookingRow } from './shared/slot-availability';
 import { seatingGalleryMessages } from './table-reservation.flow';
+import { tableOffer, tableOfferLines, tablePayableNow, tablePaysInFull } from './shared/table-offer';
 import {
   beforeBookingMessage, deliverAfterBookingIntake, hasAnsweredBefore, intakeState, isIntakeEntitled,
   linkIntakeToBooking, loadUsableForm, openBeforeBookingIntake, syncIntakeExpiry, toE164,
@@ -2417,8 +2418,67 @@ export const schedulingFlow: FlowDefinition = {
           delete ctx.session.session_data._seating_reselect_time;
           return 'select_time';
         }
-        return 'collect_guest_names';
+        return 'select_table_package';
       },
+    },
+
+    // ── Choose a package (tables with bottle packages, M557, Owner decision 2026-11-23) ──
+    {
+      id: 'select_table_package',
+      async skipIf(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._is_table_reservation !== true) return true;
+        const offer = tableOffer(d);
+        if (offer.packages.length > 0) return false;
+        // No packages: nothing to choose. A minimum spend paid in full is still the
+        // amount to show; tables without an offer keep their values untouched.
+        d._seating_package_id = null;
+        if (offer.hasOffer) d.service_price = d.service_deposit = tablePayableNow(offer);
+        return true;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const offer = tableOffer(d);
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        // WhatsApp lists have 10 rows: up to 9 packages (M557) plus "No package".
+        const items = offer.packages.slice(0, 9).map(p => buildListItem({
+          name: p.name,
+          detail: [formatCurrency(p.price, cc), p.includes].filter(Boolean).join(' · '),
+          postbackText: `tpkg:${p.id}`,
+        }));
+        items.push({
+          title: 'No package',
+          description: offer.minimumSpend !== null ? `Minimum spend ${formatCurrency(offer.minimumSpend, cc)}` : 'Just the table',
+          postbackText: 'tpkg:none',
+        });
+        const payNote = tablePaysInFull(offer)
+          ? 'You pay for your choice in full when you book.'
+          : offer.deposit > 0
+            ? `You pay a ${formatCurrency(offer.deposit, cc)} deposit now and the rest at the venue.`
+            : 'You pay at the venue.';
+        return [{
+          type: 'list',
+          title: 'Choose a package',
+          body: `Choose a package for ${(d.seating_resource_name as string) || 'your table'}.\n\n${payNote}`,
+          buttonLabel: 'View packages',
+          items,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
+        const offer = tableOffer(d);
+        const text = input.trim();
+        let packageId: string | null | undefined;
+        if (text === 'tpkg:none' || /^(no package|none|no)$/i.test(text)) packageId = null;
+        else if (text.startsWith('tpkg:')) packageId = offer.packages.find(p => p.id === text.slice(5))?.id;
+        else packageId = offer.packages.find(p => p.name.toLowerCase() === text.toLowerCase())?.id;
+        if (packageId === undefined) {
+          return { valid: false, errorMessage: 'Please tap one of the packages above, or "No package".' };
+        }
+        const amount = tablePayableNow(tableOffer({ ...d, _seating_package_id: packageId }));
+        return { valid: true, data: { _seating_package_id: packageId, service_price: amount, service_deposit: amount } };
+      },
+      async next() { return 'collect_guest_names'; },
     },
 
     // ── Collect Guest Names (group bookings) ──
@@ -2868,8 +2928,10 @@ export const schedulingFlow: FlowDefinition = {
         ];
         // Table reservations show the table the customer chose (service_name is only
         // set from the table after booking, and may hold a stale keyword-matched service).
-        if (d._is_table_reservation === true && d.seating_resource_name) lines.push(`🪑 ${d.seating_resource_name as string}`);
-        else if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
+        if (d._is_table_reservation === true && d.seating_resource_name) {
+          lines.push(`🪑 ${d.seating_resource_name as string}`);
+          lines.push(...tableOfferLines(tableOffer(d), (ctx.business?.country_code || 'NG') as CountryCode));
+        } else if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
         if (d._location_name) lines.push(`📍 Location: ${d._location_name as string}`);
         if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
 
@@ -3325,7 +3387,10 @@ export const schedulingFlow: FlowDefinition = {
         if (d._is_table_reservation) {
           // ── Table reservation: FLAT deposit per reservation (Owner decision 2026-10-27) ──
           // Not multiplied by party_size. The resource deposit IS the total payable.
-          const flatDeposit = (d._seating_deposit as number) ?? serviceDeposit ?? 0;
+          // M557: with a minimum spend or packages, the amount to pay now (package price
+          // or minimum spend in full); book_table_atomic re-checks it against the table.
+          const offer = tableOffer(d);
+          const flatDeposit = offer.hasOffer ? tablePayableNow(offer) : ((d._seating_deposit as number) ?? serviceDeposit ?? 0);
           if (prepayMode === 'free' && flatDeposit > 0) {
             // Commercial-policy conflict: business set free prepay but resource has deposit.
             // Fail closed — do not create a booking with inconsistent payment state.
@@ -3476,6 +3541,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (d._is_table_reservation) {
             // ── Table reservation: use dedicated book_table_atomic RPC ──
+            const tableTerms = tableOffer(d);
             const { data: tableResult, error: tableError } = await ctx.supabase
               .rpc('book_table_atomic' as string, {
                 p_bot_session_id: ctx.session.id,
@@ -3498,6 +3564,11 @@ export const schedulingFlow: FlowDefinition = {
                 // Includes zero — a stale-zero→positive change must be caught.
                 p_expected_deposit: (d._seating_deposit as number) ?? 0,
                 p_expected_duration: (d._seating_duration as number) ?? null,
+                // M557: the offer the customer was shown, checked against the table.
+                p_package_id: tableTerms.selectedPackage?.id ?? null,
+                p_expected_payable: totalDeposit,
+                p_expected_minimum_spend: tableTerms.minimumSpend,
+                p_expected_package_price: tableTerms.selectedPackage?.price ?? null,
               })
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
@@ -3507,7 +3578,7 @@ export const schedulingFlow: FlowDefinition = {
               if (pgError?.message?.includes('party_too_small') || pgError?.message?.includes('party_too_large')) {
                 return [{ type: 'text', text: await ctx.t(`Sorry, that table doesn't accommodate a party of ${partySize}. Send *Hi* to start over.`) }];
               }
-              if (pgError?.message?.includes('deposit_changed') || pgError?.message?.includes('duration_changed')) {
+              if (pgError?.message?.includes('deposit_changed') || pgError?.message?.includes('duration_changed') || pgError?.message?.includes('package_unavailable')) {
                 return [{ type: 'text', text: await ctx.t('The reservation terms have been updated. Send *Hi* to start over with the current pricing.') }];
               }
               if (pgError?.message?.includes('day_unavailable') || pgError?.message?.includes('before_opening') || pgError?.message?.includes('after_closing') || pgError?.message?.includes('past_midnight')) {
@@ -3764,6 +3835,21 @@ export const schedulingFlow: FlowDefinition = {
           d._tax_snapshot = committed.tax_snapshot ?? null;
           confirmedBooking = committed.status === 'confirmed';
         }
+        // M557: a table with a minimum spend or packages pays the amount the database
+        // committed. A reused booking (payment retry) must still match the package and
+        // amount chosen now, or the customer could pay one amount for another booking.
+        if (d._is_table_reservation && tableOffer(d).hasOffer) {
+          const { data: committed, error: committedError } = await ctx.supabase.from('bookings')
+            .select('deposit_amount, total_amount, metadata')
+            .eq('id', booking.id).eq('business_id', ctx.business!.id).eq('bot_session_id', ctx.session.id)
+            .in('status', ['pending', 'confirmed', 'in_progress']).single();
+          const committedPackageId = ((committed?.metadata as { table_offer?: { package?: { id?: string } | null } } | null)?.table_offer?.package?.id) ?? null;
+          if (committedError || !committed || Number(committed.deposit_amount) !== totalDeposit
+              || committedPackageId !== (tableOffer(d).selectedPackage?.id ?? null)) {
+            return [{ type: 'text', text: await ctx.t('Your booking terms could not be verified. Please contact the business before retrying payment.') }];
+          }
+          bookingTotalAmount = Number(committed.total_amount);
+        }
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
@@ -3931,9 +4017,10 @@ export const schedulingFlow: FlowDefinition = {
                 `📅 ${dateLabel}`,
                 `🕐 ${d.time as string}`,
                 `👥 ${partySize} ${labels.quantityLabel}`,
+                ...(d._is_table_reservation ? tableOfferLines(tableOffer(d), (ctx.business?.country_code || 'NG') as CountryCode) : []),
                 `🔑 Ref: *${booking.reference_code}*`,
                 '',
-                `💳 *${isPrepay ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, cc2)}*`,
+                `💳 *${isPrepay || tablePaysInFull(tableOffer(d)) ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, cc2)}*`,
                 '',
                 getFlowCopy(ctx.copyLang, 'payment.pay_online'),
                 paymentResult.url,
@@ -3972,9 +4059,10 @@ export const schedulingFlow: FlowDefinition = {
                 `📅 ${dateLabel}`,
                 `🕐 ${d.time as string}`,
                 `👥 ${partySize} ${labels.quantityLabel}`,
+                ...(d._is_table_reservation ? tableOfferLines(tableOffer(d), (ctx.business?.country_code || 'NG') as CountryCode) : []),
                 `🔑 Ref: *${booking.reference_code}*`,
                 '',
-                `💳 *${isPrepay ? 'Payment' : 'Deposit'}: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
+                `💳 *${isPrepay || tablePaysInFull(tableOffer(d)) ? 'Payment' : 'Deposit'}: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
                 '',
                 getFlowCopy(ctx.copyLang, 'payment.pay_here'),
                 paymentResult.url,
@@ -4019,6 +4107,7 @@ export const schedulingFlow: FlowDefinition = {
               `📅 ${dateLabel}`,
               `🕐 ${d.time as string}`,
               `👥 ${partySize} ${labels.quantityLabel}`,
+              ...(d._is_table_reservation ? tableOfferLines(tableOffer(d), cc2) : []),
               `💰 ${formatCurrency(totalDeposit, cc2)}`,
               `🔑 Ref: *${booking.reference_code}*`,
               '',
@@ -4091,6 +4180,20 @@ export const schedulingFlow: FlowDefinition = {
             referenceCode: booking.reference_code,
             subscriptionTier: ctx.business?.subscription_tier,
           });
+        }
+
+        // M557: the confirmation names the package and minimum spend (empty without an offer).
+        const offerLines = d._is_table_reservation ? tableOfferLines(tableOffer(d), (ctx.business?.country_code || 'NG') as CountryCode) : [];
+        if (offerLines.length > 0) {
+          // Above the reference line so the footer stays last; a custom template without one
+          // gets them above its "Powered by" footer, or at the end.
+          const refAt = message.indexOf('\n🔑');
+          const footerAt = message.indexOf('\n\n_Powered by');
+          message = refAt >= 0
+            ? `${message.slice(0, refAt)}\n${offerLines.join('\n')}${message.slice(refAt)}`
+            : footerAt >= 0
+              ? `${message.slice(0, footerAt)}\n\n${offerLines.join('\n')}${message.slice(footerAt)}`
+              : `${message}\n\n${offerLines.join('\n')}`;
         }
 
         // Create notification

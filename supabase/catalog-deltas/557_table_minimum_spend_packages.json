@@ -1,0 +1,157 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "integer"
+   },
+   "after_sha256": "a09b5329cddcbfcdc9114baaafe3af969fe9dd2a5c6c95037a26837a0d29795a",
+   "identity": "column:public.seating_resources.minimum_spend",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'[]'::jsonb",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "jsonb"
+   },
+   "after_sha256": "b2c79171ba6b50b1c1297b811e2753641e3b32f9bb9e8e410e3d3f65929f4fa5",
+   "identity": "column:public.seating_resources.packages",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "'deposit'::text",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "188f1ae1593caecc506d662603b0ebc80104d8fd18167365de1f4e568b5766e6",
+   "identity": "column:public.seating_resources.payment_mode",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (payment_mode = 'deposit'::text OR minimum_spend IS NOT NULL OR jsonb_typeof(packages) = 'array'::text AND jsonb_array_length(packages) > 0)",
+    "validated": true
+   },
+   "after_sha256": "03109d146cbe804aa6d22c129a5ceecf957585f07099e310e966dba6deee36ba",
+   "identity": "constraint:public.seating_resources.seating_full_payment_needs_offer",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (minimum_spend IS NULL OR minimum_spend > 0 AND minimum_spend <= 999999999)",
+    "validated": true
+   },
+   "after_sha256": "36fcdcabeb5b221b004f87edc72fcfe67be0925e041fcc2e1139725d16fba271",
+   "identity": "constraint:public.seating_resources.seating_minimum_spend_positive",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (payment_mode = ANY (ARRAY['deposit'::text, 'full'::text]))",
+    "validated": true
+   },
+   "after_sha256": "dc644047512d4fa37331034f5a48aeead433052b61d065d0f48ee8763556d00a",
+   "identity": "constraint:public.seating_resources.seating_payment_mode_valid",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "36d1a978c240b8217cd038861ed2275730d66830d31adba94996584a3a0fe491",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "09835689056ecea60da687901378dbc4309d6e67aa9366333ab9716a9547436d",
+   "identity": "function:private.seating_packages_valid()",
+   "operation": "add"
+  },
+  {
+   "identity": "function:public.book_table_atomic(p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_deposit_amount integer, p_deposit_status text, p_status text, p_total_amount integer, p_expected_deposit integer, p_expected_duration integer)",
+   "operation": "remove"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer DEFAULT 90, p_guest_name text DEFAULT NULL::text, p_guest_phone text DEFAULT NULL::text, p_guest_email text DEFAULT NULL::text, p_special_requests text DEFAULT NULL::text, p_deposit_amount integer DEFAULT 0, p_deposit_status text DEFAULT 'none'::text, p_status text DEFAULT 'confirmed'::text, p_total_amount integer DEFAULT 0, p_expected_deposit integer DEFAULT NULL::integer, p_expected_duration integer DEFAULT NULL::integer, p_package_id uuid DEFAULT NULL::uuid, p_expected_payable integer DEFAULT NULL::integer, p_expected_minimum_spend integer DEFAULT NULL::integer, p_expected_package_price integer DEFAULT NULL::integer",
+    "body_sha256": "41e00f639e6763fea736d1e4146808fa71c5e6df2fc09ccc45029d088fed638a",
+    "config": null,
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "TABLE(booking_id uuid, reference_code text, slot_available boolean)",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "7d10c9f805b8d196e0d2dad4facac44a8b3db3ec8954b13138165b4ffdbd5299",
+   "identity": "function:public.book_table_atomic(p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_seating_resource_id uuid, p_date date, p_time text, p_party_size integer, p_duration_minutes integer, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_deposit_amount integer, p_deposit_status text, p_status text, p_total_amount integer, p_expected_deposit integer, p_expected_duration integer, p_package_id uuid, p_expected_payable integer, p_expected_minimum_spend integer, p_expected_package_price integer)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER seating_packages_valid BEFORE INSERT OR UPDATE OF packages ON seating_resources FOR EACH ROW EXECUTE FUNCTION private.seating_packages_valid()",
+    "enabled": "O"
+   },
+   "after_sha256": "08b1d1e8718ffedb525e82b795cb58b536ef2957ed5e66b0484f8873b675b76d",
+   "identity": "trigger:public.seating_resources.seating_packages_valid",
+   "operation": "add"
+  }
+ ],
+ "migration": "557_table_minimum_spend_packages.sql",
+ "migration_sha256": "f9b08e52616c2f0db431bb768d6b22d285a59f73e627ce05473ddea02fce7ce4",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}

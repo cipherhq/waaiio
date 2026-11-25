@@ -1,0 +1,37 @@
+## 2026-11-23 — Table minimum spend and bottle packages, part 2 (WhatsApp step, amount, confirmations, dashboard)
+
+- **Owner decision 2026-11-23 ("go").** Customers book a VIP table in this order: table, date, time, party size, then a new "Choose a package" step, then pay the deposit or the full amount. The confirmation names the package, and the venue sees it on the booking. Q1–Q4 use the coordinator-recommended defaults, which the Owner accepted by deferral.
+- **Change:**
+  - `lib/bot/flows/table-reservation.flow.ts`:
+    - Reads `minimum_spend`, `payment_mode` and `packages` (M557, part 1).
+    - The table list row adds "₦X minimum spend" when the table has one.
+    - The offer is kept in the session.
+  - `lib/bot/flows/shared/table-offer.ts` (new): the rules for the amount to pay now, plus the package and minimum-spend lines. The amount follows M557's `book_table_atomic`:
+    - pay in full: the package price, else the minimum spend, else the deposit;
+    - deposit only: the deposit.
+  - `lib/bot/flows/scheduling.flow.ts`:
+    - New step `select_table_package`, between party size and guest names. It lists up to 9 packages with their prices, then "No package", described as "Minimum spend ₦X" or "Just the table". It is skipped for other bookings and for tables without packages.
+    - The summary, the payment messages ("Payment" rather than "Deposit" when paying in full) and the instant confirmation name the package, the minimum spend and "The rest is paid at the venue".
+    - `create_booking` passes the package and the expected amount, minimum spend and package price to `book_table_atomic`. A `package_unavailable` refusal gets the existing "terms have been updated" message.
+  - `lib/payments/send-confirmation.ts`: the paid confirmation of a table booking adds the package and minimum-spend lines from `bookings.metadata.table_offer`. The amount, fee, custody and delivery code are unchanged.
+  - `app/dashboard/reservations/page.tsx`: the booking details show a "Package" panel (package, what's included, minimum spend, paid in full or deposit). `metadata` is added to the bookings query.
+  - `lib/bot/flows/shared/capability-transition.ts`: leaving a table reservation clears the new session keys.
+- **Tests:**
+  - `lib/__tests__/table-packages-bot-557.test.ts`:
+    - the list row;
+    - the step order, skips, list and WhatsApp limits;
+    - every amount combination;
+    - refused packages;
+    - the summary;
+    - `create_booking` RPC terms, payment amount, message wording, instant confirmation and changed terms;
+    - helpers and session clean-up.
+  - `lib/payments/__tests__/table-package-confirmation-557.test.ts`: runs the real `sendProactiveConfirmation` and captures the WhatsApp text.
+  - `lib/__tests__/table-reservation-730-dashboard.test.tsx`: one new rendered case for the Package panel.
+- **Affects:**
+  - Tables without a minimum spend or packages book with the same amount and messages as before. They now also pass `p_expected_payable` (equal to the deposit) and NULL package terms.
+  - The payment pipeline is unchanged. The amount charged is the one `book_table_atomic` commits, so the Waaiio fee, both custody routes and refunds (on `total_amount`, the amount paid) apply to it as to any booking payment.
+- **Could break:**
+  - Needs M557 (part 1) applied first, and must ship with part 1.
+  - Before paying a booking it already created (payment retry), the bot re-reads the committed amount and package for tables with an offer. If they don't match the current choice, it charges nothing and asks the customer to contact the business.
+  - A customer who goes back and picks another package after the booking was created gets that message. Their own pending booking holds the table until it expires, as with any other change of selection.
+  - The package list is read from the table when the customer picks it. If the venue changes a price before the customer pays, the booking is refused with "terms have been updated".

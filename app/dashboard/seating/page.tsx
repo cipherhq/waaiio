@@ -25,7 +25,22 @@ interface SeatingResource {
   available_from: string | null;
   available_to: string | null;
   gallery_urls?: string[];
+  minimum_spend?: number | null;
+  payment_mode?: 'deposit' | 'full';
+  packages?: TablePackage[];
 }
+
+/** A bottle package on a table (M557). Prices are whole amounts, like the deposit. */
+interface TablePackage {
+  id: string;
+  name: string;
+  includes: string;
+  price: number;
+}
+
+/** WhatsApp lists show 10 rows; the 10th is "No package" (M557 allows at most 9). */
+const MAX_PACKAGES = 9;
+const MAX_PACKAGE_PRICE = 999_999_999;
 
 /** Optional photos per table or section (#892; the database allows at most 3, M516). */
 const MAX_PHOTOS = 3;
@@ -77,7 +92,24 @@ const defaultForm = {
   available_from: '',
   available_to: '',
   gallery_urls: [] as string[],
+  minimum_spend: '',
+  payment_mode: 'deposit' as 'deposit' | 'full',
+  packages: [] as Array<{ id: string; name: string; includes: string; price: string }>,
 };
+
+/** Without a minimum spend or a package there is nothing to pay in full, so the choice goes back to the deposit. */
+function keepPaymentModeValid<T extends { minimum_spend: string; packages: unknown[]; payment_mode: 'deposit' | 'full' }>(f: T): T {
+  return Number(f.minimum_spend) > 0 || f.packages.length > 0 ? f : { ...f, payment_mode: 'deposit' };
+}
+
+/** The database's own error names for the M557 checks, shown as plain guidance. */
+function packageErrorMessage(message: string | undefined): string | null {
+  if (message?.includes('seating_packages_too_many')) return `A table can have at most ${MAX_PACKAGES} packages.`;
+  if (message?.includes('seating_packages_invalid')) return 'Each package needs a name (up to 60 characters), what it includes (up to 300) and a whole-number price.';
+  if (message?.includes('seating_full_payment_needs_offer')) return 'To ask for payment in full, add a minimum spend or at least one package.';
+  if (message?.includes('seating_minimum_spend_positive')) return 'Minimum spend must be a whole number of at least 1, or left empty.';
+  return null;
+}
 
 export default function SeatingPage() {
   const business = useBusiness();
@@ -135,6 +167,9 @@ export default function SeatingPage() {
       available_from: r.available_from || '',
       available_to: r.available_to || '',
       gallery_urls: r.gallery_urls || [],
+      minimum_spend: r.minimum_spend ? String(r.minimum_spend) : '',
+      payment_mode: r.payment_mode === 'full' ? 'full' : 'deposit',
+      packages: (r.packages || []).map(p => ({ id: p.id, name: p.name, includes: p.includes, price: String(p.price) })),
     });
     setEditId(r.id);
     setView('edit');
@@ -156,6 +191,22 @@ export default function SeatingPage() {
       setError(OVERNIGHT_MESSAGE);
       return;
     }
+    const minimumSpend = form.minimum_spend.trim() === '' ? null : Number(form.minimum_spend);
+    if (minimumSpend !== null && (!Number.isInteger(minimumSpend) || minimumSpend < 1 || minimumSpend > MAX_PACKAGE_PRICE)) {
+      setError('Minimum spend must be a whole number of at least 1, or left empty.');
+      return;
+    }
+    if (form.packages.length > MAX_PACKAGES) { setError(`A table can have at most ${MAX_PACKAGES} packages.`); return; }
+    const packages: TablePackage[] = [];
+    for (const p of form.packages) {
+      const price = parseWholeNumber(p.price, 0);
+      if (!p.name.trim() || p.name.trim().length > 60) { setError('Each package needs a name of up to 60 characters.'); return; }
+      if (p.includes.length > 300) { setError('What a package includes can be up to 300 characters.'); return; }
+      if (price === null || price < 1 || price > MAX_PACKAGE_PRICE) { setError(`Package "${p.name.trim()}" needs a whole-number price of at least 1.`); return; }
+      packages.push({ id: p.id, name: p.name.trim(), includes: p.includes.trim(), price });
+    }
+    // "Pay in full now" needs something to pay for; without it the table takes the deposit, as before.
+    const paymentMode = form.payment_mode === 'full' && (minimumSpend !== null || packages.length > 0) ? 'full' : 'deposit';
     setSaving(true);
     setError('');
 
@@ -176,6 +227,9 @@ export default function SeatingPage() {
       available_from: form.available_from || null,
       available_to: form.available_to || null,
       gallery_urls: form.gallery_urls,
+      minimum_spend: minimumSpend,
+      payment_mode: paymentMode,
+      packages,
     };
 
     const { error: err } = editId
@@ -185,7 +239,8 @@ export default function SeatingPage() {
       // The database check still guards a bypassed client check; show the same guidance, not the raw error.
       setError(err.code === '40001' ? 'This resource changed. Try again.'
         : err.message?.includes('seating_capacity_conflict') ? 'Capacity cannot be reduced below existing bookings and holds.'
-        : err.message?.includes('seating_no_overnight') ? OVERNIGHT_MESSAGE : err.message);
+        : err.message?.includes('seating_no_overnight') ? OVERNIGHT_MESSAGE
+        : packageErrorMessage(err.message) ?? err.message);
       setSaving(false);
       return;
     }
@@ -239,6 +294,9 @@ export default function SeatingPage() {
 
   // ── Add/Edit form ──
   if (view === 'add' || view === 'edit') {
+    // "Pay in full now" needs a minimum spend or a package; without one the table takes the deposit.
+    const hasOffer = Number(form.minimum_spend) > 0 || form.packages.length > 0;
+    const paysInFull = hasOffer && form.payment_mode === 'full';
     return (
       <div className="p-6 max-w-2xl">
         <button onClick={() => { setView('list'); resetForm(); }} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 mb-4 flex items-center gap-1">
@@ -299,6 +357,72 @@ export default function SeatingPage() {
               {Number(form.deposit_amount) > 0 && <p className="text-xs text-gray-500 mt-1">{formatCurrency(Number(form.deposit_amount), country)}</p>}
             </div>
           </div>
+
+          <fieldset className="space-y-3 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <legend className="px-1 text-sm font-medium">Minimum spend &amp; bottle packages (optional)</legend>
+            <div>
+              <label htmlFor="minimum_spend" className="block text-sm font-medium mb-1">Minimum spend ({country})</label>
+              <input id="minimum_spend" type="number" min={1} step={1} value={form.minimum_spend} placeholder="No minimum spend"
+                onChange={e => setForm(f => keepPaymentModeValid({ ...f, minimum_spend: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
+              <p className="text-xs text-gray-500 mt-1">
+                {Number(form.minimum_spend) > 0 ? `Customers see "${formatCurrency(Number(form.minimum_spend), country)} minimum spend" on WhatsApp.` : 'Leave empty for no minimum spend.'}
+              </p>
+            </div>
+
+            <div>
+              <p className="block text-sm font-medium mb-1">Bottle packages</p>
+              <p className="text-xs text-gray-500 mb-2">Customers choose one after the party size. Up to {MAX_PACKAGES} per table.</p>
+              <div className="space-y-3">
+                {form.packages.map((p, i) => {
+                  const belowMinimum = Number(form.minimum_spend) > 0 && Number(p.price) > 0 && Number(p.price) < Number(form.minimum_spend);
+                  return (
+                    <div key={p.id} className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2" data-testid="package-row">
+                      <div className="grid grid-cols-3 gap-2">
+                        <input type="text" aria-label={`Package ${i + 1} name`} value={p.name} maxLength={60} placeholder="e.g. Gold"
+                          onChange={e => setForm(f => ({ ...f, packages: f.packages.map(x => x.id === p.id ? { ...x, name: e.target.value } : x) }))}
+                          className="col-span-2 px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
+                        <input type="number" aria-label={`Package ${i + 1} price`} min={1} step={1} value={p.price} placeholder={`Price (${country})`}
+                          onChange={e => setForm(f => ({ ...f, packages: f.packages.map(x => x.id === p.id ? { ...x, price: e.target.value } : x) }))}
+                          className="px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
+                      </div>
+                      <textarea aria-label={`Package ${i + 1} includes`} value={p.includes} maxLength={300} rows={2} placeholder="What's included, e.g. 2 Hennessy VS + 1 Moët"
+                        onChange={e => setForm(f => ({ ...f, packages: f.packages.map(x => x.id === p.id ? { ...x, includes: e.target.value } : x) }))}
+                        className="w-full px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" />
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-amber-600 dark:text-amber-400" aria-live="polite">{belowMinimum ? 'This package costs less than the minimum spend.' : ''}</p>
+                        <button type="button" onClick={() => setForm(f => keepPaymentModeValid({ ...f, packages: f.packages.filter(x => x.id !== p.id) }))}
+                          className="text-xs text-red-600 hover:underline">Remove package {i + 1}</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {form.packages.length < MAX_PACKAGES && (
+                <button type="button" onClick={() => setForm(f => ({ ...f, packages: [...f.packages, { id: crypto.randomUUID(), name: '', includes: '', price: '' }] }))}
+                  className="mt-2 text-sm text-purple-600 hover:underline">+ Add package</button>
+              )}
+            </div>
+
+            <fieldset>
+              <legend className="block text-sm font-medium mb-1">What the customer pays now</legend>
+              <div className="space-y-1 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="radio" name="payment_mode" checked={!paysInFull} onChange={() => setForm(f => ({ ...f, payment_mode: 'deposit' }))} />
+                  Deposit only (the rest is paid at the venue)
+                </label>
+                <label className={`flex items-center gap-2 ${hasOffer ? '' : 'opacity-50'}`}>
+                  <input type="radio" name="payment_mode" checked={paysInFull} disabled={!hasOffer} aria-describedby="payment_mode_hint" onChange={() => setForm(f => ({ ...f, payment_mode: 'full' }))} />
+                  Pay in full now (the package price, or the minimum spend if no package)
+                </label>
+                <p id="payment_mode_hint" className="text-xs text-gray-500">
+                  {hasOffer
+                    ? 'With pay in full, a customer who picks no package pays the minimum spend, or the deposit if there is no minimum spend.'
+                    : 'Add a minimum spend or a package to ask for payment in full.'}
+                </p>
+              </div>
+            </fieldset>
+          </fieldset>
 
           <div>
             <label className="block text-sm font-medium mb-1">Available Days</label>
@@ -454,6 +578,11 @@ export default function SeatingPage() {
                 {r.deposit_amount > 0 && (
                   <p>Deposit: {formatCurrency(r.deposit_amount, country)}</p>
                 )}
+                {r.minimum_spend ? <p>Minimum spend: {formatCurrency(r.minimum_spend, country)}</p> : null}
+                {r.packages && r.packages.length > 0 && (
+                  <p>{r.packages.length} package{r.packages.length > 1 ? 's' : ''}{r.payment_mode === 'full' ? ' \u00b7 paid in full when booking' : ''}</p>
+                )}
+                {(!r.packages || r.packages.length === 0) && r.minimum_spend && r.payment_mode === 'full' ? <p>Minimum spend paid in full when booking</p> : null}
                 {r.available_days && r.available_days.length > 0 && r.available_days.length < 7 && (
                   <p className="text-xs">{r.available_days.map(d => d.slice(0, 3)).join(', ')}</p>
                 )}

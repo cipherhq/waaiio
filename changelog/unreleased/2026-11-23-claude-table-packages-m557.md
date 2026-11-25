@@ -1,0 +1,31 @@
+## 2026-11-23 — Table minimum spend and bottle packages, part 1 (M557 + Seating form)
+
+- **Owner decision 2026-11-23 ("go").** Nightclubs sell VIP tables with a minimum spend and bottle packages. Each table can now have an optional minimum spend, up to 9 bottle packages (name, what's included, price), and a choice of what the customer pays now: deposit only (as today) or pay in full now (the package price, or the minimum spend if no package).
+- **Change:**
+  - Migration `supabase/migrations/557_table_minimum_spend_packages.sql`:
+    - `seating_resources` gains `minimum_spend`, `payment_mode` and `packages`, plus CHECKs and the trigger `private.seating_packages_valid` (SECURITY INVOKER).
+    - `book_table_atomic` is re-created with four optional parameters. The old 18-argument signature is dropped and EXECUTE stays service_role only.
+    - The function works out the amount to pay now from the locked table row. It saves that amount for every caller that passes an expected amount or a package, and refuses changed terms (`deposit_changed`) or another table's package (`package_unavailable`).
+    - The booking stores the offer in `bookings.metadata.table_offer`.
+    - No RLS, policy or grant change.
+  - `app/dashboard/seating/page.tsx`:
+    - The Seating form gets a "Minimum spend & bottle packages (optional)" section and the "What the customer pays now" choice. "Pay in full now" is only available once there is a minimum spend or a package.
+    - It warns, without blocking, when a package costs less than the minimum spend.
+    - Each table card shows the minimum spend and the package count.
+  - CI: `.github/workflows/ci.yml` excludes the new real-PostgreSQL test from Main App. The test is required in the P0 disposable-PG job, which enforces zero skips. `docs/MIGRATION_REGISTRY.md` records M557.
+- **Tests:**
+  - `lib/__tests__/table-packages-557.pg.test.ts` (real PostgreSQL) covers:
+    - old and new callers;
+    - every amount rule;
+    - changed terms;
+    - cross-business packages;
+    - retries;
+    - package checks;
+    - final-state grants and RLS;
+    - re-applying the migration.
+  - `lib/__tests__/table-packages-form-557.test.tsx` renders the real Seating form.
+- **Affects:** tables with no minimum spend and no packages book exactly as before: same deposit, total, status and metadata. The WhatsApp customer step comes in part 2 (bot "Choose a package" step, amount and confirmation).
+- **Could break:**
+  - M557 must be applied before this code is deployed. Without it, saving a table fails because the new columns are missing.
+  - Do not release this part without part 2. Until the bot passes the new parameters, `book_table_atomic` refuses (fails closed) any table set to "pay in full now" for a customer, because the old bot would charge only the deposit. Deposit-only tables with packages still book, but the customer is not yet asked for a package.
+  - Release tooling records `book_table_atomic` by its full signature (`scripts/full-release-catalog-contracts.json`, release-v3 lock catalogs). The signature change shows up as one function dropped and one added in the catalog delta.

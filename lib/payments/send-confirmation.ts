@@ -8,6 +8,8 @@ import { reportFailure } from '@/lib/observability/report-failure';
 import { safeLogErrorContext } from '@/lib/errors';
 import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
+import { tableOfferLines } from '@/lib/bot/flows/shared/table-offer';
+import type { TablePackage } from '@/lib/bot/flows/table-reservation.flow';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
@@ -225,12 +227,14 @@ export async function sendProactiveConfirmation(
   let receiptItems: ReceiptLineItem[] = [];
   let receiptTotalDue: number | undefined;
   let receiptBalanceDue: number | undefined;
+  // M557: a table booking names its package and minimum spend (empty for other bookings).
+  let tableOfferText: string[] = [];
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, guest_email, guest_name, quantity, event_id, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
+      .select('guest_phone, guest_email, guest_name, quantity, event_id, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, metadata, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -268,6 +272,18 @@ export async function sendProactiveConfirmation(
 
 
       bookingServiceType = svc?.service_type || undefined;
+      const offer = (booking.metadata as { table_offer?: { payment_mode?: string; minimum_spend?: number | null; package?: TablePackage | null } } | null)?.table_offer;
+      if (bookingFlowType === 'table_reservation' && offer) {
+        const pkg = offer.package ?? null;
+        tableOfferText = tableOfferLines({
+          packages: pkg ? [pkg] : [],
+          minimumSpend: typeof offer.minimum_spend === 'number' ? offer.minimum_spend : null,
+          paymentMode: offer.payment_mode === 'full' ? 'full' : 'deposit',
+          deposit: Number(booking.deposit_amount || 0),
+          hasOffer: true,
+          selectedPackage: pkg,
+        }, ((biz?.country_code || countryCode) as CountryCode));
+      }
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
@@ -566,6 +582,7 @@ export async function sendProactiveConfirmation(
     '',
     `🏢 ${businessName}`,
     `📋 ${serviceName}`,
+    ...tableOfferText,
     `💰 Amount: ${formatCurrency(payment.amount, countryCode)}`,
     referenceCode ? `🔑 Ref: *${referenceCode}*` : '',
     '',

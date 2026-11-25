@@ -56,6 +56,17 @@ export async function seatingGalleryMessages(ctx: FlowContext): Promise<PromptMe
  * `book_table_atomic` instead of `book_slot_atomic`.
  */
 
+/** Columns the table steps read; minimum spend, pay mode and packages are M557. */
+const SEATING_SELECT = 'id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to, minimum_spend, payment_mode, packages';
+
+/** A bottle package on a table (M557): whole amounts, like the deposit. */
+export interface TablePackage {
+  id: string;
+  name: string;
+  includes: string;
+  price: number;
+}
+
 interface SeatingResource {
   id: string;
   name: string;
@@ -69,6 +80,9 @@ interface SeatingResource {
   available_days: string[] | null;
   available_from: string | null;
   available_to: string | null;
+  minimum_spend: number | null;
+  payment_mode: 'deposit' | 'full';
+  packages: TablePackage[];
 }
 
 /** Build validate() return data for a seating resource */
@@ -92,6 +106,11 @@ function buildSelectionData(r: SeatingResource): Record<string, unknown> {
     _service_price_is_variable: true,
     _service_max_capacity: 1, // One reservation per table at a time (capacity is for party size)
     _is_table_reservation: true,
+    // M557: the offer as shown; book_table_atomic re-checks it when booking.
+    _seating_minimum_spend: r.minimum_spend ?? null,
+    _seating_payment_mode: r.payment_mode === 'full' ? 'full' : 'deposit',
+    _seating_packages: Array.isArray(r.packages) ? r.packages : [],
+    _seating_package_id: null,
   };
 }
 
@@ -116,6 +135,10 @@ function setSeatingSessionData(ctx: FlowContext, r: SeatingResource) {
   ctx.session.session_data._service_price_is_variable = true;
   ctx.session.session_data._service_max_capacity = 1; // One reservation per table at a time
   ctx.session.session_data._is_table_reservation = true;
+  ctx.session.session_data._seating_minimum_spend = r.minimum_spend ?? null;
+  ctx.session.session_data._seating_payment_mode = r.payment_mode === 'full' ? 'full' : 'deposit';
+  ctx.session.session_data._seating_packages = Array.isArray(r.packages) ? r.packages : [];
+  ctx.session.session_data._seating_package_id = null;
 }
 
 const selectTableStep: FlowStepConfig = {
@@ -126,7 +149,7 @@ const selectTableStep: FlowStepConfig = {
 
     const { data: resources } = await ctx.supabase
       .from('seating_resources')
-      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to')
+      .select(SEATING_SELECT)
       .eq('business_id', ctx.business.id)
       .eq('is_active', true)
       .order('sort_order');
@@ -155,7 +178,8 @@ const selectTableStep: FlowStepConfig = {
         ? `Deposit: ${formatCurrency(r.deposit_amount, cc)}`
         : '';
       const sectionLabel = hasSections && r.section ? `${r.section} · ` : '';
-      const desc = [sectionLabel + capacityLabel, depositLabel].filter(Boolean).join(' · ');
+      const minimumSpendLabel = r.minimum_spend ? `${formatCurrency(r.minimum_spend, cc)} minimum spend` : '';
+      const desc = [sectionLabel + capacityLabel, minimumSpendLabel, depositLabel].filter(Boolean).join(' · ');
 
       const name = r.name || 'Table';
       if (name.length <= 24) {
@@ -182,7 +206,7 @@ const selectTableStep: FlowStepConfig = {
       return { valid: true, data: { _action: 'cancel' } };
     }
 
-    const selectFields = 'id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to';
+    const selectFields = SEATING_SELECT;
 
     // Try exact ID match first
     const { data: resource } = await ctx.supabase
@@ -233,7 +257,7 @@ const selectTableStep: FlowStepConfig = {
     // Auto-select if only one active resource (runs BEFORE prompt)
     const { data: resources } = await ctx.supabase
       .from('seating_resources')
-      .select('id, name, resource_type, capacity, min_party_size, section, deposit_amount, reservation_duration_minutes, description, available_days, available_from, available_to')
+      .select(SEATING_SELECT)
       .eq('business_id', ctx.business.id)
       .eq('is_active', true)
       .order('sort_order');
