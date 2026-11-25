@@ -1815,6 +1815,9 @@ export class BotService {
           return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId, undefined, undefined, 'returning_customer', undefined, true);
         }
         const newData = { ...session.session_data, active_capability: undefined };
+        // The earlier booking's question answers stay with that booking
+        const { clearPreBookingQuestionState } = await import('./flows/shared/capability-transition');
+        clearPreBookingQuestionState(newData);
         const casParams: Record<string, unknown> = {
           p_session_id: session.id,
           p_expected_version: session.version ?? 0,

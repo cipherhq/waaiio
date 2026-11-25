@@ -209,6 +209,9 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // Exactly one renderable capability → auto-select and skip the menu
     if (customFlows.length === 0 && userFacing.length === 1 && !await isSharedConversation(ctx.supabase, ctx.session.session_data) && !ctx.session.session_data._customer_history) {
+      // A new booking starts here without a menu selection
+      const { clearPreBookingQuestionState } = await import('./shared/capability-transition');
+      clearPreBookingQuestionState(ctx.session.session_data);
       ctx.session.session_data.active_capability = userFacing[0];
       // Send greeting as standalone text since capability menu is skipped
       const greeting = ctx.session.session_data._greeting as string | undefined;
