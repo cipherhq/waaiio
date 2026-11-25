@@ -86,7 +86,7 @@ jobs:
 
       - name: Build
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npx next build
 
   # ── Release Gate V2 ──
@@ -4763,7 +4763,7 @@ jobs:
 
       - name: Build application
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npx next build
 
       - name: Verify preinstalled Playwright Chromium
