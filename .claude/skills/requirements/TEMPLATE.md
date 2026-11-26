@@ -4,10 +4,10 @@
 |---|---|
 | Issue | #<n> |
 | Revision | r1 |
-| Evidence gathered at | `main` <40-char SHA> |
+| Evidence gathered at | `main` <40-char SHA> (HEAD = origin/main) |
 | Author | <session name> |
 | Lane | Full process: <trigger: new feature / money / migration / auth / cross-capability bot> |
-| Tools used | Graphify (commitSha <sha>, = HEAD: yes/no) · Serena: used/not needed/failed (<why>) · grep/read · Supabase MCP read-only (<project>) |
+| Tools used | Graphify (commitSha <sha>, = recorded SHA: yes/no; grep cross-check done) · Serena: used/not needed/failed (<why>) · grep/read · Supabase MCP read-only (<project>) |
 | Private advisory | none / <GHSA id, no detail here> |
 
 **Revision log**

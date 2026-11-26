@@ -4,9 +4,10 @@
 - Evidence rules: every claim about current behaviour cites file:line, a migration or a live read-only query; anything else is marked UNVERIFIED. Tool order: Graphify (commitSha must equal HEAD), then Serena, then grep/read; Supabase MCP SELECT-only for the live schema.
 - The S section includes an overlap check against open PRs and recent merges (`gh pr list` + `gh pr diff --name-only`).
 - Gate: two independent read-only Claude reviewers (req-reviewer-a business/functional, req-reviewer-b system/security) post `Requirements-Review-Record` lines; then the Owner approves B and F through the coordinator; only then may implementation start. The implementation PR lists the IDs it covers.
+- Owner approval of B and F is not merge, migration, deploy or provider authorization. Security-sensitive requirements go in a private advisory. The code-impact part points to the `preflight-check` skill. Production schema reads need the user's OK first.
 - Full process applies to new features, money, migrations, auth and cross-capability bot changes. Small bug fixes keep CLAUDE.md's one-paragraph implementation contract.
 
-**Files:** `.claude/skills/requirements/SKILL.md`, `.claude/skills/requirements/TEMPLATE.md`, and a one-line pointer in `CLAUDE.md` under "Lean implementation discipline", habit 1.
+**Files:** `.claude/skills/requirements/SKILL.md`, `.claude/skills/requirements/TEMPLATE.md`, and a two-line pointer in `CLAUDE.md` under "Lean implementation discipline", habit 1, which records the new gate as an Owner-approved exception (2026-11-26) to that section's "no new reviewer or serial approval round".
 
 **Affects:** process only. No app code, migration, money routing or user-facing behaviour changes.
 

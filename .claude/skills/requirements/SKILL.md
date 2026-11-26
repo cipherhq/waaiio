@@ -20,6 +20,8 @@ The requirements doc is the "approved requirements" that CLAUDE.md habit 1 and t
 
 ## When to use this skill (scaling)
 
+This gate is an Owner-approved addition (2026-11-26) for the work below. The req reviewers review the requirements doc only; they do not replace the two assigned post-implementation reviewers.
+
 **Full process (this skill), required for:**
 - new features or new capabilities;
 - anything touching money: payments, payouts, fees, refunds, settlement, provider integrations;
@@ -43,16 +45,16 @@ If unsure which applies, use the full process and say why in the issue.
 1. **Every statement about current behaviour cites evidence**: `file:line` at a stated SHA, a migration file (`supabase/migrations/NNN_*.sql`), or a live read-only query with its result. Docs alone, PR prose, memory and handoff claims are not evidence of current behaviour (Operating Order "Evidence Hierarchy"). They can be cited as the source of an Owner decision.
 2. **Anything not confirmed is marked `UNVERIFIED`**, with what would confirm it. Never present an assumption as fact. An `UNVERIFIED` item that a requirement depends on is either verified before review or becomes an open question.
 3. **Final state, not creation.** For any table, column, enum, constraint, policy, grant or function, check every later migration that may alter it (CLAUDE.md Golden Rule 9, RELEASE_GATE_V2.md §2), then confirm against the live schema.
-4. **Record the SHA.** The doc header names the `main` SHA (`git rev-parse origin/main`) the evidence was gathered at.
+4. **Record the SHA.** Gather evidence on a checkout of current `main` (or a branch at the same commit), so `git rev-parse HEAD` equals `git rev-parse origin/main`. The doc header names that SHA. Graphify's `commitSha` is compared against the same SHA.
 
 ### Tool order
 
 Use these in order, and record in the doc's "Tools used" line which ones you used and what failed.
 
-1. **Graphify MCP:** `graphify_find` (definitions), `graphify_callers`, `query_graph` (how/where behaviour is handled), `graphify_impact` (blast radius, `include_risk=true`), `graphify_tests_for`. Check that each result's `commitSha` equals `git rev-parse HEAD`. If it does, use the result as-is unless it says coverage is partial. Graphify indexes **code only, not docs**: read docs directly.
-2. **Serena MCP** (local stdio server `serena`), when Graphify is down, partial, or its `commitSha` differs from HEAD. Call `initial_instructions` first, then use `serena_repl` with `s.lsp.find_symbol`, `s.lsp.find_referencing_symbols` and `s.lsp.get_symbols_overview` (TypeScript language server). **Read-only**: never use `s.edit`, `s.lsp.rename_symbol`, `s.lsp.safe_delete_symbol`, `s.fs.create_text_file` or `s.shell`.
+1. **Graphify MCP:** `graphify_find` (definitions), `graphify_callers`, `query_graph` (how/where behaviour is handled), `graphify_impact` (blast radius, `include_risk=true`), `graphify_tests_for`. Check that each result's `commitSha` equals the recorded SHA. For the S7 code-impact blast radius, always cross-check Graphify's callers and dependents with grep at that SHA (RELEASE_GATE_V2.md §9.1 item 10), even when the SHAs match. Graphify indexes **code only, not docs**: read docs directly.
+2. **Serena MCP** (local stdio server `serena`), when Graphify is down, partial, or its `commitSha` differs from HEAD. Call `initial_instructions` first, then use `serena_repl` with **only** these read-only calls: `s.lsp.find_symbol`, `s.lsp.find_referencing_symbols`, `s.lsp.find_declaration`, `s.lsp.get_symbols_overview` (TypeScript language server), plus `s.fs.read_file` / `s.fs.search_for_pattern`. Anything else (edit, rename, delete, create file, shell, memory writes) is forbidden.
 3. **Direct grep and read**, when neither works. Read the file around each hit; a grep hit alone is not a trace.
-4. **Supabase MCP** for the live schema. `execute_sql` with `SELECT`s only (`information_schema`, `pg_catalog`, `pg_policies`, `pg_proc.proconfig`, `has_function_privilege`, etc.). Never `apply_migration`, never INSERT/UPDATE/DELETE/DDL. Production reads need the user's explicit OK first. Don't put customer data or PII in the doc; prefer counts and identifiers.
+4. **Supabase MCP** for the live schema. `execute_sql` with catalog and table `SELECT`s only (`information_schema`, `pg_catalog`, `pg_policies`, `pg_proc.proconfig`, `has_function_privilege`, etc.). Never `apply_migration`, never INSERT/UPDATE/DELETE/DDL, and never a SELECT that calls an application or side-effecting function. Production reads need the user's explicit OK first (a stricter rule than the design's minimum, matching CLAUDE.md's separate authorization phases). Never put customer data, PII, secrets or environment values in the doc; prefer counts and identifiers.
 
 **Never skip verification because a tool is down.** Fall through to the next tool. If no tool can confirm something, mark it `UNVERIFIED` and say which tools failed.
 
@@ -89,12 +91,12 @@ New user-facing wording is proposed in the doc and approved by the Owner with th
 ### 3. System (S1…)
 Each with evidence:
 - **Data and migrations.** Tables, columns, types, enums, CHECK constraints, defaults, NOT NULL, indexes, verified against the **final migration state** and the live schema. Name any new migration, its number as currently free (check `supabase/migrations/` and open PRs), and whether it ships ahead of the app (RELEASE_GATE_V2.md §9.2). Trace the INSERT/UPDATE that creates any record you read (Golden Rule 3).
-- **RLS and grants.** RLS on every new public table, default deny (DB-003). An access matrix (identity × operation × allow/deny × rule × caller), per Operating Order "Access-contract matrix". Every `SECURITY DEFINER` function: private schema, `search_path` per DB-001/DB-002/DB-006, `CREATE OR REPLACE` attributes preserved per §2.1.
+- **RLS and grants.** RLS on every new public table, default deny (DB-003). An access matrix (identity × operation × allow/deny × rule × caller), per Operating Order "Access-contract matrix". Every `SECURITY DEFINER` function: private schema, a pinned `search_path` on every one (and `public, extensions` where DB-001/DB-006 apply), and `CREATE OR REPLACE` attributes preserved per DB-002 / §2.1. List every RELEASE_GATE_V2.md §1 invariant the feature touches (e.g. DB-004, DB-005, CH-001, SEC-003), not only the payment ones.
 - **Payment custody.** If money moves, state the route for each custody model in `docs/MERCHANT_PAYMENT_CUSTODY_POLICY.md` (merchant-connected and Waaiio-owned), the fee per tier, who pays gateway fees, the trial rule, and the §1.2 invariants touched. Any change to these rules is an open question for the Owner, never a requirement.
 - **Provider limits.** E.g. WhatsApp lists max 10 rows (`lib/bot/flows/shared/list-pages.ts` `LIST_MAX_ROWS`, `lib/channels/meta-cloud.ts`), button and title lengths, template approval, Stripe/Paystack constraints. Cite the code or provider docs.
 - **Capability and bot routing**, checked against `docs/contracts/736-capability-e2e-contract.md`: entry type, payment eligibility, post-payment fulfillment authority, dependencies. Name the flow files, step IDs, `session_data` keys and handlers (`bot.service.ts` versus `executor.ts`) involved.
 - **Code impact.** The `preflight-check` summary: files, callers, shared types, blast radius.
-- **Overlap check.** Open PRs and recent merges touching the same files or types. Two PRs that each added `metadata` to the same type broke main on 2026-11-26; this check exists to catch that.
+- **Overlap check.** Open PRs and recent merges touching the same files or types. On 2026-11-26 two PRs each added `metadata` to the same type and broke main (fixed by `6bf62d202`, #1156); this check exists to catch that.
   ```bash
   gh pr list --state open --limit 100 --json number,title,headRefName
   gh pr diff <n> --name-only        # for each open PR
@@ -121,7 +123,7 @@ Each one is a decision card in the CLAUDE.md format:
 Architecture, migration or security conflicts are CTO questions in the same format. The writer never asks the Owner directly: the coordinator queues the cards one at a time.
 
 ### 6. Acceptance ledger
-Every B, F and S ID → the planned test and its kind: handler test, rendered UI test, disposable PostgreSQL test, golden journey (RELEASE_GATE_V2.md §3), catalog assertion, negative/concurrency test. Name the planned test file. A B-line may map to a post-launch measure instead of a test. A source-string test or mock alone is not acceptance for an F or S line (CLAUDE.md "Prove actual behavior").
+Every B, F and S ID → the planned test and its kind: handler test, rendered UI test, disposable PostgreSQL test, golden journey (RELEASE_GATE_V2.md §3), catalog assertion, negative/concurrency test. Name the planned test file. A B-line may map to a post-launch measure instead of a test. A source-string test or mock alone is not acceptance for an F or S line (CLAUDE.md "Prove actual behavior"). For any money lane, the ledger must also include both custody routes and duplicate-payment, fee, refund and cross-business regression tests (RELEASE_GATE_V2.md §9.1 item 2).
 
 ## Gate
 
@@ -136,7 +138,7 @@ Implementation must not start until all four steps are done.
    ```
    CHANGES_REQUESTED → fix, bump the revision, and have the same reviewer recheck the new revision. A record for an older revision does not count.
 3. **Owner approval.** With both reviewers APPROVED on the same revision, the coordinator brings the Owner a plain-language summary of the B and F sections, recommendation first, with no jargon, and one question at a time for any open card. The Owner approves B and F. Record the approval on the issue (date, revision, the Owner's words as relayed). **The writer never asks the Owner directly.**
-4. **Implementation may start.** Phase A agreement still applies for high-risk work (Operating Order "Standard Substantive-Change Process").
+4. **Implementation may start**, within the task the coordinator authorizes. Phase A agreement still applies for high-risk work (Operating Order "Standard Substantive-Change Process"). Owner approval of B and F is approval of the requirements only. It is not merge, migration-apply, deployment, production-data or live-provider/financial authorization; each stays a separate Owner approval (RELEASE_GATE_V2.md §9.1 item 5).
 
 ### After approval
 - The implementation PR lists the IDs it covers (e.g. "Covers B1, F1–F6, S1–S4 of #NNNN@r3") and, per ID, the test that proves it.
