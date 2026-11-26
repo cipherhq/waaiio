@@ -466,6 +466,14 @@ Reserved by the coordinator 2026-11-19 after checking main through M552 (M551 SM
 
 Reserved 2026-11-23 after checking main through M554, the open PRs (#1144, #1145: no migration) and local worktree migration filenames. Owner decision 2026-11-23 ("build it": standard items every day plus a weekly menu with different dishes per weekday). Adds `public.products.available_days` (smallint[] of ISO weekdays 1–7, NULL/empty = every day), `available_from` and `available_until` (date, NULL = no limit), with CHECKs `products_available_days_valid` (days within 1..7) and `products_available_dates_order` (from ≤ until). No function, grant, RLS, policy or trigger change; existing rows get NULL (every day). Applying it to staging or production needs separate Owner approval, and it must be applied before the app code that reads these columns is deployed.
 
+### Reservation — weekly menu upload (weekly menus part 2)
+
+| Version | Name | Branch | Status |
+|---|---|---|---|
+| 556 | weekly_menu_upload | claude/weekly-menu-upload | Reserved; not applied |
+
+Reserved 2026-11-23 after checking main through M555 (#1146 merged), the open PRs (none with a migration) and local worktree migration filenames. Owner decisions 2026-11-23 (menu photo upload read by Ace: own daily read limit Free 1 / Pro 5 / Premium 10; review before save; every dish is a product; "2A" a new weekly menu hides the previous weekly-menu dishes, never deletes; everyday items untouched). Adds `public.products.weekly_menu_week` (date, a Monday; NULL = ordinary item) with CHECK `products_weekly_menu_week_monday` and partial index `idx_products_weekly_menu`; table `public.menu_photo_reads` (business_id, read_date, read_count; RLS on, no policy, no anon/authenticated grant); functions `public.consume_menu_photo_read(uuid, date, integer)` and `public.save_weekly_menu(uuid, date, jsonb)`, both SECURITY INVOKER with `search_path = ''` and EXECUTE for service_role only. No existing function, policy, trigger or grant changes. Must apply after M555. Applying it to staging or production needs separate Owner approval, and it must be applied before the app code that uses it is deployed.
+
 ### Reservation — table minimum spend and bottle packages
 
 | Version | Name | Branch | Status |

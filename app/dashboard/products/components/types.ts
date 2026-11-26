@@ -141,7 +141,7 @@ export const EMPTY_VARIANT: ProductVariant = {
   options: {},
 };
 
-export type ViewMode = 'list' | 'add' | 'edit' | 'bulk';
+export type ViewMode = 'list' | 'add' | 'edit' | 'bulk' | 'weekly';
 
 // ── Helpers ──
 

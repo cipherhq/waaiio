@@ -18,6 +18,7 @@ import {
   normalizeAceImageItems,
   type AceImageMode,
 } from '@/lib/ai-setup/image-catalog';
+import { MENU_BUSINESS_COLUMNS, menuDay, menuPhotoDailyLimit } from '@/lib/products/weekly-menu';
 
 // Sonnet vision calls on a full menu can take tens of seconds.
 export const maxDuration = 60;
@@ -39,6 +40,8 @@ function getClient(): Anthropic {
  *
  * Owner decision: each image counts toward the Ace allowance. A checked image
  * is counted before the model call, whether or not Ace finds any items.
+ * weekly_menu mode (Owner decision 2026-11-23) counts against its own daily
+ * menu photo limit instead (Free 1, Pro 5, Premium 10 per business-local day).
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -63,11 +66,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid mode' }, { status: 400 });
   }
   const mode: AceImageMode = rawMode;
+  const weekly = mode === 'weekly_menu';
 
   // Verify ownership BEFORE consuming any rate-limit or quota budget
   const { data: biz } = await supabase
     .from('businesses')
-    .select('id, country_code, subscription_tier')
+    .select(MENU_BUSINESS_COLUMNS)
     .eq('id', businessId)
     .eq('owner_id', user.id)
     .maybeSingle();
@@ -77,13 +81,15 @@ export async function POST(request: NextRequest) {
   const rateLimited = await rateLimitResponseAsync(`ai-parse:${businessId}:${user.id}`, 10, 3600_000);
   if (rateLimited) return rateLimited;
 
-  const tier = (biz.subscription_tier || 'free') as string;
-  const { allowed, reason } = await checkAIFeature(supabase, businessId, tier, 'ace_setup');
-  if (!allowed) {
-    return NextResponse.json(
-      { error: reason || 'You have used all your Ace setup requests for this month. Upgrade your plan for more.' },
-      { status: 403 },
-    );
+  if (!weekly) {
+    const tier = (biz.subscription_tier || 'free') as string;
+    const { allowed, reason } = await checkAIFeature(supabase, businessId, tier, 'ace_setup');
+    if (!allowed) {
+      return NextResponse.json(
+        { error: reason || 'You have used all your Ace setup requests for this month. Upgrade your plan for more.' },
+        { status: 403 },
+      );
+    }
   }
 
   // Validate the real bytes — file.type is client-supplied
@@ -117,9 +123,31 @@ export async function POST(request: NextRequest) {
   // Owner decision: every checked image counts, even if nothing is read.
   // ai_usage is written with the service client (service-role only). If the
   // count cannot be saved, the image is not read, so no image goes uncounted.
-  const counted = await incrementAIUsage(createServiceClient(), businessId, 'ace_setup');
-  if (!counted) {
-    return NextResponse.json({ error: 'Ace is unavailable right now. Please try again in a moment.' }, { status: 503 });
+  // weekly_menu: one atomic count-or-refuse against today's menu photo limit.
+  let extra: { reads_left?: number } = {};
+  if (weekly) {
+    const limit = menuPhotoDailyLimit(biz);
+    const { data: used, error: countError } = await createServiceClient().rpc('consume_menu_photo_read', {
+      p_business_id: businessId,
+      p_read_date: menuDay(biz).date,
+      p_daily_limit: limit,
+    });
+    if (countError) {
+      logger.error('[AI-SETUP] Menu read count error:', countError.message);
+      return NextResponse.json({ error: 'Ace is unavailable right now. Please try again in a moment.' }, { status: 503 });
+    }
+    if (used === null || used === undefined) {
+      return NextResponse.json({
+        error: `You have used today's ${limit} menu read${limit === 1 ? '' : 's'}. You can upload again tomorrow.`,
+        reads_left: 0,
+      }, { status: 403 });
+    }
+    extra = { reads_left: Math.max(0, limit - Number(used)) };
+  } else {
+    const counted = await incrementAIUsage(createServiceClient(), businessId, 'ace_setup');
+    if (!counted) {
+      return NextResponse.json({ error: 'Ace is unavailable right now. Please try again in a moment.' }, { status: 503 });
+    }
   }
 
   let text: string;
@@ -136,7 +164,9 @@ export async function POST(request: NextRequest) {
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpegBase64 } },
           { type: 'text', text: mode === 'product_photo'
             ? 'Suggest catalog details for the product in this photo. Respond with JSON only.'
-            : 'Extract the catalog items from this image. Respond with JSON only.' },
+            : weekly
+              ? 'Extract this week\'s menu items and their days from this image. Respond with JSON only.'
+              : 'Extract the catalog items from this image. Respond with JSON only.' },
         ],
       }],
     });
@@ -152,6 +182,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       items: [],
       mode,
+      ...extra,
       message: 'This menu is too long for one photo. Take separate photos of each page or section and upload them one at a time.',
     });
   }
@@ -162,11 +193,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       items: [],
       mode,
+      ...extra,
       message: mode === 'product_photo'
         ? 'Ace could not recognise a product in that photo. Try a clearer photo, or add the product manually.'
         : 'Could not read the image clearly. Try uploading a clearer photo with visible text and prices, or add items manually.',
     });
   }
 
-  return NextResponse.json({ items, mode });
+  return NextResponse.json({ items, mode, ...extra });
 }
