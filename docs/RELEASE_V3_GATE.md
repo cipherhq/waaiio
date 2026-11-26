@@ -185,6 +185,8 @@ To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `
   - staging: 7205 objects, `9bae4ca4…`.
 - `release-v3-admission.test.ts` proves lock + committed deltas through M554 + these corrections reproduce both exactly, and that without them the gate stops.
 
+**Second case (2026-11-26):** after M555–M557 on staging, `table:public.menu_photo_reads` (M556) differed on staging only, for the same reason as M547. With that one added correction, staging read 7231 objects, `4b83d3ac…` (`lock.observed.measured_corrections_2026_11_26`). Production equalled the lock + deltas through M554 exactly (7184, `370dce71…`), and has no correction for M555–M557.
+
 **Removal:** a later lock re-bootstrap past M549 drops the entries; a correction naming a migration that is no longer admitted fails closed.
 
 ## Migrations (authors)

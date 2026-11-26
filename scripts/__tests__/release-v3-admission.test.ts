@@ -168,22 +168,27 @@ describe('catalog admission (lock + reviewed deltas, exact equality)', () => {
   });
   it('the committed measured corrections (Owner 2026-11-19, option A) match the reviewed predictions and reproduce the measured catalogs', () => {
     const lock = loadLock();
-    const migrations = postBootstrapMigrations(process.cwd(), 'HEAD', lock, []).filter((m: { name: string }) => m.name <= '554_paystack_plan_expiry_authority');
+    const all = postBootstrapMigrations(process.cwd(), 'HEAD', lock, []);
     expect(Object.fromEntries(Object.entries(lock.measured).map(([env, list]) => [env, (list as { identity: string }[]).map(c => c.identity)]))).toEqual({
       production: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts'],
-      staging: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts', 'table:public.customer_suspensions'] });
-    for (const env of ['production', 'staging']) {
-      const lockMap = loadLockMap(lock.environments[env]);
-      const predicted = applyDeltas(lockMap, migrations.map((m: { delta: unknown }) => m.delta));
-      const measured = lock.measured[env] as { identity: string; predicted_sha256: string; measured_sha256: string }[];
-      for (const c of measured) expect(predicted.get(c.identity)).toBe(c.predicted_sha256);
-      const live = new Map(predicted); for (const c of measured) live.set(c.identity, c.measured_sha256);
-      const observed = lock.observed.measured_corrections_2026_11_19[env];
-      expect({ count: live.size, sha256: catalogAggregate(live) }).toEqual({ count: observed.count, sha256: observed.sha256 });
-      expect(verifyCatalog(live, lock.environments[env], migrations, env, lockMap, measured).sha256).toBe(observed.sha256);
-      expect(() => verifyCatalog(live, lock.environments[env], migrations, env, lockMap)).toThrow('differs from lock + reviewed deltas');
+      staging: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts', 'table:public.customer_suspensions', 'table:public.menu_photo_reads'] });
+    // Each observation was read after the migrations up to `through`; only the corrections those migrations admit apply.
+    for (const key of ['measured_corrections_2026_11_19', 'measured_corrections_2026_11_26']) {
+      for (const env of ['production', 'staging']) {
+        const observed = lock.observed[key][env];
+        const migrations = all.filter((m: { name: string }) => m.name <= observed.through);
+        const lockMap = loadLockMap(lock.environments[env]);
+        const predicted = applyDeltas(lockMap, migrations.map((m: { delta: unknown }) => m.delta));
+        const measured = (lock.measured[env] as { migration: string; identity: string; predicted_sha256: string; measured_sha256: string }[])
+          .filter(c => migrations.some((m: { name: string }) => m.name === c.migration));
+        for (const c of measured) expect(predicted.get(c.identity)).toBe(c.predicted_sha256);
+        const live = new Map(predicted); for (const c of measured) live.set(c.identity, c.measured_sha256);
+        expect({ count: live.size, sha256: catalogAggregate(live) }).toEqual({ count: observed.count, sha256: observed.sha256 });
+        expect(verifyCatalog(live, lock.environments[env], migrations, env, lockMap, measured).sha256).toBe(observed.sha256);
+        expect(() => verifyCatalog(live, lock.environments[env], migrations, env, lockMap)).toThrow('differs from lock + reviewed deltas');
+      }
     }
-  }, 60_000);
+  }, 120_000);
   it('rejects malformed measured corrections in the lock', () => {
     const text = readFileSync('scripts/release-v3/lock.json', 'utf8');
     const bad = (mutate: (l: any) => void) => { const l = JSON.parse(text); mutate(l); return JSON.stringify(l); };

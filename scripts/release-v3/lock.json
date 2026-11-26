@@ -70,6 +70,13 @@
     "migration": "547_customer_suspensions",
     "predicted_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
     "reason": "M547 revokes only client roles; staging's default grants for the server role differ from production's, which the replay models, so staging's result differs from the reviewed prediction. Measured read-only 2026-11-19; Owner decision 2026-11-19 (option A)."
+   },
+   {
+    "identity": "table:public.menu_photo_reads",
+    "measured_sha256": "f2fe515ce7cb36576c0b89be5cb24ceaab7d8875f00cfe8dd3cab3149c1d08de",
+    "migration": "556_weekly_menu_upload",
+    "predicted_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+    "reason": "M556 revokes only client roles; staging's default grants for the server role differ from production's, which the replay models, so staging's result differs from the reviewed prediction (same cause as M547). Measured read-only 2026-11-26."
    }
   ]
  },
@@ -131,6 +138,19 @@
     "count": 7205,
     "sha256": "9bae4ca40b99bf6ff2a55de097c26b972f7c31afefff1d7c1aae6cb19a25909d",
     "through": "554_paystack_plan_expiry_authority"
+   }
+  },
+  "measured_corrections_2026_11_26": {
+   "method": "read-only catalog-v3.sql aggregate via the Supabase connector as postgres; staging after M555-M557, production after M554 (M555-M557 not yet applied there)",
+   "production": {
+    "count": 7184,
+    "sha256": "370dce7176b029b543bf3f9884ce5c17ca039efb39c215dcd1a88fc818c869bb",
+    "through": "554_paystack_plan_expiry_authority"
+   },
+   "staging": {
+    "count": 7231,
+    "sha256": "4b83d3ac8b83bfef9fecaf3a0f39e1ddc70773ab5154c17f19e6d3c8194803b0",
+    "through": "557_table_minimum_spend_packages"
    }
   },
   "method": "authorized Supabase connector, read-only SELECT",
