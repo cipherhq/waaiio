@@ -1,3 +1,271 @@
+## 2026-11-26 — Requirements skill: evidence-backed requirements before code
+
+**What changed:** Owner design 2026-11-26. New project skill `requirements` writes one requirements document per feature, in the feature's GitHub issue, before any code is written. It has Business (B), Functional (F) and System (S) requirements with IDs, out of scope, open questions as PRODUCT DECISION NEEDED cards, and an acceptance ledger mapping each ID to a planned test.
+- Evidence rules: every claim about current behaviour cites file:line, a migration or a live read-only query; anything else is marked UNVERIFIED. Tool order: Graphify (commitSha must equal the recorded `main` SHA), then Serena, then grep/read; Supabase MCP SELECT-only for the live schema.
+- Never guess product behaviour (Owner instruction 2026-11-26): any product gap not settled by code, docs or a recorded Owner decision becomes a numbered PRODUCT DECISION NEEDED card; affected lines are marked `BLOCKED ON Q<n>`; reviewers reject assumptions; Owner approval waits until every card is answered and recorded with the Owner's words and date.
+- The S section includes an overlap check against open PRs and recent merges (`gh pr list` + `gh pr diff --name-only`).
+- Gate: two independent read-only Claude reviewers (req-reviewer-a business/functional, req-reviewer-b system/security) post `Requirements-Review-Record` lines; then the Owner approves B and F through the coordinator; only then may implementation start. The implementation PR lists the IDs it covers.
+- Owner approval of B and F is not merge, migration, deploy or provider authorization. Security-sensitive requirements go in a private advisory. The code-impact part points to the `preflight-check` skill. Production schema reads need the user's OK first.
+- Full process applies to new features, money, migrations, auth and cross-capability bot changes. Small bug fixes keep CLAUDE.md's one-paragraph implementation contract.
+
+**Files:** `.claude/skills/requirements/SKILL.md`, `.claude/skills/requirements/TEMPLATE.md`, and a two-line pointer in `CLAUDE.md` under "Lean implementation discipline", habit 1, which records the new gate as an Owner-approved exception (2026-11-26) to that section's "no new reviewer or serial approval round".
+
+**Affects:** process only. No app code, migration, money routing or user-facing behaviour changes.
+
+**What could break:** nothing at runtime.
+
+## 2026-11-26 — Release lock: re-certify the 2026-11-19 merchant redeploy, and a staging correction for M556
+
+- **What changed:**
+  - The `recertified` entry in the release lock now names release deploy run 44568946884 at `15d8e3cd`, with the production merchant deployment that serves today. That deployment is the same-SHA Vercel redeploy made after the Owner added the SMS sender setting on 2026-11-19. The admin deployment is unchanged. This entry replaces the old one for release #4, which no longer applied.
+  - The lock also gains one staging-only measured correction, for `table:public.menu_photo_reads` (M556). Staging's default server-role grants differ from production's, as with M547. The lock records the measured catalogs as well.
+- **Files:** `scripts/release-v3/lock.json`, `scripts/__tests__/release-v3-admission.test.ts`, `docs/RELEASE_V3_GATE.md`.
+- **What it affects:** Only the certified baseline and the staging catalog check in the next Release V3 prepare. There is no app, database or setting change.
+- **What could break:** A wrong value makes prepare stop (fail closed). The `recertified` entry stops applying once a newer release deploys.
+
+## 2026-11-26 — Fix main build: duplicate `metadata` field on the reservations page
+
+**What changed:** `Booking` in `app/dashboard/reservations/page.tsx` declared `metadata` twice: once typed for the M557 table offer (#1152) and once as `Record<string, unknown>` for pre-booking answers (#1151). Each PR built on its own, but together `next build` fails with "Duplicate identifier 'metadata'". The second, looser declaration is removed. The pre-booking answers are still read through `bookingCustomAnswers()` and `<PreBookingAnswers>`, which both take `unknown`, so nothing else changes.
+
+**Files:** `app/dashboard/reservations/page.tsx` (one type line removed, comment updated).
+
+**Affects:** Type checking only. The query, rendering, CSV export and table-offer display are unchanged.
+
+**What could break:** Nothing at runtime. Code that later reads other `metadata` keys on `Booking` must go through a helper that accepts `unknown`, or widen the M557 type.
+
+## 2026-11-26 — Email question in the WhatsApp bot is optional everywhere
+
+**What changed:** Owner decision 2026-11-26. The three bot steps that ask a customer for an email now ask "📧 Want a copy by email? Type your email or tap *Skip*." and show a **Skip** button (id `skip_email`, title from `booking.skip`). The three steps are ordering, booking (scheduling) and reservation `collect_email`. A Skip tap, or a typed "skip", saves no email and moves on to the next step:
+- ordering goes to `review_order_summary`. Before this change, ordering required a valid email and had no way to skip;
+- scheduling goes to `create_booking`;
+- reservation goes to `create_reservation`.
+
+A skip also sets `email` and `customer_email` to null in the session. An email carried over from another business's session therefore never reaches this business's booking, reservation or order summary. Before this change, `reuseStoreCustomerEmail` refused such an email, but a skip left it in the session.
+
+A valid email is still saved to the business's customer profile, as before. A returning customer's saved email for the same business is still reused without asking (`reuseStoreCustomerEmail`).
+
+**Copy:** `booking.collect_email`, `ordering.collect_email`, `booking.invalid_email` and `ordering.invalid_email` are rewritten in en, pcm, yo, ig, ha, tw, fr and es. Each language names its own Skip button title. Reservation used hard-coded English; it now uses the same `booking.*` copy.
+
+**Files:**
+- `lib/bot/flows/ordering.flow.ts`, `scheduling.flow.ts`, `reservation.flow.ts` (`collect_email` prompt and validate);
+- `lib/bot/flows/flow-localization.ts` (copy);
+- `lib/bot/__tests__/bot-latency-batch1.golden.json` (recorded booking prompt);
+- tests: new `lib/__tests__/email-optional-skip.test.ts`, plus case 1D in `lib/__tests__/phase-2d-stage3-runtime.test.ts`.
+
+**Affects:**
+- Customer email is optional for every bot checkout, and payments do not need it. The ordering checkout never passes the email to a provider. Paystack and Stripe use the internal phone alias, Flutterwave uses its phone-based fallback, and Square omits `buyer_email`.
+- Every downstream customer-email send already checks for an address:
+  - the direct-transfer order email (`customer_order_email`, via `findCustomerEmail`);
+  - the booking confirmation email (`guest_email`);
+  - `sendOrEmail`;
+  - the order summary line.
+- Owner notifications go to the owner's email, not the customer's.
+- No money routing, fee or custody change.
+
+**What could break:**
+- A customer who skips gets no confirmation email, only WhatsApp, as intended.
+- A customer who types a translated word for "skip" instead of tapping the button gets the "not a valid email" reply with the Skip button again.
+
+## 2026-11-25 — Reset per-booking question state between bookings
+
+**What changed:** The answers a customer gives to a business's pre-booking questions, and the bot's position in those questions, now belong to one booking only. They are cleared whenever a new booking starts in the same chat:
+- on every capability selection or switch, including picking the same capability again (`clearStaleCapabilityState`);
+- when the capability menu auto-selects a business's only capability;
+- when the saved-card "Menu" button returns the customer to the capability menu.
+
+Before this, a new booking in the same session could skip the questions and be saved with the earlier booking's answers in `bookings.metadata.custom_answers`.
+
+**Files:** `lib/bot/flows/shared/capability-transition.ts` (new `clearPreBookingQuestionState`, called from `clearStaleCapabilityState`), `lib/bot/flows/capability-selection.flow.ts` (single-capability auto-select), `lib/bot/bot.service.ts` (saved-card Menu), new test `lib/bot/__tests__/pbq-session-reset.test.ts`.
+
+**Affects:** The scheduling flow's `pre_booking_questions` step (session keys `_pbq_answers`, `_pbq_index`) and the answers saved on new bookings. No other session keys and no other flows are touched. Within one booking, the answers are kept exactly as before.
+
+**What could break:** A customer who starts a new booking is asked the business's questions again, as intended. Any future path that returns to an earlier booking step through the capability menu would also start the questions again.
+
+## 2026-11-24 — Big shop catalogs no longer break the WhatsApp order menu, and every product can be reached
+
+**What changed:** WhatsApp lists allow at most 10 rows in total. A shop with more than 10 products in several categories (staging: Simi Scents, 22 products) got a 17-row list, and Meta refused it (131009, Sentry JAVASCRIPT-NEXTJS-B/C). Products past the 10th in one category could never be reached. Owner decision 2026-11-24: keep all 22 products, fix the bug.
+- Opening the shop: when the catalog has more than 10 products in more than one category, the bot shows the category list first, the same list as "browse by category" mode. With one category, products come in pages with a "More Options →" row and a "← Previous" row. These reuse the existing `nav.more_options` / `nav.previous_page` copy that the main menu pages already use.
+- Inside a category: every product is now listed through pages. Before, only the first 9 were listed. "Back to categories" stays at the top of every page.
+- More than 10 categories: the category list is paged the same way.
+- "Add more items or checkout" after adding to the cart, and the cart list: Checkout stays at the top of every page. Up to 9 products are listed beside it, the same as before. A bigger catalog lists its categories (several categories) or pages its products (one category).
+- Products with no category, listed under "Menu", now open correctly from the category list. Before, tapping "Menu" showed nothing, because the bot searched for products whose category is literally "Menu".
+- Backstop in the Meta sender: a list that still has more than 10 rows, or duplicate row ids, is cut to fit and logged as an error, so Meta no longer refuses it. Paging is the fix. The backstop only catches a future caller that forgets to page.
+
+**Files:** `lib/bot/flows/shared/list-pages.ts` (new paging helper), `lib/bot/flows/ordering.flow.ts` (`browse_catalog`, `browse_category_items`, `add_to_cart`, `continue_or_checkout`), `lib/channels/meta-cloud.ts` (`sendList` backstop), `lib/bot/flows/__tests__/ordering-list-limits.test.ts` (new).
+
+**Affects:** The ordering bot for shops with more than 10 products in a list. Shops with 9 or fewer products see exactly the same lists as before. At exactly 10 products, three lists change:
+- A category with exactly 10 products now shows 8 plus "More". Before, it listed 9 and hid the 10th.
+- With one category, the "add more items or checkout" list and the cart list now show Checkout, 8 products and "More". Before, they showed Checkout and 9 products, and the 10th was hidden.
+- With several categories, those two lists now show Checkout and the categories. Before, they had 11 rows, which Meta refused.
+
+The first list of a 10-product shop with several categories is still the plain list of products, as before. Browse-by-category mode after adding to the cart still uses its two buttons. No change to the cart, prices, checkout or payment.
+
+**What could break:** Known limit, not changed: the shop and cart lists read a shop's first 100 products, as before. A shop with more than 100 products cannot reach the rest from those lists. The category view filters by category in the database, so it reads up to 100 products per category. New session keys `_browse_page`, `_category_page` and `_cart_page` hold the page numbers. A page number past the end shows the last page. Tapping a "More" row from an older list moves the current list one page on, which is harmless. Not changed: variant and add-on lists with more than 10 options. They never exceed 10 rows, but options past the 10th are still hidden, as before.
+
+## 2026-11-23 — Upload this week's menu (weekly menus, part 2)
+
+- **Owner decisions 2026-11-23.** A food vendor photographs this week's menu, Ace reads the dishes and their days, she reviews them and saves once. Menu photo reads have their own daily limit per business (Free 1, Pro 5, Premium 10; the feature trial uses Premium), separate from the Ace setup allowance, resetting at midnight in the business's timezone. Every dish saves as a menu item (product). Saving a new weekly menu hides the previous weekly-menu dishes from customers (not deleted); everyday items are untouched.
+- **Change:**
+  - Migration `supabase/migrations/556_weekly_menu_upload.sql`: `products.weekly_menu_week` (Monday of the week a weekly-menu save put the dish on; NULL = ordinary item; CHECK Monday; partial index); `menu_photo_reads` table (RLS on, service_role only); `consume_menu_photo_read` (atomic count-or-refuse against the day's limit) and `save_weekly_menu` (one transaction, one save at a time per business: brings back an earlier weekly dish with the same name or adds a new one, skips names that are ordinary items, gives every dish this week's Mon–Sun dates and its days, then sets `is_active = false` on every other weekly-menu dish). Both SECURITY INVOKER, `search_path = ''`, EXECUTE for service_role only.
+  - `lib/ai-setup/image-catalog.ts`: new Ace image mode `weekly_menu` (prompt asks for each dish's weekdays, never guessed; every item is a product; `parseWeekdays`). The `menu` and `product_photo` modes are unchanged.
+  - `app/api/ai-setup/parse-image/route.ts`: in `weekly_menu` mode the read counts against the daily menu read limit (`consume_menu_photo_read`) instead of the Ace setup allowance, and the reply includes `reads_left`. Same pinned model, 4MB cap, image checks and 10/hour rate limit. Other modes unchanged.
+  - `lib/products/weekly-menu.ts` (limits, "today" for the business, save validation) and `app/api/products/weekly-menu/route.ts` (GET reads left + this week's dates; POST saves the confirmed dishes).
+  - Dashboard: "Upload this week's menu" button on Products (`ProductList.tsx`) opens `WeeklyMenuUpload.tsx`: "N of M menu reads left today", "upload again tomorrow" when used up (upgrade hint on Free), review grouped by day with name / price / day chips / remove / "+ Add a dish", a missing price blocks Save, one "Save menu". `page.tsx`: saving an item as every day with no dates clears `weekly_menu_week`, so later weekly saves leave it alone.
+- **Tests:** `lib/__tests__/weekly-menu-upload-556.test.ts` (route handlers, Lagos midnight, tier limits incl. trial, Setup Guide mode unchanged, save validation), `lib/__tests__/weekly-menu-upload-556-form.test.tsx` (rendered screen), `lib/__tests__/weekly-menu-upload-556.pg.test.ts` (real PostgreSQL: ACLs, limit incl. 12 concurrent reads, save / bring back / skip / hide / same-week replace / atomic refusal / tenant scope / idempotent re-apply).
+- **Could break:** M556 must be applied (after M555) before this code is deployed; without it the upload screen cannot load reads and the product save fails on `weekly_menu_week`. A read is counted once the photo passes the checks, even if Ace then fails or finds nothing (same rule as Ace setup). Dishes always get this week's dates (Mon–Sun), so a menu saved on Sunday only shows on Sunday. An ordinary item with the same name as a dish (even one switched off or limited to some days) is skipped, not changed; the screen names it and says to edit that item. A hidden dish brought back by hand needs new dates in its product form (or comes back automatically when a later weekly menu lists it).
+
+## 2026-11-23 — Menu items on sale only on certain days (weekly menus, part 1)
+
+- **Owner decision 2026-11-23 ("build it").** A food vendor sells standard items every day plus a weekly menu with different dishes per weekday. Customers must only see today's dishes plus the standard items.
+- **Change:**
+  - Migration `supabase/migrations/555_product_day_availability.sql` (+ catalog delta): `products.available_days` (ISO weekdays 1 = Mon … 7 = Sun; NULL/empty = every day), `available_from` / `available_until` (dates; NULL = no limit), CHECKs for days 1..7 and from ≤ until. No grant, RLS, policy or trigger change. Existing items get NULL = every day, so they behave exactly as before.
+  - `lib/products/availability.ts` (pure rules, labels, save normalisation) and `lib/products/availability-today.ts` ("today" in the business timezone: `businesses.timezone` when it fits the country, else the country default; NG = Africa/Lagos). The business is looked up only when an item has a limit, so menus without limits make no extra query.
+  - Customer-facing filtering: bot ordering lists (`browse_catalog`, `browse_category_items`, both all-at-once lists in `lib/bot/flows/ordering.flow.ts`), smart product matching (`lib/bot/smart-intent.ts`), the AI business knowledge menu (`lib/bot/business-knowledge.ts`), the "Order" option in the capability menu (`lib/bot/flows/capability-selection.flow.ts`, now hidden when nothing is on sale today), "reorder" (`lib/bot/handlers/global-queries.ts`, a dish not on sale today counts as unavailable), and WhatsApp catalog sync (`app/api/catalog/sync`, `app/api/cron/catalog-sync`: items not on sale today are synced as out of stock).
+  - Not filtered, on purpose: checkout (`review_order_summary`) does not re-check days, so an order started before midnight still completes; selecting an item by its list button; Custom Flow product sources (the same function serves the merchant's flow editor and readiness check).
+  - Dashboard: product form gets "Days available" chips (Every day, Mon–Sun) and optional From/Until dates (`app/dashboard/products/components/AvailabilityFields.tsx`, `ProductForm.tsx`, `page.tsx`); the product list shows a small label such as "Mon, Tue" or "this week" (`ProductList.tsx`). Merchants still see every item.
+- **Tests:** `lib/__tests__/weekly-menu-availability-555.test.ts` (rules, Lagos midnight boundary, ordering lists, category top-10, checkout keeps a rolled-over cart item, capability menu, smart matching), `lib/__tests__/product-availability-form-555.test.tsx` (rendered form), `lib/__tests__/product-day-availability-555.pg.test.ts` (real PostgreSQL).
+- **Could break:** the app reads and writes the new columns, so M555 must be applied before this code is deployed; without it product lists and the product save fail. A US/CA business whose stored timezone does not fit its country uses America/New_York / America/Toronto for "today". The WhatsApp catalog cron runs every 6 hours (00:30 UTC first), so the catalog can show yesterday's dishes for up to ~1.5 hours after Lagos midnight; an order placed from the native WhatsApp catalog cart (`create_catalog_order_atomic`) is not checked against the days, so in that window yesterday's dish can still be ordered there. The Order option checks at most 500 active products.
+
+## 2026-11-23 — Table minimum spend and bottle packages, part 1 (M557 + Seating form)
+
+- **Owner decision 2026-11-23 ("go").** Nightclubs sell VIP tables with a minimum spend and bottle packages. Each table can now have an optional minimum spend, up to 9 bottle packages (name, what's included, price), and a choice of what the customer pays now: deposit only (as today) or pay in full now (the package price, or the minimum spend if no package).
+- **Change:**
+  - Migration `supabase/migrations/557_table_minimum_spend_packages.sql`:
+    - `seating_resources` gains `minimum_spend`, `payment_mode` and `packages`, plus CHECKs and the trigger `private.seating_packages_valid` (SECURITY INVOKER).
+    - `book_table_atomic` is re-created with four optional parameters. The old 18-argument signature is dropped and EXECUTE stays service_role only.
+    - The function works out the amount to pay now from the locked table row. It saves that amount for every caller that passes an expected amount or a package, and refuses changed terms (`deposit_changed`) or another table's package (`package_unavailable`).
+    - The booking stores the offer in `bookings.metadata.table_offer`.
+    - No RLS, policy or grant change.
+  - `app/dashboard/seating/page.tsx`:
+    - The Seating form gets a "Minimum spend & bottle packages (optional)" section and the "What the customer pays now" choice. "Pay in full now" is only available once there is a minimum spend or a package.
+    - It warns, without blocking, when a package costs less than the minimum spend.
+    - Each table card shows the minimum spend and the package count.
+  - CI: `.github/workflows/ci.yml` excludes the new real-PostgreSQL test from Main App. The test is required in the P0 disposable-PG job, which enforces zero skips. `docs/MIGRATION_REGISTRY.md` records M557.
+- **Tests:**
+  - `lib/__tests__/table-packages-557.pg.test.ts` (real PostgreSQL) covers:
+    - old and new callers;
+    - every amount rule;
+    - changed terms;
+    - cross-business packages;
+    - retries;
+    - package checks;
+    - final-state grants and RLS;
+    - re-applying the migration.
+  - `lib/__tests__/table-packages-form-557.test.tsx` renders the real Seating form.
+- **Affects:** tables with no minimum spend and no packages book exactly as before: same deposit, total, status and metadata. The WhatsApp customer step comes in part 2 (bot "Choose a package" step, amount and confirmation).
+- **Could break:**
+  - M557 must be applied before this code is deployed. Without it, saving a table fails because the new columns are missing.
+  - Do not release this part without part 2. Until the bot passes the new parameters, `book_table_atomic` refuses (fails closed) any table set to "pay in full now" for a customer, because the old bot would charge only the deposit. Deposit-only tables with packages still book, but the customer is not yet asked for a package.
+  - Release tooling records `book_table_atomic` by its full signature (`scripts/full-release-catalog-contracts.json`, release-v3 lock catalogs). The signature change shows up as one function dropped and one added in the catalog delta.
+
+## 2026-11-23 — Table minimum spend and bottle packages, part 2 (WhatsApp step, amount, confirmations, dashboard)
+
+- **Owner decision 2026-11-23 ("go").** Customers book a VIP table in this order: table, date, time, party size, then a new "Choose a package" step, then pay the deposit or the full amount. The confirmation names the package, and the venue sees it on the booking. Q1–Q4 use the coordinator-recommended defaults, which the Owner accepted by deferral.
+- **Change:**
+  - `lib/bot/flows/table-reservation.flow.ts`:
+    - Reads `minimum_spend`, `payment_mode` and `packages` (M557, part 1).
+    - The table list row adds "₦X minimum spend" when the table has one.
+    - The offer is kept in the session.
+  - `lib/bot/flows/shared/table-offer.ts` (new): the rules for the amount to pay now, plus the package and minimum-spend lines. The amount follows M557's `book_table_atomic`:
+    - pay in full: the package price, else the minimum spend, else the deposit;
+    - deposit only: the deposit.
+  - `lib/bot/flows/scheduling.flow.ts`:
+    - New step `select_table_package`, between party size and guest names. It lists up to 9 packages with their prices, then "No package", described as "Minimum spend ₦X" or "Just the table". It is skipped for other bookings and for tables without packages.
+    - The summary, the payment messages ("Payment" rather than "Deposit" when paying in full) and the instant confirmation name the package, the minimum spend and "The rest is paid at the venue".
+    - `create_booking` passes the package and the expected amount, minimum spend and package price to `book_table_atomic`. A `package_unavailable` refusal gets the existing "terms have been updated" message.
+  - `lib/payments/send-confirmation.ts`: the paid confirmation of a table booking adds the package and minimum-spend lines from `bookings.metadata.table_offer`. The amount, fee, custody and delivery code are unchanged.
+  - `app/dashboard/reservations/page.tsx`: the booking details show a "Package" panel (package, what's included, minimum spend, paid in full or deposit). `metadata` is added to the bookings query.
+  - `lib/bot/flows/shared/capability-transition.ts`: leaving a table reservation clears the new session keys.
+- **Tests:**
+  - `lib/__tests__/table-packages-bot-557.test.ts`:
+    - the list row;
+    - the step order, skips, list and WhatsApp limits;
+    - every amount combination;
+    - refused packages;
+    - the summary;
+    - `create_booking` RPC terms, payment amount, message wording, instant confirmation and changed terms;
+    - helpers and session clean-up.
+  - `lib/payments/__tests__/table-package-confirmation-557.test.ts`: runs the real `sendProactiveConfirmation` and captures the WhatsApp text.
+  - `lib/__tests__/table-reservation-730-dashboard.test.tsx`: one new rendered case for the Package panel.
+- **Affects:**
+  - Tables without a minimum spend or packages book with the same amount and messages as before. They now also pass `p_expected_payable` (equal to the deposit) and NULL package terms.
+  - The payment pipeline is unchanged. The amount charged is the one `book_table_atomic` commits, so the Waaiio fee, both custody routes and refunds (on `total_amount`, the amount paid) apply to it as to any booking payment.
+- **Could break:**
+  - Needs M557 (part 1) applied first, and must ship with part 1.
+  - Before paying a booking it already created (payment retry), the bot re-reads the committed amount and package for tables with an offer. If they don't match the current choice, it charges nothing and asks the customer to contact the business.
+  - A customer who goes back and picks another package after the booking was created gets that message. Their own pending booking holds the table until it expires, as with any other change of selection.
+  - The package list is read from the table when the customer picks it. If the venue changes a price before the customer pays, the booking is refused with "terms have been updated".
+
+## 2026-11-23 — Owners now see customers' pre-booking answers; optional questions get a Skip button
+
+**What changed:** Answers to the business's own pre-booking questions (Settings → Business, saved in `bookings.metadata.custom_answers`) were stored but never shown anywhere. They now appear as "Question: Answer" lines:
+- in the booking detail panel on the Bookings page and in the Calendar booking details, next to Special Requests;
+- as a "Pre-booking Answers" column in the Bookings CSV export;
+- in the owner's new-booking email (escaped) and WhatsApp alert (each answer capped at 300 characters), for bookings confirmed in the bot without a deposit. Bookings with a deposit notify the owner later from the payment confirmation (`lib/payments/send-confirmation.ts`), which this change does not touch, so those alerts do not carry the answers yet; the dashboard still shows them.
+Labels come from the business's current questions, matched by id. An answer to a question that was since deleted keeps the label "Earlier question" and is never dropped.
+In the bot, an optional question now shows a "Skip" reply button (the existing localized `booking.skip` title) instead of the "_Type *skip*_" hint; typing "skip" still works and a skipped question still stores nothing. A required question can no longer be passed by typing "skip" (it gets the same "Please answer this question to continue." as an empty reply). A question longer than a WhatsApp button body allows (1024 characters) keeps the old text hint.
+How answers are stored is unchanged.
+
+**Files:** `lib/bookings/pre-booking-answers.ts` (new shared labelling helper), `components/dashboard/PreBookingAnswers.tsx` (new), `app/dashboard/reservations/page.tsx`, `app/dashboard/calendar/page.tsx`, `lib/bot/flows/scheduling.flow.ts` (`pre_booking_questions` step and the owner notify call), `lib/bot/flows/shared/notify-owner.ts`, `lib/email/templates.ts` (`newBookingOwnerEmail`). Tests: `lib/bot/flows/__tests__/pre-booking-questions.test.ts`, `lib/__tests__/intake-create-booking-963.test.ts` (create_booking → notifier wiring), `lib/bot/flows/shared/__tests__/notify-owner-pre-booking-answers.test.ts`, `app/dashboard/reservations/__tests__/pre-booking-answers.test.tsx`, `lib/bookings/__tests__/pre-booking-answers.test.ts`.
+
+**Affects:** Scheduling/appointment and table bookings made through the bot; Bookings and Calendar dashboard pages; owner new-booking notifications.
+
+**What could break:** The Bookings and Calendar booking queries now also select `bookings.metadata` (already readable by the owner under existing RLS). A customer who used to type "skip" on a required question must now answer it.
+
+## 2026-11-23 — Admin platform settings save no longer fails on the audit write
+
+- **Owner approved the fix 2026-11-23 ("Yes, fix it").** Saving a non-commercial platform setting on admin-staging (`customer_daily_reply_limit`) showed "Failed to save setting". The value was saved, but the audit row was not written and the route returned 500. The staging log said `invalid input syntax for type uuid: "customer_daily_reply_limit"`.
+- **Cause:** `app/api/admin/platform-settings/route.ts` passed the setting key (text) as `entityId` to `logAdminAudit`. `admin_audit_logs.entity_id` is a UUID column (M010; no later migration changes it).
+- **Change:** PUT, POST and DELETE in that route now record `entity_id` null. The key is still in `details.key`, so the audit row still says which setting changed. This matches `/api/admin/audit`, which keeps non-UUID identifiers in `details`. A failed audit write still fails the request. No migration. The commercial-config routes and `/api/admin/platform-settings/fee-bank` are not changed.
+- **Tests:** `lib/__tests__/platform-settings-audit-entity.test.ts` (real handlers and real `logAdminAudit`; PUT/POST/DELETE succeed with entity_id null and the key in details; a failed audit still returns 500; commercial and fee-bank keys still refused). `lib/__tests__/platform-settings-audit-entity.pg.test.ts` (real PostgreSQL with `admin_audit_logs` from M010 and `platform_settings` from M012 on disk; the old string key is rejected, the new rows are accepted). Both fail on the old code with 500.
+- **Could break:** nothing reads `entity_id` for `entity_type = 'platform_setting'` rows; anyone filtering those rows should use `details->>'key'`.
+
+## 2026-11-23 — Harden party invite RSVP lookup on the public join page
+
+- **Change:** `POST /api/invite-optin` (`app/api/invite-optin/route.ts`, the public join-event page's sign-up) now returns an RSVP link and code only for an invite it creates in that same request.
+  - When the phone is already on the guest list, the response is `{ success, already_invited, whatsapp_sent }`. The invite's RSVP link is re-sent only to the phone on the list over WhatsApp, for every RSVP status. Guests who already replied now get it too, so they can change their answer (Owner decision 2026-11-23).
+  - Invite messages are capped at 3 per recipient (phone or email) per event/party per 24 hours, using the shared limiter.
+  - The route's per-address limit is now 5 requests per 10 minutes (was 10 per minute).
+- **Page:** `app/join-event/[id]/page.tsx`. A guest already on the list sees "You're on the list!" and "We've sent your RSVP link to your WhatsApp. Open it there to reply or change your answer.", without RSVP buttons. If the message could not be sent, the page shows "Check your WhatsApp for your RSVP link." instead. New guests see the same screen as before.
+- **Unchanged:** the new-guest path (invite created, WhatsApp/email sent, own RSVP link and WhatsApp button returned), international phone storage and legacy-phone adoption, the host dashboard invite route, and bot RSVP handling.
+- **Tests:**
+  - `lib/__tests__/invite-optin-rsvp-lookup.test.ts` (route: new guest, existing guest for every status, send caps, per-address limit)
+  - `lib/__tests__/join-event-optin-ui.test.tsx` (rendered success screen)
+  - `lib/__tests__/rsvp-whatsapp-delivery.test.ts` (limiter mock updated)
+- **Could break:**
+  - A guest already on the list no longer gets RSVP buttons on the page. After 3 sends in 24 hours they must use the message already in WhatsApp or ask the host.
+  - A shared office or venue network signing up more than 5 guests in 10 minutes from one address gets "Too many requests" for a few minutes.
+  - When the shared limiter (Upstash) is not configured, the send cap is per server instance.
+
+## 2026-11-23 — CI: give `next build` a 6 GB heap so the type check stops running out of memory
+
+- **Why:** push-to-main CI failed on `5e861ab74` (run 45213753537) and `e5e733da1` (run 45217418097), and PR #1147 failed the same way on `294d267` (run 45238128876) after passing on the same SHA (run 45234963610). In every failure all tests passed, then `npx next build` compiled fine and died in "Linting and checking validity of types": `Mark-Compact (reduce) 4075 -> 4053 MB … FATAL ERROR: Ineffective mark-compacts near heap limit … JavaScript heap out of memory`, then `Next.js build worker exited with code: null and signal: SIGABRT`. Passing and failing runs use the same runner image (`ubuntu-26.04`, 20261116.202.1), so the app's type check now needs about the 4096 MB cap and tips over it on some runs. Not a code error.
+- **Change:** `.github/workflows/ci.yml` — `NODE_OPTIONS: --max-old-space-size=4096` → `6144` on both `npx next build` steps (Main App "Build", Playwright "Build application"). No job, step, check or test is removed, skipped or weakened. GitHub's standard Linux runner for public repositories has 16 GB of RAM, so 6 GB of heap leaves room for the rest of the job.
+- **Affects:** CI only. No app code, Vercel build or production behaviour changes.
+- **Could break:** nothing expected; if the type check keeps growing it could reach the new cap later, and the same OOM line would show it. `scripts/reduced-release-gate.mjs` still runs its build with 4096 and is not changed here.
+
+## 2026-11-20 — "My bookings" after a finished payment opens your history, not the business picker
+
+**What changed:** Owner bug 2026-11-20 (staging, TestBiz saved-card booking). After payment the chat closes, and the "My bookings / My tickets / My orders / My giving" next-steps button then sent the customer to the past-business picker and then "no business found". The button now names its business and the list it opens (`pc_history:<bookings|orders|giving>:<businessId>`), following the View Options pattern from 2026-11-18. When it's tapped with no chat open, the business is checked against this number's own past businesses, and the reply is sent as that business. The existing typed "my bookings" / "my orders" / "my giving" view then opens, looked up from this number's own profile and never from the button. A business this customer never used, or an older bare `pc_history` button, still goes to the picker, as before.
+
+**Files:** `lib/bot/flows/shared/navigation.ts` (`historyPostback`, parser), `lib/bot/flows/executor.ts` (button ids), `lib/bot/bot.service.ts` (`resumeStaleNextSteps` and its two call sites), tests `lib/__tests__/stale-next-steps-button.test.ts` and `lib/__tests__/updates-optin-executor-menu.test.ts`.
+
+**Affects:** Only the "My …" next-steps button. With a chat still open, the id is reduced to `pc_history` and the in-chat handler runs unchanged. View Options, Book again and Done are unchanged.
+
+**What could break:** Anything that compares this button's id with the literal `pc_history` before `parseViewOptionsPostback` runs.
+
+**Known gap (not fixed here):** On the shared number, typing "my bookings" / "my orders" with no chat open still sends nothing, because no business is bound to the reply and the send guard refuses it.
+
+## 2026-11-20 — Bookings cancellation test no longer fails on its fixture date
+
+**What changed:** `app/dashboard/reservations/__tests__/cancellation.test.tsx` used a fixed booking date of 2026-11-20. On that day the Bookings page correctly lists the booking twice, once in "Today's Schedule" and once in the table, so `getByText('Guest one')` found two elements and all 5 tests failed on every branch, main included. The fixture dates are now 30 and 31 days after the current date. Test-only change: no app code.
+
+**Files:** `app/dashboard/reservations/__tests__/cancellation.test.tsx`.
+
+**Affects:** CI "Main App (lint, test, build)" on 2026-11-20. It unblocks #1144.
+
+**What could break:** Nothing in the app. The test now depends on the system clock, but it can never land on today.
+
 ## 2026-11-19 — Modern rounded QR codes everywhere (Owner request)
 
 - **Change:** every QR code Waaiio draws now has the look the Owner asked for. Modules are rounded and join into smooth shapes, the finder "eyes" are rounded, and thin corner brackets sit outside the quiet zone. The encoded content of every QR is byte-for-byte unchanged.
