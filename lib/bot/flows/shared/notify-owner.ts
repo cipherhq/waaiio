@@ -7,6 +7,7 @@ import { newOrderEmail, newBookingOwnerEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { shouldNotify, type NotificationType } from './notifications';
+import type { PreBookingAnswerLine } from '@/lib/bookings/pre-booking-answers';
 
 // ── Notification tier limits ──
 const WHATSAPP_NOTIFY_LIMITS: Record<string, number> = {
@@ -363,10 +364,16 @@ interface NotifyBookingOpts {
   quantity: number;
   quantityLabel: string;
   amount?: number;
+  /** The customer's pre-booking answers, already labelled (see lib/bookings/pre-booking-answers). */
+  preBookingAnswers?: PreBookingAnswerLine[];
 }
+
+/** Keeps the WhatsApp alert well under the message limit even with long answers. */
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<void> {
   const { supabase, sender, businessId, businessName, countryCode, referenceCode, customerName, date, time, quantity, quantityLabel, amount } = opts;
+  const preBookingAnswers = opts.preBookingAnswers || [];
 
   const ownerInfo = await fetchOwnerInfo(supabase, businessId);
   if (!ownerInfo) return;
@@ -386,6 +393,7 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
       quantity,
       quantityLabel,
       amount: amount ? formatCurrency(amount, cc) : undefined,
+      preBookingAnswers,
       dashboardUrl,
     });
     sendEmail({ to: ownerEmail, subject, html }).catch(err =>
@@ -406,6 +414,11 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
 
     if (amount) {
       lines.push(`💰 Amount: *${formatCurrency(amount, cc)}*`);
+    }
+
+    if (preBookingAnswers.length > 0) {
+      lines.push('', `📋 *Pre-booking answers*`);
+      for (const a of preBookingAnswers) lines.push(`${clip(a.label, 100)}: ${clip(a.answer, 300)}`);
     }
 
     lines.push('', `Open your dashboard to manage this booking.`);
