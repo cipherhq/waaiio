@@ -11,7 +11,11 @@ vi.mock('@/lib/security/check-optin', () => ({ checkOptInBatch: mocks.optIn }));
 // #1131: SMS invites go through the charged business sender.
 vi.mock('@/lib/sms/send', () => ({ sendBusinessSms: mocks.sms }));
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => ({ from: mocks.from }) }));
-vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: mocks.limit, getRateLimitKey: () => 'test' }));
+vi.mock('@/lib/rate-limit', () => ({
+  rateLimitResponseAsync: mocks.limit,
+  checkRateLimitAsync: async () => ({ allowed: true, remaining: 1, resetAt: 0 }),
+  getRateLimitKey: () => 'test',
+}));
 vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class { resolveByBusinessId = mocks.resolve; },
 }));
