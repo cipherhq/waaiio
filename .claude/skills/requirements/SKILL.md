@@ -51,7 +51,7 @@ If unsure which applies, use the full process and say why in the issue.
 
 The Owner said: "for the requirements it should ask product related questions on whenever its not sure about something".
 
-- A requirement may depend on how the product should behave: what a user sees or can do, wording, business rules, fees, limits, eligibility, edge cases (cancel, retry, timeout, failure), or anything affecting merchants' money or customers' experience. When current code, docs or a recorded Owner decision do not already settle the answer, the writer **must** raise a PRODUCT DECISION NEEDED card (§5). The writer must not pick an answer.
+- A requirement may depend on how the product should behave: what a user sees or can do, wording, business rules, fees, limits, eligibility, edge cases (cancel, retry, timeout, failure), anything affecting merchants' money or customers' experience, security tradeoffs, or any deviation from an Owner, CTO or reviewer instruction (the full CLAUDE.md "Product decisions" list). When current code, docs or a recorded Owner decision do not already settle the answer, the writer **must** raise a PRODUCT DECISION NEEDED card (§5). The writer must not pick an answer.
 - Mark each affected B, F or S line `BLOCKED ON Q<n>`.
 - Reviewers must reject (CHANGES_REQUESTED) a doc that fills a product gap with an assumption.
 - The Owner approval step cannot happen while any product card is unanswered.
@@ -149,7 +149,7 @@ Implementation must not start until all four steps are done.
    Requirements-Review-Record: v1 verdict=APPROVED|CHANGES_REQUESTED doc=<issue#>@<revision> reviewer=req-reviewer-a|b
    ```
    CHANGES_REQUESTED → fix, bump the revision, and have the same reviewer recheck the new revision. A record for an older revision does not count.
-3. **Owner approval.** With both reviewers APPROVED on the same revision and every product card answered and recorded, the coordinator brings the Owner a plain-language summary of the B and F sections, recommendation first, with no jargon, and one question at a time for any open card. The Owner approves B and F. Record the approval on the issue (date, revision, the Owner's words as relayed). **The writer never asks the Owner directly.**
+3. **Owner approval.** With both reviewers APPROVED on the same revision and every product card answered and recorded, the coordinator brings the Owner a plain-language summary of the B and F sections, recommendation first, with no jargon. Product cards are not brought here: the coordinator queues them to the Owner one at a time beforehand, each answer goes into a new revision, and both reviewers recheck that revision before this step. The Owner approves B and F. Record the approval on the issue (date, revision, the Owner's words as relayed). **The writer never asks the Owner directly.**
 4. **Implementation may start**, within the task the coordinator authorizes. Phase A agreement still applies for high-risk work (Operating Order "Standard Substantive-Change Process"). Owner approval of B and F is approval of the requirements only. It is not merge, migration-apply, deployment, production-data or live-provider/financial authorization; each stays a separate Owner approval (RELEASE_GATE_V2.md §9.1 item 5).
 
 ### After approval
