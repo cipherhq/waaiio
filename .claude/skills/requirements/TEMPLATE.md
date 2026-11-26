@@ -13,7 +13,7 @@
 **Revision log**
 - r1 (<date>): first draft.
 
-Status words: `VERIFIED` (evidence cited) · `UNVERIFIED` (what would confirm it).
+Status words: `VERIFIED` (evidence cited) · `UNVERIFIED` (what would confirm it) · `BLOCKED ON Q<n>` (waiting on an Owner product decision; never guess).
 
 ---
 
@@ -77,6 +77,8 @@ Commands: `gh pr list --state open --limit 100 --json number,title,headRefName`;
 
 ## 5. Open questions
 
+**Q1**
+
 > **PRODUCT DECISION NEEDED:** …
 >
 > **Context:** …
@@ -86,6 +88,10 @@ Commands: `gh pr list --state open --limit 100 --json number,title,headRefName`;
 > **My recommendation:** …
 >
 > **Meanwhile:** …
+
+Affects: F…, S… (marked `BLOCKED ON Q1`)
+
+**Owner answer** (<date>, relayed by the coordinator): "<Owner's words>"
 
 ## 6. Acceptance ledger
 

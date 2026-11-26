@@ -47,12 +47,22 @@ If unsure which applies, use the full process and say why in the issue.
 3. **Final state, not creation.** For any table, column, enum, constraint, policy, grant or function, check every later migration that may alter it (CLAUDE.md Golden Rule 9, RELEASE_GATE_V2.md §2), then confirm against the live schema.
 4. **Record the SHA.** Gather evidence on a checkout of current `main` (or a branch at the same commit), so `git rev-parse HEAD` equals `git rev-parse origin/main`. The doc header names that SHA. Graphify's `commitSha` is compared against the same SHA.
 
+### Never guess product behaviour (Owner instruction 2026-11-26)
+
+The Owner said: "for the requirements it should ask product related questions on whenever its not sure about something".
+
+- A requirement may depend on how the product should behave: what a user sees or can do, wording, business rules, fees, limits, eligibility, edge cases (cancel, retry, timeout, failure), or anything affecting merchants' money or customers' experience. When current code, docs or a recorded Owner decision do not already settle the answer, the writer **must** raise a PRODUCT DECISION NEEDED card (§5). The writer must not pick an answer.
+- Mark each affected B, F or S line `BLOCKED ON Q<n>`.
+- Reviewers must reject (CHANGES_REQUESTED) a doc that fills a product gap with an assumption.
+- The Owner approval step cannot happen while any product card is unanswered.
+- Record each answered card in the doc with the Owner's words, as relayed by the coordinator, and the date.
+
 ### Tool order
 
 Use these in order, and record in the doc's "Tools used" line which ones you used and what failed.
 
 1. **Graphify MCP:** `graphify_find` (definitions), `graphify_callers`, `query_graph` (how/where behaviour is handled), `graphify_impact` (blast radius, `include_risk=true`), `graphify_tests_for`. Check that each result's `commitSha` equals the recorded SHA. For the S7 code-impact blast radius, always cross-check Graphify's callers and dependents with grep at that SHA (RELEASE_GATE_V2.md §9.1 item 10), even when the SHAs match. Graphify indexes **code only, not docs**: read docs directly.
-2. **Serena MCP** (local stdio server `serena`), when Graphify is down, partial, or its `commitSha` differs from HEAD. Call `initial_instructions` first, then use `serena_repl` with **only** these read-only calls: `s.lsp.find_symbol`, `s.lsp.find_referencing_symbols`, `s.lsp.find_declaration`, `s.lsp.get_symbols_overview` (TypeScript language server), plus `s.fs.read_file` / `s.fs.search_for_pattern`. Anything else (edit, rename, delete, create file, shell, memory writes) is forbidden.
+2. **Serena MCP** (local stdio server `serena`), when Graphify is down, partial, or its `commitSha` differs from the recorded SHA. Call `initial_instructions` first, then use `serena_repl` with **only** these read-only calls: `s.lsp.find_symbol`, `s.lsp.find_referencing_symbols`, `s.lsp.find_declaration`, `s.lsp.get_symbols_overview` (TypeScript language server), plus `s.fs.read_file` / `s.fs.search_for_pattern`. Anything else (edit, rename, delete, create file, shell, memory writes) is forbidden.
 3. **Direct grep and read**, when neither works. Read the file around each hit; a grep hit alone is not a trace.
 4. **Supabase MCP** for the live schema. `execute_sql` with catalog and table `SELECT`s only (`information_schema`, `pg_catalog`, `pg_policies`, `pg_proc.proconfig`, `has_function_privilege`, etc.). Never `apply_migration`, never INSERT/UPDATE/DELETE/DDL, and never a SELECT that calls an application or side-effecting function. Production reads need the user's explicit OK first (a stricter rule than the design's minimum, matching CLAUDE.md's separate authorization phases). Never put customer data, PII, secrets or environment values in the doc; prefer counts and identifiers.
 
@@ -120,6 +130,8 @@ Each one is a decision card in the CLAUDE.md format:
 >
 > **Meanwhile:** what I will keep working on that does not depend on this
 
+Number each card `Q1`, `Q2`, …; affected lines carry `BLOCKED ON Q<n>`. When answered, add under the card: **Owner answer (<date>, relayed by the coordinator):** "<Owner's words>", then update and unblock the affected lines in a new revision.
+
 Architecture, migration or security conflicts are CTO questions in the same format. The writer never asks the Owner directly: the coordinator queues the cards one at a time.
 
 ### 6. Acceptance ledger
@@ -130,14 +142,14 @@ Every B, F and S ID → the planned test and its kind: handler test, rendered UI
 Implementation must not start until all four steps are done.
 
 1. **Two independent reviewers.** Each is a fresh-context, read-only Claude subagent with no shared notes. Give each the issue number, revision, `main` SHA and the governance docs, and ask them to verify the claims, not trust them.
-   - **req-reviewer-a (business/functional):** completeness; every edge case in §2 covered or justified; consistency with Owner decisions (memory, docs, issues); every F-line testable; wording proposals present; ledger complete.
+   - **req-reviewer-a (business/functional):** completeness; every edge case in §2 covered or justified; consistency with Owner decisions (memory, docs, issues); no product gap filled with an assumption instead of a card; every F-line testable; wording proposals present; ledger complete.
    - **req-reviewer-b (system/feasibility/security):** re-verifies every citation against the code at the SHA and the live schema, using the same tool order; re-runs the overlap check itself; checks RLS/grants/SECURITY DEFINER, custody, provider limits and routing; confirms that `UNVERIFIED` marks are honest and that nothing sensitive is in the public issue.
 2. **Review records.** Each reviewer's report is posted on the issue verbatim, ending with this line on its own, unformatted:
    ```
    Requirements-Review-Record: v1 verdict=APPROVED|CHANGES_REQUESTED doc=<issue#>@<revision> reviewer=req-reviewer-a|b
    ```
    CHANGES_REQUESTED → fix, bump the revision, and have the same reviewer recheck the new revision. A record for an older revision does not count.
-3. **Owner approval.** With both reviewers APPROVED on the same revision, the coordinator brings the Owner a plain-language summary of the B and F sections, recommendation first, with no jargon, and one question at a time for any open card. The Owner approves B and F. Record the approval on the issue (date, revision, the Owner's words as relayed). **The writer never asks the Owner directly.**
+3. **Owner approval.** With both reviewers APPROVED on the same revision and every product card answered and recorded, the coordinator brings the Owner a plain-language summary of the B and F sections, recommendation first, with no jargon, and one question at a time for any open card. The Owner approves B and F. Record the approval on the issue (date, revision, the Owner's words as relayed). **The writer never asks the Owner directly.**
 4. **Implementation may start**, within the task the coordinator authorizes. Phase A agreement still applies for high-risk work (Operating Order "Standard Substantive-Change Process"). Owner approval of B and F is approval of the requirements only. It is not merge, migration-apply, deployment, production-data or live-provider/financial authorization; each stays a separate Owner approval (RELEASE_GATE_V2.md §9.1 item 5).
 
 ### After approval
