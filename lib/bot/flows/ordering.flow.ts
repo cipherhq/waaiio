@@ -2113,7 +2113,8 @@ export const orderingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const email = input.trim().toLowerCase();
         // Email is optional (Owner 2026-11-26): no email is saved and checkout uses the phone.
-        if (email === 'skip' || email === 'skip_email') return { valid: true };
+        // A skip also drops an email carried from another business's session (reuse refused it).
+        if (email === 'skip' || email === 'skip_email') return { valid: true, data: { customer_email: null, email: null } };
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email) || isReservedEmailDomain(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_email') };

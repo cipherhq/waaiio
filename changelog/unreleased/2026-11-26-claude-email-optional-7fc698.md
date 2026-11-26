@@ -5,6 +5,8 @@
 - scheduling goes to `create_booking`;
 - reservation goes to `create_reservation`.
 
+A skip also sets `email` and `customer_email` to null in the session. An email carried over from another business's session therefore never reaches this business's booking, reservation or order summary. Before this change, `reuseStoreCustomerEmail` refused such an email, but a skip left it in the session.
+
 A valid email is still saved to the business's customer profile, as before. A returning customer's saved email for the same business is still reused without asking (`reuseStoreCustomerEmail`).
 
 **Copy:** `booking.collect_email`, `ordering.collect_email`, `booking.invalid_email` and `ordering.invalid_email` are rewritten in en, pcm, yo, ig, ha, tw, fr and es. Each language names its own Skip button title. Reservation used hard-coded English; it now uses the same `booking.*` copy.

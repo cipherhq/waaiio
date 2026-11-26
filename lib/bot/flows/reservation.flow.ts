@@ -791,7 +791,8 @@ export const reservationFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const email = input.trim().toLowerCase();
         if (email === 'skip' || email === 'skip_email') {
-          return { valid: true };
+          // Drop an email carried from another business's session (reuse refused it).
+          return { valid: true, data: { email: null, customer_email: null } };
         }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || isReservedEmailDomain(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };

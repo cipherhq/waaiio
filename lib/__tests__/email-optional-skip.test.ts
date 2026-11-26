@@ -16,7 +16,8 @@ import { orderingFlow } from '@/lib/bot/flows/ordering.flow';
 import { schedulingFlow } from '@/lib/bot/flows/scheduling.flow';
 import { reservationFlow } from '@/lib/bot/flows/reservation.flow';
 import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
-import type { FlowDefinition } from '@/lib/bot/flows/types';
+import { reuseStoreCustomerEmail } from '@/lib/bot/flows/shared/customer-email';
+import type { FlowContext, FlowDefinition } from '@/lib/bot/flows/types';
 
 vi.mock('@sentry/nextjs', () => ({
   captureMessage: vi.fn(),
@@ -139,8 +140,8 @@ describe('collect_email skip through the real executor', () => {
         await executor.execute('+2348000000001', input, session as any, business as any);
 
         // No email kept in the session and nothing written to the store customer profile.
-        expect(session.session_data.email).toBeUndefined();
-        expect(session.session_data.customer_email).toBeUndefined();
+        expect(session.session_data.email ?? null).toBeNull();
+        expect(session.session_data.customer_email ?? null).toBeNull();
         expect(writes.filter(w => w.table === 'customer_profiles')).toEqual([]);
         // Not re-asked: no invalid-email error went out.
         expect(JSON.stringify(sent)).not.toMatch(/valid email/i);
@@ -151,6 +152,35 @@ describe('collect_email skip through the real executor', () => {
       });
     }
   }
+});
+
+describe('collect_email skip drops an email carried from another business', () => {
+  for (const c of cases) {
+    it(`${c.name}: reuse refuses the other business's email, and Skip clears it`, async () => {
+      const business = businessFor(c, 'stale');
+      const session = sessionAtCollectEmail(c, 'biz-previous-store');
+      session.session_data.email = 'old@previous-store.com';
+      session.session_data.customer_email = 'old@previous-store.com';
+
+      // The question is asked: the carried email belongs to another business.
+      const reuseCtx = { supabase: buildExecutorSupabase(), from: '+2348000000001', business, session, copyLang: 'en' };
+      expect(await reuseStoreCustomerEmail(reuseCtx as unknown as FlowContext, c.flow === orderingFlow)).toBe(false);
+
+      const executor = new FlowExecutor(buildExecutorSupabase() as any, buildSender() as any, {} as any, {} as any);
+      await executor.execute('+2348000000001', 'skip_email', session as any, business as any);
+
+      expect(session.session_data.email).toBeNull();
+      expect(session.session_data.customer_email).toBeNull();
+      expect(JSON.stringify(casCalls)).not.toContain('old@previous-store.com');
+      expect(casCalls.map(call => call.p_current_step)).toContain(c.next);
+    });
+  }
+
+  it('ordering: the order summary shows no email line after a skip', async () => {
+    const ctx = createMockContext();
+    const result = await getStep(orderingFlow, 'collect_email').validate('skip_email', ctx);
+    expect(result).toEqual({ valid: true, data: { customer_email: null, email: null } });
+  });
 });
 
 describe('collect_email still accepts a real email and rejects a bad one', () => {
