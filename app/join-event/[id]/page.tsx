@@ -33,7 +33,7 @@ export default function PublicInvitePage() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ whatsapp_sent: boolean; rsvp_url: string; already_invited?: boolean; invite_token?: string; wa_number?: string; email_sent?: boolean } | null>(null);
+  const [result, setResult] = useState<{ whatsapp_sent: boolean; rsvp_url?: string; already_invited?: boolean; invite_token?: string; wa_number?: string; email_sent?: boolean } | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -133,7 +133,11 @@ export default function PublicInvitePage() {
             {result.already_invited ? "You're on the list!" : "You're in!"}
           </h1>
           <p className="mt-2 text-gray-600">
-            RSVP on WhatsApp to confirm your attendance.
+            {!result.already_invited
+              ? 'RSVP on WhatsApp to confirm your attendance.'
+              : result.whatsapp_sent
+                ? "We've sent your RSVP link to your WhatsApp. Open it there to reply or change your answer."
+                : 'Check your WhatsApp for your RSVP link.'}
             {result.email_sent && ' We also sent the details to your email.'}
           </p>
 
@@ -157,13 +161,15 @@ export default function PublicInvitePage() {
             </a>
           )}
 
-          {/* Fallback: web RSVP */}
-          <a
-            href={result.rsvp_url}
-            className="mt-3 block w-full rounded-xl border border-gray-200 py-3 text-center text-sm font-medium text-gray-600 hover:bg-gray-50"
-          >
-            Or RSVP on Web
-          </a>
+          {/* Fallback: web RSVP (only for an invite created by this request) */}
+          {result.rsvp_url && (
+            <a
+              href={result.rsvp_url}
+              className="mt-3 block w-full rounded-xl border border-gray-200 py-3 text-center text-sm font-medium text-gray-600 hover:bg-gray-50"
+            >
+              Or RSVP on Web
+            </a>
+          )}
 
           {!isWhiteLabel(event?.subscription_tier) && (
             <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>

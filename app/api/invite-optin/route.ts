@@ -2,18 +2,32 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
-import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, checkRateLimitAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
+
+/** Invite messages to one recipient for one event/party per day. Sends are billed to the business. */
+const INVITE_SENDS_PER_RECIPIENT = 3;
+const INVITE_SEND_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Shared (Redis when configured) cap on invite messages to one recipient for one target. */
+async function inviteSendAllowed(targetId: string, recipient: string): Promise<boolean> {
+  const { allowed } = await checkRateLimitAsync(
+    `invite-send:${targetId}:${recipient.toLowerCase()}`, INVITE_SENDS_PER_RECIPIENT, INVITE_SEND_WINDOW_MS,
+  );
+  return allowed;
+}
 
 /**
  * POST /api/invite/optin
  * Public endpoint — guest opts in to receive a WhatsApp invite.
  * Creates an event_invite record and sends the invite via WhatsApp.
+ * The RSVP link of an invite that already exists is only ever sent to that
+ * invite's own phone, never returned in the response.
  */
 export async function POST(request: NextRequest) {
-  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'invite-optin'), 10, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'invite-optin'), 5, 10 * 60_000);
   if (rateLimit) return rateLimit;
 
   try {
@@ -79,27 +93,18 @@ export async function POST(request: NextRequest) {
       const { data: existingRows } = await findQuery;
       const existing = await adoptExistingInvite(supabase, existingRows, cleanPhone);
 
-      if (existing && existing.status !== 'pending') {
-        // Already responded — don't re-send
-        return NextResponse.json({
-          success: true,
-          already_invited: true,
-          status: existing.status,
-          rsvp_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/rsvp/${existing.invite_token}`,
-        });
-      }
-      if (existing && existing.status === 'pending') {
-        // Pending — WhatsApp probably didn't send last time. Use existing invite but continue to send.
-        // Skip creating a new invite, use the existing one
+      if (existing) {
+        // The link goes only to the phone already on the list, whatever the RSVP status, so the
+        // guest can reply or change their answer (Owner decision 2026-11-23). Never return it,
+        // its token or the status: the caller has not proved they own that phone.
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const inviteLink = `${appUrl}/rsvp/${existing.invite_token}`;
 
-        // Try to send WhatsApp now
         let whatsappSent = false;
         try {
           const resolver = new ChannelResolver(supabase);
           const resolved = await resolver.resolveByBusinessId(target.business_id);
-          if (resolved) {
+          if (resolved && await inviteSendAllowed(target.id, cleanPhone)) {
             // Get host name
             const { data: biz } = await supabase.from('businesses').select('name, owner_id, subscription_tier, country_code').eq('id', target.business_id).single();
             let hostName = biz?.name || '';
@@ -149,22 +154,10 @@ export async function POST(request: NextRequest) {
           logger.error('[INVITE-OPTIN] Re-send WhatsApp error:', err);
         }
 
-        // Get WA number for CtWA
-        let waNum = '';
-        try {
-          const r = new ChannelResolver(supabase);
-          const res = await r.resolveByBusinessId(target.business_id);
-          if (res?.channel?.phone_number) waNum = res.channel.phone_number.replace(/\D/g, '');
-        } catch {}
-
         return NextResponse.json({
           success: true,
           already_invited: true,
           whatsapp_sent: whatsappSent,
-          status: existing.status,
-          rsvp_url: inviteLink,
-          invite_token: existing.invite_token,
-          wa_number: waNum,
         });
       }
     }
@@ -222,7 +215,7 @@ export async function POST(request: NextRequest) {
       const resolver = new ChannelResolver(supabase);
       const resolved = await resolver.resolveByBusinessId(target.business_id);
 
-      if (resolved) {
+      if (resolved && (!cleanPhone || await inviteSendAllowed(target.id, cleanPhone))) {
         const messageParts = [
           `🎉 *You're Invited!*`,
           '',
@@ -268,7 +261,7 @@ export async function POST(request: NextRequest) {
 
     // Send email invite if email provided
     let emailSent = false;
-    if (guestEmail && typeof guestEmail === 'string' && guestEmail.includes('@')) {
+    if (guestEmail && typeof guestEmail === 'string' && guestEmail.includes('@') && await inviteSendAllowed(target.id, guestEmail.trim())) {
       try {
         const { sendEmail } = await import('@/lib/email/client');
         await sendEmail({
