@@ -1,6 +1,7 @@
 import { persistStoreCustomerEmail, reuseStoreCustomerEmail } from './shared/customer-email';
 import { prepareFreeCompletion } from './shared/free-completion';
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
@@ -782,17 +783,18 @@ export const reservationFlow: FlowDefinition = {
       id: 'collect_email',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
-          type: 'text',
-          text: `Thanks, ${ctx.session.session_data.first_name}! 📧 What's your email address?\n\nType your email or *skip*:`,
+          type: 'buttons',
+          body: getFlowCopy(ctx.copyLang, 'booking.collect_email'),
+          buttons: [{ id: 'skip_email', title: getFlowCopy(ctx.copyLang, 'booking.skip') }],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-        if (input.toLowerCase() === 'skip') {
+        const email = input.trim().toLowerCase();
+        if (email === 'skip' || email === 'skip_email') {
           return { valid: true };
         }
-        const email = input.trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || isReservedEmailDomain(email)) {
-          return { valid: false, errorMessage: "That doesn't look like a valid email. Try again or type *skip*:" };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };
         }
         const businessId = ctx.business?.id || ctx.session.business_id;
         if (businessId && (!ctx.business?.id || !ctx.session.business_id || ctx.business.id === ctx.session.business_id)) {

@@ -43,9 +43,15 @@
   ],
   "typed answer at collect_name": [
     {
-      "type": "text",
+      "type": "buttons",
       "to": "2348011112222",
-      "text": "📧 We'll send your booking confirmation to your email. Type your email or *skip* to skip:"
+      "body": "📧 Want a copy by email? Type your email or tap *Skip*.",
+      "buttons": [
+        {
+          "id": "skip_email",
+          "title": "Skip"
+        }
+      ]
     }
   ],
   "free text at select_service": [

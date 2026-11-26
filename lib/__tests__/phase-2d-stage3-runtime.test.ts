@@ -228,6 +228,30 @@ describe('Stage3 email lifecycle', () => {
     expect(indCalls).toHaveLength(1);
     expect(completeCalls).toHaveLength(0);
   });
+
+  it('1D. customer skipped email: no customer_order_email, WhatsApp confirmation still completes', async () => {
+    vi.resetModules();
+    // Email is optional in the bot (Owner 2026-11-26): this customer never gave one.
+    const { findCustomerEmail } = await import('@/lib/channels/send-or-email');
+    vi.mocked(findCustomerEmail).mockResolvedValueOnce(null);
+    mockResolveByChForBiz.mockResolvedValue({ channel: { id: 'ch-no-em', channel_type: 'shared' }, sender: sharedSender });
+    mockSendEmail.mockResolvedValue({ success: true });
+
+    const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+    const sb = mockSb('ch-no-em', 'o-no-em', 'p-no-em');
+    const result = await sendProactiveConfirmation(sb, {
+      id: 'p-no-em', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null,
+      order_id: 'o-no-em', payment_authority_version: 1,
+    }, { logPrefix: '[NO-EMAIL]', exactEntityFamily: true });
+
+    expect(result.status).toBe('completed');
+    expect(sharedSender.sendText).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    const initCall = (sb.rpc as any).mock.calls.find((c: any) => c[0] === 'initialize_terminal_effects');
+    expect(initCall[1].p_effect_keys).not.toContain('customer_order_email');
+    const emailEffectCalls = (sb.rpc as any).mock.calls.filter((call: any) => call[1]?.p_effect_key === 'customer_order_email');
+    expect(emailEffectCalls).toHaveLength(0);
+  });
 });
 
 // ═══ 2. CHANNEL AUTHORITY ═══

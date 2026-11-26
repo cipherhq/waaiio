@@ -3199,15 +3199,17 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'collect_email',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        return [
-          { type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.collect_email') },
-        ];
+        return [{
+          type: 'buttons',
+          body: getFlowCopy(ctx.copyLang, 'booking.collect_email'),
+          buttons: [{ id: 'skip_email', title: getFlowCopy(ctx.copyLang, 'booking.skip') }],
+        }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-        if (input.toLowerCase() === 'skip' || input.toLowerCase() === 'skip_email') {
+        const email = input.trim().toLowerCase();
+        if (email === 'skip' || email === 'skip_email') {
           return { valid: true };
         }
-        const email = input.trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || isReservedEmailDomain(email)) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };
         }
