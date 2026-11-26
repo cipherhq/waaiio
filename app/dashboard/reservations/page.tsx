@@ -75,12 +75,12 @@ interface Booking {
   service_id: string | null;
   refund_amount: number | null;
   guest_list: Array<{ name: string }> | null;
-  /** M557: table bookings keep the offer the customer chose (table_offer). */
+  /** M557: table bookings keep the offer the customer chose (table_offer).
+   *  Pre-booking answers (custom_answers) are read as unknown via bookingCustomAnswers(). */
   metadata?: { table_offer?: { payment_mode?: string; minimum_spend?: number | null; package?: { name: string; includes: string; price: number } | null } } | null;
   flow_type: string | null;
   seating_resource_id: string | null;
   seating_resource_name: string | null;
-  metadata?: Record<string, unknown> | null;
   _isReservation?: boolean;
 }
 
