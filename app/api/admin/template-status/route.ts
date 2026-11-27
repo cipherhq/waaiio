@@ -1,14 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual } from 'crypto';
-import { verifyCronAuth } from '@/lib/cron-auth';
+import { verifyCronAuth, hasBearerSecret } from '@/lib/cron-auth';
 
 export async function GET(request: NextRequest) {
+  // Auth: cron auth header OR internal token (Authorization header only)
   const authError = verifyCronAuth(request);
-  if (authError) {
-    const token = request.nextUrl.searchParams.get('token');
-    const valid = process.env.INTERNAL_API_TOKEN;
-    if (!token || !valid || token.length !== valid.length || !timingSafeEqual(Buffer.from(token), Buffer.from(valid))) return authError;
-  }
+  if (authError && !hasBearerSecret(request, process.env.INTERNAL_API_TOKEN)) return authError;
 
   const wabaId = process.env.META_CLOUD_WABA_ID;
   const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;

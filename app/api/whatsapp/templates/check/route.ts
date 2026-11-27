@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
-import { verifyCronAuth } from '@/lib/cron-auth';
+import { verifyCronAuth, hasBearerSecret } from '@/lib/cron-auth';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 
@@ -10,22 +10,16 @@ import { logger } from '@/lib/logger';
  * Diagnostic: checks if waaiio_event_invite template exists and is approved
  * on the shared WABA. If missing or rejected, auto-creates it as MARKETING.
  *
- * Protected by admin session, cron auth, or internal token.
+ * Protected by admin session, cron auth, or internal token
+ * (`Authorization: Bearer <INTERNAL_API_TOKEN>`; never a query parameter).
  *
  * Query params:
  *   ?fix=true     — auto-create if missing, delete+recreate if wrong category
- *   ?token=xxx    — internal API token or cron secret auth
  *   ?test=PHONE   — send a test template message to this phone number
  */
 export async function GET(request: NextRequest) {
-  // Auth: internal token OR cron secret OR cron auth header OR admin session
-  const internalToken = request.nextUrl.searchParams.get('token');
-  const validInternalToken = process.env.INTERNAL_API_TOKEN;
-  const cronSecret = process.env.CRON_SECRET;
-  const hasInternalAuth = internalToken && (
-    (validInternalToken && internalToken === validInternalToken) ||
-    (cronSecret && internalToken === cronSecret)
-  );
+  // Auth: internal token (Authorization header) OR cron auth header OR admin session
+  const hasInternalAuth = hasBearerSecret(request, process.env.INTERNAL_API_TOKEN);
 
   if (!hasInternalAuth) {
     // verifyCronAuth returns null on success, NextResponse on failure
