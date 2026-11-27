@@ -6,6 +6,7 @@ import { rateLimitResponseAsync, checkRateLimitAsync, getRateLimitKey } from '@/
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
+import { webCheckoutBlocked, customerBlockedResponse, businessCountryForBlock } from '@/lib/customer-block';
 
 /** Invite messages to one recipient for one event/party per day. Sends are billed to the business. */
 const INVITE_SENDS_PER_RECIPIENT = 3;
@@ -71,6 +72,13 @@ export async function POST(request: NextRequest) {
 
     if (!target) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+    }
+
+    // #1166 Q7 C: a blocked phone or email cannot ask to be invited.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'invite-optin', businessId: target.business_id, phone, email: guestEmail, countryCode: await businessCountryForBlock(supabase, target.business_id),
+    })) {
+      return customerBlockedResponse();
     }
 
     // Store international digits so the bot's RSVP lookup matches the WhatsApp sender

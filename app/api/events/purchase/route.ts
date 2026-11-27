@@ -5,6 +5,8 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
+import { markBookingEmailVerified } from '@/lib/customer-email-proof';
 
 export async function POST(request: NextRequest) {
   // Rate limit: 10/min per IP
@@ -83,6 +85,13 @@ export async function POST(request: NextRequest) {
     country_code: string;
     payment_gateway: string | null;
   };
+
+  // #1166: a blocked phone or email is refused before anything is created or charged.
+  if (await webCheckoutBlocked(supabase, {
+    route: 'events/purchase', businessId: business.id, phone: guestPhone, email: verifiedEmail, countryCode: business.country_code,
+  })) {
+    return customerBlockedResponse();
+  }
 
   // Check max_per_order
   const maxAllowed = event.max_per_order || 10;
@@ -228,6 +237,9 @@ export async function POST(request: NextRequest) {
 
   const bookingId = row.booking_id;
   const referenceCode = row.reference_code;
+
+  // #1166 S1(b): the guest email on this booking was proved with a code.
+  await markBookingEmailVerified(supabase, bookingId, 'events/purchase');
 
   // 4. If free event, return success immediately
   if (totalAmount <= 0) {

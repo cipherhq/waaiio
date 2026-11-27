@@ -9,6 +9,7 @@ import { getCountry } from '@/lib/countries';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,6 +45,13 @@ export async function POST(request: NextRequest) {
 
     if (!business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 400 });
+    }
+
+    // #1166: a blocked phone or email is refused before any subscription or checkout.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'recurring/setup', businessId: business.id, phone: customerPhone, email: customerEmail, countryCode: business.country_code,
+    })) {
+      return customerBlockedResponse();
     }
 
     // Check if the service is configured as recurring, or fall back to business-level toggle

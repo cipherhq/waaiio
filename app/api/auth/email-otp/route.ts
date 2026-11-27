@@ -5,6 +5,8 @@ import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { generateOtpChallenge, verifyOtpChallenge } from '@/lib/otp-challenge';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
+import { createServiceClient } from '@/lib/supabase/service';
 
 export async function POST(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -36,6 +38,11 @@ async function handleSend(request: NextRequest) {
     if (emailLimit) return emailLimit;
     const ipLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'email-otp'), 10, 600_000);
     if (ipLimit) return ipLimit;
+
+    // #1166 F13: no code is created or sent for a blocked email.
+    if (await webCheckoutBlocked(createServiceClient(), { route: 'auth/email-otp', email: emailLower })) {
+      return customerBlockedResponse();
+    }
 
     // Generate challenge — hashed storage, atomic consume, failed-attempt tracking
     const { code, challengeId } = await generateOtpChallenge('email', emailLower);

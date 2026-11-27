@@ -4,6 +4,7 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
 import { logger } from '@/lib/logger';
 import { findWebIntake, openBeforeBookingIntake, toE164, webBeforeBookingForm } from '@/lib/intake/send';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NO_STORE = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' };
@@ -33,9 +34,16 @@ export async function POST(request: NextRequest) {
     if (!phone) return json({ code: 'phone_required', error: 'Please add your phone number.' }, 400);
 
     const db = createServiceClient();
-    const { data: business } = await db.from('businesses').select('id, subscription_tier')
+    const { data: business } = await db.from('businesses').select('id, subscription_tier, country_code')
       .eq('slug', businessSlug).eq('status', 'active').maybeSingle();
     if (!business) return json({ error: 'Business not found' }, 404);
+
+    // #1166: a blocked phone or email is refused before an intake is opened.
+    if (await webCheckoutBlocked(db, {
+      route: 'bookings/public/intake', businessId: business.id, phone, email: verified, countryCode: business.country_code,
+    })) {
+      return customerBlockedResponse(NO_STORE);
+    }
 
     const form = await webBeforeBookingForm(db, { businessId: business.id, tier: business.subscription_tier, serviceId, email });
     if (!form) return json({ required: false });

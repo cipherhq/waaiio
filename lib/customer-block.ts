@@ -20,6 +20,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
 import { canonicalCustomerPhone, lookupKey } from '@/lib/customer-suspension';
 import { logger } from '@/lib/logger';
 import { reportFailure } from '@/lib/observability/report-failure';
@@ -27,6 +28,14 @@ import { reportFailure } from '@/lib/observability/report-failure';
 /** The one neutral website refusal (Owner wording, #1166). No reason is given. */
 export const CUSTOMER_BLOCKED_WEB_TEXT =
   "This service isn't available. If you think this is a mistake, contact support@waaiio.com";
+
+/**
+ * The website refusal: the neutral text, the same on every route, with no hint
+ * of which detail matched (F10). Status 403, as other refusals on these routes.
+ */
+export function customerBlockedResponse(headers?: Record<string, string>): NextResponse {
+  return NextResponse.json({ error: CUSTOMER_BLOCKED_WEB_TEXT, code: 'customer_unavailable' }, { status: 403, headers });
+}
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -102,6 +111,19 @@ export async function customerBlockStatus(
     phoneKey: customerPhoneBlockKey(input.phone, input.countryCode),
     emailKey: normalizeBlockEmail(input.email),
   });
+}
+
+/**
+ * The business country used to read a local phone number. Part of the check,
+ * so it never throws: null on any failure (the number is then read as typed).
+ */
+export async function businessCountryForBlock(db: SupabaseClient, businessId: string): Promise<string | null> {
+  try {
+    const { data } = await db.from('businesses').select('country_code').eq('id', businessId).maybeSingle();
+    return (data as { country_code?: string | null } | null)?.country_code ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

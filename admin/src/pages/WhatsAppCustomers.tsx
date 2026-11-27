@@ -427,6 +427,9 @@ export default function Customers() {
     setAddEmail('');
     setAddError('');
     setCandidatesError('');
+    // Cleared for every open, so a lookup still running for an earlier dialog
+    // cannot leave "Loading emails…" on this one.
+    setCandidatesLoading(false);
     if (!target.block) {
       // Unblock: every email blocked for this customer, none ticked.
       setCandidates(blockedEmailsFor(target.phone, own.email).map(b => ({
@@ -435,7 +438,6 @@ export default function Customers() {
       return;
     }
     setCandidates([]);
-    setCandidatesLoading(false);
     // Nothing to look up for a guest with no usable number and no account:
     // the list is empty and the admin adds emails by hand (F5a).
     if (target.addOnly || (!target.phone && !target.userId)) return;
@@ -533,7 +535,8 @@ export default function Customers() {
       setSuspendMessage('Tick or add at least one email.');
       return;
     }
-    if (block && (!reason || reason.trim().length < 3)) {
+    // Counted in characters, as the server and the database count them.
+    if (block && (!reason || [...reason.trim()].length < 3)) {
       setSuspendMessage('Enter a reason (at least 3 characters).');
       return;
     }

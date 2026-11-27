@@ -1,0 +1,25 @@
+## 2026-11-27 — Extend customer blocking to email: website checkouts (#1166, slice 3 of 4)
+
+- **What changed:** The website now refuses a blocked phone or a blocked email before anything is created or charged (#1166 r7 F9–F14, F11, S1(b), S5, Q9; Owner approval 2026-11-27).
+  - **The message:** every refusal is the same neutral one, "This service isn't available. If you think this is a mistake, contact support@waaiio.com". It is sent as HTTP 403 with code `customer_unavailable` and never says which detail matched. Each refusal logs `customer_block.refused` with the route, business and the kind of match, never the phone or email.
+  - **Where it applies:**
+    - the email code step (`/api/auth/email-otp`): no code is created or sent;
+    - public booking and before-booking intake;
+    - event ticket purchase;
+    - donation, pay link and public recurring setup;
+    - WhatsApp Flow booking completion, by phone, which gets the WhatsApp reply once per 24 hours through the business's channel;
+    - form submission, invite opt-in requests, check-in and waiver signing (Q7 C).
+  - **Still allowed:** RSVPs and intake answers by link (Q7 C, Q14 A), and everything the merchant creates or sends (Q4 A).
+  - **If the check cannot be read:** the request goes through and the error is reported (Q10 A).
+  - **Proof mark:** a booking or ticket made after an email code now records `bookings.email_verified_at`. The admin list uses it for "Proved with a code". If the mark cannot be saved, this is logged and the checkout still succeeds.
+  - **WhatsApp reply (Q9 A):** the WhatsApp neutral reply now ends with the same support line. It stays in English for every language.
+  - **Admin page fixes:**
+    - no stale "Loading emails…" when the unblock dialog opens while a lookup is still running;
+    - the reason is counted in characters on the page, as the server counts it.
+- **Files:**
+  - Routes: `app/api/auth/email-otp`, `bookings/public/create`, `bookings/public/intake`, `events/purchase`, `campaigns/[id]/donate`, `pay-link/pay`, `recurring/setup`, `whatsapp/flow-callback`, `forms/submit`, `invite-optin`, `checkin`, `waivers/sign`.
+  - Libraries: `lib/customer-block.ts` (refusal response, business-country helper), `lib/customer-email-proof.ts` (new), `lib/customer-suspension.ts` (reply text).
+  - Admin: `admin/src/pages/WhatsAppCustomers.tsx`.
+  - Tests: `lib/__tests__/customer-block-web-routes.test.ts`, `lib/__tests__/customer-block-pages.test.tsx`, `lib/__tests__/customer-block-money-guard.test.ts`, `admin/src/__tests__/customers-email-block.test.tsx`.
+- **What it affects:** Customers whose phone or email an admin has blocked can no longer start a booking, ticket purchase, donation, pay-link payment, recurring setup, form, invite request, check-in or waiver on the website. Each route makes one extra read of the two block tables before its first write. None of the following change: payments already made, confirmations, webhooks, fees, refunds, payouts and settlement. A guard test checks that money code does not read the block.
+- **What could break:** a route whose phone is in a local format with no business country can only be matched by its digits. A database problem with the block tables lets checkouts through and is reported in Sentry under area `customer_block`.

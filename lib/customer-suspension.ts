@@ -16,8 +16,12 @@ import { parsePhoneNumber, type CountryCode } from 'libphonenumber-js';
 import { logger } from '@/lib/logger';
 import { reportFailure } from '@/lib/observability/report-failure';
 
-/** The one neutral reply a suspended customer gets. No reason is given. */
-export const SUSPENDED_CUSTOMER_TEXT = "This service isn't available for this number.";
+/**
+ * The one neutral reply a suspended customer gets. No reason is given. English
+ * for every language, Pidgin included (Owner Q9 A, #1166).
+ */
+export const SUSPENDED_CUSTOMER_TEXT =
+  "This service isn't available for this number. If you think this is a mistake, contact support@waaiio.com";
 
 /** The neutral reply is sent at most once per WhatsApp conversation window. */
 export const SUSPENDED_NOTICE_WINDOW_MS = 24 * 60 * 60 * 1000;

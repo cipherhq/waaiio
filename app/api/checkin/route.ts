@@ -4,6 +4,7 @@ import { isStagingWhatsAppRouting, loadStagingDesignatedChannel } from '@/lib/ch
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
 
 /**
  * POST /api/checkin
@@ -43,13 +44,20 @@ export async function POST(request: NextRequest) {
     // Verify business exists and is active
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, name, phone, assigned_channel_id, whatsapp_channel_id, wa_method, bot_code')
+      .select('id, name, phone, assigned_channel_id, whatsapp_channel_id, wa_method, bot_code, country_code')
       .eq('id', business_id)
       .eq('status', 'active')
       .maybeSingle();
 
     if (!business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    }
+
+    // #1166 Q7 C: a blocked phone or email cannot check in.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'checkin', businessId: business.id, phone: customer_phone, email: trimmedEmail, countryCode: business.country_code,
+    })) {
+      return customerBlockedResponse();
     }
 
     // Duplicate check: same business + phone + today
