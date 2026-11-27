@@ -167,6 +167,8 @@ describe('reminders cron (/api/cron/reminders): booking, reservation, event and 
       invoices: [
         { id: 'inv-1', business_id: BIZ, status: 'overdue', customer_email: BLOCKED_EMAIL, customer_name: 'Ada', total_amount: 100, due_date: day(-3), businesses: business },
         { id: 'inv-2', business_id: BIZ, status: 'overdue', customer_email: CLEAR_EMAIL, customer_name: 'Bo', total_amount: 100, due_date: day(-3), businesses: business },
+        // A clear email on an invoice whose phone is blocked (F16), stored in local format.
+        { id: 'inv-3', business_id: BIZ, status: 'overdue', customer_email: 'third@example.com', customer_phone: '08012345678', customer_name: 'Cy', total_amount: 100, due_date: day(-3), businesses: { name: 'Lagos Barbers', country_code: 'NG' } },
       ],
       customer_profiles: [], orders: [], profiles: [],
     });
@@ -180,6 +182,7 @@ describe('reminders cron (/api/cron/reminders): booking, reservation, event and 
     expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE, CLEAR_PHONE]); // booking + event, both clear phones
     expect(emailed().sort()).toEqual([CLEAR_EMAIL, CLEAR_EMAIL]); // bk-3 reminder + inv-2 overdue
     expect(emailed()).not.toContain(BLOCKED_EMAIL);
+    expect(emailed()).not.toContain('third@example.com');
     expect(new Set(skipLogs().map(l => l.send))).toEqual(new Set(['booking_reminder', 'reservation_reminder', 'event_reminder', 'invoice_overdue_reminder']));
   });
 

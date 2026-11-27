@@ -3,7 +3,7 @@
 - **What changed:** Waaiio's reminder, marketing, invite and follow-up emails (the S9 skip list) no longer go to a blocked email. When the send has a blocked phone, its email copy is skipped too (#1166 r7 F15, F16, F21, F22; Owner approval 2026-11-27).
   - **Sends covered:**
     - booking, reservation and event reminders, including email-only reminders;
-    - overdue-invoice reminders;
+    - overdue-invoice reminders (the invoice's stored phone is also checked, F16);
     - balance reminders and subscription setup reminders;
     - broadcast email copies and native-form email broadcasts;
     - event and party invite emails (fallback and listed emails);

@@ -307,12 +307,17 @@ export async function GET(request: NextRequest) {
   // ── Overdue invoice reminders ──
   const { data: overdueInvoices } = await supabase
     .from('invoices')
-    .select('id, customer_email, customer_name, total_amount, due_date, business_id, businesses!inner(name)')
+    .select('id, customer_email, customer_phone, customer_name, total_amount, due_date, business_id, businesses!inner(name, country_code)')
     .eq('status', 'overdue');
 
   for (const inv of overdueInvoices || []) {
-    // #1166 F15: a blocked email gets no overdue reminder (the invoice itself stays payable, Q4 A).
-    if (inv.customer_email && !(await customerEmailSendBlocked(supabase, { send: 'invoice_overdue_reminder', businessId: inv.business_id, email: inv.customer_email }))) {
+    // #1166 F15/F16: a blocked email, or the invoice's blocked phone, gets no overdue
+    // reminder email (the invoice itself stays payable, Q4 A).
+    if (inv.customer_email && !(await customerEmailSendBlocked(supabase, {
+      send: 'invoice_overdue_reminder', businessId: inv.business_id, email: inv.customer_email,
+      phone: (inv as { customer_phone?: string | null }).customer_phone ?? null,
+      countryCode: (inv as { businesses?: { country_code?: string | null } }).businesses?.country_code ?? null,
+    }))) {
       const bizName = (inv as any).businesses?.name || 'Business';
       await sendEmail({
         to: inv.customer_email,
