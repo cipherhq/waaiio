@@ -32,11 +32,12 @@ export type FailureArea =
   | 'saved_card'
   | 'followup'
   | 'cron'
-  | 'dashboard_api';
+  | 'dashboard_api'
+  | 'customer_block';
 
 const AREAS: ReadonlySet<string> = new Set<FailureArea>([
   'bot', 'flow', 'custom_flow', 'whatsapp_send', 'whatsapp_webhook', 'payment_webhook',
-  'payment_success', 'saved_card', 'followup', 'cron', 'dashboard_api',
+  'payment_success', 'saved_card', 'followup', 'cron', 'dashboard_api', 'customer_block',
 ]);
 
 export interface FailureContext {
