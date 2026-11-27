@@ -251,7 +251,7 @@ describe.skipIf(!dbUrl)('M474 API Key Atomic Issuance (real PostgreSQL)', () => 
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      ALTER ROLE service_role BYPASSRLS;
+      DO $$ BEGIN IF NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role') THEN ALTER ROLE service_role BYPASSRLS; END IF; END $$;
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
       -- auth.uid() stub (idempotent)

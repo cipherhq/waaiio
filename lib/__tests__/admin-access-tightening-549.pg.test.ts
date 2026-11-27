@@ -167,7 +167,7 @@ describe('M549 admin access tightening (real PostgreSQL)', () => {
     for (const role of ['anon', 'authenticated', 'service_role']) {
       await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role} NOLOGIN; END IF; END $$`);
     }
-    await control.query('ALTER ROLE service_role BYPASSRLS');
+    await control.query(`DO $$ BEGIN IF NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role') THEN ALTER ROLE service_role BYPASSRLS; END IF; END $$`);
     for (const state of STATES) {
       databases[state] = `m549_${state}_${randomUUID().replaceAll('-', '')}`;
       await control.query(`CREATE DATABASE ${databases[state]}`);

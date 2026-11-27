@@ -58,7 +58,7 @@ describe('M547 customer suspensions (real PostgreSQL)', () => {
       if (!(await q('SELECT 1 FROM pg_roles WHERE rolname=$1', [role])).rowCount) await q(`CREATE ROLE ${role}`);
     }
     // Supabase's service_role bypasses RLS.
-    await q('ALTER ROLE service_role BYPASSRLS');
+    await q(`DO $$ BEGIN IF NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role') THEN ALTER ROLE service_role BYPASSRLS; END IF; END $$`);
     await q('GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role');
     // Production's drift: new tables and functions default to every right for every API role.
     await q(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
