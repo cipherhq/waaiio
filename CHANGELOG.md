@@ -1,3 +1,156 @@
+## 2026-11-27 — Internal template routes: accept the service token in the Authorization header only
+
+**What changed**
+- `GET /api/whatsapp/templates/check`, `GET /api/admin/template-status` and `GET /api/admin/provision-templates` now read the internal service token only from `Authorization: Bearer <INTERNAL_API_TOKEN>`. A `?token=` query value is ignored.
+- `templates/check` no longer accepts `CRON_SECRET` as a `?token=` value. Its existing cron path (`Authorization: Bearer <CRON_SECRET>` via `verifyCronAuth`) and admin-session fallback are unchanged, as are the cron and admin paths on the other two routes.
+- All three compare the token in constant time and refuse it when `INTERNAL_API_TOKEN` is unset or empty.
+
+**Files**
+- `lib/cron-auth.ts`: new `hasBearerSecret(request, secret)` helper (constant-time `Authorization: Bearer` check, false for an empty secret). `verifyCronAuth` now uses it; its behaviour is unchanged.
+- `app/api/whatsapp/templates/check/route.ts`, `app/api/admin/template-status/route.ts`, `app/api/admin/provision-templates/route.ts`: use `hasBearerSecret` instead of reading `?token=`.
+- `lib/__tests__/template-routes-header-auth.test.ts`: new handler-level tests for the three routes.
+- `lib/__tests__/admin-role-escalation.test.ts`: template-check test 1 now sends the token in the header.
+
+**What it affects**
+- No caller in this repository uses these routes. Anyone calling them by hand with `?token=` must send the `Authorization: Bearer` header instead.
+
+**What could break**
+- A manual or external caller still using `?token=` gets 401/403 until it switches to the header.
+
+## 2026-11-27 — session-bind: identify the user with getUser()
+
+- **What changed:** `POST /api/auth/session-bind` now takes the user's id and email from `supabase.auth.getUser()`, which checks the token with Supabase Auth, instead of from the cookie session returned by `getSession()`. `getSession()` is still read, but only for the access token that `security_sessions.session_id` is derived from. If `getUser()` returns no user or an error, the route returns the same 401 `Not authenticated` as before and writes nothing and sends no email.
+- **Files:** `app/api/auth/session-bind/route.ts`; new handler test `lib/__tests__/session-bind-route.test.ts`.
+- **Affects:** the session record, `profiles.last_login_at`, login alerts, and the "New login" email sent after email/password sign-in on `/login` (the only caller). Responses are unchanged.
+- **What could break:** each call now makes one extra request to Supabase Auth. A sign-in whose token Supabase Auth rejects is no longer recorded and gets no login email. The login page ignores this call's result, so sign-in itself is unaffected.
+
+## 2026-11-27 — Release lock: measured corrections for M558 and M559
+
+- **What changed:** The release lock gains five measured corrections. In both environments, `table:public.growth_pricing` and `table:public.keyword_campaign_responses` (M558) end with different table grants from the replay's prediction, because the replay does not model each environment's earlier grants (as with M549). On staging only, `table:public.customer_email_blocks` (M559) differs because staging's default server-role grants differ from production's (as with M547). The lock also records the measured catalogs (production 7231 objects, staging 7252).
+- **Files:** `scripts/release-v3/lock.json`, `scripts/__tests__/release-v3-admission.test.ts`, `docs/RELEASE_V3_GATE.md`.
+- **What it affects:** Only the catalog check in the next Release V3 prepare. There is no app, database or setting change.
+- **What could break:** A wrong value makes prepare stop (fail closed). Every other catalog object must still match exactly.
+
+## 2026-11-27 — Public booking: match existing customers by verified email only
+
+- **What changed:** In the public web booking route, the guest is matched to an existing customer profile by the OTP-verified email. The phone typed on the form is only used to reuse a profile that already has that same email (ignoring letter case). If the phone belongs to a profile with a different email, or with no email, the guest is treated as new under the verified email (the same new-guest path used today), and the existing profile is not changed. The route no longer writes an email onto a profile it found by phone (Owner decision 2026-11-27, "keep separate"; same rule as the event ticket purchase route, #1162).
+- **Files:** `app/api/bookings/public/create/route.ts`, `app/api/bookings/__tests__/public-create-guest-profile-match.test.ts` (new handler-level tests with a mocked Supabase client; runs in the CI "Main App" job, "Run tests" step).
+- **What it affects:** Only which profile a public web booking is recorded under. Prices, deposits, tax, fees, payment routing and the booking RPC arguments other than the user id are unchanged. Booking confirmations and reminders use the booking's own guest phone and email, so they are unchanged. Matching by verified email, and brand-new guests, behave as before.
+- **What could break:** A customer who first used WhatsApp (profile with phone but no email, or another email) and then books on the web with a different email now gets a separate profile. The WhatsApp "my bookings" list, and its cancel and reschedule actions, look bookings up by profile id, so that web booking is listed and managed under the new profile, not the WhatsApp one. A rare existing limit now applies to more guests: if an account already exists for the verified email but no profile row stores that exact lower-case email, account creation fails and the guest sees "Failed to create account". A profile whose email differs only in letter case is reused but its email is no longer rewritten to lowercase.
+
+## 2026-11-27 — Restrict growth_pricing and keyword_campaign_responses writes to service role (least privilege)
+
+- **What changed:** New migration M558. On `public.growth_pricing` the two write policies (`growth_pricing_service_insert`, `growth_pricing_service_update`) are recreated `TO service_role` with the same conditions. On `public.keyword_campaign_responses` the `service_insert_responses` policy is recreated `TO service_role`. INSERT, UPDATE, DELETE and TRUNCATE on both tables are revoked from PUBLIC, anon and authenticated, and service_role keeps SELECT, INSERT, UPDATE and DELETE. SELECT grants and SELECT policies are not touched (`growth_pricing_admin_select` from M439, `owners_read_responses` from M203). The migration ends with a self-check that fails if an API role can still write or a write policy still names public, anon or authenticated.
+- **Files:** `supabase/migrations/558_growth_pricing_service_role_writes.sql`, `lib/__tests__/service-role-writes-558.pg.test.ts` (real PostgreSQL, two starting grant states, applied twice), `.github/workflows/ci.yml` (test listed in the security-acl-tests `.pg.test.ts` step and excluded from the unit run, like the other `.pg.test.ts` files).
+- **What it affects:** Only who may write these two tables. The only app writer is the WhatsApp bot keyword handler (`lib/bot/handlers/keyword-actions.ts`), which uses the service-role client from the Meta webhook. `growth_pricing` has no app or admin-panel writer. Admin reads of `growth_pricing` and business-owner reads of their own keyword responses (dashboard routes under `app/api/keyword-campaigns/`) are unchanged.
+- **What could break:** A future browser-side write to either table would now be refused; such writes must go through a server route using the service role. The Release V3 catalog check will see the new policy roles and table grants once M558 is applied.
+
+## 2026-11-27 — CI: stop the "tuple concurrently updated" flake in the parallel .pg.test.ts job
+
+- **What changed:** Twelve `.pg.test.ts` files ran `ALTER ROLE service_role BYPASSRLS` on every setup, even when the role already had it. Roles belong to the whole PostgreSQL cluster, not to each test database, so when several files start at the same time they rewrite the same `pg_authid` row and one of them fails at random with `XX000: tuple concurrently updated` (runs 46003209846 and 46008845394 on main, 2026-11-27). Each file now only runs the `ALTER ROLE` when `service_role` does not already have `BYPASSRLS`, the same pattern files 521 and 523 already use. In CI the provisioning step creates `service_role` with `BYPASSRLS`, so no file writes that row any more. The parallel CI step also now fails early, with the file and line, if a file adds an unconditional `ALTER ROLE` on `service_role`, `anon` or `authenticated`.
+- **Files:** `lib/__tests__/{705-api-key-issuance,api-key-dml-lockdown-520,profile-consent-preferences-515,seating-resource-gallery-516,form-sends-517,party-tables-grants-519,resellers-own-record-read-only-524,customer-message-guards-536,customer-suspensions-547,admin-whatsapp-broadcasts-548,admin-access-tightening-549,service-role-writes-558}.pg.test.ts` (one line each), `.github/workflows/ci.yml` (guard in the "P0 security ACL tests (disposable PG)" job, "Run .pg.test.ts files in parallel with isolated databases" step).
+- **What it affects:** Test setup and CI only. No assertion, test, migration or app code changed; each test still makes sure `service_role` has `BYPASSRLS` before it runs, still fails (not skips) without a database, and the same files and test counts run.
+- **What could break:** A new `.pg.test.ts` that copies the old unconditional `ALTER ROLE` line will fail the CI guard until it uses the `IF NOT (SELECT rolbypassrls ...)` form. `lib/tax/__tests__/sql-calculation-authority.pg.test.ts` keeps its unconditional line because it runs alone in another job.
+
+## 2026-11-27 — Payout account-name lookup: business owners only, rate limited, audited
+
+- **What changed:** `POST /api/payouts/resolve` (bank account holder-name lookup) now needs a `business_id` the signed-in user owns (same `owner_id` rule as `/api/payouts/setup`; others get 403), allows 10 lookups per user per hour through the shared limiter in `lib/rate-limit.ts` (Upstash when configured, otherwise the existing per-instance in-memory fallback; over the limit returns 429 "Too many requests. Please try again later." without calling the provider), and records each provider lookup in `audit_log` (action `payout_account_lookup`: user, business, bank code, last 4 digits of the account number only, ok/fail, time). Owner decision 2026-11-27. The provider call and the response shape are unchanged.
+- **Files:** `app/api/payouts/resolve/route.ts`; `lib/audit/log.ts` (new `payout_account_lookup` action; `logAudit` now returns the insert error so callers can log it, existing caller unaffected); callers `app/dashboard/payouts/page.tsx` and `app/dashboard/settings/tabs/PaymentsTab.tsx` now send `business_id`; tests `lib/__tests__/payout-resolve-owner-limit.test.ts` (new), `lib/__tests__/payout-setup-hardening.test.ts`, `lib/__tests__/payout-test-bank-staging.test.ts`, `app/dashboard/payouts/__tests__/flutterwave-setup-availability-762.test.tsx` (updated for the business id and the audit entry).
+- **What it affects:** Only the account-name lookup step of payout and Paystack connect setup in the dashboard. No payout, settlement, fee, split or routing logic changed. No migration (`audit_log` already exists with a service-role insert grant).
+- **What could break:** Team members who are not the owner can no longer look up account names (they already could not save payout details). An owner who types more than 10 account numbers in an hour sees the "Too many requests" message until the window passes. Without Upstash the limit is per server instance. If the audit insert fails the lookup still succeeds and the failure is written to the server log.
+
+## 2026-11-27 — Guest ticket purchase: match existing customers by verified email only
+
+- **What changed:** In the web event ticket purchase route, the buyer is matched to an existing customer profile by the OTP-verified email. The phone typed on the form is only used to reuse a profile that already has that same email (ignoring letter case). If the phone belongs to a profile with a different email, or with no email, the buyer is treated as a new guest under the verified email (the same new-buyer path used today), and the existing profile is not changed. The route no longer writes an email onto a profile it found by phone (Owner decision 2026-11-27, "keep separate").
+- **Files:** `app/api/events/purchase/route.ts`, `app/api/events/__tests__/purchase-guest-profile-match.test.ts` (new handler-level tests with a mocked Supabase client; runs in the CI "Main App" job, "Run tests" step).
+- **What it affects:** Only which profile a web ticket purchase is recorded under. Amounts, fees, payment routing, the purchase RPC arguments other than the user id, and ticket delivery (which uses the booking's verified email) are unchanged. Matching by verified email, and brand-new buyers, behave as before.
+- **What could break:** A customer who first used WhatsApp (profile with phone but no email, or another email) and then buys on the web with a different email now gets a separate profile, and anything keyed on the profile id (for example payment records) sits under that new profile. Tickets still store the typed phone, so the WhatsApp "my bookings" list, which looks tickets up by phone, is unchanged. A profile whose email differs only in letter case is reused but its email is no longer rewritten to lowercase.
+
+## 2026-11-27 — Extend customer blocking to email: website checkouts (#1166, slice 3 of 4)
+
+- **What changed:** The website now refuses a blocked phone or a blocked email before anything is created or charged (#1166 r7 F9–F14, F11, S1(b), S5, Q9; Owner approval 2026-11-27).
+  - **The message:** every refusal is the same neutral one, "This service isn't available. If you think this is a mistake, contact support@waaiio.com". It is sent as HTTP 403 with code `customer_unavailable` and never says which detail matched. Each refusal logs `customer_block.refused` with the route, business and the kind of match, never the phone or email.
+  - **Where it applies:**
+    - the email code step (`/api/auth/email-otp`): no code is created or sent;
+    - public booking and before-booking intake;
+    - event ticket purchase;
+    - donation, pay link and public recurring setup;
+    - WhatsApp Flow booking completion, by phone, which gets the WhatsApp reply once per 24 hours through the business's channel;
+    - form submission, invite opt-in requests, check-in and waiver signing (Q7 C).
+  - **Still allowed:** RSVPs and intake answers by link (Q7 C, Q14 A), and everything else the merchant creates or sends (Q4 A). Every form submission is refused, including a form the merchant sent (Q15 revised A, Owner 2026-11-27).
+  - **If the check cannot be read:** the request goes through and the error is reported (Q10 A).
+  - **Proof mark:** a booking or ticket made after an email code now records `bookings.email_verified_at`. The admin list uses it for "Proved with a code". If the mark cannot be saved, this is logged and the checkout still succeeds.
+  - **WhatsApp reply (Q9 A):** the WhatsApp neutral reply now ends with the same support line. It stays in English for every language.
+  - **Admin page fixes:**
+    - no stale "Loading emails…" when the unblock dialog opens while a lookup is still running;
+    - the reason is counted in characters on the page, as the server counts it.
+- **Files:**
+  - Routes: `app/api/auth/email-otp`, `bookings/public/create`, `bookings/public/intake`, `events/purchase`, `campaigns/[id]/donate`, `pay-link/pay`, `recurring/setup`, `whatsapp/flow-callback`, `forms/submit`, `invite-optin`, `checkin`, `waivers/sign`.
+  - Libraries: `lib/customer-block.ts` (refusal response, business-country helper), `lib/customer-email-proof.ts` (new), `lib/customer-suspension.ts` (reply text).
+  - Admin: `admin/src/pages/WhatsAppCustomers.tsx`.
+  - Tests: `lib/__tests__/customer-block-web-routes.test.ts`, `lib/__tests__/customer-block-pages.test.tsx`, `lib/__tests__/customer-block-money-guard.test.ts`, `admin/src/__tests__/customers-email-block.test.tsx`.
+- **What it affects:** Customers whose phone or email an admin has blocked can no longer start a booking, ticket purchase, donation, pay-link payment, recurring setup, form, invite request, check-in or waiver on the website. Each route makes one extra read of the two block tables before its first write. None of the following change: payments already made, confirmations, webhooks, fees, refunds, payouts and settlement. A guard test checks that money code does not read the block.
+- **What could break:** a route whose phone is in a local format with no business country can only be matched by its digits. A database problem with the block tables lets checkouts through and is reported in Sentry under area `customer_block`.
+
+## 2026-11-27 — Extend customer blocking to email: customer email sends (#1166, slice 4 of 4)
+
+- **What changed:** Waaiio's reminder, marketing, invite and follow-up emails (the S9 skip list) no longer go to a blocked email. When the send has a blocked phone, its email copy is skipped too (#1166 r7 F15, F16, F21, F22; Owner approval 2026-11-27).
+  - **Sends covered:**
+    - booking, reservation and event reminders, including email-only reminders;
+    - overdue-invoice reminders (the invoice's stored phone is also checked, F16);
+    - balance reminders and subscription setup reminders;
+    - broadcast email copies and native-form email broadcasts;
+    - event and party invite emails (fallback and listed emails);
+    - waitlist "a spot opened";
+    - after-booking intake links;
+    - party follow-up emails.
+  - **What the merchant sees** is exactly what they see when the customer has not given email consent: invites fall back to SMS or the share link (`needs_optin`), broadcast copies are left out, native-form broadcasts count the email as skipped, and the party preview shows the same reason as missing consent. Nothing is specific to a block (Q3 A).
+  - **Unchanged:** money and transactional emails still go to a blocked email (F17). These are payment confirmations, receipts, tickets, invoices, payment requests, bank-transfer outcomes, charge-failed notices, contract and waiver copies, booking changes and account emails. So do emails to merchants and staff (F18).
+  - **If the block cannot be read,** a skip-list email is skipped and reported (fails closed, as #1103's sends do).
+  - **SMS fallback (Q16 A, Owner 2026-11-27):** a blocked email counts exactly as no email, so a clear phone still gets the SMS fallback when WhatsApp fails; a blocked phone gets no SMS, as today. The invite route follows the same rule.
+  - **Nothing is replayed** after an unblock (F21).
+  - **Mechanism:** `sendOrEmail` has a new opt-in `emailBlock` option, set only by skip-list callers. `customerEmailSendBlocked` now reads a stored local-format phone in the business country when the caller passes it.
+- **Files:**
+  - Library: `lib/channels/send-or-email.ts`, `lib/customer-block.ts`.
+  - Cron routes: `app/api/cron/reminders`, `cron/balance-reminder`, `cron/subscription-reminders`.
+  - Other routes: `app/api/broadcasts/send`, `events/invite`, `waitlist/notify`.
+  - Send logic: `lib/whatsapp-forms/email-broadcast.ts`, `lib/intake/send.ts`, `lib/parties/reminder-preview.ts`.
+  - New tests: `lib/__tests__/customer-email-block-sends.test.ts`, `customer-email-block-invites.test.ts`, and `customer-block-inventory.test.ts` (every email-sending file must be classified; the block modules are never imported by browser code).
+  - Extended tests: `intake-send-963.test.ts`, `party-reminders-preview-490.test.ts`, and seeded RSVP/intake tests in `customer-block-web-routes.test.ts`.
+- **What it affects:** customers whose email (or phone) an admin has blocked stop receiving skip-list emails. Each such send makes one or two extra indexed reads.
+- **What could break:**
+  - A new email send must be added to the inventory guard as "skip" or "always". Until it is, CI fails on purpose.
+  - A database problem with the block tables stops skip-list emails while it lasts, and is reported under Sentry area `customer_block`.
+
+## 2026-11-27 — Extend customer blocking to email: storage and shared check (#1166, slice 1 of 4)
+
+- **What changed:** New migration M559 and a shared server-side check, the base for extending customer blocking (#1103) to email and website checkout (#1166 r7, Owner approval 2026-11-27).
+  - M559 adds `public.customer_email_blocks`. It has one row per blocked email, stored trimmed and lower-cased, unique. Each row records the reason (3–500 characters), who blocked it, when, and optionally the canonical phone it was blocked with. There is no foreign key to `customer_suspensions`, so unblocking a phone never removes an email block. Access: RLS deny-all, service_role only.
+  - M559 adds a nullable `public.bookings.email_verified_at`. A trigger (`private.bookings_email_verified_at_guard`, SECURITY INVOKER, empty `search_path`) refuses any real change to it by a database role other than service_role. Owners' other booking updates are unaffected.
+  - M559 adds `public.svc_set_customer_block(...)` (SECURITY INVOKER, service_role only). It blocks or unblocks a phone and any number of emails in one transaction, with one `admin_audit_logs` row per changed item. `svc_set_customer_suspension` (M547) is unchanged. The migration ends with a self-check.
+  - New `lib/customer-block.ts`, which only reads:
+    - `webCheckoutBlocked` lets the request through on a read error and reports it.
+    - `customerEmailSendBlocked` skips the send on a read error.
+    - Logs `customer_block.refused` and `customer_block.email_skipped` without the phone or email.
+  - `lookupKey` is now exported from `lib/customer-suspension.ts`, and `report-failure` gains the `customer_block` area.
+- **Files:** `supabase/migrations/559_customer_email_blocks.sql`, `lib/customer-block.ts`, `lib/customer-suspension.ts`, `lib/observability/report-failure.ts`, `lib/__tests__/customer-email-blocks-559.pg.test.ts` (real PostgreSQL, applied twice), `lib/__tests__/customer-block-helper.test.ts`, `.github/workflows/ci.yml` (PG test in the security-acl-tests step, excluded from the unit run), `docs/MIGRATION_REGISTRY.md`.
+- **What it affects:** Nothing at runtime yet. No route, admin page or email send calls the new check. Slices 2–4 wire it into the admin page, website checkouts and customer emails. Payments, refunds, payouts, settlement and payment confirmations do not read it.
+- **What could break:** M559 must be applied before the app code of slices 2–4 is deployed. The email-send check skips on a read error, so without the table every email on the skip list would be skipped. Once M559 is applied, the Release V3 catalog check will see the new table, column, trigger and function.
+
+## 2026-11-27 — Extend customer blocking to email: admin block and unblock (#1166, slice 2 of 4)
+
+- **What changed:** On the admin Customers page, blocking a customer can now also block their emails (#1166 r7 F1–F8, S3, S4, Owner approval 2026-11-27).
+  - The block dialog lists candidate emails, none ticked by default. Each shows where it came from ("Account", "Proved with a code", "Website", "Booking added by the business", "Booking from the business's booking system", "Booking (source not recorded)") and when it was last seen. Emails already blocked cannot be ticked. The admin can also add an email by hand ("Added by you").
+  - Confirming blocks the number and the ticked emails in one change, behind one step-up bound to the number, the reason and the exact set of emails. The confirm button says "Block number", "Block number and N emails" or "Block N emails".
+  - A customer with no usable number, and the new "Block an email" action on the list, can block emails on their own.
+  - The list of suspended numbers now also shows blocked emails, with a type column (Number / Email). Each email has its own "Unblock" with its own step-up.
+  - Unsuspending a number lists its blocked emails, none ticked, and unblocks only the ticked ones. A blocked customer's detail shows their blocked emails.
+  - Adding emails for an already-blocked number links them to that number without touching the number: an email-only change with a bound `linkPhone`.
+  - New admin-only route `GET /api/admin/customers/suspension/candidates`. `POST /api/admin/customers/suspension` accepts `emails` and calls `svc_set_customer_block` (M559). A request without `emails` (an admin panel from before this change) keeps the #1103 phone-only behaviour unchanged. The GET response adds `emailBlocks`.
+- **Files:** `app/api/admin/customers/suspension/route.ts`, `app/api/admin/customers/suspension/candidates/route.ts`, `lib/customer-email-candidates.ts`, `admin/src/pages/WhatsAppCustomers.tsx`, tests `lib/__tests__/customer-email-block-route.test.ts`, `lib/__tests__/customer-email-block-candidates.test.ts`, `admin/src/__tests__/customers-email-block.test.tsx`, `admin/src/__tests__/customers-suspension-1103.test.tsx` (updated for the new buttons and the emails binding), `lib/__tests__/helpers/memory-db.ts` (supports `col.not.is.null` inside `or()`).
+- **What it affects:** Only the admin Customers page and its two admin routes. Support can see blocked emails but cannot change them, as with numbers. Blocking an email has no effect on checkouts or emails yet; slices 3 and 4 add that. Payments, refunds, payouts and settlement do not read it.
+- **What could break:** M559 must be applied before this is deployed. Without it, the list read and every email change fail with an error, while phone-only changes from an older admin panel still work. Older admin panels keep working with the #1103 phone-only binding until the admin panel is redeployed.
+
 ## 2026-11-26 — Requirements skill: evidence-backed requirements before code
 
 **What changed:** Owner design 2026-11-26. New project skill `requirements` writes one requirements document per feature, in the feature's GitHub issue, before any code is written. It has Business (B), Functional (F) and System (S) requirements with IDs, out of scope, open questions as PRODUCT DECISION NEEDED cards, and an acceptance ledger mapping each ID to a planned test.
