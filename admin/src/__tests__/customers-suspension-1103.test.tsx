@@ -62,8 +62,9 @@ beforeEach(() => {
     if (url.endsWith('/api/admin/customers')) {
       return m.customersStatus === 200 ? Response.json(customersPayload()) : Response.json({ error: 'x' }, { status: m.customersStatus });
     }
+    if (url.includes('/api/admin/customers/suspension/candidates')) return Response.json({ candidates: [] });
     if (url.endsWith('/api/admin/customers/suspension') && (!init?.method || init.method === 'GET')) {
-      return m.listStatus === 200 ? Response.json({ suspensions: m.suspensions }) : Response.json({ error: 'Unable to load suspended customers' }, { status: m.listStatus });
+      return m.listStatus === 200 ? Response.json({ suspensions: m.suspensions, emailBlocks: [] }) : Response.json({ error: 'Unable to load suspended customers' }, { status: m.listStatus });
     }
     if (url.endsWith('/step-up/prepare')) return Response.json({ stepUpId: 'grant-1', factorId: 'factor', challengeId: '' });
     if (url.endsWith('/step-up/verify')) return Response.json({ session: { access_token: 'after-mfa', refresh_token: 'r' } });
@@ -126,28 +127,29 @@ describe('Customers: platform-wide suspension (#1103)', () => {
     render(<Customers />);
     await openAda();
     fireEvent.click(screen.getByRole('button', { name: 'Suspend from all bots' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Block number' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Enter a reason');
     expect(calls('/step-up/prepare')).toHaveLength(0);
 
     // The admin confirms the full number, not a masked one.
     expect(screen.getByText(`+${PHONE}`)).toBeTruthy();
     fireEvent.change(screen.getByLabelText(/^Reason/), { target: { value: 'Abusive messages' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Block number' }));
     await screen.findByText('Confirm operation');
+    // #1166: the step-up also binds the (here empty) set of ticked emails.
     expect(JSON.parse(String(calls('/step-up/prepare')[0][1].body))).toEqual({
       actionType: 'customer_suspension', targetId: PHONE,
-      params: { phone: PHONE, suspended: true, reason: 'Abusive messages' },
+      params: { phone: PHONE, suspended: true, reason: 'Abusive messages', emails: [] },
     });
     expect(calls('/api/admin/customers/suspension', 'POST')).toHaveLength(0);
 
     authorize();
     await waitFor(() => expect(calls('/api/admin/customers/suspension', 'POST')).toHaveLength(1));
     const [, request] = calls('/api/admin/customers/suspension', 'POST')[0];
-    expect(JSON.parse(String(request.body))).toEqual({ phone: PHONE, suspended: true, reason: 'Abusive messages', stepUpId: 'grant-1' });
+    expect(JSON.parse(String(request.body))).toEqual({ phone: PHONE, suspended: true, reason: 'Abusive messages', emails: [], stepUpId: 'grant-1' });
     expect((request.headers as Record<string, string>).Authorization).toBe('Bearer token');
     expect(await screen.findByText('Reason: Abusive messages')).toBeTruthy();
-    expect(screen.getByText(/Suspended numbers \(1\)/)).toBeTruthy();
+    expect(screen.getByText(/Suspended numbers and emails \(1\)/)).toBeTruthy();
   });
 
   it('a refused save shows the server error and the number stays unsuspended', async () => {
@@ -155,12 +157,12 @@ describe('Customers: platform-wide suspension (#1103)', () => {
     render(<Customers />);
     await openAda();
     fireEvent.click(screen.getByRole('button', { name: 'Suspend from all bots' }));
-    fireEvent.change(screen.getByLabelText(/^Reason/), { target: { value: 'Abusive messages' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend' }));
+    fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: 'Abusive messages' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Block number' }));
     await screen.findByText('Confirm operation');
     authorize();
     expect((await screen.findByRole('alert')).textContent).toContain('Step-up authorization invalid');
-    expect(screen.queryByText(/Suspended numbers/)).toBeNull();
+    expect(screen.getByText(/Suspended numbers and emails \(0\)/)).toBeTruthy();
   });
 
   it('admin unsuspends from the suspended numbers list', async () => {
@@ -170,12 +172,12 @@ describe('Customers: platform-wide suspension (#1103)', () => {
     const ada = (await screen.findByText('Ada')).closest('tr')!;
     expect(within(ada).getByText('suspended')).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: 'Unsuspend •••• 5678' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Unsuspend' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unblock number' }));
     await screen.findByText('Confirm operation');
-    expect(JSON.parse(String(calls('/step-up/prepare')[0][1].body)).params).toEqual({ phone: PHONE, suspended: false, reason: null });
+    expect(JSON.parse(String(calls('/step-up/prepare')[0][1].body)).params).toEqual({ phone: PHONE, suspended: false, reason: null, emails: [] });
     authorize();
-    await waitFor(() => expect(screen.queryByText(/Suspended numbers/)).toBeNull());
-    expect(JSON.parse(String(calls('/api/admin/customers/suspension', 'POST')[0][1].body))).toEqual({ phone: PHONE, suspended: false, reason: null, stepUpId: 'grant-1' });
+    await waitFor(() => expect(screen.getByText(/Suspended numbers and emails \(0\)/)).toBeTruthy());
+    expect(JSON.parse(String(calls('/api/admin/customers/suspension', 'POST')[0][1].body))).toEqual({ phone: PHONE, suspended: false, reason: null, emails: [], stepUpId: 'grant-1' });
   });
 
   it('support sees the status but no suspend or unsuspend controls', async () => {

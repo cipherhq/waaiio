@@ -50,6 +50,54 @@ interface Suspension {
   suspended_at: string;
 }
 
+/** A blocked email (#1166), with the number it was blocked with, if any. */
+interface EmailBlock {
+  email: string;
+  phone: string | null;
+  reason: string;
+  blocked_at: string;
+}
+
+type CandidateSource = 'proved' | 'account' | 'web' | 'dashboard' | 'api' | 'unrecorded' | 'added';
+
+interface EmailCandidate {
+  email: string;
+  source: CandidateSource;
+  last_seen: string | null;
+  blocked: boolean;
+}
+
+/** Owner wording (#1166 r7). */
+const SOURCE_LABEL: Record<CandidateSource, string> = {
+  account: 'Account',
+  proved: 'Proved with a code',
+  web: 'Website',
+  dashboard: 'Booking added by the business',
+  api: 'Booking from the business\u2019s booking system',
+  unrecorded: 'Booking (source not recorded)',
+  added: 'Added by you',
+};
+
+/**
+ * The block / unblock dialog. `phone` is the customer's canonical number, or
+ * null for an email-only change. `phoneBlocked` means the number is already
+ * blocked, so a block only adds emails.
+ */
+interface BlockTarget {
+  block: boolean;
+  phone: string | null;
+  phoneBlocked: boolean;
+  label: string;
+  userId: string | null;
+  /** "Block an email" from the list: no candidate list, the add field only. */
+  addOnly: boolean;
+}
+
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Same key as the server: trimmed and lower-cased. */
+const emailKey = (value: string) => value.trim().toLowerCase();
+const emailCount = (n: number) => `${n} email${n === 1 ? '' : 's'}`;
+
 const COUNTRY_TO_CURRENCY: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS', IN: 'INR' };
 const currencyFor = (country: string | null | undefined) => COUNTRY_TO_CURRENCY[country || 'NG'] || 'NGN';
 
@@ -77,7 +125,16 @@ export default function Customers() {
   // Platform-wide suspension (#1103)
   const [suspensions, setSuspensions] = useState<Map<string, Suspension>>(new Map());
   const [suspensionError, setSuspensionError] = useState('');
-  const [suspendTarget, setSuspendTarget] = useState<{ phone: string; label: string; suspend: boolean } | null>(null);
+  const [emailBlocks, setEmailBlocks] = useState<EmailBlock[]>([]);
+  const [suspendTarget, setSuspendTarget] = useState<BlockTarget | null>(null);
+  const [candidates, setCandidates] = useState<EmailCandidate[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesError, setCandidatesError] = useState('');
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [addEmail, setAddEmail] = useState('');
+  const [addError, setAddError] = useState('');
+  // Each dialog open gets a number; a candidate response for an earlier open is ignored.
+  const candidatesRequestRef = useRef(0);
   const [suspendReason, setSuspendReason] = useState('');
   const [suspendSaving, setSuspendSaving] = useState(false);
   const [suspendMessage, setSuspendMessage] = useState('');
@@ -93,6 +150,7 @@ export default function Customers() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Unable to load suspended customers');
       setSuspensions(new Map((data.suspensions as Suspension[]).map(s => [s.phone, s])));
+      setEmailBlocks((data.emailBlocks as EmailBlock[] | undefined) ?? []);
       setSuspensionError('');
     } catch (err) {
       setSuspensionError(err instanceof Error ? err.message : 'Unable to load suspended customers');
@@ -354,24 +412,88 @@ export default function Customers() {
     loadTransactions();
   }, [selected]);
 
-  function openSuspend(phone: string, label: string, suspend: boolean) {
-    setSuspendTarget({ phone, label, suspend });
-    setSuspendReason('');
-    setSuspendMessage('');
+  /** Blocked emails that belong to this customer: linked to their number, or their own email. */
+  function blockedEmailsFor(phone: string | null, email: string | null): EmailBlock[] {
+    const own = email ? emailKey(email) : '';
+    return emailBlocks.filter(b => (phone && b.phone === phone) || (own && b.email === own));
   }
 
-  async function confirmSuspend() {
-    if (!suspendTarget || !isFullAdmin || suspendSaving) return;
-    const { phone, label, suspend } = suspendTarget;
-    const reason = suspendReason.trim() ? suspendReason : null;
-    if (suspend && (!reason || reason.trim().length < 3)) {
-      setSuspendMessage('Enter a reason (at least 3 characters).');
+  async function openBlock(target: BlockTarget, own: { email: string | null } = { email: null }) {
+    const request = ++candidatesRequestRef.current;
+    setSuspendTarget(target);
+    setSuspendReason('');
+    setSuspendMessage('');
+    setTicked(new Set());
+    setAddEmail('');
+    setAddError('');
+    setCandidatesError('');
+    if (!target.block) {
+      // Unblock: every email blocked for this customer, none ticked.
+      setCandidates(blockedEmailsFor(target.phone, own.email).map(b => ({
+        email: b.email, source: 'unrecorded', last_seen: b.blocked_at, blocked: true,
+      })));
       return;
     }
+    setCandidates([]);
+    setCandidatesLoading(false);
+    // Nothing to look up for a guest with no usable number and no account:
+    // the list is empty and the admin adds emails by hand (F5a).
+    if (target.addOnly || (!target.phone && !target.userId)) return;
+    setCandidatesLoading(true);
+    try {
+      const query = new URLSearchParams();
+      if (target.phone) query.set('phone', target.phone);
+      if (target.userId) query.set('userId', target.userId);
+      const res = await adminApiGet(`/api/admin/customers/suspension/candidates?${query.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (request !== candidatesRequestRef.current) return;
+      if (!res.ok) throw new Error(data.error || 'Unable to load this customer\u2019s emails');
+      setCandidates(data.candidates as EmailCandidate[]);
+    } catch (err) {
+      if (request !== candidatesRequestRef.current) return;
+      setCandidatesError(err instanceof Error ? err.message : 'Unable to load this customer\u2019s emails');
+    } finally {
+      if (request === candidatesRequestRef.current) setCandidatesLoading(false);
+    }
+  }
+
+  function toggleEmail(email: string) {
+    setTicked(prev => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email); else next.add(email);
+      return next;
+    });
+  }
+
+  function addHandEmail() {
+    const email = emailKey(addEmail);
+    if (!EMAIL_FORMAT.test(email) || email.length > 254) {
+      setAddError('Enter a valid email address.');
+      return;
+    }
+    if (candidates.some(c => c.email === email)) {
+      setAddError('This email is already in the list.');
+      return;
+    }
+    setCandidates(prev => [...prev, { email, source: 'added', last_seen: null, blocked: false }]);
+    setTicked(prev => new Set(prev).add(email));
+    setAddEmail('');
+    setAddError('');
+  }
+
+  /** Run one bound change: a number and/or emails, behind its own step-up. */
+  async function runBlockChange(change: {
+    phone: string | null; linkPhone?: string; block: boolean; reason: string | null; emails: string[]; description: string;
+  }) {
+    if (!isFullAdmin || suspendSaving) return;
+    const emails = [...new Set(change.emails.map(emailKey))].sort();
+    const { phone, block, reason } = change;
     setSuspendSaving(true);
     setSuspendMessage('');
+    const params: Record<string, unknown> = { phone, suspended: block, reason, emails };
+    if (change.linkPhone) params.linkPhone = change.linkPhone;
     const onAuthorized = async (stepUpId: string) => {
-      const res = await adminApiFetch('/api/admin/customers/suspension', { phone, suspended: suspend, reason, stepUpId });
+      const res = await adminApiFetch('/api/admin/customers/suspension', { ...params, stepUpId });
       const data = await res.json().catch(() => ({}));
       stepUpCallbackRef.current = null;
       if (!res.ok) {
@@ -387,9 +509,9 @@ export default function Customers() {
     try {
       await stepUp.execute({
         actionType: 'customer_suspension',
-        targetId: phone,
-        params: { phone, suspended: suspend, reason },
-        description: `${suspend ? 'Suspend' : 'Unsuspend'} ${label} (${maskPhone(phone)}) on all Waaiio bots`,
+        targetId: phone ?? emails[0],
+        params,
+        description: change.description,
         onAuthorized,
       });
     } catch (err) {
@@ -399,6 +521,39 @@ export default function Customers() {
     } finally {
       setSuspendSaving(false);
     }
+  }
+
+  async function confirmSuspend() {
+    if (!suspendTarget || !isFullAdmin || suspendSaving) return;
+    const { phone, phoneBlocked, label, block } = suspendTarget;
+    const reason = suspendReason.trim() ? suspendReason : null;
+    const emails = [...ticked];
+    const phoneChange = phone !== null && !(block && phoneBlocked);
+    if (!phoneChange && emails.length === 0) {
+      setSuspendMessage('Tick or add at least one email.');
+      return;
+    }
+    if (block && (!reason || reason.trim().length < 3)) {
+      setSuspendMessage('Enter a reason (at least 3 characters).');
+      return;
+    }
+    const who = phone ? `${label} (${maskPhone(phone)})` : label;
+    const emailPart = emails.length > 0 ? `${block ? 'block' : 'unblock'} ${emailCount(emails.length)}` : '';
+    const description = phoneChange
+      ? `${block ? 'Suspend' : 'Unsuspend'} ${who} on all Waaiio bots${emailPart ? ` and ${emailPart}` : ''}`
+      : `${block ? 'Block' : 'Unblock'} ${emailCount(emails.length)} for ${who}`;
+    // Emails added for an already-blocked number are linked to it, without
+    // touching the number (an email-only change bound to that link).
+    if (phone !== null && !phoneChange) {
+      await runBlockChange({ phone: null, linkPhone: phone, block, reason, emails, description });
+      return;
+    }
+    await runBlockChange({ phone, block, reason, emails, description });
+  }
+
+  async function unblockEmail(block: EmailBlock) {
+    setSuspendTarget(null);
+    await runBlockChange({ phone: null, block: false, reason: null, emails: [block.email], description: `Unblock ${block.email}` });
   }
 
   // Filters
@@ -429,10 +584,16 @@ export default function Customers() {
     lastActive: c => sortTime(c.last_active),
   }, { onSortChange: () => setPage(1) });
   const pageItems = sorted.slice((page - 1) * perPage, page * perPage);
-  const suspensionSort = useTableSort([...suspensions.values()], {
-    phone: s => s.phone,
-    reason: s => s.reason,
-    suspended: s => sortTime(s.suspended_at),
+  // One list of blocked numbers and blocked emails (#1166 F5).
+  const blockRows = [
+    ...[...suspensions.values()].map(s => ({ key: `n:${s.phone}`, type: 'Number' as const, value: s.phone, reason: s.reason, at: s.suspended_at, email: null as EmailBlock | null })),
+    ...emailBlocks.map(b => ({ key: `e:${b.email}`, type: 'Email' as const, value: b.email, reason: b.reason, at: b.blocked_at, email: b })),
+  ];
+  const suspensionSort = useTableSort(blockRows, {
+    type: r => r.type,
+    phone: r => r.value,
+    reason: r => r.reason,
+    suspended: r => sortTime(r.at),
   });
 
   // Stats
@@ -457,6 +618,17 @@ export default function Customers() {
   const stepUpInFlight = ['preparing', 'awaiting-code', 'verifying', 'executing'].includes(stepUp.state.phase);
   const stepUpFailure = stepUp.state.phase === 'error' ? stepUp.state.error : '';
   const selectedSuspension = selected?.canonical_phone ? suspensions.get(selected.canonical_phone) : undefined;
+  const selectedEmailBlocks = selected
+    ? blockedEmailsFor(selected.canonical_phone, selected.email !== '—' ? selected.email : null)
+    : [];
+  const tickedCount = ticked.size;
+  const confirmLabel = !suspendTarget ? '' : suspendTarget.block
+    ? (suspendTarget.phone && !suspendTarget.phoneBlocked
+      ? (tickedCount > 0 ? `Block number and ${emailCount(tickedCount)}` : 'Block number')
+      : `Block ${emailCount(tickedCount)}`)
+    : (suspendTarget.phone
+      ? (tickedCount > 0 ? `Unblock number and ${emailCount(tickedCount)}` : 'Unblock number')
+      : `Unblock ${emailCount(tickedCount)}`);
 
   if (loading) {
     return (
@@ -549,7 +721,8 @@ export default function Customers() {
                 >
                   <td className="px-4 py-3 font-medium text-gray-900">
                     {c.name}
-                    {c.canonical_phone && suspensions.has(c.canonical_phone) && (
+                    {((c.canonical_phone && suspensions.has(c.canonical_phone))
+                      || (c.email !== '—' && emailBlocks.some(b => b.email === emailKey(c.email)))) && (
                       <span className="ml-2 align-middle"><StatusBadge status="suspended" /></span>
                     )}
                   </td>
@@ -588,38 +761,65 @@ export default function Customers() {
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
-      {/* Suspended numbers (#1103), including numbers not in the list above */}
-      {suspensions.size > 0 && (
+      {/* Blocked numbers (#1103) and emails (#1166), including ones not in the list above */}
+      {(blockRows.length > 0 || (isFullAdmin && !suspensionError)) && (
         <div className="mt-8">
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-            <Ban className="h-5 w-5 text-red-500" /> Suspended numbers ({suspensions.size})
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+              <Ban className="h-5 w-5 text-red-500" /> Suspended numbers and emails ({blockRows.length})
+            </h2>
+            {isFullAdmin && !suspensionError && (
+              <button
+                onClick={() => openBlock({ block: true, phone: null, phoneBlocked: false, label: 'this email', userId: null, addOnly: true })}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Block an email
+              </button>
+            )}
+          </div>
           <p className="mt-1 text-sm text-gray-500">Blocked from every Waaiio bot at every business. Marketing skips them. Payments are not affected.</p>
+          {blockRows.length > 0 && (
           <div className="mt-3 overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <SortableTh {...suspensionSort.sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Phone</SortableTh>
+                  <SortableTh {...suspensionSort.sortProps('type')} className="px-4 py-3 text-left font-medium text-gray-500">Type</SortableTh>
+                  <SortableTh {...suspensionSort.sortProps('phone')} className="px-4 py-3 text-left font-medium text-gray-500">Number or email</SortableTh>
                   <SortableTh {...suspensionSort.sortProps('reason')} className="px-4 py-3 text-left font-medium text-gray-500">Reason</SortableTh>
                   <SortableTh {...suspensionSort.sortProps('suspended')} className="px-4 py-3 text-left font-medium text-gray-500">Suspended</SortableTh>
                   {isFullAdmin && <th className="px-4 py-3" />}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {suspensionSort.sorted.map(s => (
-                  <tr key={s.phone}>
-                    <td className="px-4 py-3 text-gray-700">{maskPhone(s.phone)}</td>
-                    <td className="px-4 py-3 text-gray-600">{s.reason}</td>
-                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateTime(s.suspended_at)}</td>
+                {suspensionSort.sorted.map(r => (
+                  <tr key={r.key}>
+                    <td className="px-4 py-3 text-gray-500">{r.type}</td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {r.email ? r.email.email : maskPhone(r.value)}
+                      {r.email?.phone && <span className="ml-2 text-xs text-gray-400">with {maskPhone(r.email.phone)}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{r.reason}</td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDateTime(r.at)}</td>
                     {isFullAdmin && (
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => openSuspend(s.phone, 'this number', false)}
-                          aria-label={`Unsuspend ${maskPhone(s.phone)}`}
-                          className="text-sm font-medium text-brand hover:underline"
-                        >
-                          Unsuspend
-                        </button>
+                        {r.email ? (
+                          <button
+                            onClick={() => unblockEmail(r.email!)}
+                            disabled={suspendSaving}
+                            aria-label={`Unblock ${r.email.email}`}
+                            className="text-sm font-medium text-brand hover:underline disabled:opacity-50"
+                          >
+                            Unblock
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openBlock({ block: false, phone: r.value, phoneBlocked: true, label: 'this number', userId: null, addOnly: false })}
+                            aria-label={`Unsuspend ${maskPhone(r.value)}`}
+                            className="text-sm font-medium text-brand hover:underline"
+                          >
+                            Unsuspend
+                          </button>
+                        )}
                       </td>
                     )}
                   </tr>
@@ -627,6 +827,7 @@ export default function Customers() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
@@ -650,22 +851,42 @@ export default function Customers() {
             <DetailRow label="First Seen" value={fmtDateTime(selected.first_seen)} />
             <DetailRow label="Last Active" value={fmtDateTime(selected.last_active)} />
 
-            {/* Platform-wide suspension (#1103) */}
+            {/* Platform-wide suspension (#1103), with emails (#1166) */}
             <div className="rounded-lg border border-gray-200 p-4">
               <p className="mb-2 text-xs font-semibold uppercase text-gray-500">Waaiio access</p>
               {!selected.canonical_phone ? (
-                <p className="text-gray-500">No WhatsApp number in international format is on record, so this customer cannot be suspended here.</p>
+                <div className="space-y-2">
+                  <p className="text-gray-500">No WhatsApp number in international format is on record, so this customer cannot be suspended here.</p>
+                  {isFullAdmin && !suspensionError && (
+                    <button
+                      onClick={() => openBlock({ block: true, phone: null, phoneBlocked: false, label: selected.name, userId: selected.user_id, addOnly: false }, { email: selected.email !== '—' ? selected.email : null })}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                      Block
+                    </button>
+                  )}
+                </div>
               ) : selectedSuspension ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2"><StatusBadge status="suspended" /><span className="text-gray-600">since {fmtDateTime(selectedSuspension.suspended_at)}</span></div>
                   <p className="text-gray-600">Reason: {selectedSuspension.reason}</p>
                   {isFullAdmin && (
-                    <button
-                      onClick={() => openSuspend(selected.canonical_phone!, selected.name, false)}
-                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      Unsuspend
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => openBlock({ block: false, phone: selected.canonical_phone!, phoneBlocked: true, label: selected.name, userId: selected.user_id, addOnly: false }, { email: selected.email !== '—' ? selected.email : null })}
+                        className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Unsuspend
+                      </button>
+                      {!suspensionError && (
+                        <button
+                          onClick={() => openBlock({ block: true, phone: selected.canonical_phone!, phoneBlocked: true, label: selected.name, userId: selected.user_id, addOnly: false })}
+                          className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          Block an email
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               ) : (
@@ -673,12 +894,32 @@ export default function Customers() {
                   <div className="flex items-center gap-2"><StatusBadge status="active" /><span className="text-gray-600">Can use every Waaiio bot</span></div>
                   {isFullAdmin && !suspensionError && (
                     <button
-                      onClick={() => openSuspend(selected.canonical_phone!, selected.name, true)}
+                      onClick={() => openBlock({ block: true, phone: selected.canonical_phone!, phoneBlocked: false, label: selected.name, userId: selected.user_id, addOnly: false })}
                       className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
                     >
                       Suspend from all bots
                     </button>
                   )}
+                </div>
+              )}
+              {selectedEmailBlocks.length > 0 && (
+                <div className="mt-3 space-y-1">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Blocked emails</p>
+                  {selectedEmailBlocks.map(b => (
+                    <div key={b.email} className="flex items-center justify-between gap-2">
+                      <span className="text-gray-700">{b.email} <span className="text-xs text-gray-400">since {fmtDateTime(b.blocked_at)}</span></span>
+                      {isFullAdmin && (
+                        <button
+                          onClick={() => unblockEmail(b)}
+                          disabled={suspendSaving}
+                          aria-label={`Unblock ${b.email}`}
+                          className="text-sm font-medium text-brand hover:underline disabled:opacity-50"
+                        >
+                          Unblock
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -749,22 +990,89 @@ export default function Customers() {
         )}
       </DetailModal>
 
-      {/* Suspend / unsuspend confirmation */}
+      {/* Block / unblock confirmation (#1103, emails #1166) */}
       <DetailModal
         open={!!suspendTarget && !stepUpInFlight}
         onClose={() => { if (!suspendSaving) setSuspendTarget(null); }}
-        title={suspendTarget?.suspend ? 'Suspend from all Waaiio bots' : 'Unsuspend this number'}
+        title={!suspendTarget ? '' : suspendTarget.block
+          ? (suspendTarget.phone && !suspendTarget.phoneBlocked ? 'Suspend from all Waaiio bots' : 'Block emails')
+          : 'Unsuspend this number'}
       >
         {suspendTarget && (
           <div className="space-y-4 text-sm">
-            <p className="text-gray-700">
-              {suspendTarget.suspend
-                ? <>The number <strong>+{suspendTarget.phone}</strong> will be blocked from every Waaiio bot at every business. It gets one short reply, with no reason given. Marketing will skip it. Payments, refunds and payouts are not changed.</>
-                : <>The number <strong>+{suspendTarget.phone}</strong> will be able to use Waaiio bots again.</>}
-            </p>
+            {suspendTarget.phone && !(suspendTarget.block && suspendTarget.phoneBlocked) && (
+              <p className="text-gray-700">
+                {suspendTarget.block
+                  ? <>The number <strong>+{suspendTarget.phone}</strong> will be blocked from every Waaiio bot at every business. It gets one short reply, with no reason given. Marketing will skip it. Payments, refunds and payouts are not changed.</>
+                  : <>The number <strong>+{suspendTarget.phone}</strong> will be able to use Waaiio bots again.</>}
+              </p>
+            )}
+
+            <fieldset className="space-y-2">
+              {!suspendTarget.addOnly && (suspendTarget.block || candidates.length > 0) && (
+                <>
+                  <legend className="text-xs font-semibold uppercase text-gray-500">
+                    {suspendTarget.block ? 'Also block these emails' : 'Also unblock these emails'}
+                  </legend>
+                  <p className="text-gray-500">
+                    {suspendTarget.block
+                      ? 'Tick the emails to block. Nothing is blocked unless you tick it.'
+                      : 'Tick the emails to unblock. Emails you don\u2019t tick stay blocked.'}
+                  </p>
+                </>
+              )}
+              {candidatesLoading && <p className="text-gray-400">Loading emails…</p>}
+              {candidatesError && <p role="alert" className="text-red-600">{candidatesError}</p>}
+              {candidates.map(c => {
+                const unavailable = suspendTarget.block && c.blocked;
+                return (
+                  <label key={c.email} className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={ticked.has(c.email)}
+                      disabled={unavailable}
+                      onChange={() => toggleEmail(c.email)}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="text-gray-800">{c.email}</span>
+                      <span className="block text-xs text-gray-500">
+                        {suspendTarget.block
+                          ? <>{SOURCE_LABEL[c.source]}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ''}{unavailable ? ' · Blocked' : ''}</>
+                          : <>Blocked {c.last_seen ? fmtDate(c.last_seen) : ''}</>}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+              {suspendTarget.block && (
+                <div>
+                  <label htmlFor="block-add-email" className="block text-xs font-semibold uppercase text-gray-500">Add an email</label>
+                  <div className="mt-1 flex gap-2">
+                      <input
+                        id="block-add-email"
+                        type="email"
+                        value={addEmail}
+                        onChange={e => { setAddEmail(e.target.value); setAddError(''); }}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addHandEmail(); } }}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={addHandEmail}
+                        className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Add
+                      </button>
+                  </div>
+                  {addError && <p role="alert" className="mt-1 text-red-600">{addError}</p>}
+                </div>
+              )}
+            </fieldset>
+
             <label className="block">
               <span className="text-xs font-semibold uppercase text-gray-500">
-                Reason{suspendTarget.suspend ? ' (required, kept in the audit log)' : ' (optional)'}
+                Reason{suspendTarget.block ? ' (required, kept in the audit log)' : ' (optional)'}
               </span>
               <textarea
                 value={suspendReason}
@@ -786,14 +1094,19 @@ export default function Customers() {
               <button
                 onClick={confirmSuspend}
                 disabled={suspendSaving}
-                className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${suspendTarget.suspend ? 'bg-red-600 hover:bg-red-700' : 'bg-brand hover:opacity-90'}`}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${suspendTarget.block ? 'bg-red-600 hover:bg-red-700' : 'bg-brand hover:opacity-90'}`}
               >
-                {suspendSaving ? 'Working…' : suspendTarget.suspend ? 'Suspend' : 'Unsuspend'}
+                {suspendSaving ? 'Working…' : confirmLabel}
               </button>
             </div>
           </div>
         )}
       </DetailModal>
+
+      {/* An "Unblock" outside the dialog shows its error here. */}
+      {!suspendTarget && suspendMessage && (
+        <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{suspendMessage}</div>
+      )}
 
       <StepUpDialog
         open={!!stepUpCallbackRef.current && (stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying')}
