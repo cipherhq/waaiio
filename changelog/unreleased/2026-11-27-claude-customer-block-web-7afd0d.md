@@ -9,7 +9,7 @@
     - donation, pay link and public recurring setup;
     - WhatsApp Flow booking completion, by phone, which gets the WhatsApp reply once per 24 hours through the business's channel;
     - form submission, invite opt-in requests, check-in and waiver signing (Q7 C).
-  - **Still allowed:** RSVPs and intake answers by link (Q7 C, Q14 A), and everything the merchant creates or sends (Q4 A).
+  - **Still allowed:** RSVPs and intake answers by link (Q7 C, Q14 A); a form the merchant sent to that customer personally, answered through its pending sent record (Q15 A, Owner 2026-11-27); and everything else the merchant creates or sends (Q4 A). A public-link form submission is refused.
   - **If the check cannot be read:** the request goes through and the error is reported (Q10 A).
   - **Proof mark:** a booking or ticket made after an email code now records `bookings.email_verified_at`. The admin list uses it for "Proved with a code". If the mark cannot be saved, this is logged and the checkout still succeeds.
   - **WhatsApp reply (Q9 A):** the WhatsApp neutral reply now ends with the same support line. It stays in English for every language.
