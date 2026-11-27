@@ -1,0 +1,403 @@
+{
+ "applied_as": "one-whole-file-statement",
+ "changes": [
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "8c7417b8116b7705685261c2863d063700a4e464840751bd42c937573552cbb9",
+   "identity": "column:public.bookings.email_verified_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "now()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "timestamp with time zone"
+   },
+   "after_sha256": "03644eced6a7eaaaabbff0b34a0df8e9e349831acf388a4612a095f9f9cfaf5f",
+   "identity": "column:public.customer_email_blocks.blocked_at",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "9613253f5447cfc2d205223b3473da5b38c70415e0197a618439b15ba03349d7",
+   "identity": "column:public.customer_email_blocks.blocked_by",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.customer_email_blocks.email",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": "gen_random_uuid()",
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "uuid"
+   },
+   "after_sha256": "efcf5c768bde6718ea5310aefd42725602962afe5bc7b36464b82d114617028f",
+   "identity": "column:public.customer_email_blocks.id",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "after_sha256": "1d31b5af7b72e1e43262f37b50282a4bca396668c9d24cbf87b83ae100925216",
+   "identity": "column:public.customer_email_blocks.phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [],
+    "default": null,
+    "generated": "",
+    "identity": "",
+    "notnull": true,
+    "type": "text"
+   },
+   "after_sha256": "efaf803629593c5cf0f1ad4d63cccbc3dfdb7a7a5b6496b59199a9d6ffc85358",
+   "identity": "column:public.customer_email_blocks.reason",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (char_length(email) <= 254 AND email ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'::text)",
+    "validated": true
+   },
+   "after_sha256": "dcf22f23addcaf44dada47485b4270325757df5c8a13f4544f0761dd7f3e1dc6",
+   "identity": "constraint:public.customer_email_blocks.customer_email_blocks_email_format",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "UNIQUE (email)",
+    "validated": true
+   },
+   "after_sha256": "82e0d8d7490f88013a27431776fb6b53434d65044ce15304389dcc6f7a5a06dc",
+   "identity": "constraint:public.customer_email_blocks.customer_email_blocks_email_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (email = lower(btrim(email)))",
+    "validated": true
+   },
+   "after_sha256": "409c4ad7d7c406e2b8bebadc4feb07430338b402ac0adf7e6a24bdd03ea4d062",
+   "identity": "constraint:public.customer_email_blocks.customer_email_blocks_email_normalized",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (phone IS NULL OR phone ~ '^[1-9][0-9]{6,14}$'::text)",
+    "validated": true
+   },
+   "after_sha256": "393f38225e103b1dc51841ba434ac76903d1314aad9efa3e1f1d7f47f2cb772d",
+   "identity": "constraint:public.customer_email_blocks.customer_email_blocks_phone_format",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "PRIMARY KEY (id)",
+    "validated": true
+   },
+   "after_sha256": "ceeed3e1b6b0f71197286468986349d099d90ea1af0bc7dc10eec8147ca0bd38",
+   "identity": "constraint:public.customer_email_blocks.customer_email_blocks_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "deferrable": false,
+    "deferred": false,
+    "definition": "CHECK (char_length(btrim(reason)) >= 3 AND char_length(btrim(reason)) <= 500)",
+    "validated": true
+   },
+   "after_sha256": "0e192c20d6603a9b01ad1602440cbb965f918ba212e6f90a4c0f599fdea4f960",
+   "identity": "constraint:public.customer_email_blocks.customer_email_blocks_reason_length",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "",
+    "body_sha256": "31c5eb40e9b6e73518f157c8268bbb0d23fc14cc65de5da069aaa24fcd2f1bc2",
+    "config": [
+     "search_path=\"\""
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "trigger",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "f24c49a05b2872f505919c0b6af2b8967df7f8379e8784c0fb084bccaec9750f",
+   "identity": "function:private.bookings_email_verified_at_guard()",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "EXECUTE"
+     }
+    ],
+    "arguments": "p_actor_id uuid, p_phone text, p_phone_action text, p_block_emails text[], p_unblock_emails text[], p_reason text, p_ip text DEFAULT NULL::text",
+    "body_sha256": "8a2b1e2f910e51847b5c884dcc74e91b37a125cf3fd6cd571dae68150e9e045a",
+    "config": [
+     "search_path=public, pg_temp"
+    ],
+    "definer": false,
+    "kind": "f",
+    "language": "plpgsql",
+    "leakproof": false,
+    "owner": "postgres",
+    "parallel": "u",
+    "returns": "jsonb",
+    "strict": false,
+    "volatility": "v"
+   },
+   "after_sha256": "b08e0bbe3771bf925e7ee7fda079481f9cfcd321ff5e186f69649655b037a7b0",
+   "identity": "function:public.svc_set_customer_block(p_actor_id uuid, p_phone text, p_phone_action text, p_block_emails text[], p_unblock_emails text[], p_reason text, p_ip text)",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX customer_email_blocks_email_key ON public.customer_email_blocks USING btree (email)",
+    "predicate": null,
+    "primary": false,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "ebdd30a0299f109333be8f7851250ee02754562a04d09b59ab49bc6481147248",
+   "identity": "index:public.customer_email_blocks.customer_email_blocks_email_key",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE UNIQUE INDEX customer_email_blocks_pkey ON public.customer_email_blocks USING btree (id)",
+    "predicate": null,
+    "primary": true,
+    "ready": true,
+    "unique": true,
+    "valid": true
+   },
+   "after_sha256": "ab5d75c3265c9cbf99e7d3c6bd58f0d6b7ede50d20b148fbe469c844ef9b83f5",
+   "identity": "index:public.customer_email_blocks.customer_email_blocks_pkey",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE INDEX idx_customer_email_blocks_phone ON public.customer_email_blocks USING btree (phone) WHERE (phone IS NOT NULL)",
+    "predicate": "(phone IS NOT NULL)",
+    "primary": false,
+    "ready": true,
+    "unique": false,
+    "valid": true
+   },
+   "after_sha256": "8c763758330c5a91da9fe7f7b42b044afc41c277094307ab629c5733848ad544",
+   "identity": "index:public.customer_email_blocks.idx_customer_email_blocks_phone",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "command": "ALL",
+    "permissive": "PERMISSIVE",
+    "roles": [
+     "public"
+    ],
+    "using": "false",
+    "with_check": "false"
+   },
+   "after_sha256": "6462477c6c36ac19d46569c6f7297bf8d3e7556c39b46dcb0fb5b0749b5f42a1",
+   "identity": "policy:public.customer_email_blocks.customer_email_blocks_deny_all",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "acl": [
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "postgres",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "DELETE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "INSERT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "MAINTAIN"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "REFERENCES"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "SELECT"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRIGGER"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "TRUNCATE"
+     },
+     {
+      "grantable": false,
+      "grantee": "service_role",
+      "grantor": "postgres",
+      "privilege": "UPDATE"
+     }
+    ],
+    "force_rls": false,
+    "kind": "r",
+    "owner": "postgres",
+    "rls": true,
+    "view": null
+   },
+   "after_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+   "identity": "table:public.customer_email_blocks",
+   "operation": "add"
+  },
+  {
+   "after": {
+    "definition": "CREATE TRIGGER bookings_email_verified_at_guard BEFORE INSERT OR UPDATE OF email_verified_at ON bookings FOR EACH ROW EXECUTE FUNCTION private.bookings_email_verified_at_guard()",
+    "enabled": "O"
+   },
+   "after_sha256": "aab38a53ef793b87eb1ecde098105fe0aa634b39d1413be8c51e8c44f3bce6a8",
+   "identity": "trigger:public.bookings.bookings_email_verified_at_guard",
+   "operation": "add"
+  }
+ ],
+ "migration": "559_customer_email_blocks.sql",
+ "migration_sha256": "2294141456c3ffce97fe0d5d451cfc34ccd2964c1acb14b560857f982f9e63ff",
+ "postgres_major": 17,
+ "query_sha256": "5a2182832965f380f8ff6787a75e996640650168f16ecb75ed2d65696d1c0efb",
+ "schema_version": 1
+}
