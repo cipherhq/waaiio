@@ -714,10 +714,15 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                 if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match.'); return; }
                 setPasswordSaving(true);
                 try {
-                  const supabase = createClient();
-                  const { error } = await supabase.auth.updateUser({ password: newPassword });
-                  if (error) {
-                    setPasswordError(error.message || 'Failed to update password.');
+                  // The server confirms the current password before changing it.
+                  const res = await fetch('/api/account/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ currentPassword, newPassword }),
+                  });
+                  const result = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setPasswordError(result.error || 'Failed to update password.');
                   } else {
                     setPasswordSuccess('Password updated successfully.');
                     setCurrentPassword('');
