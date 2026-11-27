@@ -47,6 +47,20 @@
     "migration": "549_admin_access_tightening",
     "predicted_sha256": "b87a8bf767b1806fc9e403dd54412077f562c402a47d51526635d3dacb131738",
     "reason": "M549 revokes and grants on a table whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction. Measured read-only 2026-11-19 after M547-M554; Owner decision 2026-11-19 (option A)."
+   },
+   {
+    "identity": "table:public.growth_pricing",
+    "measured_sha256": "c092d308366f46eefd089b6a3a8a77a00527482bedbe0d3dde9606481e29c738",
+    "migration": "558_growth_pricing_service_role_writes",
+    "predicted_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "reason": "M558 revokes and grants on tables whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction (same cause as M549). Measured read-only 2026-11-27 after M558-M559."
+   },
+   {
+    "identity": "table:public.keyword_campaign_responses",
+    "measured_sha256": "c092d308366f46eefd089b6a3a8a77a00527482bedbe0d3dde9606481e29c738",
+    "migration": "558_growth_pricing_service_role_writes",
+    "predicted_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "reason": "M558 revokes and grants on tables whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction (same cause as M549). Measured read-only 2026-11-27 after M558-M559."
    }
   ],
   "staging": [
@@ -77,6 +91,27 @@
     "migration": "556_weekly_menu_upload",
     "predicted_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
     "reason": "M556 revokes only client roles; staging's default grants for the server role differ from production's, which the replay models, so staging's result differs from the reviewed prediction (same cause as M547). Measured read-only 2026-11-26."
+   },
+   {
+    "identity": "table:public.growth_pricing",
+    "measured_sha256": "eb9ddd8095d02cc59b1a42a728b84c5cfa449657e0f6f3fac5601f41ffc048fa",
+    "migration": "558_growth_pricing_service_role_writes",
+    "predicted_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "reason": "M558 revokes and grants on tables whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction (same cause as M549). Measured read-only 2026-11-27 after M558-M559."
+   },
+   {
+    "identity": "table:public.keyword_campaign_responses",
+    "measured_sha256": "eb9ddd8095d02cc59b1a42a728b84c5cfa449657e0f6f3fac5601f41ffc048fa",
+    "migration": "558_growth_pricing_service_role_writes",
+    "predicted_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "reason": "M558 revokes and grants on tables whose earlier grants the PG17 replay does not model (Supabase-era table grants, which differ per environment), so the live result differs from the reviewed prediction (same cause as M549). Measured read-only 2026-11-27 after M558-M559."
+   },
+   {
+    "identity": "table:public.customer_email_blocks",
+    "measured_sha256": "ac9a5e8a369cf3dca2273d46f537cb35cdce477f630b085de184150f07a16c15",
+    "migration": "559_customer_email_blocks",
+    "predicted_sha256": "d8a2ddf4a402a6a3dcfe8f73181d13591b2238ec6284f6f72dd7ff031035e218",
+    "reason": "M559 revokes only client roles; staging's default grants for the server role differ from production's, which the replay models, so staging's result differs from the reviewed prediction (same cause as M547). Measured read-only 2026-11-27."
    }
   ]
  },
@@ -151,6 +186,19 @@
     "count": 7231,
     "sha256": "4b83d3ac8b83bfef9fecaf3a0f39e1ddc70773ab5154c17f19e6d3c8194803b0",
     "through": "557_table_minimum_spend_packages"
+   }
+  },
+  "measured_corrections_2026_11_27": {
+   "method": "read-only catalog-v3.sql aggregate via the Supabase connector as postgres, after M558-M559 were applied to both environments",
+   "production": {
+    "count": 7231,
+    "sha256": "32486490fa25e96860a1e54631a4c81792a8417491515a034a6d8e05e550e6d6",
+    "through": "559_customer_email_blocks"
+   },
+   "staging": {
+    "count": 7252,
+    "sha256": "171bdeb05c64ce27f1b8011cad57d0d58b398619f33c2b9bf1126a088661e1fb",
+    "through": "559_customer_email_blocks"
    }
   },
   "method": "authorized Supabase connector, read-only SELECT",
