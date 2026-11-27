@@ -13,10 +13,11 @@ import { normalizeBlockEmail } from '@/lib/customer-block';
  * POST — block or unblock (admin, with step-up):
  *   - with `emails` (an array, possibly empty): a phone and/or emails in one
  *     change, written with their audit rows by svc_set_customer_block (M559).
- *     `phone` null means an email-only change. The step-up is bound to
- *     { phone, suspended, reason, emails } with emails trimmed, lower-cased,
- *     de-duplicated and sorted; its target is the phone, or the first email
- *     for an email-only change.
+ *     `phone` null means an email-only change; `linkPhone` then records the
+ *     (already blocked) number the emails belong to without changing it. The
+ *     step-up is bound to { phone, suspended, reason, emails[, linkPhone] }
+ *     with emails trimmed, lower-cased, de-duplicated and sorted; its target
+ *     is the phone, or the first email for an email-only change.
  *   - without `emails`: the phone-only change of #1103 (an admin panel that
  *     predates #1166), via svc_set_customer_suspension (M547), unchanged.
  */
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const { phone, suspended, reason, stepUpId, emails } = (body ?? {}) as Record<string, unknown>;
     if (emails !== undefined) {
-      return await setCustomerBlock(request, admin, { phone, suspended, reason, stepUpId, emails }, cors);
+      return await setCustomerBlock(request, admin, body as Record<string, unknown>, cors);
     }
 
     if (typeof phone !== 'string' || canonicalCustomerPhone(phone) !== phone) {
@@ -122,13 +123,19 @@ async function setCustomerBlock(
   input: Record<string, unknown>,
   cors: Record<string, string>,
 ) {
-  const { phone, suspended, reason, stepUpId } = input;
+  const { phone, suspended, reason, stepUpId, linkPhone } = input;
   const emails = blockEmailSet(input.emails);
   if (!emails) {
     return NextResponse.json({ error: `emails must be a list of up to ${MAX_EMAILS} valid email addresses` }, { status: 400, headers: cors });
   }
   if (phone !== null && (typeof phone !== 'string' || canonicalCustomerPhone(phone) !== phone)) {
     return NextResponse.json({ error: 'phone must be the canonical number (country code and digits only) or null' }, { status: 400, headers: cors });
+  }
+  // linkPhone: emails blocked for an already-blocked number are linked to it
+  // with no change to the number itself. Email-only blocks only.
+  if (linkPhone !== undefined && (phone !== null || suspended !== true || emails.length === 0
+    || typeof linkPhone !== 'string' || canonicalCustomerPhone(linkPhone) !== linkPhone)) {
+    return NextResponse.json({ error: 'linkPhone must be a canonical number, only when blocking emails without a number' }, { status: 400, headers: cors });
   }
   if (phone === null && emails.length === 0) {
     return NextResponse.json({ error: 'Choose a number or at least one email' }, { status: 400, headers: cors });
@@ -140,15 +147,17 @@ async function setCustomerBlock(
     return NextResponse.json({ error: 'reason must be text' }, { status: 400, headers: cors });
   }
   const trimmed = typeof reason === 'string' ? reason.trim() : '';
-  if (trimmed.length > 500 || (suspended && trimmed.length < 3)) {
+  // Counted in characters, as the SQL CHECK counts them (char_length).
+  const reasonLength = [...trimmed].length;
+  if (reasonLength > 500 || (suspended && reasonLength < 3)) {
     return NextResponse.json({ error: suspended ? 'A reason (3 to 500 characters) is required' : 'reason is too long' }, { status: 400, headers: cors });
   }
 
   // Bound to exactly the number, reason and set of emails the admin confirmed.
+  const bound: Record<string, unknown> = { phone, suspended, reason: (reason as string | null | undefined) ?? null, emails };
+  if (linkPhone !== undefined) bound.linkPhone = linkPhone;
   try {
-    await consumeStepUp(admin, typeof stepUpId === 'string' ? stepUpId : '', 'customer_suspension', phone ?? emails[0], {
-      phone, suspended, reason: (reason as string | null | undefined) ?? null, emails,
-    });
+    await consumeStepUp(admin, typeof stepUpId === 'string' ? stepUpId : '', 'customer_suspension', phone ?? emails[0], bound);
   } catch (err) {
     const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403, headers: cors });
@@ -156,7 +165,7 @@ async function setCustomerBlock(
 
   const { data, error } = await createServiceClient().rpc('svc_set_customer_block', {
     p_actor_id: admin.userId,
-    p_phone: phone,
+    p_phone: phone ?? (linkPhone as string | undefined) ?? null,
     p_phone_action: phone === null ? null : suspended ? 'block' : 'unblock',
     p_block_emails: suspended ? emails : [],
     p_unblock_emails: suspended ? [] : emails,
@@ -171,7 +180,10 @@ async function setCustomerBlock(
   const changedEmails = result.emails.filter(e => e.changed === true).map(e => e.email);
   if (!phoneChanged && changedEmails.length === 0) {
     return NextResponse.json({
-      error: suspended ? 'Already blocked' : 'Not blocked',
+      // A number keeps the #1103 wording; an email-only change has its own.
+      error: phone !== null
+        ? (suspended ? 'This number is already suspended' : 'This number is not suspended')
+        : (suspended ? 'Already blocked' : 'Not blocked'),
       suspended,
     }, { status: 409, headers: cors });
   }

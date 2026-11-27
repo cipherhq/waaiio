@@ -68,6 +68,10 @@ export async function customerEmailCandidates(
   input: { phone: string | null; userId: string | null },
 ): Promise<EmailCandidate[]> {
   const { phone, userId } = input;
+  // userId goes into a PostgREST filter: only a uuid is accepted.
+  if (userId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+    throw new Error('userId must be a uuid');
+  }
   const found = new Map<string, { source: CandidateSource; last_seen: string | null; seenSource: string | null }>();
 
   function add(raw: unknown, source: CandidateSource, seen: string | null) {
@@ -89,9 +93,10 @@ export async function customerEmailCandidates(
   const filter = userId ? `guest_phone.not.is.null,user_id.eq.${userId}` : 'guest_phone.not.is.null';
   for (let page = 0; page < MAX_PAGES; page++) {
     const { data, error } = await db.from('bookings')
-      .select('user_id, business_id, guest_phone, guest_email, channel, email_verified_at, created_at')
+      .select('id, user_id, business_id, guest_phone, guest_email, channel, email_verified_at, created_at')
       .or(filter)
       .order('created_at', { ascending: false })
+      .order('id', { ascending: true })
       .range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw new Error('bookings');
     bookings.push(...((data ?? []) as BookingRow[]));

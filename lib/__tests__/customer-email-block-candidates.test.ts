@@ -134,6 +134,10 @@ describe('customerEmailCandidates (F2)', () => {
     expect((await customerEmailCandidates(f.db, { phone: PHONE, userId: null })).map(c => c.email)).toEqual(['late@example.com']);
   });
 
+  it('refuses a user id that is not a uuid', async () => {
+    await expect(customerEmailCandidates(f.db, { phone: null, userId: 'x,guest_email.eq.y' })).rejects.toThrow(/uuid/);
+  });
+
   it('only reads', async () => {
     seed({ bookings: [booking({ guest_email: 'ada@example.com' })] });
     await customerEmailCandidates(f.db, { phone: PHONE, userId: USER });

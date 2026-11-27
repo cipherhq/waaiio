@@ -149,7 +149,8 @@ describe('POST with emails: block a number and emails (F4)', () => {
     f.rpcResult = { data: { phone: { changed: false }, emails: EMAILS.map(email => ({ email, changed: false })) }, error: null };
     const res = await POST(req('POST', blockBody));
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'Already blocked', suspended: true });
+    // A change that includes the number keeps the #1103 wording.
+    expect(await res.json()).toEqual({ error: 'This number is already suspended', suspended: true });
   });
 
   it('reports 500 and no success when the RPC fails', async () => {
@@ -179,6 +180,50 @@ describe('POST with emails: email-only changes (F5a, F6)', () => {
     const res = await POST(req('POST', { ...params, stepUpId: 'su-1' }));
     expect(res.status).toBe(200);
     expect(f.rpcCalls[0][1]).toMatchObject({ p_phone: null, p_phone_action: null, p_block_emails: [], p_unblock_emails: ['solo@example.com'], p_reason: null });
+  });
+});
+
+describe('POST with emails: emails linked to an already blocked number (F6)', () => {
+  const params = { phone: null, linkPhone: PHONE, suspended: true, reason: 'Same person', emails: ['new@example.com'] };
+
+  it('blocks the emails linked to the number with no action on the number', async () => {
+    grant('new@example.com', params);
+    const res = await POST(req('POST', { ...params, stepUpId: 'su-1' }));
+    expect(res.status).toBe(200);
+    expect(f.rpcCalls[0][1]).toMatchObject({ p_phone: PHONE, p_phone_action: null, p_block_emails: ['new@example.com'], p_unblock_emails: [] });
+  });
+
+  it('a grant without the link does not authorize a linked change, and the reverse', async () => {
+    const { linkPhone: _l, ...unlinked } = params;
+    grant('new@example.com', unlinked);
+    expect((await POST(req('POST', { ...params, stepUpId: 'su-1' }))).status).toBe(403);
+    f.db.tables.admin_step_up_authorizations = [];
+    grant('new@example.com', params);
+    expect((await POST(req('POST', { ...unlinked, stepUpId: 'su-1' }))).status).toBe(403);
+    expect(f.rpcCalls).toEqual([]);
+  });
+
+  it.each([
+    ['with a number', { phone: PHONE }],
+    ['when unblocking', { suspended: false }],
+    ['with no emails', { emails: [] }],
+    ['a local-format link', { linkPhone: '08012345678' }],
+    ['a non-text link', { linkPhone: 42 }],
+  ])('rejects linkPhone %s with 400 before consuming the step-up', async (_label, patch) => {
+    grant('new@example.com', params);
+    expect((await POST(req('POST', { ...params, ...patch, stepUpId: 'su-1' }))).status).toBe(400);
+    expect(f.db.tables.admin_step_up_authorizations[0].consumed_at).toBeNull();
+    expect(f.rpcCalls).toEqual([]);
+  });
+});
+
+describe('POST with emails: reason length in characters', () => {
+  it('counts characters as the database does', async () => {
+    grant(PHONE, { ...blockParams, reason: '😀😀' });
+    expect((await POST(req('POST', { ...blockBody, reason: '😀😀' }))).status).toBe(400);
+    f.db.tables.admin_step_up_authorizations = [];
+    grant(PHONE, { ...blockParams, reason: '😀😀😀' });
+    expect((await POST(req('POST', { ...blockBody, reason: '😀😀😀' }))).status).toBe(200);
   });
 });
 

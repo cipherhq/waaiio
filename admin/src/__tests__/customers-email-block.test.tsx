@@ -17,6 +17,9 @@ const m = vi.hoisted(() => ({
   candidates: [] as Array<{ email: string; source: string; last_seen: string | null; blocked: boolean }>,
   candidatesStatus: 200,
   saveStatus: 200,
+  /** When set, the candidate response for this phone waits for release(). */
+  holdPhone: null as string | null,
+  release: null as null | (() => void),
 }));
 
 vi.mock('@/lib/supabase', () => {
@@ -42,12 +45,16 @@ const customersPayload = () => ({
       status: 'confirmed', total_amount: 5000, deposit_amount: 0, created_at: '2026-11-10T10:00:00Z' },
     { id: 'bk-2', user_id: USER, business_id: 'biz-a', guest_name: 'Chi', guest_phone: null, guest_email: null, canonical_phone: null,
       status: 'confirmed', total_amount: 9000, deposit_amount: 0, created_at: '2026-11-09T10:00:00Z' },
+    // A guest with no usable number and no account.
+    { id: 'bk-3', user_id: null, business_id: 'biz-a', guest_name: 'Bayo', guest_phone: '0700', guest_email: 'bayo@example.com', canonical_phone: null,
+      status: 'confirmed', total_amount: 1000, deposit_amount: 0, created_at: '2026-11-08T10:00:00Z' },
   ],
   payments: [],
 });
 
 beforeEach(() => {
   m.role = 'admin'; m.suspensions = []; m.emailBlocks = []; m.candidatesStatus = 200; m.saveStatus = 200;
+  m.holdPhone = null; m.release = null;
   m.candidates = [
     { email: 'ada@example.com', source: 'proved', last_seen: '2026-11-10T10:00:00Z', blocked: false },
     { email: 'ada.work@example.com', source: 'account', last_seen: null, blocked: false },
@@ -61,6 +68,11 @@ beforeEach(() => {
   m.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/api/admin/customers')) return Response.json(customersPayload());
     if (url.includes('/api/admin/customers/suspension/candidates')) {
+      if (m.holdPhone && url.includes(`phone=${m.holdPhone}`)) {
+        await new Promise<void>(resolve => { m.release = resolve; });
+        return Response.json({ candidates: [{ email: 'ada-private@example.com', source: 'account', last_seen: null, blocked: false }] });
+      }
+      if (url.includes(`userId=${USER}`)) return Response.json({ candidates: [{ email: 'chi@example.com', source: 'account', last_seen: null, blocked: false }] });
       return m.candidatesStatus === 200 ? Response.json({ candidates: m.candidates }) : Response.json({ error: 'Unable to load this customer’s emails' }, { status: 500 });
     }
     if (url.endsWith('/api/admin/customers/suspension') && (!init?.method || init.method === 'GET')) {
@@ -70,7 +82,7 @@ beforeEach(() => {
     if (url.endsWith('/step-up/verify')) return Response.json({ session: { access_token: 'after-mfa', refresh_token: 'r' } });
     if (url.endsWith('/api/admin/customers/suspension')) {
       const body = JSON.parse(String(init!.body));
-      if (m.saveStatus !== 200) return Response.json({ error: 'Already blocked' }, { status: m.saveStatus });
+      if (m.saveStatus !== 200) return Response.json({ error: 'Already blocked', suspended: true }, { status: m.saveStatus });
       if (body.suspended) {
         if (body.phone) m.suspensions = [{ phone: body.phone, reason: body.reason, suspended_at: '2026-11-27T12:00:00Z' }];
         m.emailBlocks = [...m.emailBlocks, ...body.emails.map((email: string) => ({ email, phone: body.phone, reason: body.reason, blocked_at: '2026-11-27T12:00:00Z' }))];
@@ -172,6 +184,37 @@ describe('Block: one step-up bound to the number, reason and ticked emails (F4, 
     expect(calls('/api/admin/customers/suspension', 'POST')).toHaveLength(0);
   });
 
+  it('a late candidate list from an earlier dialog is ignored', async () => {
+    m.holdPhone = PHONE;
+    render(<Customers />);
+    await openCustomer('Ada');
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend from all bots' }));
+    await waitFor(() => expect(m.release).not.toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await openCustomer('Chi Obi');
+    fireEvent.click(screen.getByRole('button', { name: 'Block' }));
+    await screen.findByRole('checkbox', { name: esc('chi@example.com') });
+    m.release!();
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.getAllByRole('checkbox').map(c => (c as HTMLInputElement).labels?.[0]?.textContent)).toEqual([expect.stringMatching(/^chi@example\.com/)]);
+  });
+
+  it('a refused save shows the server message and keeps the dialog open', async () => {
+    m.saveStatus = 409;
+    render(<Customers />);
+    await openCustomer('Ada');
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend from all bots' }));
+    await screen.findByRole('checkbox', { name: esc('ada@example.com') });
+    fireEvent.click(box('ada@example.com'));
+    fireEvent.change(screen.getByLabelText(/^Reason/), { target: { value: 'Abusive messages' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Block number and 1 email' }));
+    await screen.findByText('Confirm operation');
+    authorize();
+    expect((await screen.findByRole('alert')).textContent).toContain('Already blocked');
+    expect(screen.getByRole('button', { name: 'Block number and 1 email' })).toBeTruthy();
+  });
+
   it('if the candidate list cannot load, says so and still allows blocking the number', async () => {
     m.candidatesStatus = 500;
     render(<Customers />);
@@ -200,6 +243,16 @@ describe('Email-only block (F5a)', () => {
     authorize();
     await waitFor(() => expect(calls('/api/admin/customers/suspension', 'POST')).toHaveLength(1));
     expect(saved()).toMatchObject({ phone: null, emails: ['chi@example.com'] });
+  });
+
+  it('a guest with no usable number and no account gets the dialog with no lookup and no error', async () => {
+    render(<Customers />);
+    await openCustomer('Bayo');
+    fireEvent.click(screen.getByRole('button', { name: 'Block' }));
+    expect(await screen.findByLabelText('Add an email')).toBeTruthy();
+    expect(calls('/candidates')).toHaveLength(0);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Also block these emails')).toBeTruthy();
   });
 
   it('needs a ticked or added email', async () => {
@@ -269,8 +322,12 @@ describe('Blocked list and unblocking (F5, F6, F6a)', () => {
     fireEvent.change(screen.getByLabelText(/^Reason/), { target: { value: 'Same person' } });
     fireEvent.click(screen.getByRole('button', { name: 'Block 1 email' }));
     await screen.findByText('Confirm operation');
-    // Sent with the customer's number so the email is linked to it; the number stays blocked.
-    expect(prepared().params).toEqual({ phone: PHONE, suspended: true, reason: 'Same person', emails: ['new@example.com'] });
+    // An email-only change linked to the customer's number: the number itself is not touched.
+    expect(prepared()).toEqual({ actionType: 'customer_suspension', targetId: 'new@example.com',
+      params: { phone: null, linkPhone: PHONE, suspended: true, reason: 'Same person', emails: ['new@example.com'] } });
+    authorize();
+    await waitFor(() => expect(calls('/api/admin/customers/suspension', 'POST')).toHaveLength(1));
+    expect(saved()).toEqual({ phone: null, linkPhone: PHONE, suspended: true, reason: 'Same person', emails: ['new@example.com'], stepUpId: 'grant-1' });
   });
 
   it('unblocking the number lists its blocked emails unticked and unblocks only the ticked ones', async () => {

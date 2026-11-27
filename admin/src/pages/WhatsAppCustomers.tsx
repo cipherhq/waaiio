@@ -133,6 +133,8 @@ export default function Customers() {
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [addEmail, setAddEmail] = useState('');
   const [addError, setAddError] = useState('');
+  // Each dialog open gets a number; a candidate response for an earlier open is ignored.
+  const candidatesRequestRef = useRef(0);
   const [suspendReason, setSuspendReason] = useState('');
   const [suspendSaving, setSuspendSaving] = useState(false);
   const [suspendMessage, setSuspendMessage] = useState('');
@@ -417,6 +419,7 @@ export default function Customers() {
   }
 
   async function openBlock(target: BlockTarget, own: { email: string | null } = { email: null }) {
+    const request = ++candidatesRequestRef.current;
     setSuspendTarget(target);
     setSuspendReason('');
     setSuspendMessage('');
@@ -432,7 +435,10 @@ export default function Customers() {
       return;
     }
     setCandidates([]);
-    if (target.addOnly) return;
+    setCandidatesLoading(false);
+    // Nothing to look up for a guest with no usable number and no account:
+    // the list is empty and the admin adds emails by hand (F5a).
+    if (target.addOnly || (!target.phone && !target.userId)) return;
     setCandidatesLoading(true);
     try {
       const query = new URLSearchParams();
@@ -440,12 +446,14 @@ export default function Customers() {
       if (target.userId) query.set('userId', target.userId);
       const res = await adminApiGet(`/api/admin/customers/suspension/candidates?${query.toString()}`);
       const data = await res.json().catch(() => ({}));
+      if (request !== candidatesRequestRef.current) return;
       if (!res.ok) throw new Error(data.error || 'Unable to load this customer\u2019s emails');
       setCandidates(data.candidates as EmailCandidate[]);
     } catch (err) {
+      if (request !== candidatesRequestRef.current) return;
       setCandidatesError(err instanceof Error ? err.message : 'Unable to load this customer\u2019s emails');
     } finally {
-      setCandidatesLoading(false);
+      if (request === candidatesRequestRef.current) setCandidatesLoading(false);
     }
   }
 
@@ -474,13 +482,16 @@ export default function Customers() {
   }
 
   /** Run one bound change: a number and/or emails, behind its own step-up. */
-  async function runBlockChange(change: { phone: string | null; block: boolean; reason: string | null; emails: string[]; description: string }) {
+  async function runBlockChange(change: {
+    phone: string | null; linkPhone?: string; block: boolean; reason: string | null; emails: string[]; description: string;
+  }) {
     if (!isFullAdmin || suspendSaving) return;
     const emails = [...new Set(change.emails.map(emailKey))].sort();
     const { phone, block, reason } = change;
     setSuspendSaving(true);
     setSuspendMessage('');
-    const params = { phone, suspended: block, reason, emails };
+    const params: Record<string, unknown> = { phone, suspended: block, reason, emails };
+    if (change.linkPhone) params.linkPhone = change.linkPhone;
     const onAuthorized = async (stepUpId: string) => {
       const res = await adminApiFetch('/api/admin/customers/suspension', { ...params, stepUpId });
       const data = await res.json().catch(() => ({}));
@@ -531,8 +542,12 @@ export default function Customers() {
     const description = phoneChange
       ? `${block ? 'Suspend' : 'Unsuspend'} ${who} on all Waaiio bots${emailPart ? ` and ${emailPart}` : ''}`
       : `${block ? 'Block' : 'Unblock'} ${emailCount(emails.length)} for ${who}`;
-    // An already-blocked number is sent as the customer's number so the new
-    // emails are linked to it; the number itself stays blocked.
+    // Emails added for an already-blocked number are linked to it, without
+    // touching the number (an email-only change bound to that link).
+    if (phone !== null && !phoneChange) {
+      await runBlockChange({ phone: null, linkPhone: phone, block, reason, emails, description });
+      return;
+    }
     await runBlockChange({ phone, block, reason, emails, description });
   }
 
@@ -994,7 +1009,7 @@ export default function Customers() {
             )}
 
             <fieldset className="space-y-2">
-              {!suspendTarget.addOnly && (
+              {!suspendTarget.addOnly && (suspendTarget.block || candidates.length > 0) && (
                 <>
                   <legend className="text-xs font-semibold uppercase text-gray-500">
                     {suspendTarget.block ? 'Also block these emails' : 'Also unblock these emails'}
@@ -1032,10 +1047,10 @@ export default function Customers() {
               })}
               {suspendTarget.block && (
                 <div>
-                  <label className="block">
-                    <span className="text-xs font-semibold uppercase text-gray-500">Add an email</span>
-                    <div className="mt-1 flex gap-2">
+                  <label htmlFor="block-add-email" className="block text-xs font-semibold uppercase text-gray-500">Add an email</label>
+                  <div className="mt-1 flex gap-2">
                       <input
+                        id="block-add-email"
                         type="email"
                         value={addEmail}
                         onChange={e => { setAddEmail(e.target.value); setAddError(''); }}
@@ -1049,8 +1064,7 @@ export default function Customers() {
                       >
                         Add
                       </button>
-                    </div>
-                  </label>
+                  </div>
                   {addError && <p role="alert" className="mt-1 text-red-600">{addError}</p>}
                 </div>
               )}
