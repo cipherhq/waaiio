@@ -12,9 +12,17 @@ import { logger } from '@/lib/logger';
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
+    // Identify the user with getUser(), which checks the token with Supabase Auth.
+    // getSession() only reads the cookie, so it is used for the access token alone.
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
     const { data: { session } } = await supabase.auth.getSession();
 
-    if (!session?.user) {
+    if (!session?.access_token) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
@@ -23,7 +31,7 @@ export async function POST(request: NextRequest) {
     const country = request.headers.get('x-vercel-ip-country') || undefined;
 
     await bindSession({
-      userId: session.user.id,
+      userId: user.id,
       sessionId: session.access_token.slice(-32),
       ip,
       userAgent,
@@ -32,13 +40,13 @@ export async function POST(request: NextRequest) {
 
     // Send login notification email (non-blocking)
     try {
-      const email = session.user.email;
+      const email = user.email;
       if (email) {
         const service = createServiceClient();
         const { data: profile } = await service
           .from('profiles')
           .select('first_name')
-          .eq('id', session.user.id)
+          .eq('id', user.id)
           .single();
 
         const name = profile?.first_name || 'there';
