@@ -124,7 +124,7 @@ describe('W05 rendered payout setup availability', () => {
     await screen.findByText('Payout account connected');
     const resolveCall = fixture.fetch.mock.calls.find(([url]) => url === '/api/payouts/resolve');
     expect(resolveCall).toBeDefined();
-    expect(JSON.parse(resolveCall![1].body)).toEqual({ gateway: 'paystack', bank_code: '058', account_number: '0123456789' });
+    expect(JSON.parse(resolveCall![1].body)).toEqual({ business_id: 'biz-fixture', gateway: 'paystack', bank_code: '058', account_number: '0123456789' });
     const setupCall = fixture.fetch.mock.calls.find(([url]) => url === '/api/payouts/setup');
     expect(setupCall).toBeDefined();
     expect(JSON.parse(setupCall![1].body)).toMatchObject({

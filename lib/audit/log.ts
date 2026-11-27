@@ -5,7 +5,8 @@ export type AuditAction =
   | 'enable' | 'disable'
   | 'login' | 'logout'
   | 'export' | 'import'
-  | 'payout_request' | 'payout_approve' | 'payout_reject';
+  | 'payout_request' | 'payout_approve' | 'payout_reject'
+  | 'payout_account_lookup';
 
 export type AuditEntityType =
   | 'booking' | 'order' | 'service' | 'product'
@@ -24,8 +25,8 @@ export async function logAudit(
     changes?: Record<string, unknown>;
     ipAddress?: string;
   },
-): Promise<void> {
-  await supabase.from('audit_log').insert({
+): Promise<{ error: { message: string } | null }> {
+  const { error } = await supabase.from('audit_log').insert({
     business_id: params.businessId,
     user_id: params.userId || null,
     action: params.action,
@@ -34,4 +35,5 @@ export async function logAudit(
     changes: params.changes || null,
     ip_address: params.ipAddress || null,
   });
+  return { error: error ?? null };
 }

@@ -127,6 +127,10 @@ describe('Test bank 001 in /api/payouts/resolve', () => {
   });
 
   function mockAuth() {
+    // Signed-in owner of biz-1 (the resolve route checks business ownership)
+    const chain: Record<string, unknown> = {};
+    ['select', 'eq'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+    chain.single = vi.fn().mockResolvedValue({ data: { id: 'biz-1' }, error: null });
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
         auth: {
@@ -134,6 +138,12 @@ describe('Test bank 001 in /api/payouts/resolve', () => {
             data: { user: { id: 'u-1', email: 'test@test.com' } },
           }),
         },
+        from: vi.fn().mockReturnValue(chain),
+      }),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({ error: null }) }),
       }),
     }));
   }
@@ -149,7 +159,7 @@ describe('Test bank 001 in /api/payouts/resolve', () => {
 
     const { POST } = await import('@/app/api/payouts/resolve/route');
     const res = await POST(makePost('/api/payouts/resolve', {
-      gateway: 'paystack', bank_code: '001', account_number: '0000000000',
+      business_id: 'biz-1', gateway: 'paystack', bank_code: '001', account_number: '0000000000',
     }));
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -165,7 +175,7 @@ describe('Test bank 001 in /api/payouts/resolve', () => {
 
     const { POST } = await import('@/app/api/payouts/resolve/route');
     const res = await POST(makePost('/api/payouts/resolve', {
-      gateway: 'paystack', bank_code: '001', account_number: '0000000000',
+      business_id: 'biz-1', gateway: 'paystack', bank_code: '001', account_number: '0000000000',
     }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('Invalid bank');
@@ -179,7 +189,7 @@ describe('Test bank 001 in /api/payouts/resolve', () => {
 
     const { POST } = await import('@/app/api/payouts/resolve/route');
     const res = await POST(makePost('/api/payouts/resolve', {
-      gateway: 'paystack', bank_code: '001', account_number: '0000000000',
+      business_id: 'biz-1', gateway: 'paystack', bank_code: '001', account_number: '0000000000',
     }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('Invalid bank');
