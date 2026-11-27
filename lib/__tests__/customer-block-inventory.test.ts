@@ -14,8 +14,9 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SEND = /\bsendEmail\(|\bsendOrEmail\(|\bsendBookingEmail\(/;
-const CHECKS = /customerEmailSendBlocked|emailBlock\s*:/;
+const SEND = /\bsendEmail(ToEach)?\(|\bsendOrEmail\(|\bsendBookingEmail\(/;
+// `emailBlock:` or the shorthand `emailBlock,` / `emailBlock }` in a call.
+const CHECKS = /customerEmailSendBlocked|\bemailBlock\s*[:,}]/;
 
 /** S9 "skip": reminders, marketing, invites and follow-ups. */
 const SKIP = [
@@ -132,7 +133,8 @@ describe('#1166 email send inventory', () => {
 });
 
 describe('#1166 block modules stay server-only (SEC-001)', () => {
-  const MODULES = /@\/lib\/(customer-block|customer-email-proof|customer-email-candidates)['"]/;
+  // Alias or relative imports of the server-only modules.
+  const MODULES = /(?:@\/lib\/|\.\.?\/(?:[\w-]+\/)*)(customer-block|customer-email-proof|customer-email-candidates)['"]/;
 
   it("no 'use client' file and no admin-panel file imports them", () => {
     const client = [...walk('app'), ...walk('components'), ...walk('lib')]

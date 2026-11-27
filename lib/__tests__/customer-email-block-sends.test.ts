@@ -160,6 +160,8 @@ describe('reminders cron (/api/cron/reminders): booking, reservation, event and 
       ],
       reservations: [
         { id: 'rs-1', business_id: BIZ, check_in: day(1), status: 'confirmed', guest_name: 'Ada', guest_phone: null, guest_email: BLOCKED_EMAIL, reference_code: 'RES', businesses: business },
+        // With a clear phone: WhatsApp goes, the blocked email copy does not.
+        { id: 'rs-2', business_id: BIZ, check_in: day(1), status: 'confirmed', guest_name: 'Ada', guest_phone: CLEAR_PHONE, guest_email: BLOCKED_EMAIL, reference_code: 'RES2', businesses: business },
       ],
       events: [{ id: 'ev-1', business_id: BIZ, name: 'AfroFest', date: day(1), time: '18:00', venue: 'Lagos', status: 'published', businesses: { name: 'AfroFest', country_code: 'NG' } }],
       event_tickets: [{ id: 'tk-1', event_id: 'ev-1', status: 'valid', reminder_sent: false, guest_name: 'Ada', guest_phone: CLEAR_PHONE, guest_email: BLOCKED_EMAIL }],
@@ -179,7 +181,7 @@ describe('reminders cron (/api/cron/reminders): booking, reservation, event and 
     vi.resetModules();
     const { GET } = await import('@/app/api/cron/reminders/route');
     expect((await GET(new Request('http://localhost/api/cron') as never)).status).toBe(200);
-    expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE, CLEAR_PHONE]); // booking + event, both clear phones
+    expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE, CLEAR_PHONE, CLEAR_PHONE]); // booking, reservation and event, all clear phones
     expect(emailed().sort()).toEqual([CLEAR_EMAIL, CLEAR_EMAIL]); // bk-3 reminder + inv-2 overdue
     expect(emailed()).not.toContain(BLOCKED_EMAIL);
     expect(emailed()).not.toContain('third@example.com');
@@ -196,14 +198,17 @@ describe('reminders cron (/api/cron/reminders): booking, reservation, event and 
     // The overdue-invoice reminder is a daily repeat by design; no other blocked email is caught up.
     vi.setSystemTime(new Date(NOW.getTime() + 3 * 86_400_000));
     await GET(new Request('http://localhost/api/cron') as never);
-    expect(emailed().filter(e => e === BLOCKED_EMAIL).length).toBeLessThanOrEqual(1);
+    // Only the daily overdue-invoice repeat reaches the now-unblocked address: no reminder from the blocked period is replayed.
+    expect(emailed().filter(e => e === BLOCKED_EMAIL)).toEqual([BLOCKED_EMAIL]);
   });
 });
 
 describe('balance-reminder and subscription-reminders crons', () => {
-  it.each([[BLOCKED_EMAIL, []], [CLEAR_EMAIL, [CLEAR_EMAIL]]])('balance reminder with email %s: emails %j, WhatsApp still goes', async (address, expected) => {
+  it.each([[BLOCKED_EMAIL, []], [CLEAR_EMAIL, [CLEAR_EMAIL, CLEAR_EMAIL]]])('balance reminders (reservation and booking) with email %s: emails %j, WhatsApp still goes', async (address, expected) => {
     blocks({
-      reservations: [],
+      // Both loops: the reservation balance reminder and the booking balance reminder.
+      reservations: [{ id: 'rs-1', business_id: BIZ, check_in: day(1), status: 'confirmed', deposit_status: 'paid', total_amount: 50000, deposit_amount: 10000,
+        guest_phone: CLEAR_PHONE, guest_name: 'Ada', reference_code: 'RES', businesses: { name: 'Lagos Suites', country_code: 'NG', payment_gateway: 'paystack' } }],
       bookings: [{ id: 'bk-1', business_id: BIZ, date: day(1), status: 'confirmed', deposit_status: 'paid', total_amount: 20000, deposit_amount: 5000,
         guest_phone: CLEAR_PHONE, guest_name: 'Ada', guest_email: address, reference_code: 'BK', businesses: { name: 'Lagos Spa', country_code: 'NG', payment_gateway: 'paystack' } }],
       whatsapp_config: [], profiles: [], orders: [],
@@ -212,21 +217,24 @@ describe('balance-reminder and subscription-reminders crons', () => {
     vi.resetModules();
     const { GET } = await import('@/app/api/cron/balance-reminder/route');
     await GET(new Request('http://localhost/api/cron') as never);
-    expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE]);
+    expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE, CLEAR_PHONE]);
     expect(emailed()).toEqual(expected);
   });
 
-  it.each([[BLOCKED_EMAIL, []], [CLEAR_EMAIL, [CLEAR_EMAIL]]])('subscription setup reminder with email %s: emails %j', async (address, expected) => {
+  it.each([[BLOCKED_EMAIL, []], [CLEAR_EMAIL, [CLEAR_EMAIL, CLEAR_EMAIL]]])('subscription setup reminder and expiry notice with email %s: emails %j', async (address, expected) => {
     h.waFails = true; // the email goes as the fallback here
     blocks({
       customer_subscriptions: [{ id: 'remind-1', business_id: BIZ, customer_phone: CLEAR_PHONE, customer_name: 'Ada', customer_email: address,
-        status: 'pending', gateway: 'stripe', created_at: new Date(NOW.getTime() - 30 * 3_600_000).toISOString(), businesses: { name: 'Lagos Gym' } }],
+        status: 'pending', gateway: 'stripe', created_at: new Date(NOW.getTime() - 30 * 3_600_000).toISOString(), businesses: { name: 'Lagos Gym' } },
+        // Older than the setup window: the expiry notice path.
+        { id: 'expire-1', business_id: BIZ, customer_phone: CLEAR_PHONE, customer_name: 'Ada', customer_email: address,
+        status: 'pending', gateway: 'stripe', created_at: new Date(NOW.getTime() - 80 * 3_600_000).toISOString(), businesses: { name: 'Lagos Gym' } }],
       customer_profiles: [], bookings: [], orders: [],
     });
     vi.resetModules();
     const { GET } = await import('@/app/api/cron/subscription-reminders/route');
     await GET(new Request('http://localhost/api/cron') as never);
-    expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE]);
+    expect(h.wa.map(w => w.to)).toEqual([CLEAR_PHONE, CLEAR_PHONE]);
     expect(emailed()).toEqual(expected);
   });
 });
