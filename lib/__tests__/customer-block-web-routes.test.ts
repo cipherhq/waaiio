@@ -496,24 +496,15 @@ describe('POST /api/whatsapp/flow-callback, booking completion (F11)', () => {
   });
 });
 
-describe('POST /api/forms/submit: a form the merchant sent (Q15 A)', () => {
-  const submit = async (phone: string) => (await import('@/app/api/forms/submit/route')).POST(post('/api/forms/submit', {
-    token: 'form-token', answers: {}, customer_name: 'Ann', customer_phone: phone, customer_email: EMAIL, turnstileToken: 'ok',
+describe('POST /api/forms/submit: every form is refused for a blocked customer (Q15 revised A)', () => {
+  const submit = async () => (await import('@/app/api/forms/submit/route')).POST(post('/api/forms/submit', {
+    token: 'form-token', answers: {}, customer_name: 'Ann', customer_phone: `+${PHONE}`, turnstileToken: 'ok',
   }));
 
-  it('a blocked customer can answer the form the merchant sent to them: the sent record is filled in', async () => {
-    seedBlocks({ phones: [PHONE], emails: [EMAIL] });
-    h.rows.form_responses = { id: 'resp-sent' };
-    const res = await submit(`+${PHONE}`);
-    expect(res.status).toBe(200);
-    expect(h.writes.find(w => w.table === 'form_responses')).toMatchObject({ op: 'update' });
-    expect(h.reads.filter(t => BLOCK_TABLES.has(t))).toEqual([]);
-  });
-
-  it('with no sent record for that number, the submission is refused', async () => {
+  it('even when an old pending "sent" record exists for that number, nothing is written', async () => {
     seedBlocks({ phones: [PHONE] });
-    h.rows.form_responses = null;
-    await expectRefused(await submit(`+${PHONE}`));
+    h.rows.form_responses = { id: 'resp-sent' };
+    await expectRefused(await submit());
   });
 });
 

@@ -115,24 +115,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'This form is no longer accepting responses' }, { status: 410 });
     }
 
-    // A form the merchant sent to this number (/api/forms/send) is answered by
-    // filling in its pending "sent" record.
-    const normalizedPhone = customer_phone?.startsWith('+') ? customer_phone : customer_phone ? `+${customer_phone}` : null;
-    const { data: sentRecord } = normalizedPhone
-      ? await supabase
-        .from('form_responses')
-        .select('id')
-        .eq('form_id', form.id)
-        .eq('customer_phone', normalizedPhone)
-        .eq('status', 'sent')
-        .maybeSingle()
-      : { data: null };
-
-    // #1166 Q7 C: a blocked phone or email cannot submit a form. Q15 A (Owner
-    // 2026-11-27): answering a form the merchant sent to them personally is
-    // allowed, like RSVPs and intake (Q4 A / Q14 A).
-    if (!sentRecord && await webCheckoutBlocked(supabase, {
-      route: 'forms/submit', businessId: form.business_id, phone: customer_phone, email: customer_email,
+    // #1166 Q7 C, Q15 revised A (Owner 2026-11-27): a blocked phone or email
+    // cannot submit any form, public link or one the merchant sent.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'forms/submit', businessId: form.business_id, phone: customer_phone == null ? null : String(customer_phone), email: customer_email,
       countryCode: await businessCountryForBlock(supabase, form.business_id),
     })) {
       return customerBlockedResponse();
@@ -165,11 +151,20 @@ export async function POST(request: NextRequest) {
     }
     const consentColumn = offersOptIn ? { consent_given: optIn } : {};
 
-    // A pending "sent" record for this phone + form is updated instead of inserting.
+    // Check if there's a pending "sent" record for this phone + form (update instead of insert)
     let insertError: { message: string; code?: string } | null = null;
+    const normalizedPhone = customer_phone?.startsWith('+') ? customer_phone : customer_phone ? `+${customer_phone}` : null;
 
     if (normalizedPhone) {
-      if (sentRecord) {
+      const { data: existing } = await supabase
+        .from('form_responses')
+        .select('id')
+        .eq('form_id', form.id)
+        .eq('customer_phone', normalizedPhone)
+        .eq('status', 'sent')
+        .maybeSingle();
+
+      if (existing) {
         // Update the existing sent record
         const { error } = await supabase
           .from('form_responses')
@@ -181,7 +176,7 @@ export async function POST(request: NextRequest) {
             submitted_at: new Date().toISOString(),
             ...consentColumn,
           })
-          .eq('id', sentRecord.id);
+          .eq('id', existing.id);
         insertError = error;
       } else {
         const { error } = await supabase
