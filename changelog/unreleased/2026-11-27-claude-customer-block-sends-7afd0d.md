@@ -12,7 +12,8 @@
     - party follow-up emails.
   - **What the merchant sees** is exactly what they see when the customer has not given email consent: invites fall back to SMS or the share link (`needs_optin`), broadcast copies are left out, native-form broadcasts count the email as skipped, and the party preview shows the same reason as missing consent. Nothing is specific to a block (Q3 A).
   - **Unchanged:** money and transactional emails still go to a blocked email (F17). These are payment confirmations, receipts, tickets, invoices, payment requests, bank-transfer outcomes, charge-failed notices, contract and waiver copies, booking changes and account emails. So do emails to merchants and staff (F18).
-  - **If the block cannot be read,** a skip-list email is skipped and reported (fails closed, as #1103's sends do). A blocked email is not a delivery failure, so no SMS is sent in its place.
+  - **If the block cannot be read,** a skip-list email is skipped and reported (fails closed, as #1103's sends do).
+  - **SMS fallback (Q16 A, Owner 2026-11-27):** a blocked email counts exactly as no email, so a clear phone still gets the SMS fallback when WhatsApp fails; a blocked phone gets no SMS, as today. The invite route follows the same rule.
   - **Nothing is replayed** after an unblock (F21).
   - **Mechanism:** `sendOrEmail` has a new opt-in `emailBlock` option, set only by skip-list callers. `customerEmailSendBlocked` now reads a stored local-format phone in the business country when the caller passes it.
 - **Files:**

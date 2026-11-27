@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
   wa: [] as Array<{ to: string; text?: string }>,
   waFails: false,
   sms: vi.fn(),
+  smsConfigured: false,
+  smsSent: [] as string[],
   logs: [] as Array<{ ctx: Record<string, unknown>; msg: string }>,
   reportFailure: vi.fn(),
   db: null as any,
@@ -46,7 +48,10 @@ vi.mock('@/lib/email/client', () => ({
   sendEmailToEach: vi.fn(),
 }));
 vi.mock('@/lib/sms/send', () => ({ sendBusinessSms: (...a: unknown[]) => h.sms(...a) }));
-vi.mock('@/lib/sms/bulksms-ng', () => ({ sendSms: vi.fn(async () => ({ sent: true })), isSmsEligible: () => false, isSmsConfigured: () => false }));
+vi.mock('@/lib/sms/bulksms-ng', () => ({
+  sendSms: vi.fn(async (to: string) => { h.smsSent.push(to); return { sent: true }; }),
+  isSmsEligible: () => false, isSmsConfigured: () => h.smsConfigured,
+}));
 vi.mock('@/lib/bot/conversation-guard', () => ({ checkConversationLimit: vi.fn(async () => ({ allowed: true })), trackOutboundMessage: vi.fn() }));
 vi.mock('@/lib/bot/flows/shared/payment', () => ({ initializePayment: vi.fn(async () => null) }));
 vi.mock('@/lib/channels/channel-resolver', () => ({
@@ -86,6 +91,7 @@ const skipLogs = () => h.logs.filter(l => l.msg === 'customer_block.email_skippe
 beforeEach(() => {
   h.emails.length = 0; h.wa.length = 0; h.logs.length = 0; h.waFails = false;
   h.sms.mockReset().mockResolvedValue({ status: 'sent' });
+  h.smsConfigured = false; h.smsSent.length = 0;
   h.reportFailure.mockReset();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -101,7 +107,7 @@ describe('sendOrEmail (F15, F16, F17)', () => {
   it('a skip-list send does not email a blocked address; WhatsApp still goes; logged without the address', async () => {
     blocks();
     const r = await base(CLEAR_PHONE, ' Ann@Example.com', { emailBlock: { send: 'booking_reminder', businessId: BIZ } });
-    expect(r).toEqual({ whatsapp: 'sent', email: 'skipped' });
+    expect(r).toEqual({ whatsapp: 'sent', email: 'no_address' }); // as if there were no email (Q16 A)
     expect(emailed()).toEqual([]);
     expect(skipLogs()).toEqual([{ op: 'customer_block.email_skipped', send: 'booking_reminder', business_id: BIZ }]);
     expect(JSON.stringify(h.logs)).not.toMatch(/ann@example\.com/i);
@@ -129,17 +135,33 @@ describe('sendOrEmail (F15, F16, F17)', () => {
   it('fails closed: an unreadable block skips the email and is reported', async () => {
     blocks({}, { fail: true });
     const r = await base(CLEAR_PHONE, CLEAR_EMAIL, { emailBlock: { send: 'booking_reminder', businessId: BIZ } });
-    expect(r.email).toBe('skipped');
+    expect(r.email).toBe('no_address');
     expect(emailed()).toEqual([]);
     expect(h.reportFailure).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ area: 'customer_block', op: 'email_send_check' }));
   });
 
-  it('a blocked email is not a delivery failure: no SMS stands in for it', async () => {
+  it('Q16 A: a blocked email counts as no email, so a clear phone still gets the SMS fallback when WhatsApp fails', async () => {
     blocks();
     h.waFails = true;
-    await base(CLEAR_PHONE, BLOCKED_EMAIL, { emailBlock: { send: 'booking_reminder', businessId: BIZ }, smsFallback: { businessId: BIZ, idempotencyKey: 'k' } });
+    const r = await base(CLEAR_PHONE, BLOCKED_EMAIL, { emailBlock: { send: 'booking_reminder', businessId: BIZ }, smsFallback: { businessId: BIZ, idempotencyKey: 'k' } });
     expect(emailed()).toEqual([]);
-    expect(h.sms).not.toHaveBeenCalled();
+    expect(r.email).toBe('no_address');
+    expect(h.sms).toHaveBeenCalledTimes(1);
+    expect(h.sms.mock.calls[0][1]).toMatchObject({ businessId: BIZ, phone: CLEAR_PHONE });
+    expect(r.sms).toBe('sent');
+  });
+
+  it('Q16 A: a blocked phone still gets no SMS (the SMS sender refuses a blocked number, as today)', async () => {
+    blocks({ businesses: [{ id: BIZ, country_code: 'NG' }] });
+    h.waFails = true;
+    h.smsConfigured = true;
+    const real = await vi.importActual<typeof import('@/lib/sms/send')>('@/lib/sms/send');
+    h.sms.mockImplementation(real.sendBusinessSms);
+    const r = await base(BLOCKED_PHONE, CLEAR_EMAIL, { emailBlock: { send: 'booking_reminder', businessId: BIZ }, smsFallback: { businessId: BIZ, idempotencyKey: 'k2' } });
+    expect(emailed()).toEqual([]);
+    expect(h.sms).toHaveBeenCalledTimes(1);
+    expect(h.smsSent).toEqual([]);
+    expect(r.sms).toBe('skipped');
   });
 });
 
