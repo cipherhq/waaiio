@@ -5052,6 +5052,18 @@ jobs:
             exit 1
           fi
 
+          # These files share one PostgreSQL cluster, and roles live in it, not
+          # in each clone. An unconditional ALTER ROLE on a shared role rewrites
+          # the same pg_authid row from parallel jobs and fails at random with
+          # XX000 "tuple concurrently updated". The roles above already have the
+          # right attributes, so a file may only ALTER one inside IF NOT/ELSIF NOT.
+          UNSAFE_ALTERS=$(grep -nE "ALTER ROLE (service_role|anon|authenticated)\b" "${PG_FILES[@]}" | grep -vE "(ELSIF|IF) NOT \(SELECT rol" | grep -vE "^[^:]+:[0-9]+:[[:space:]]*//" || true)
+          if [ -n "$UNSAFE_ALTERS" ]; then
+            echo "❌ Unconditional ALTER ROLE on a shared role (races across parallel files):"
+            echo "$UNSAFE_ALTERS"
+            exit 1
+          fi
+
           # Create one database per file (cloned from pg_template_clean).
           # Done sequentially because CREATE DATABASE ... TEMPLATE requires
           # no other connections to the template.

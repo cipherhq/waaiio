@@ -65,7 +65,7 @@ suite('M536 customer message guards (real PostgreSQL)', () => {
     for (const role of ['anon', 'authenticated', 'service_role']) {
       await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role} NOLOGIN; END IF; END $$`);
     }
-    await control.query('ALTER ROLE service_role BYPASSRLS');
+    await control.query(`DO $$ BEGIN IF NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role') THEN ALTER ROLE service_role BYPASSRLS; END IF; END $$`);
     await control.query(`CREATE DATABASE ${database}`);
     const u = new URL(url!); u.pathname = `/${database}`;
     client = new pg.Client({ connectionString: u.toString() }); await client.connect();

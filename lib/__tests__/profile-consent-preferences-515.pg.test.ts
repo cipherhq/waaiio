@@ -58,7 +58,7 @@ suite('M515 profiles.consent_preferences (real PostgreSQL)', () => {
     control = new pg.Client({ connectionString: url }); await control.connect();
     await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$`);
     // Supabase's service_role bypasses RLS; match it even if another suite created the role first.
-    await control.query(`ALTER ROLE service_role BYPASSRLS`);
+    await control.query(`DO $$ BEGIN IF NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role') THEN ALTER ROLE service_role BYPASSRLS; END IF; END $$`);
     for (const role of ['anon', 'authenticated']) {
       await control.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role} NOLOGIN; END IF; END $$`);
     }
