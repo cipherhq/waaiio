@@ -1,0 +1,29 @@
+## 2026-11-27 — Extend customer blocking to email: customer email sends (#1166, slice 4 of 4)
+
+- **What changed:** Waaiio's reminder, marketing, invite and follow-up emails (the S9 skip list) no longer go to a blocked email. When the send has a blocked phone, its email copy is skipped too (#1166 r7 F15, F16, F21, F22; Owner approval 2026-11-27).
+  - **Sends covered:**
+    - booking, reservation and event reminders, including email-only reminders;
+    - overdue-invoice reminders (the invoice's stored phone is also checked, F16);
+    - balance reminders and subscription setup reminders;
+    - broadcast email copies and native-form email broadcasts;
+    - event and party invite emails (fallback and listed emails);
+    - waitlist "a spot opened";
+    - after-booking intake links;
+    - party follow-up emails.
+  - **What the merchant sees** is exactly what they see when the customer has not given email consent: invites fall back to SMS or the share link (`needs_optin`), broadcast copies are left out, native-form broadcasts count the email as skipped, and the party preview shows the same reason as missing consent. Nothing is specific to a block (Q3 A).
+  - **Unchanged:** money and transactional emails still go to a blocked email (F17). These are payment confirmations, receipts, tickets, invoices, payment requests, bank-transfer outcomes, charge-failed notices, contract and waiver copies, booking changes and account emails. So do emails to merchants and staff (F18).
+  - **If the block cannot be read,** a skip-list email is skipped and reported (fails closed, as #1103's sends do).
+  - **SMS fallback (Q16 A, Owner 2026-11-27):** a blocked email counts exactly as no email, so a clear phone still gets the SMS fallback when WhatsApp fails; a blocked phone gets no SMS, as today. The invite route follows the same rule.
+  - **Nothing is replayed** after an unblock (F21).
+  - **Mechanism:** `sendOrEmail` has a new opt-in `emailBlock` option, set only by skip-list callers. `customerEmailSendBlocked` now reads a stored local-format phone in the business country when the caller passes it.
+- **Files:**
+  - Library: `lib/channels/send-or-email.ts`, `lib/customer-block.ts`.
+  - Cron routes: `app/api/cron/reminders`, `cron/balance-reminder`, `cron/subscription-reminders`.
+  - Other routes: `app/api/broadcasts/send`, `events/invite`, `waitlist/notify`.
+  - Send logic: `lib/whatsapp-forms/email-broadcast.ts`, `lib/intake/send.ts`, `lib/parties/reminder-preview.ts`.
+  - New tests: `lib/__tests__/customer-email-block-sends.test.ts`, `customer-email-block-invites.test.ts`, and `customer-block-inventory.test.ts` (every email-sending file must be classified; the block modules are never imported by browser code).
+  - Extended tests: `intake-send-963.test.ts`, `party-reminders-preview-490.test.ts`, and seeded RSVP/intake tests in `customer-block-web-routes.test.ts`.
+- **What it affects:** customers whose email (or phone) an admin has blocked stop receiving skip-list emails. Each such send makes one or two extra indexed reads.
+- **What could break:**
+  - A new email send must be added to the inventory guard as "skip" or "always". Until it is, CI fails on purpose.
+  - A database problem with the block tables stops skip-list emails while it lasts, and is reported under Sentry area `customer_block`.

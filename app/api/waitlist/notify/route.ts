@@ -107,6 +107,7 @@ export async function POST(request: NextRequest) {
             email: emailOpt,
             businessName: bizName,
             alwaysEmail: true,
+            emailBlock: { send: 'waitlist_spot_opened', businessId },
           });
         }
 

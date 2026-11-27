@@ -23,7 +23,7 @@ vi.mock('@/lib/email/client', () => ({
 }));
 vi.mock('@/lib/forms/form-send', () => ({ businessChatWindowState: async () => env.window }));
 vi.mock('@/lib/trial-status', () => ({ resolveLimitTier: async () => env.tier }));
-vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/logger', () => { const l: any = { warn: vi.fn(), error: vi.fn(), info: vi.fn() }; l.withContext = () => l; return { logger: l }; });
 vi.mock('@/lib/channels/channel-resolver', () => ({ ChannelResolver: class { async resolveByBusinessId() { return null; } } }));
 
 import {
@@ -467,6 +467,21 @@ describe('web bookings (public booking page)', () => {
     const token = /\/intake\/([A-Za-z0-9_-]+)/.exec(env.emails[0].html)![1];
     expect(db.tables.booking_intakes[0].token_hash).toBe(sha(token));
     if (r.status === 'sent') expect(r.url).toContain(`/intake/${token}`);
+  });
+
+  it('#1166 F15/F16: no intake link to a blocked email, nor for a blocked phone; nothing is created', async () => {
+    for (const blocked of [
+      { customer_email_blocks: [{ id: 'e1', email: 'ada@example.com' }], customer_suspensions: [] },
+      { customer_email_blocks: [], customer_suspensions: [{ id: 's1', phone: '2348012345678' }] },
+    ]) {
+      env.emails = [];
+      const db = web();
+      Object.assign(db.tables, blocked);
+      const r = await deliverAfterBookingIntake(db as never, 'k1', { resolver: sender().resolver, now: NOW });
+      expect(r).toEqual({ status: 'skipped', reason: 'no_email' });
+      expect(env.emails).toEqual([]);
+      expect(db.tables.booking_intakes).toEqual([]);
+    }
   });
 
   it('a failed email removes the intake, unless the page also shows the link', async () => {

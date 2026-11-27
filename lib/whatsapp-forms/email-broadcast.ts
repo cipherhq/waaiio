@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 import { sendEmail } from '@/lib/email/client';
 import { hasEmailMarketingPermission, normalizeConsentEmail } from './email-consent';
 import { emailUnsubscribeToken } from './email-unsubscribe';
@@ -52,7 +53,9 @@ export async function dispatchNativeFormEmails(input: {
     const address = normalizeConsentEmail(response.customer_email);
     const phone = String(response.customer_phone || '').replace(/^\+/, '');
     if (!address || seen.has(address) || Date.now() >= deadline
-      || !await hasEmailMarketingPermission(db, businessId, address, phone)) { result.skipped++; continue; }
+      || !await hasEmailMarketingPermission(db, businessId, address, phone)
+      // #1166 F15/F16/F22: a blocked email or phone is counted as skipped, like no permission.
+      || await customerEmailSendBlocked(db, { send: 'native_form_email_broadcast', businessId, email: address, phone })) { result.skipped++; continue; }
     seen.add(address);
     const unsubscribe = `${base}/forms/email-unsubscribe?token=${emailUnsubscribeToken(businessId, address, phone)}`;
     try {

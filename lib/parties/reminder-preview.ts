@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { ChannelResolver, type ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { hasRecipientPermission } from '@/lib/merchants/recipient-permission';
 import { blocksReminder } from '@/lib/customer-suspension';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 import { findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
@@ -114,7 +115,9 @@ export async function loadReminderPreview(db:SupabaseClient,partyId:string,purpo
    recipient.variants.push({channel:'whatsapp_template',available,reason:available?'Marketing template fallback':!marketing?'Marketing consent unavailable':'Approved compatible template unavailable',text:template?template.body.replace('{{1}}',params[0]).replace('{{2}}',params[1])+(template.footer?'\n'+template.footer:''):'Template approval unavailable',templateParams:params,category:'marketing'});
   } else {
    const address=await findCustomerEmail(db,recipient.phone.replace(/\D/g,''),party.business_id);
-   const permitted=!suspended && await hasRecipientPermission(db,party.business_id,recipient.phone,'utility','email');
+   // #1166 F15/F22: a blocked email reads as no consent, so the preview gives no reason.
+   const emailBlocked=!!address && await customerEmailSendBlocked(db,{send:'party_followup',businessId:party.business_id,email:address,phone:recipient.phone,countryCode:business.country_code});
+   const permitted=!suspended && !emailBlocked && await hasRecipientPermission(db,party.business_id,recipient.phone,'utility','email');
    const email=businessNotificationEmail({businessName:party.name,title:'Event Reminder',message:party.followup_message,details:{Date:dateLabel,...(party.venue?{Venue:party.venue}:{}),...(seating?{Seating:seating}:{})}});
    const emailAllowed=!!resolved && !!process.env.RESEND_API_KEY && !!address && permitted;
    recipient.variants.push({channel:'email',available:emailAllowed,reason:emailAllowed?'Scheduled dual delivery':'Email address, configured channel or utility consent unavailable',text:email.html,address:address||undefined,subject:email.subject,html:email.html,category:'service'});

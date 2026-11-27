@@ -5,11 +5,11 @@ vi.mock('@/lib/merchants/recipient-permission',()=>({hasRecipientPermission:m.pe
 vi.mock('@/lib/channels/send-or-email',()=>({findCustomerEmail:m.email}));
 import {loadReminderPreview,signPreview,verifyPreview,scheduledOccurrence} from '@/lib/parties/reminder-preview';
 const baseInvite={guest_name:'Guest',guest_phone:'2348012345678',invite_token:'token',reminder_sent:false,table_id:'table',seat_number:2};
-function dbFixture(options:{legacy?:boolean;window?:boolean;table?:string;suspended?:boolean;suspensionReadFails?:boolean}={}) {
+function dbFixture(options:{legacy?:boolean;window?:boolean;table?:string;suspended?:boolean;suspensionReadFails?:boolean;emailBlocked?:boolean}={}) {
  const trace:Record<string,unknown>[]=[];
  const db={from:(table:string)=>{
   const filters:Record<string,unknown>={table};trace.push(filters);
-  const data=()=>table==='parties'?{id:'party',business_id:'business',name:'Celebration',date:'2027-01-01',time:'18:00',venue:'Hall',followup_message:'See you soon',followup_days_before:1,businesses:{owner_id:'owner',name:'Host',country_code:'NG'}}:table==='event_invites'?['pending','maybe','accepted','declined'].map((status,i)=>({...baseInvite,id:String(i),status,reminder_sent:!!options.legacy})):table==='party_tables'?[{id:'table',name:options.table || 'A'}]:table==='whatsapp_inbound_receipts'?(options.window===false?null:{created_at:new Date().toISOString()}):table==='customer_consents'?{status:'granted',expires_at:null}:table==='customer_suspensions'?(options.suspended?{id:'suspension'}:null):null;
+  const data=()=>table==='parties'?{id:'party',business_id:'business',name:'Celebration',date:'2027-01-01',time:'18:00',venue:'Hall',followup_message:'See you soon',followup_days_before:1,businesses:{owner_id:'owner',name:'Host',country_code:'NG'}}:table==='event_invites'?['pending','maybe','accepted','declined'].map((status,i)=>({...baseInvite,id:String(i),status,reminder_sent:!!options.legacy})):table==='party_tables'?[{id:'table',name:options.table || 'A'}]:table==='whatsapp_inbound_receipts'?(options.window===false?null:{created_at:new Date().toISOString()}):table==='customer_consents'?{status:'granted',expires_at:null}:table==='customer_suspensions'?(options.suspended?{id:'suspension'}:null):table==='customer_email_blocks'?(options.emailBlocked?{id:'email-block'}:null):null;
   const q:any={select:()=>q,eq:(k:string,v:unknown)=>{filters[k]=v;return q;},in:()=>q,or:()=>q,is:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,single:async()=>({data:data(),error:null}),maybeSingle:async()=>table==='customer_suspensions'&&options.suspensionReadFails?{data:null,error:{message:'read failed'}}:{data:data(),error:null},then:(resolve:(v:unknown)=>unknown)=>Promise.resolve({data:data(),error:null,count:0}).then(resolve)};return q;
  }};return {db:db as never,trace};
 }
@@ -59,6 +59,11 @@ describe('Party reminder preview and consent contracts',()=>{
   // Control: the same guest, not suspended, is reachable on every follow-up channel.
   const clear=(await loadReminderPreview(dbFixture().db,'party','followup','owner')).preview.recipients.find(r=>r.eligible)!;
   expect(clear.variants.map(v=>[v.channel,v.available])).toEqual([['whatsapp_text',true],['email',true],['sms',true]]);
+ });
+ it('#1166 F15/F22: a blocked email withholds only the follow-up email, with the same reason as missing consent',async()=>{
+  const blocked=(await loadReminderPreview(dbFixture({emailBlocked:true}).db,'party','followup','owner')).preview.recipients.find(r=>r.eligible)!;
+  expect(blocked.variants.map(v=>[v.channel,v.available])).toEqual([['whatsapp_text',true],['email',false],['sms',true]]);
+  expect(blocked.variants.find(v=>v.channel==='email')!.reason).toBe('Email address, configured channel or utility consent unavailable');
  });
  it('#1103: an unreadable suspension status withholds the reminder (fails closed)',async()=>{
   const {preview}=await loadReminderPreview(dbFixture({suspensionReadFails:true}).db,'party','followup','owner');

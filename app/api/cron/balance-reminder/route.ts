@@ -141,6 +141,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName,
           alwaysEmail: true,
+          emailBlock: { send: 'balance_reminder', businessId: r.business_id, countryCode: cc },
         });
         if (result.whatsapp === 'sent' || result.email === 'sent') sent++;
       } catch (err) {
@@ -255,6 +256,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName,
           alwaysEmail: true,
+          emailBlock: { send: 'balance_reminder', businessId: b.business_id, countryCode: cc },
         });
         if (result.whatsapp === 'sent' || result.email === 'sent') sent++;
       } catch (err) {

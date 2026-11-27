@@ -10,6 +10,7 @@ import { blocksReminder } from '@/lib/customer-suspension';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { sendEmail } from '@/lib/email/client';
 import { btn, businessFrom, esc, h, p, wrap } from '@/lib/email/templates';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 
 /**
  * Creating and sending client intake links (#963 lane 3).
@@ -327,6 +328,11 @@ export async function deliverAfterBookingIntake(db: Db, bookingId: string, opts:
     const viaEmail = !opts.prepareOnly && isWebBooking(booking.metadata);
     const email = typeof booking.guest_email === 'string' ? booking.guest_email.trim().toLowerCase() : '';
     if (viaEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { status: 'skipped', reason: 'no_email' };
+    // #1166 F15/F16: no intake link to a blocked email (or a blocked phone's email copy);
+    // reported like a booking with no usable email.
+    if (viaEmail && await customerEmailSendBlocked(db, { send: 'intake_link', businessId: booking.business_id as string, email, phone: booking.guest_phone })) {
+      return { status: 'skipped', reason: 'no_email' };
+    }
 
     const { data: existing, error: existingError } = await db.from('booking_intakes').select('id')
       .eq('business_id', businessId).eq('booking_id', bookingId).eq('form_id', formId).maybeSingle();

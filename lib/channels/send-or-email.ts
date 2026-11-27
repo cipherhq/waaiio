@@ -3,6 +3,7 @@ import type { MessageSender } from './message-sender';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 import { sendBusinessSms } from '@/lib/sms/send';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 
 interface SendOrEmailOpts {
   supabase: SupabaseClient;
@@ -26,6 +27,15 @@ interface SendOrEmailOpts {
   smsFallback?: { businessId: string; idempotencyKey: string; purpose?: 'reminder' | 'notice' };
   /** WhatsApp message classification per Meta policy (utility, marketing, service). Callers should set this explicitly. */
   messageCategory?: string;
+  /**
+   * #1166 F15/F16: set only by reminder, marketing, invite and follow-up sends
+   * (the r7 S9 "skip" list). The email copy is then skipped when the address or
+   * the phone is blocked, and the send carries on exactly as if the customer had
+   * no email ('no_address'), so a clear phone still gets the SMS fallback when
+   * WhatsApp fails (Owner Q16 A, 2026-11-27). Money and transactional sends
+   * never set this.
+   */
+  emailBlock?: { send: string; businessId?: string | null; countryCode?: string | null };
 }
 
 interface SendOrEmailResult {
@@ -67,7 +77,11 @@ export async function sendOrEmail(opts: SendOrEmailOpts): Promise<SendOrEmailRes
 
   // 2. Send email if: always-email mode, OR WhatsApp failed (fallback)
   //    Inspect both thrown errors AND resolved {success:false}
-  if (email?.address && (alwaysEmail || result.whatsapp === 'failed')) {
+  const wantsEmail = !!email?.address && (alwaysEmail || result.whatsapp === 'failed');
+  const emailBlocked = wantsEmail && !!opts.emailBlock
+    && await customerEmailSendBlocked(opts.supabase, { ...opts.emailBlock, email: email!.address, phone: to });
+  if (emailBlocked) result.email = 'no_address';
+  if (email?.address && wantsEmail && !emailBlocked) {
     try {
       const emailResult = await sendEmail({
         to: email.address,
@@ -84,7 +98,8 @@ export async function sendOrEmail(opts: SendOrEmailOpts): Promise<SendOrEmailRes
     }
   }
 
-  // 3. SMS fallback — attempt when both WhatsApp and email failed (NG/GH only, charged)
+  // 3. SMS fallback — attempt when both WhatsApp and email failed (NG/GH only, charged).
+  //    A blocked email counts as no email (Q16 A); sendBusinessSms itself skips a blocked phone.
   if (opts.smsFallback && result.whatsapp === 'failed' && (result.email === 'failed' || result.email === 'no_address')) {
     const sms = await sendBusinessSms(opts.supabase, {
       businessId: opts.smsFallback.businessId,
