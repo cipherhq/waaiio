@@ -509,18 +509,29 @@ describe('POST /api/forms/submit: every form is refused for a blocked customer (
 });
 
 describe('Q7 C / Q14 A: replies to things the merchant created are not checked', () => {
-  it.each([
-    ['/api/rsvp/[token]', '@/app/api/rsvp/[token]/route'],
-    ['/api/intake/[token]', '@/app/api/intake/[token]/route'],
-  ])('%s never reads the block and never refuses with the block message', async (path, mod) => {
+  it('a blocked guest can RSVP to an invite: the RSVP is saved and the block is never read', async () => {
     seedBlocks({ phones: [PHONE], emails: [EMAIL] });
-    const { POST } = await import(mod);
-    const res: Response = await POST(post(path.replace('[token]', 'tok'), { status: 'attending', phone: PHONE, email: EMAIL, answers: {} }),
-      { params: Promise.resolve({ token: 'tok' }) });
+    h.rows.event_invites = { id: 'inv-1', status: 'pending', plus_ones: 0, party_id: null, business_id: BIZ, guest_phone: PHONE };
+    const { POST } = await import('@/app/api/rsvp/[token]/route');
+    const res: Response = await POST(post('/api/rsvp/invite-token-123', { status: 'accepted' }), { params: Promise.resolve({ token: 'invite-token-123' }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true });
+    expect(h.writes.some(w => w.table === 'event_invites' && w.op === 'update')).toBe(true);
     expect(h.reads.filter(t => BLOCK_TABLES.has(t))).toEqual([]);
-    const body = await res.json().catch(() => ({}));
-    expect(body.code).not.toBe('customer_unavailable');
-    expect(body.error).not.toBe(TEXT);
+  });
+
+  it('a blocked customer can answer an intake form: the answers are submitted and the block is never read', async () => {
+    seedBlocks({ phones: [PHONE], emails: [EMAIL] });
+    h.rows.booking_intakes = { id: 'in-1', business_id: BIZ, service_id: 'svc-1', form_id: 'f-1', booking_id: null, status: 'pending', expires_at: '2099-01-01T00:00:00Z' };
+    h.rows.forms = { title: 'Intake', description: null, fields: [], is_active: true };
+    h.rpcs.submit_booking_intake_526 = { data: null, error: null };
+    const token = 'a'.repeat(43);
+    const { POST } = await import('@/app/api/intake/[token]/route');
+    const res: Response = await POST(post(`/api/intake/${token}`, { answers: {} }), { params: Promise.resolve({ token }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'submitted' });
+    expect(h.writes.some(w => w.table === 'rpc:submit_booking_intake_526')).toBe(true);
+    expect(h.reads.filter(t => BLOCK_TABLES.has(t))).toEqual([]);
   });
 });
 

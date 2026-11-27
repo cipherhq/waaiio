@@ -81,6 +81,7 @@ export async function GET(request: NextRequest) {
               email: email ? { address: email, subject: 'Subscription Setup Expired', html: `<p>Your recurring payment setup with <strong>${business.name}</strong> has expired. Please contact them for a new link if you'd like to subscribe.</p>` } : null,
               businessName: business.name,
               smsFallback: { businessId: sub.business_id, idempotencyKey: `sub-setup-expired:${sub.id}` },
+          emailBlock: { send: 'subscription_setup_reminder', businessId: sub.business_id },
             });
           }
           failed++;
@@ -103,6 +104,7 @@ export async function GET(request: NextRequest) {
           email: email ? { address: email, subject: 'Complete Your Subscription Setup', html: `<p>Your recurring payment setup with <strong>${business.name}</strong> is still pending. Please complete your payment to activate automatic charges. Contact them for a new link if needed.</p>` } : null,
           businessName: business.name,
           smsFallback: { businessId: sub.business_id, idempotencyKey: `sub-setup-pending:${sub.id}:${new Date().toISOString().slice(0, 10)}` },
+          emailBlock: { send: 'subscription_setup_reminder', businessId: sub.business_id },
         });
         reminded++;
       } catch (err) {

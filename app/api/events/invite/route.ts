@@ -12,6 +12,7 @@ import { isSmsEligible } from '@/lib/sms/bulksms-ng';
 import { sendBusinessSms } from '@/lib/sms/send';
 import { sendColdPartyInvite, coldInviteBlocked } from '@/lib/parties/cold-invite';
 import { toInviteGuestPhone, inviteGuestPhoneVariants, adoptExistingInvite } from '@/lib/parties/invite-phone';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 50;
@@ -317,9 +318,14 @@ export async function POST(request: NextRequest) {
         // email/SMS/link fallbacks below still apply.
         results.push({ phone, status: isResend ? 'resent' : 'sent', note: 'WhatsApp invite with Yes / Maybe / No buttons' });
       } else if (!isOptedIn) {
-        // Not opted in — try email fallback, otherwise return share link
-        const guestEmail = emails?.[i]?.trim();
-        if (guestEmail && guestEmail.includes('@')) {
+        // Not opted in — try email fallback, otherwise return share link.
+        // #1166 F15/F16/F22: a blocked email, or a blocked phone's email copy, is
+        // treated as no email; the merchant gets the same SMS/share-link result.
+        const typedEmail = emails?.[i]?.trim();
+        const guestEmail = typedEmail && typedEmail.includes('@')
+          && !(await customerEmailSendBlocked(service, { send: 'event_invite_email', businessId, email: typedEmail, phone, countryCode: business?.country_code }))
+          ? typedEmail : undefined;
+        if (guestEmail) {
           // Send email invite with RSVP + WhatsApp opt-in link
           try {
             const { sendEmail } = await import('@/lib/email/client');
@@ -414,8 +420,14 @@ export async function POST(request: NextRequest) {
       const dateStr = formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG');
       const timeStr = formatInviteTime(inviteTarget.time, 'en', business?.country_code || 'NG');
 
-      for (const email of emails.slice(0, 50)) {
+      for (const [idx, email] of emails.slice(0, 50).entries()) {
         if (!email || !email.includes('@')) continue;
+        // #1166 F15/F16: no invite email to a blocked address, nor to the guest
+        // whose phone (same position in the list) is blocked.
+        if (await customerEmailSendBlocked(service, {
+          send: 'event_invite_listed_email', businessId, email,
+          phone: phones[idx] ? toInviteGuestPhone(phones[idx], business?.country_code) : null, countryCode: business?.country_code,
+        })) continue;
 
         // Find the invite for the first phone (link email to same invite)
         const firstPhone = phones[0] ? toInviteGuestPhone(phones[0], business?.country_code) : '';

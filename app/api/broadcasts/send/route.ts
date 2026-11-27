@@ -15,6 +15,7 @@ import { ensurePlus } from '@/lib/utils/phone';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { resolveTemplateCategory } from '@/lib/bot/automation/sealed-rule-actions';
 import { businessNotificationEmail } from '@/lib/email/templates';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 import { estimateSmsCampaign, sendSmsCampaign } from '@/lib/sms/campaign';
 export const maxDuration = 60;
 
@@ -261,7 +262,10 @@ export async function POST(request: NextRequest) {
         if (!sent) {
           const customerEmail = await findCustomerEmail(service, phone, business_id);
           let emailOpt: { address: string; subject: string; html: string } | null = null;
-          if (customerEmail && await hasEmailMarketingPermission(service, business_id, customerEmail, phone, true)) {
+          // #1166 F15/F16/F22: a blocked email (or a blocked phone's email copy) is
+          // left out exactly like an email without marketing permission.
+          if (customerEmail && await hasEmailMarketingPermission(service, business_id, customerEmail, phone, true)
+            && !(await customerEmailSendBlocked(service, { send: 'broadcast_email_copy', businessId: business_id, email: customerEmail, phone, countryCode: business.country_code }))) {
             const tmpl = businessNotificationEmail({
               businessName: business.name,
               title: 'Broadcast Message',

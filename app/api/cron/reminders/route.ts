@@ -11,6 +11,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { logger } from '@/lib/logger';
 import { blocksReminder } from '@/lib/customer-suspension';
+import { customerEmailSendBlocked } from '@/lib/customer-block';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -140,6 +141,7 @@ export async function GET(request: NextRequest) {
             businessName,
             alwaysEmail: true,
             smsFallback: { businessId: booking.business_id, idempotencyKey: `booking-reminder:${booking.id}:${hoursAhead}h` },
+            emailBlock: { send: 'booking_reminder', businessId: booking.business_id },
           });
           if (result.whatsapp === 'sent') whatsappSent++;
           if (result.email === 'sent') remindersSent++;
@@ -154,6 +156,8 @@ export async function GET(request: NextRequest) {
         }
       } else if (email) {
         // No phone — email only
+        // #1166 F15: a blocked email gets no reminder.
+        if (await customerEmailSendBlocked(supabase, { send: 'booking_reminder', businessId: booking.business_id, email })) continue;
         const rl = await resolveReminderLabels(supabase, booking.guest_phone, booking.business_id, [businessName, serviceName]);
         const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '', undefined, undefined, rl.labels, rl.wrapperLabels);
         await sendEmail({ to: email, subject, html }).catch(err => logger.error('[REMINDERS] Email error:', err));
@@ -203,6 +207,7 @@ export async function GET(request: NextRequest) {
           businessName: bizName,
           alwaysEmail: true,
           smsFallback: { businessId: res.business_id, idempotencyKey: `reservation-reminder:${res.id}:${res.check_in}` },
+          emailBlock: { send: 'reservation_reminder', businessId: res.business_id },
         });
         if (result.whatsapp === 'sent') whatsappSent++;
         if (result.email === 'sent') remindersSent++;
@@ -210,6 +215,8 @@ export async function GET(request: NextRequest) {
     } else if (email) {
       // No phone — email only
       // No phone for language resolution — fail closed to English
+      // #1166 F15: a blocked email gets no reminder.
+      if (await customerEmailSendBlocked(supabase, { send: 'reservation_reminder', businessId: res.business_id, email })) continue;
       const { subject, html } = bookingReminderEmail(bizName, guestName, 'your stay', res.check_in, '', res.reference_code || '');
       await sendEmail({ to: email, subject, html }).catch(() => {});
       remindersSent++;
@@ -265,6 +272,7 @@ export async function GET(request: NextRequest) {
           businessName: bizName,
           alwaysEmail: true,
           smsFallback: { businessId: event.business_id, idempotencyKey: `event-reminder:${ticket.id}` },
+          emailBlock: { send: 'event_reminder', businessId: event.business_id, countryCode: eventCc },
         });
         if (result.whatsapp === 'sent') whatsappSent++;
         if (result.email === 'sent') remindersSent++;
@@ -303,7 +311,8 @@ export async function GET(request: NextRequest) {
     .eq('status', 'overdue');
 
   for (const inv of overdueInvoices || []) {
-    if (inv.customer_email) {
+    // #1166 F15: a blocked email gets no overdue reminder (the invoice itself stays payable, Q4 A).
+    if (inv.customer_email && !(await customerEmailSendBlocked(supabase, { send: 'invoice_overdue_reminder', businessId: inv.business_id, email: inv.customer_email }))) {
       const bizName = (inv as any).businesses?.name || 'Business';
       await sendEmail({
         to: inv.customer_email,

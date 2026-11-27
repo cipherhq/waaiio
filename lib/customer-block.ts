@@ -162,11 +162,13 @@ export async function webCheckoutBlocked(
  */
 export async function customerEmailSendBlocked(
   db: SupabaseClient,
-  input: { send: string; businessId?: string | null; email?: unknown; phone?: unknown },
+  input: { send: string; businessId?: string | null; email?: unknown; phone?: unknown; countryCode?: string | null },
 ): Promise<boolean> {
   const keys: BlockKeys = {
-    // Stored phones are messaged as-is, so use the bot's digits-only key.
-    phoneKey: typeof input.phone === 'string' ? lookupKey(input.phone) : null,
+    // With the business country, a stored local number ('080…') is read the
+    // way the website check reads it; without it, the bot's digits-only key.
+    phoneKey: typeof input.phone !== 'string' ? null
+      : input.countryCode ? customerPhoneBlockKey(input.phone, input.countryCode) : lookupKey(input.phone),
     emailKey: normalizeBlockEmail(input.email),
   };
   if (!keys.phoneKey && !keys.emailKey) return false;
