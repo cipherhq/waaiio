@@ -4881,6 +4881,11 @@ jobs:
   security-acl-tests:
     name: P0 security ACL tests (disposable PG)
     runs-on: ubuntu-latest
+    # TEMPORARY (flake proof, removed before final head): 5 repeats
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5]
     services:
       postgres:
         image: postgres:15-alpine
