@@ -187,6 +187,8 @@ To re-bootstrap the lock later (a reviewed gate change), dispatch prepare with `
 
 **Second case (2026-11-26):** after M555–M557 on staging, `table:public.menu_photo_reads` (M556) differed on staging only, for the same reason as M547. With that one added correction, staging read 7231 objects, `4b83d3ac…` (`lock.observed.measured_corrections_2026_11_26`). Production equalled the lock + deltas through M554 exactly (7184, `370dce71…`), and has no correction for M555–M557.
 
+**Third case (2026-11-27):** after M558–M559 in both environments, `table:public.growth_pricing` and `table:public.keyword_campaign_responses` (M558) differed in both, for the same reason as M549, and `table:public.customer_email_blocks` (M559) differed on staging only, for the same reason as M547. With those corrections production read 7231 objects, `32486490…`, and staging 7252 objects, `171bdeb0…` (`lock.observed.measured_corrections_2026_11_27`). Every other object equalled the lock + deltas through M559.
+
 **Removal:** a later lock re-bootstrap past M549 drops the entries; a correction naming a migration that is no longer admitted fails closed.
 
 ## Migrations (authors)

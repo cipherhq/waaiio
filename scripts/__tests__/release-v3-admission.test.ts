@@ -170,10 +170,11 @@ describe('catalog admission (lock + reviewed deltas, exact equality)', () => {
     const lock = loadLock();
     const all = postBootstrapMigrations(process.cwd(), 'HEAD', lock, []);
     expect(Object.fromEntries(Object.entries(lock.measured).map(([env, list]) => [env, (list as { identity: string }[]).map(c => c.identity)]))).toEqual({
-      production: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts'],
-      staging: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts', 'table:public.customer_suspensions', 'table:public.menu_photo_reads'] });
+      production: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts', 'table:public.growth_pricing', 'table:public.keyword_campaign_responses'],
+      staging: ['table:public.admin_role_permissions', 'table:public.business_bank_accounts', 'table:public.customer_suspensions', 'table:public.menu_photo_reads',
+        'table:public.growth_pricing', 'table:public.keyword_campaign_responses', 'table:public.customer_email_blocks'] });
     // Each observation was read after the migrations up to `through`; only the corrections those migrations admit apply.
-    for (const key of ['measured_corrections_2026_11_19', 'measured_corrections_2026_11_26']) {
+    for (const key of ['measured_corrections_2026_11_19', 'measured_corrections_2026_11_26', 'measured_corrections_2026_11_27']) {
       for (const env of ['production', 'staging']) {
         const observed = lock.observed[key][env];
         const migrations = all.filter((m: { name: string }) => m.name <= observed.through);
