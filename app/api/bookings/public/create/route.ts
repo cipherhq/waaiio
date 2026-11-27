@@ -312,15 +312,23 @@ export async function POST(request: NextRequest) {
     const phoneClean = guestPhone ? `+${guestPhone.replace(/[^0-9]/g, '')}` : null;
 
     const { data: byEmail } = await supabase.from('profiles').select('id').eq('email', emailLower).limit(1).maybeSingle();
+    // The phone is typed by the guest and is not verified, so a phone match is only
+    // reused when that profile already has the verified email (e.g. stored with
+    // different letter case). Otherwise the guest is treated as new under the
+    // verified email, and the existing profile is left untouched (Owner decision
+    // 2026-11-27, same rule as the event ticket purchase route).
     const { data: byPhone } = !byEmail && phoneClean
-      ? await supabase.from('profiles').select('id').eq('phone', phoneClean).limit(1).maybeSingle()
+      ? await supabase.from('profiles').select('id, email').eq('phone', phoneClean).limit(1).maybeSingle()
       : { data: null };
+    const byPhoneSameEmail =
+      byPhone && typeof byPhone.email === 'string' && byPhone.email.toLowerCase().trim() === emailLower
+        ? byPhone
+        : null;
 
     if (byEmail) {
       userId = byEmail.id;
-    } else if (byPhone) {
-      userId = byPhone.id;
-      await supabase.from('profiles').update({ email: emailLower }).eq('id', byPhone.id);
+    } else if (byPhoneSameEmail) {
+      userId = byPhoneSameEmail.id;
     } else {
       const nameParts = guestName.trim().split(/\s+/);
       const firstName = nameParts[0] || guestName;
