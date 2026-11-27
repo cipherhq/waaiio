@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual } from 'crypto';
 import { provisionTemplates } from '@/lib/channels/provision-templates';
-import { verifyCronAuth } from '@/lib/cron-auth';
+import { verifyCronAuth, hasBearerSecret } from '@/lib/cron-auth';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
@@ -12,12 +11,8 @@ export const dynamic = 'force-dynamic';
  * Protected by cron auth OR admin session.
  */
 export async function GET(request: NextRequest) {
-  // Auth: cron secret OR admin session OR internal token query param
-  const internalToken = request.nextUrl.searchParams.get('token');
-  const validInternalToken = process.env.INTERNAL_API_TOKEN;
-  const hasInternalAuth = internalToken && validInternalToken
-    && internalToken.length === validInternalToken.length
-    && timingSafeEqual(Buffer.from(internalToken), Buffer.from(validInternalToken));
+  // Auth: internal token (Authorization header only) OR cron secret OR admin session
+  const hasInternalAuth = hasBearerSecret(request, process.env.INTERNAL_API_TOKEN);
 
   if (!hasInternalAuth) {
     const cronAuth = verifyCronAuth(request);

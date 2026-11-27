@@ -18,11 +18,21 @@ export function verifyCronAuth(request: NextRequest): NextResponse | null {
     return null; // Allow in local development only
   }
 
-  const authHeader = request.headers.get('authorization') || '';
-  const expected = `Bearer ${secret}`;
-  if (authHeader.length === expected.length && timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
+  if (hasBearerSecret(request, secret)) {
     return null; // Authorized
   }
 
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+
+/**
+ * True when the request carries `Authorization: Bearer <secret>`, compared in
+ * constant time. Always false when `secret` is unset or empty (fail-closed).
+ * The token is read from the header only, never from the query string.
+ */
+export function hasBearerSecret(request: NextRequest, secret: string | undefined): boolean {
+  if (!secret) return false;
+  const actual = Buffer.from(request.headers.get('authorization') || '');
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

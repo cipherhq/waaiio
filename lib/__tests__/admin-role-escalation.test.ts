@@ -276,10 +276,10 @@ describe('Template-check GET handler', () => {
 
   // ── Authorized paths ──
 
-  it('1. valid internal token → 200, requirePlatformAdmin not called, Meta called', async () => {
+  it('1. valid internal token (Authorization header) → 200, requirePlatformAdmin not called, Meta called', async () => {
     setup(null);
     const { GET } = await import('@/app/api/whatsapp/templates/check/route');
-    const res = await GET(makeReq({ token: 'test-internal-token' }));
+    const res = await GET(makeReq({}, { Authorization: 'Bearer test-internal-token' }));
     expect(res.status).toBe(200);
     expect(requirePlatformAdminCalls).toBe(0);
     expect(metaConstructorCalls).toBe(1);
