@@ -162,6 +162,8 @@ describe('sendOrEmail (F15, F16, F17)', () => {
     expect(h.sms).toHaveBeenCalledTimes(1);
     expect(h.smsSent).toEqual([]);
     expect(r.sms).toBe('skipped');
+    // Refused by the SMS sender's own suspension check, not by anything else.
+    expect(await h.sms.mock.results[0].value).toEqual({ status: 'skipped', reason: 'suspended' });
   });
 });
 
