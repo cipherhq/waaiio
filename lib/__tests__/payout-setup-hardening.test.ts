@@ -380,6 +380,10 @@ describe('Payout resolve: no mock when key missing', () => {
             data: { user: { id: 'user-1', email: 'user@test.com' } },
           }),
         },
+        // Owner of biz-1 (the resolve route checks business ownership)
+        from: vi.fn().mockImplementation(() => mockSupabaseChain({
+          single: vi.fn().mockResolvedValue({ data: { id: 'biz-1' }, error: null }),
+        })),
       }),
     }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
@@ -390,7 +394,7 @@ describe('Payout resolve: no mock when key missing', () => {
     delete process.env.PAYSTACK_SECRET_KEY;
     const mod = await loadResolveRoute();
     const res = await mod.POST(makePostRequest('/api/payouts/resolve', {
-      gateway: 'paystack', bank_code: '058', account_number: '0123456789',
+      business_id: 'biz-1', gateway: 'paystack', bank_code: '058', account_number: '0123456789',
     }));
     expect(res.status).toBe(503);
     expect((await res.json()).error).toContain('not configured');
@@ -664,6 +668,7 @@ describe('W05: Flutterwave unavailable for new payout setup', () => {
       p_business_id: 'biz-1', p_gateway: 'paystack', p_account_name: 'Fixture Merchant', p_verified_at: expect.any(String),
     }));
     expect(effects.notice).toHaveBeenCalledTimes(1);
-    expect(effects.writes).not.toHaveBeenCalled();
+    // The only service-client table access is the resolve lookup's audit_log entry
+    expect(effects.writes.mock.calls).toEqual([['audit_log']]);
   });
 });

@@ -667,7 +667,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
           const res = await fetch('/api/payouts/resolve', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ gateway: 'paystack', bank_code: paystackBankCode, account_number: cleaned }),
+            body: JSON.stringify({ business_id: business.id, gateway: 'paystack', bank_code: paystackBankCode, account_number: cleaned }),
           });
           const data = await res.json();
           if (res.ok && data.account_name) {
