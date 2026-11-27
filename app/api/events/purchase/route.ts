@@ -140,17 +140,23 @@ export async function POST(request: NextRequest) {
     .limit(1)
     .maybeSingle();
 
-  // If not found by email, try phone
+  // If not found by email, try phone. The phone is typed by the buyer and is
+  // not verified, so a phone match is only reused when that profile already
+  // has the verified email (e.g. stored with different letter case). Otherwise
+  // the buyer is treated as a new guest under the verified email, and the
+  // existing profile is left untouched (Owner decision 2026-11-27).
   const { data: byPhone } = !byEmail && phoneClean
-    ? await supabase.from('profiles').select('id').eq('phone', phoneClean).limit(1).maybeSingle()
+    ? await supabase.from('profiles').select('id, email').eq('phone', phoneClean).limit(1).maybeSingle()
     : { data: null };
+  const byPhoneSameEmail =
+    byPhone && typeof byPhone.email === 'string' && byPhone.email.toLowerCase().trim() === emailLower
+      ? byPhone
+      : null;
 
   if (byEmail) {
     userId = byEmail.id;
-  } else if (byPhone) {
-    userId = byPhone.id;
-    // Update their email since we verified it
-    await supabase.from('profiles').update({ email: emailLower }).eq('id', byPhone.id);
+  } else if (byPhoneSameEmail) {
+    userId = byPhoneSameEmail.id;
   } else {
     // Create new auth user
     const nameParts = guestName.trim().split(/\s+/);
