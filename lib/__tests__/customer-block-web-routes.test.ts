@@ -56,9 +56,11 @@ function builder(table: string) {
     return { data: Array.isArray(value) ? value : value ? [value] : [], error: null, count: 0 };
   };
   const q: any = {};
-  for (const m of ['select', 'eq', 'neq', 'in', 'is', 'not', 'or', 'order', 'limit', 'range', 'gte', 'lte', 'gt', 'lt', 'ilike', 'match', 'filter']) {
+  for (const m of ['select', 'eq', 'neq', 'in', 'not', 'or', 'order', 'limit', 'range', 'gte', 'lte', 'gt', 'lt', 'ilike', 'match', 'filter']) {
     q[m] = () => q;
   }
+  // Filters on a write are recorded, so a test can assert them.
+  q.is = (col: string, value: unknown) => { if (write) (h.writes[h.writes.length - 1] as any).is = [col, value]; return q; };
   for (const op of ['insert', 'update', 'upsert', 'delete']) {
     q[op] = (values?: unknown) => { write = { op, values }; h.writes.push({ table, op, values }); return q; };
   }
@@ -350,6 +352,27 @@ describe.each(ROUTES)('$name', route => {
   });
 });
 
+describe('phones sent as JSON numbers and local formats are still checked', () => {
+  it('POST /api/checkin with a numeric phone', async () => {
+    seedBlocks({ phones: [PHONE] });
+    const { POST } = await import('@/app/api/checkin/route');
+    await expectRefused(await POST(post('/api/checkin', { business_id: BIZ, customer_name: 'Ann', customer_phone: Number(PHONE) })));
+  });
+  it('POST /api/invite-optin with a numeric phone', async () => {
+    seedBlocks({ phones: [PHONE] });
+    const { POST } = await import('@/app/api/invite-optin/route');
+    await expectRefused(await POST(post('/api/invite-optin', { eventId: 'evt-1', name: 'Ann', phone: Number(PHONE) })));
+  });
+  it('POST /api/bookings/public/intake with a local-format phone', async () => {
+    seedBlocks({ phones: [PHONE] });
+    const { POST } = await import('@/app/api/bookings/public/intake/route');
+    await expectRefused(await POST(post('/api/bookings/public/intake', {
+      businessSlug: 'biz', serviceId: '44444444-4444-4444-8444-444444444444', guestEmail: 'clear@example.com',
+      guestPhone: '08012345678', otpToken: 'as:clear@example.com',
+    })));
+  });
+});
+
 describe('POST /api/bookings/public/create: phone forms, no hint, S1(b)', () => {
   const create = async (body: unknown) => (await import('@/app/api/bookings/public/create/route')).POST(post('/api/bookings/public/create', body));
 
@@ -361,9 +384,10 @@ describe('POST /api/bookings/public/create: phone forms, no hint, S1(b)', () => 
 
   it('the refusal is the same whether the phone or the email matched', async () => {
     seedBlocks({ phones: [PHONE], emails: [EMAIL] });
-    const byPhone = await (await create(bookingBody({ phone: PHONE }))).json();
-    const byEmail = await (await create(bookingBody({ email: EMAIL }))).json();
-    expect(byPhone).toEqual(byEmail);
+    const phoneRes = await create(bookingBody({ phone: PHONE }));
+    const emailRes = await create(bookingBody({ email: EMAIL }));
+    expect([phoneRes.status, emailRes.status]).toEqual([403, 403]);
+    expect(await phoneRes.json()).toEqual(await emailRes.json());
   });
 
   it('a block that lands between page load and submit refuses the submit', async () => {
@@ -376,8 +400,10 @@ describe('POST /api/bookings/public/create: phone forms, no hint, S1(b)', () => 
   it('marks the booking as proved with a code (service role update, first proof kept)', async () => {
     const res = await create(bookingBody({}));
     expect(res.status).toBe(200);
-    const mark = h.writes.find(w => w.table === 'bookings' && w.op === 'update');
+    const mark = h.writes.find(w => w.table === 'bookings' && w.op === 'update') as any;
     expect(mark?.values).toEqual({ email_verified_at: expect.any(String) });
+    // Only when not yet marked: the first proof is kept.
+    expect(mark?.is).toEqual(['email_verified_at', null]);
   });
 
   it('a failed mark write is logged without the address and the booking still succeeds', async () => {
@@ -449,6 +475,17 @@ describe('POST /api/whatsapp/flow-callback, booking completion (F11)', () => {
     expect(h.sendText).toHaveBeenCalledWith(expect.objectContaining({
       to: PHONE, text: "This service isn't available for this number. If you think this is a mistake, contact support@waaiio.com",
     }));
+  });
+
+  it('a blocked number gets no booking even when the channel cannot be resolved', async () => {
+    seedBlocks({ phones: [PHONE] });
+    const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+    const spy = vi.spyOn(ChannelResolver.prototype, 'resolveByBusinessId').mockRejectedValueOnce(new Error('no channel'));
+    const res = await complete(PHONE);
+    expect(await res.json()).toEqual({ status: 'ok' });
+    expect(h.writes.filter(w => !BLOCK_TABLES.has(w.table))).toEqual([]);
+    expect(h.sendText).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('a failed block read lets the booking through and is reported', async () => {

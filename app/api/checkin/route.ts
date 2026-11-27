@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 
     // #1166 Q7 C: a blocked phone or email cannot check in.
     if (await webCheckoutBlocked(supabase, {
-      route: 'checkin', businessId: business.id, phone: customer_phone, email: trimmedEmail, countryCode: business.country_code,
+      route: 'checkin', businessId: business.id, phone: customer_phone == null ? null : String(customer_phone), email: trimmedEmail, countryCode: business.country_code,
     })) {
       return customerBlockedResponse();
     }

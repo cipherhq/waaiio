@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     // #1166: a blocked phone or email is refused before an intake is opened.
     if (await webCheckoutBlocked(db, {
-      route: 'bookings/public/intake', businessId: business.id, phone, email: verified, countryCode: business.country_code,
+      route: 'bookings/public/intake', businessId: business.id, phone: body?.guestPhone, email: verified, countryCode: business.country_code,
     })) {
       return customerBlockedResponse(NO_STORE);
     }

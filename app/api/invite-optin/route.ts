@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 
     // #1166 Q7 C: a blocked phone or email cannot ask to be invited.
     if (await webCheckoutBlocked(supabase, {
-      route: 'invite-optin', businessId: target.business_id, phone, email: guestEmail, countryCode: await businessCountryForBlock(supabase, target.business_id),
+      route: 'invite-optin', businessId: target.business_id, phone: phone == null ? null : String(phone), email: guestEmail, countryCode: await businessCountryForBlock(supabase, target.business_id),
     })) {
       return customerBlockedResponse();
     }
