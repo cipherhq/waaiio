@@ -58,7 +58,7 @@ export function canonicalCustomerPhone(raw: unknown, countryCode?: string | null
  * only. Deliberately not the strict parser, so an out-of-date number plan can
  * never let a suspended sender through.
  */
-function lookupKey(phone: string): string | null {
+export function lookupKey(phone: string): string | null {
   const digits = typeof phone === 'string' ? phone.replace(/\D/g, '') : '';
   return CANONICAL.test(digits) ? digits : null;
 }
