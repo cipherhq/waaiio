@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { webCheckoutBlocked } from '@/lib/customer-block';
+import { gateSuspendedCustomer } from '@/lib/customer-suspension';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
 
 const META_APP_SECRET = process.env.META_APP_SECRET || '';
 
@@ -174,6 +177,18 @@ async function handleFlowComplete(flowToken: string, data: Record<string, unknow
   }
 
   if (flowType === 'booking') {
+    // #1166: a blocked number gets no booking from a Flow form either. The reply
+    // is the WhatsApp neutral text, once per 24 hours, from the business's channel.
+    if (await webCheckoutBlocked(supabase, { route: 'whatsapp/flow-callback', businessId, phone: customerPhone })) {
+      try {
+        const resolved = await new ChannelResolver(supabase).resolveByBusinessId(businessId);
+        if (resolved) await gateSuspendedCustomer(supabase, customerPhone, resolved.sender);
+      } catch {
+        logger.warn('[FLOW-CALLBACK] Neutral reply not sent');
+      }
+      return NextResponse.json({ status: 'ok' });
+    }
+
     const serviceId = data.service_id as string;
     const date = data.date as string;
     const time = data.time as string;

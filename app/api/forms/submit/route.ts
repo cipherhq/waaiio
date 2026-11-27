@@ -6,6 +6,7 @@ import { normalizeEngagePhone } from '@/lib/engage/phone-normalize';
 import { verifyTurnstileToken } from '@/lib/security/turnstile';
 import { OPTIN_POLICY_VERSION, OPTIN_REQUEST_TTL_MS, SENT_REQUEST_RE, newOptInNonce, pendingEvidence, sendOptInConfirmationRequest } from '@/lib/consent/optin-confirmation';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { webCheckoutBlocked, customerBlockedResponse, businessCountryForBlock } from '@/lib/customer-block';
 
 /**
  * A pending request that can still be confirmed: it carries a nonce hash, was
@@ -112,6 +113,15 @@ export async function POST(request: NextRequest) {
 
     if (!form.is_active) {
       return NextResponse.json({ error: 'This form is no longer accepting responses' }, { status: 410 });
+    }
+
+    // #1166 Q7 C, Q15 revised A (Owner 2026-11-27): a blocked phone or email
+    // cannot submit any form, public link or one the merchant sent.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'forms/submit', businessId: form.business_id, phone: customer_phone == null ? null : String(customer_phone), email: customer_email,
+      countryCode: await businessCountryForBlock(supabase, form.business_id),
+    })) {
+      return customerBlockedResponse();
     }
 
     // Validate required fields

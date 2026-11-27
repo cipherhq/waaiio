@@ -5,6 +5,7 @@ import { loadPublicCampaign, parseDonationInput } from '@/lib/campaigns/public-d
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { checkTierLimit } from '@/lib/tier-limits';
 import type { CountryCode } from '@/lib/constants';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const limited = await rateLimitResponseAsync(getRateLimitKey(request, 'campaign-donate'), 20, 60_000);
@@ -21,6 +22,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const { id } = await context.params;
     const campaign = await loadPublicCampaign(supabase, id);
     if (!campaign) return NextResponse.json({ error: 'This campaign is not accepting donations.' }, { status: 404 });
+    // #1166: a blocked phone or email is refused before any payment is started.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'campaigns/donate', businessId: campaign.business_id, phone: input.phone, email: input.email,
+      countryCode: campaign.business.country_code,
+    })) {
+      return customerBlockedResponse();
+    }
     const minimum = campaign.min_donation || 1;
     const maximum = Math.min(campaign.max_donation || 10_000_000, 10_000_000);
     if (input.amount < minimum || input.amount > maximum) {

@@ -7,6 +7,8 @@ import { verifyOtpToken } from '@/lib/otp-token';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { deliverAfterBookingIntake, findWebIntake, linkIntakeToBooking, toE164, webBeforeBookingForm } from '@/lib/intake/send';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
+import { markBookingEmailVerified } from '@/lib/customer-email-proof';
 
 /**
  * POST /api/bookings/public/create
@@ -113,6 +115,13 @@ export async function POST(request: NextRequest) {
 
     if (bizError || !business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    }
+
+    // #1166: a blocked phone or email is refused before anything is created or charged.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'bookings/public/create', businessId: business.id, phone: guestPhone, email: verifiedEmail, countryCode: business.country_code,
+    })) {
+      return customerBlockedResponse();
     }
 
     // Fetch bookable item — service or appointment
@@ -408,6 +417,9 @@ export async function POST(request: NextRequest) {
     if (!isSafePurchaseAmount(slotResult.committed_deposit) || !isSafePurchaseAmount(slotResult.committed_total) || slotResult.committed_total < slotResult.committed_deposit) {
       return NextResponse.json({ error: 'Committed booking terms unavailable' }, { status: 503 });
     }
+
+    // #1166 S1(b): the guest email on this booking was proved with a code.
+    await markBookingEmailVerified(supabase, slotResult.booking_id, 'bookings/public/create');
 
     if (intakeToLink) await linkIntakeToBooking(supabase, business.id, intakeToLink, slotResult.booking_id, itemId);
 

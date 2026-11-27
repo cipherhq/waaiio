@@ -200,6 +200,34 @@ describe('Block: one step-up bound to the number, reason and ticked emails (F4, 
     expect(screen.getAllByRole('checkbox').map(c => (c as HTMLInputElement).labels?.[0]?.textContent)).toEqual([expect.stringMatching(/^chi@example\.com/)]);
   });
 
+  it('opening Unsuspend while a Block lookup is still running shows no stale "Loading emails…"', async () => {
+    m.holdPhone = PHONE;
+    m.suspensions = [{ phone: PHONE, reason: 'Abusive messages', suspended_at: '2026-11-17T12:00:00Z' }];
+    render(<Customers />);
+    await openCustomer('Ada');
+    const modal = screen.getByText('Waaiio access').closest('div')!;
+    fireEvent.click(within(modal).getByRole('button', { name: 'Block an email' }));
+    await waitFor(() => expect(m.release).not.toBeNull());
+    expect(screen.getByText('Loading emails…')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(modal).getByRole('button', { name: 'Unsuspend' }));
+    await screen.findByRole('button', { name: 'Unblock number' });
+    expect(screen.queryByText('Loading emails…')).toBeNull();
+    m.release!();
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.queryByText('Loading emails…')).toBeNull();
+  });
+
+  it('a reason is counted in characters: two emoji are too short', async () => {
+    render(<Customers />);
+    await openCustomer('Ada');
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend from all bots' }));
+    fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: '\u{1F600}\u{1F600}' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Block number' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Enter a reason');
+    expect(calls('/step-up/prepare')).toHaveLength(0);
+  });
+
   it('a refused save shows the server message and keeps the dialog open', async () => {
     m.saveStatus = 409;
     render(<Customers />);

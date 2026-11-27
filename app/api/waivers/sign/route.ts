@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
+import { webCheckoutBlocked, customerBlockedResponse, businessCountryForBlock } from '@/lib/customer-block';
 
 /** Escape user-supplied strings for safe HTML interpolation */
 function esc(s: string): string {
@@ -52,6 +53,14 @@ export async function POST(request: NextRequest) {
 
     if (!template.is_active) {
       return NextResponse.json({ error: 'This waiver is no longer active' }, { status: 410 });
+    }
+
+    // #1166 Q7 C: a blocked phone or email cannot sign; nothing is uploaded or saved.
+    if (await webCheckoutBlocked(supabase, {
+      route: 'waivers/sign', businessId: template.business_id, phone: customer_phone, email: customer_email,
+      countryCode: await businessCountryForBlock(supabase, template.business_id),
+    })) {
+      return customerBlockedResponse();
     }
 
     // Upload signature to storage

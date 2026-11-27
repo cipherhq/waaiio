@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { webCheckoutBlocked, customerBlockedResponse } from '@/lib/customer-block';
 
 /** Gateways that require a valid E.164 phone to initialize payment. */
 const PHONE_REQUIRED_GATEWAYS = new Set(['paystack', 'flutterwave']);
@@ -68,6 +69,14 @@ export async function POST(request: NextRequest) {
       { error: 'Payment link not found or inactive' },
       { status: 404 },
     );
+  }
+
+  // #1166: a blocked phone or email is refused before any payment row or checkout.
+  if (await webCheckoutBlocked(supabase, {
+    route: 'pay-link/pay', businessId: link.business_id, phone: customer_phone, email: customer_email,
+    countryCode: (link.businesses as unknown as { country_code?: string | null } | null)?.country_code ?? null,
+  })) {
+    return customerBlockedResponse();
   }
 
   // Standalone links have no itemized purchase authority. Do not silently take
