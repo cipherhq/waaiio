@@ -78,6 +78,23 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  // Owner 2026-11-27: people who sign in with a WhatsApp code can confirm with a code instead.
+  const [confirmedPhone, setConfirmedPhone] = useState('');
+  const [useCode, setUseCode] = useState(false);
+  const [codeChallenge, setCodeChallenge] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [sendingCode, setSendingCode] = useState(false);
+  const [codeSentNote, setCodeSentNote] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    // Optional: if the lookup fails, the page simply offers the current-password path.
+    Promise.resolve().then(() => createClient().auth.getUser()).then(({ data }) => {
+      const digits = (data?.user?.phone || '').replace(/\D/g, '');
+      if (active && digits && data?.user?.phone_confirmed_at) setConfirmedPhone(`+${digits}`);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   // Change Email state
   const [newEmail, setNewEmail] = useState('');
@@ -662,20 +679,84 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-bold text-gray-900">Change Password</h2>
             <p className="mt-2 text-sm text-gray-600">
-              Update your account password. You&apos;ll need to enter your current password for verification.
+              {confirmedPhone
+                ? <>Update your account password. To confirm it&apos;s you, enter your current password or use a WhatsApp code.</>
+                : <>Update your account password. You&apos;ll need to enter your current password for verification.</>}
             </p>
 
             <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Current Password</label>
-                <input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
-                  placeholder="Enter current password"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
-                />
-              </div>
+              {!useCode ? (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Current Password</label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+                    placeholder="Enter current password"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                  />
+                  {confirmedPhone && (
+                    <button
+                      type="button"
+                      onClick={() => { setUseCode(true); setPasswordError(''); setPasswordSuccess(''); }}
+                      className="mt-1 text-xs font-medium text-brand hover:underline"
+                    >
+                      Use a WhatsApp code instead
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">WhatsApp code</label>
+                  <div className="flex gap-2">
+                    <input
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={otpCode}
+                      onChange={(e) => { setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setPasswordError(''); setPasswordSuccess(''); }}
+                      placeholder="Enter the 6-digit code"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                    />
+                    <button
+                      type="button"
+                      disabled={sendingCode}
+                      onClick={async () => {
+                        setPasswordError(''); setCodeSentNote('');
+                        setSendingCode(true);
+                        try {
+                          const res = await fetch('/api/auth/otp/send', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ phone: confirmedPhone }),
+                          });
+                          const result = await res.json().catch(() => ({}));
+                          if (!res.ok || !result.pin_id) {
+                            setPasswordError(result.message || result.error || "We couldn't send a code. Please try again.");
+                          } else {
+                            setCodeChallenge(result.pin_id);
+                            setCodeSentNote(`Code sent to WhatsApp •••• ${confirmedPhone.slice(-4)}.`);
+                          }
+                        } catch {
+                          setPasswordError("We couldn't send a code. Please try again.");
+                        } finally {
+                          setSendingCode(false);
+                        }
+                      }}
+                      className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {sendingCode ? 'Sending...' : codeChallenge ? 'Send again' : 'Send code'}
+                    </button>
+                  </div>
+                  {codeSentNote && <p className="mt-1 text-xs text-gray-500">{codeSentNote}</p>}
+                  <button
+                    type="button"
+                    onClick={() => { setUseCode(false); setOtpCode(''); setPasswordError(''); }}
+                    className="mt-1 text-xs font-medium text-brand hover:underline"
+                  >
+                    Use my current password instead
+                  </button>
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">New Password</label>
                 <input
@@ -709,7 +790,10 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
               onClick={async () => {
                 setPasswordError('');
                 setPasswordSuccess('');
-                if (!currentPassword) { setPasswordError('Please enter your current password.'); return; }
+                if (useCode) {
+                  if (!codeChallenge) { setPasswordError('Tap "Send code" first.'); return; }
+                  if (otpCode.length !== 6) { setPasswordError('Enter the 6-digit code from WhatsApp.'); return; }
+                } else if (!currentPassword) { setPasswordError('Please enter your current password.'); return; }
                 if (newPassword.length < 6) { setPasswordError('New password must be at least 6 characters.'); return; }
                 if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match.'); return; }
                 setPasswordSaving(true);
@@ -718,7 +802,9 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                   const res = await fetch('/api/account/password', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ currentPassword, newPassword }),
+                    body: JSON.stringify(useCode
+                      ? { otpCode, challengeId: codeChallenge, newPassword }
+                      : { currentPassword, newPassword }),
                   });
                   const result = await res.json().catch(() => ({}));
                   if (!res.ok) {
@@ -728,6 +814,10 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     setCurrentPassword('');
                     setNewPassword('');
                     setConfirmPassword('');
+                    setOtpCode('');
+                    setCodeChallenge('');
+                    setCodeSentNote('');
+                    setUseCode(false);
                     // Audit log
                     fetch('/api/account/audit', {
                       method: 'POST',
@@ -741,7 +831,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                   setPasswordSaving(false);
                 }
               }}
-              disabled={passwordSaving || !currentPassword || !newPassword || !confirmPassword}
+              disabled={passwordSaving || (useCode ? !otpCode : !currentPassword) || !newPassword || !confirmPassword}
               className="mt-4 rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {passwordSaving ? 'Updating...' : 'Update Password'}

@@ -6,10 +6,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-type User = { id: string; email?: string | null; phone?: string | null };
+type User = { id: string; email?: string | null; phone?: string | null; phone_confirmed_at?: string | null };
 
 let getUserResult: { data: { user: User | null }; error: { message: string } | null };
-let signInResult: { error: { message: string } | null };
+let signInResult: { error: { message: string; status?: number; code?: string } | null };
+let otpResult: { valid: boolean; reason?: string };
 let updateResult: { error: { message: string } | null };
 let limitedResponse: Response | null;
 
@@ -21,6 +22,7 @@ const throwawayClient = vi.fn((_url: string, _key: string, _opts: unknown) => ({
   auth: { signInWithPassword, signOut },
 }));
 const rateLimit = vi.fn(async (_key: string, _max: number, _win: number) => limitedResponse);
+const verifyPhoneOtp = vi.fn(async (_phone: string, _code: string, _challenge: string) => otpResult);
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ auth: { getUser, updateUser } }),
@@ -30,6 +32,9 @@ vi.mock('@supabase/supabase-js', () => ({
 }));
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: (key: string, max: number, win: number) => rateLimit(key, max, win),
+}));
+vi.mock('@/lib/otp-phone-token', () => ({
+  verifyPhoneOtp: (phone: string, code: string, challenge: string) => verifyPhoneOtp(phone, code, challenge),
 }));
 vi.mock('@/lib/logger', () => {
   const ctx = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
@@ -52,6 +57,7 @@ beforeEach(() => {
   signInResult = { error: null };
   updateResult = { error: null };
   limitedResponse = null;
+  otpResult = { valid: true };
 });
 
 describe('POST /api/account/password', () => {
@@ -67,7 +73,7 @@ describe('POST /api/account/password', () => {
   });
 
   it('wrong current password: refused with 403 and the password is NOT changed', async () => {
-    signInResult = { error: { message: 'Invalid login credentials' } };
+    signInResult = { error: { message: 'Invalid login credentials', status: 400, code: 'invalid_credentials' } };
     const res = await POST(req({ currentPassword: 'wrong', newPassword: 'new-secret' }));
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'Current password is incorrect.' });
@@ -118,7 +124,7 @@ describe('POST /api/account/password', () => {
     expect(updateUser).not.toHaveBeenCalled();
   });
 
-  it('phone-only account: confirms with the phone', async () => {
+  it('account with a phone but no email: confirms the password with the phone', async () => {
     getUserResult = { data: { user: { id: 'user-2', email: null, phone: '2348031234567' } }, error: null };
     const res = await POST(req({ currentPassword: 'old-secret', newPassword: 'new-secret' }));
     expect(res.status).toBe(200);
@@ -143,5 +149,65 @@ describe('POST /api/account/password', () => {
     const res = await POST(req({ currentPassword: 'old-secret', newPassword: 'old-secret' }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Password should be different from the old password.' });
+  });
+  it('Supabase busy or down (not a wrong password): 503 with a retry message, password NOT changed', async () => {
+    signInResult = { error: { message: 'Request rate limit reached', status: 429, code: 'over_request_rate_limit' } };
+    const res = await POST(req({ currentPassword: 'old-secret', newPassword: 'new-secret' }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/couldn't check/i);
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  describe('WhatsApp code instead of the current password', () => {
+    // A WhatsApp-code account: internal email plus a confirmed phone (as otp/verify creates it).
+    const codeUser = { id: 'user-wa', email: '2348031234567@phone.waaiio.com', phone: '2348031234567', phone_confirmed_at: '2026-11-01T00:00:00Z' };
+
+    it('valid code for the account\'s own confirmed phone: updates the password without any password check', async () => {
+      getUserResult = { data: { user: codeUser }, error: null };
+      const res = await POST(req({ otpCode: '123456', challengeId: 'chal-1', newPassword: 'new-secret' }));
+      expect(res.status).toBe(200);
+      expect(verifyPhoneOtp).toHaveBeenCalledWith('+2348031234567', '123456', 'chal-1');
+      expect(signInWithPassword).not.toHaveBeenCalled();
+      expect(updateUser).toHaveBeenCalledWith({ password: 'new-secret' });
+    });
+
+    it('a phone sent by the browser is ignored: only the account\'s confirmed phone is checked', async () => {
+      getUserResult = { data: { user: codeUser }, error: null };
+      await POST(req({ otpCode: '123456', challengeId: 'chal-1', newPassword: 'new-secret', phone: '+15550001111' }));
+      expect(verifyPhoneOtp).toHaveBeenCalledWith('+2348031234567', '123456', 'chal-1');
+    });
+
+    it('wrong or expired code: 403 and the password is NOT changed', async () => {
+      getUserResult = { data: { user: codeUser }, error: null };
+      otpResult = { valid: false, reason: 'wrong_otp' };
+      const res = await POST(req({ otpCode: '000000', challengeId: 'chal-1', newPassword: 'new-secret' }));
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: 'That code is incorrect or has expired.' });
+      expect(updateUser).not.toHaveBeenCalled();
+    });
+
+    it('account without a confirmed phone cannot use a code: 400, nothing checked or changed', async () => {
+      getUserResult = { data: { user: { id: 'user-1', email: 'owner@example.com', phone: '2348031234567', phone_confirmed_at: null } }, error: null };
+      const res = await POST(req({ otpCode: '123456', challengeId: 'chal-1', newPassword: 'new-secret' }));
+      expect(res.status).toBe(400);
+      expect(verifyPhoneOtp).not.toHaveBeenCalled();
+      expect(updateUser).not.toHaveBeenCalled();
+    });
+
+    it('code without a challenge: 400, nothing checked or changed', async () => {
+      getUserResult = { data: { user: codeUser }, error: null };
+      const res = await POST(req({ otpCode: '123456', newPassword: 'new-secret' }));
+      expect(res.status).toBe(400);
+      expect(verifyPhoneOtp).not.toHaveBeenCalled();
+      expect(updateUser).not.toHaveBeenCalled();
+    });
+
+    it('the per-user limit also covers code attempts', async () => {
+      getUserResult = { data: { user: codeUser }, error: null };
+      limitedResponse = new Response('{}', { status: 429 });
+      const res = await POST(req({ otpCode: '123456', challengeId: 'chal-1', newPassword: 'new-secret' }));
+      expect(res.status).toBe(429);
+      expect(verifyPhoneOtp).not.toHaveBeenCalled();
+    });
   });
 });
