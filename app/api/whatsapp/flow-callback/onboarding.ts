@@ -9,6 +9,7 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { allocateSharedChannelForNewBusiness, SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
 import { newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
+import { authUserExists } from '@/lib/onboarding/auth-user';
 
 const WEBSITE_SIGNUP_URL = 'https://www.waaiio.com/get-started';
 
@@ -100,12 +101,16 @@ export async function handleOnboardingComplete(
     if (passwordProblem) {
       // #1175 F6: a new account needs the new-password rule. The current Flow
       // checks this on its owner-details screen; an older published Flow does
-      // not, so check again here. An existing account keeps today's path,
-      // which does not use the password.
-      const existingId = await findExistingAccountId(supabase, email);
-      if (!existingId) {
+      // not, so check again here. When an auth account with this email already
+      // exists, keep today's "already registered" path exactly; the auth
+      // record, not the profile row, decides that.
+      if (!(await authUserExists(supabase, email))) {
         await sendPasswordRefusedNotice(supabase, country, customerPhone, passwordProblem);
         return { success: false, error: 'Password does not meet the rule' };
+      }
+      const existingId = await findExistingAccountId(supabase, email);
+      if (!existingId) {
+        return { success: false, error: 'Email already registered. Please log in at waaiio.com' };
       }
       userId = existingId;
     } else {
@@ -119,15 +124,13 @@ export async function handleOnboardingComplete(
       const weakPassword = authErr ? weakPasswordMessage(authErr) : null;
       if (weakPassword) {
         // #1175 Q13 A: Supabase refused the password (for example, known from
-        // breach lists). An existing account keeps today's path; otherwise
-        // tell the merchant in WhatsApp, with the website link.
-        const existingId = await findExistingAccountId(supabase, email);
-        if (!existingId) {
-          await sendPasswordRefusedNotice(supabase, country, customerPhone, weakPassword);
-          return { success: false, error: 'Password refused' };
-        }
-        userId = existingId;
-      } else if (authErr) {
+        // breach lists). Supabase reports an existing email before it checks
+        // the password, so this is a new account: tell the merchant in
+        // WhatsApp, with the website link. Nothing is attached or created.
+        await sendPasswordRefusedNotice(supabase, country, customerPhone, weakPassword);
+        return { success: false, error: 'Password refused' };
+      }
+      if (authErr) {
         // If user exists, try to find them
         if (authErr.message?.includes('already been registered') || authErr.message?.includes('already exists')) {
           const { data: existing } = await supabase

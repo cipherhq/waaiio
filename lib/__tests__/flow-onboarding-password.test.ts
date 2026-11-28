@@ -5,7 +5,9 @@
  * - At the end, a new account with a refused password gets a WhatsApp message
  *   (W3 for an older published Flow without the screen check, W4 for a
  *   breach-list refusal) with the website link, and no account is created.
- * - An existing account keeps today's path.
+ * - An existing auth account keeps today's path; the auth record, not the
+ *   profile row, decides whether one exists. A breach-list refusal never
+ *   attaches to anything.
  * Real handlers; Supabase and the channel sender are mocked.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,6 +22,8 @@ const LINK = 'https://www.waaiio.com/get-started';
 const m = vi.hoisted(() => ({
   createUser: vi.fn(),
   existingProfile: null as { id: string } | null,
+  authEmails: [] as string[],
+  listUsers: vi.fn(),
   sendText: vi.fn(async () => ({})),
   bizCountQueried: vi.fn(),
 }));
@@ -35,7 +39,7 @@ vi.mock('@/lib/channels/channel-resolver', () => ({
 vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), info: vi.fn() } }));
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
-    auth: { admin: { createUser: m.createUser } },
+    auth: { admin: { createUser: m.createUser, listUsers: m.listUsers } },
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       chain.select = () => chain;
@@ -58,6 +62,8 @@ async function complete(password: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   m.existingProfile = null;
+  m.authEmails = [];
+  m.listUsers.mockImplementation(async () => ({ data: { users: m.authEmails.map((email, i) => ({ id: `auth-${i}`, email })) }, error: null }));
   m.createUser.mockResolvedValue({ data: { user: { id: 'new-user' } }, error: null });
 });
 
@@ -123,7 +129,8 @@ describe('Flow completion', () => {
     expect(res.error).toMatch(/Maximum number of businesses/); // stopped by the mocked limit after the account step
   });
 
-  it('existing account with a short password keeps today’s path (no new account, no notice)', async () => {
+  it('existing auth account with a short password keeps today’s path (no new account, no notice)', async () => {
+    m.authEmails = ['ada@example.com'];
     m.existingProfile = { id: 'existing-user' };
     await complete('six666');
     expect(m.createUser).not.toHaveBeenCalled();
@@ -131,12 +138,38 @@ describe('Flow completion', () => {
     expect(m.bizCountQueried).toHaveBeenCalledWith('businesses');
   });
 
-  it('existing account with a refused password keeps today’s path', async () => {
-    m.existingProfile = { id: 'existing-user' };
-    m.createUser.mockResolvedValue({ data: { user: null }, error: new AuthWeakPasswordError('weak', 422, ['pwned']) });
-    await complete('password1');
+  it('short password, a profile row with this email but no auth account: nothing is attached; W3 notice', async () => {
+    m.existingProfile = { id: 'someone-else' };
+    const res = await complete('six666');
+    expect(res).toEqual({ success: false, error: 'Password does not meet the rule' });
+    expect(m.bizCountQueried).not.toHaveBeenCalled();
+    expect(m.createUser).not.toHaveBeenCalled();
+    expect(m.sendText).toHaveBeenCalledWith({ to: '2348011112222', text: `${W3}\n\n${LINK}` });
+  });
+
+  it('short password, auth account exists but no profile row: refused as already registered, as before', async () => {
+    m.authEmails = ['ada@example.com'];
+    const res = await complete('six666');
+    expect(res).toEqual({ success: false, error: 'Email already registered. Please log in at waaiio.com' });
+    expect(m.bizCountQueried).not.toHaveBeenCalled();
     expect(m.sendText).not.toHaveBeenCalled();
-    expect(m.bizCountQueried).toHaveBeenCalledWith('businesses');
+  });
+
+  it('breach-list refusal never attaches, even when a profile row has this email', async () => {
+    m.existingProfile = { id: 'someone-else' };
+    m.createUser.mockResolvedValue({ data: { user: null }, error: new AuthWeakPasswordError('weak', 422, ['pwned']) });
+    const res = await complete('password1');
+    expect(res).toEqual({ success: false, error: 'Password refused' });
+    expect(m.bizCountQueried).not.toHaveBeenCalled();
+    expect(m.sendText).toHaveBeenCalledWith({ to: '2348011112222', text: `${W4}\n\n${LINK}` });
+  });
+
+  it('the auth lookup failing stops onboarding (fails closed), with nothing created or attached', async () => {
+    m.listUsers.mockResolvedValue({ data: { users: [] }, error: { message: 'down' } });
+    const res = await complete('six666');
+    expect(res.success).toBe(false);
+    expect(m.createUser).not.toHaveBeenCalled();
+    expect(m.bizCountQueried).not.toHaveBeenCalled();
   });
 
   it('an already-registered email is handled as before', async () => {
