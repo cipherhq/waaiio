@@ -91,7 +91,7 @@ async function renderWizard() {
 
 // Email and password are found by placeholder; the new field by its label.
 const field = (name: string) => (name === 'Email' ? screen.getByPlaceholderText('you@example.com')
-  : name === 'Password' ? screen.getByPlaceholderText('Min. 6 characters') : screen.getByLabelText(name));
+  : name === 'Password' ? screen.getByPlaceholderText('Min. 8 characters') : screen.getByLabelText(name));
 function fill(name: string, value: string) {
   fireEvent.change(field(name), { target: { value } });
 }

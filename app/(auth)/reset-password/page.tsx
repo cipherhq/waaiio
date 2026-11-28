@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { PASSWORD_MIN_LENGTH, PASSWORD_RULE_TEXT, newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -17,8 +18,9 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     if (!password || !confirmPassword) return;
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    const problem = newPasswordProblem(password);
+    if (problem) {
+      setError(problem);
       return;
     }
 
@@ -35,7 +37,10 @@ export default function ResetPasswordPage() {
       const { error: updateError } = await supabase.auth.updateUser({ password });
 
       if (updateError) {
-        if (updateError.message.includes('same as')) {
+        const weak = weakPasswordMessage(updateError);
+        if (weak) {
+          setError(weak);
+        } else if (updateError.message.includes('same as')) {
           setError('New password must be different from your current password.');
         } else {
           setError(updateError.message);
@@ -71,7 +76,7 @@ export default function ResetPasswordPage() {
           <p className="mt-2 text-sm text-gray-500">Enter your new password below.</p>
 
           {error && (
-            <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
+            <div role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
@@ -81,12 +86,14 @@ export default function ResetPasswordPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min. 6 characters"
+                placeholder="Min. 8 characters"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                 required
-                minLength={6}
+                minLength={PASSWORD_MIN_LENGTH}
                 autoComplete="new-password"
+                aria-describedby="new-password-rule"
               />
+              <p id="new-password-rule" className="mt-1 text-xs text-gray-500">{PASSWORD_RULE_TEXT}</p>
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Confirm Password</label>
@@ -97,7 +104,7 @@ export default function ResetPasswordPage() {
                 placeholder="Repeat your password"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                 required
-                minLength={6}
+                minLength={PASSWORD_MIN_LENGTH}
                 autoComplete="new-password"
               />
             </div>

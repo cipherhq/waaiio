@@ -55,7 +55,7 @@ function renderTab() {
 
 function fillAndSubmit(current: string, next: string) {
   fireEvent.change(screen.getByPlaceholderText('Enter current password'), { target: { value: current } });
-  fireEvent.change(screen.getByPlaceholderText('Min 6 characters'), { target: { value: next } });
+  fireEvent.change(screen.getByPlaceholderText('Min 8 characters'), { target: { value: next } });
   fireEvent.change(screen.getByPlaceholderText('Re-enter new password'), { target: { value: next } });
   fireEvent.click(screen.getByRole('button', { name: 'Update Password' }));
 }
@@ -91,6 +91,31 @@ describe('Settings: Change Password', () => {
     expect(screen.queryByText('Password updated successfully.')).toBeNull();
     expect(updateUser).not.toHaveBeenCalled();
   });
+  // #1175 F6 (W3, W4)
+  it('shows the 8-character rule before typing and refuses a 7-character password without calling the server', async () => {
+    renderTab();
+    await screen.findByPlaceholderText('Enter current password');
+    expect(screen.getByText('Use at least 8 characters.')).toBeTruthy();
+    fillAndSubmit('old-secret', 'seven77');
+    expect(await screen.findAllByText('Use at least 8 characters.')).toHaveLength(2);
+    expect(passwordCalls()).toHaveLength(0);
+  });
+
+  it('an 8-character password is sent to the server', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    renderTab();
+    fillAndSubmit('old-secret', 'eight888');
+    await waitFor(() => expect(passwordCalls()).toHaveLength(1));
+  });
+
+  it("shows the server's breach-list message in plain words", async () => {
+    const W4 = "This password has appeared in a data breach elsewhere, so it isn't safe. Please choose a different one.";
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: W4 }), { status: 400 }));
+    renderTab();
+    fillAndSubmit('old-secret', 'password1');
+    expect(await screen.findByText(W4)).toBeTruthy();
+  });
+
   it('no confirmed WhatsApp number: no code option is offered', async () => {
     renderTab();
     await screen.findByPlaceholderText('Enter current password');
@@ -110,7 +135,7 @@ describe('Settings: Change Password', () => {
     expect(JSON.parse((sendCall![1] as RequestInit).body as string)).toEqual({ phone: '+2348031234567' });
 
     fireEvent.change(screen.getByPlaceholderText('Enter the 6-digit code'), { target: { value: '123456' } });
-    fireEvent.change(screen.getByPlaceholderText('Min 6 characters'), { target: { value: 'new-secret' } });
+    fireEvent.change(screen.getByPlaceholderText('Min 8 characters'), { target: { value: 'new-secret' } });
     fireEvent.change(screen.getByPlaceholderText('Re-enter new password'), { target: { value: 'new-secret' } });
     fireEvent.click(screen.getByRole('button', { name: 'Update Password' }));
     await waitFor(() => expect(passwordCalls()).toHaveLength(1));

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { verifyPhoneOtp } from '@/lib/otp-phone-token';
 import { logger } from '@/lib/logger';
+import { PASSWORD_MIN_LENGTH, newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
 
 /**
  * POST /api/account/password — change the signed-in user's password.
@@ -15,10 +16,10 @@ import { logger } from '@/lib/logger';
  *    who sign in with a WhatsApp code do not know their account password.
  *    The code is checked against the account's own confirmed phone, never a
  *    phone supplied by the browser.
- * Attempts are limited per user. The minimum length matches the Settings form.
+ * Attempts are limited per user. The new-password rule is the shared one
+ * (lib/password-policy.ts, #1175 F6), the same as the Settings form.
  */
 
-const MIN_LENGTH = 6;
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000;
 
@@ -42,8 +43,8 @@ export async function POST(request: NextRequest) {
   }
   const { currentPassword, newPassword, otpCode, challengeId } = body;
 
-  if (typeof newPassword !== 'string' || newPassword.length < MIN_LENGTH) {
-    return NextResponse.json({ error: `New password must be at least ${MIN_LENGTH} characters.` }, { status: 400 });
+  if (typeof newPassword !== 'string' || newPassword.length < PASSWORD_MIN_LENGTH) {
+    return NextResponse.json({ error: newPasswordProblem(typeof newPassword === 'string' ? newPassword : '') }, { status: 400 });
   }
 
   if (typeof otpCode === 'string' && otpCode.length > 0) {
@@ -90,7 +91,7 @@ export async function POST(request: NextRequest) {
   const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
   if (updateError) {
     logger.withContext({ op: 'account.password', userId: user.id }).warn('[ACCOUNT] password update refused');
-    return NextResponse.json({ error: updateError.message || 'Failed to update password.' }, { status: 400 });
+    return NextResponse.json({ error: weakPasswordMessage(updateError) ?? (updateError.message || 'Failed to update password.') }, { status: 400 });
   }
 
   return NextResponse.json({ success: true });

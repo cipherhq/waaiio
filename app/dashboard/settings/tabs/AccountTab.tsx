@@ -13,6 +13,7 @@ import {
   TIER_LABELS,
 } from '@/lib/capabilities/types';
 import { ReAuthModal } from '@/components/dashboard/ReAuthModal';
+import { PASSWORD_RULE_TEXT, newPasswordProblem } from '@/lib/password-policy';
 import type { SettingsTabProps } from './types';
 
 interface AccountConsent {
@@ -763,9 +764,11 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                   type="password"
                   value={newPassword}
                   onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
-                  placeholder="Min 6 characters"
+                  placeholder="Min 8 characters"
+                  aria-describedby="settings-new-password-rule"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                 />
+                <p id="settings-new-password-rule" className="mt-1 text-xs text-gray-500">{PASSWORD_RULE_TEXT}</p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Confirm New Password</label>
@@ -794,7 +797,8 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                   if (!codeChallenge) { setPasswordError('Tap "Send code" first.'); return; }
                   if (otpCode.length !== 6) { setPasswordError('Enter the 6-digit code from WhatsApp.'); return; }
                 } else if (!currentPassword) { setPasswordError('Please enter your current password.'); return; }
-                if (newPassword.length < 6) { setPasswordError('New password must be at least 6 characters.'); return; }
+                const newPasswordIssue = newPasswordProblem(newPassword);
+                if (newPasswordIssue) { setPasswordError(newPasswordIssue); return; }
                 if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match.'); return; }
                 setPasswordSaving(true);
                 try {
