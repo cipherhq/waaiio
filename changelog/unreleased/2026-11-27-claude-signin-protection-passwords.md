@@ -11,9 +11,10 @@
   - Settings > change password, both the form and `/api/account/password` (on top of #1176);
   - WhatsApp onboarding.
 - **WhatsApp onboarding (Q13 A):**
-  - The Flow's owner-details "Next" now asks Waaiio to check the length, and stays on that screen with W3 if the password is too short.
+  - The Flow's owner-details "Next" now asks Waaiio to check the length, and stays on that screen with W3 if the password is too short. The Flow now also declares `data_api_version` and `routing_model`, which endpoint Flows need.
   - At the end, a new account whose password is refused gets a WhatsApp message (W3, or W4 for a breach-list refusal) with a link to finish at waaiio.com/get-started. No account is created.
   - An existing auth account keeps today's path. Whether an account exists is decided by the auth record, not the profile row. A breach-list refusal never attaches the business to an existing profile.
+- The sign-up and Settings password error boxes are now announced to screen readers (`role="alert"`).
 - Existing passwords are untouched (F7): sign-in, WhatsApp-code sign-in, and the existing-account check on sign-up all still accept older, shorter passwords.
 
 **Files:**

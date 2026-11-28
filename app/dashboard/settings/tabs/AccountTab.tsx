@@ -783,7 +783,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
             </div>
 
             {passwordError && (
-              <p className="mt-3 text-sm text-red-600">{passwordError}</p>
+              <p role="alert" className="mt-3 text-sm text-red-600">{passwordError}</p>
             )}
             {passwordSuccess && (
               <p className="mt-3 text-sm text-green-600">{passwordSuccess}</p>

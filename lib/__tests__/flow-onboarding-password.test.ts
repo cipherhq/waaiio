@@ -102,6 +102,11 @@ describe('Flow owner-details screen (data exchange)', () => {
     const welcome = flow.screens.find((s: { id: string }) => s.id === 'WELCOME');
     const welcomeFooter = (welcome.layout.children as Array<Record<string, any>>).find((c) => c.type === 'Footer')!;
     expect(welcomeFooter['on-click-action'].payload).toEqual({ password_error: '' });
+    // Endpoint Flows declare the data API version and the screen routes.
+    expect(flow.data_api_version).toBe('3.0');
+    expect(flow.routing_model).toEqual({
+      WELCOME: ['OWNER_DETAILS'], OWNER_DETAILS: ['BUSINESS_DETAILS'], BUSINESS_DETAILS: ['FEATURES'], FEATURES: [],
+    });
   });
 });
 

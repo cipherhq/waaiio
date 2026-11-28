@@ -1089,7 +1089,7 @@ function OnboardingWizard() {
             )}
 
             {error && (
-              <div className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
+              <div role="alert" className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
                 {error}
                 <button onClick={() => setError('')} className="ml-2 font-semibold underline">Dismiss</button>
               </div>
