@@ -166,12 +166,16 @@ export async function checkBruteForce(scope: BruteForceScope, key: string): Prom
   if (!redis) return checkInMemory(memoryKey(scope, key));
 
   const k = storeKeys(scope, key);
+  // Failures recorded here while the store refused writes live only in
+  // memory, so a lock held there is enforced even when store reads succeed.
+  const local = checkInMemory(memoryKey(scope, key));
   try {
     const [lockTtl, count] = await Promise.all([redis.pttl(k.lock), redis.get<number | string>(k.count)]);
-    const failures = Number(count ?? 0) || 0;
+    const failures = Math.max(Number(count ?? 0) || 0, local.failures ?? 0);
     if (typeof lockTtl === 'number' && lockTtl > 0) {
-      return { blocked: true, retryAfterMs: lockTtl, failures };
+      return { blocked: true, retryAfterMs: Math.max(lockTtl, local.retryAfterMs ?? 0), failures };
     }
+    if (local.blocked) return { ...local, failures };
     return { blocked: false, failures };
   } catch (err) {
     alertStoreOutage('check', err);

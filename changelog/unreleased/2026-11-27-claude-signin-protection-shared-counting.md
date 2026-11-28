@@ -3,14 +3,14 @@
 **What changed:**
 - `lib/brute-force.ts` counts wrong-code attempts in the shared Upstash store when it is configured, so every server sees the same counts.
   - Without the store, it counts per server as before.
-  - If the store is unreachable, it falls back per server and alerts Sentry.
+  - If the store is unreachable, it falls back per server and alerts Sentry. A lock recorded on this server while the store refused writes is still enforced when the store serves reads again.
 - Merchant sign-in codes, customer checkout codes and contract-signing codes are now counted separately. Before, one address count was shared by all three.
 - The numbers are unchanged: 5 failures give a 15-minute wait, and 20 per address give 30 minutes.
 - Store keys hold a hash, never a phone number, email or token.
 - Lock log lines no longer include the identifier.
 - `checkBruteForce`, `recordFailure` and `clearFailures` are now async and take a scope.
 - `lib/rate-limit.ts` exports `getSharedRedis()`.
-- `verifyTurnstileToken` gains an optional secret parameter for a later sign-in widget. Public forms and demo-request are unchanged.
+- `verifyTurnstileToken` gains an optional `{ secret }` option for a later sign-in widget. When it is given, only that secret is used, even if it is unset (it never falls back to the forms secret). Public forms and demo-request are unchanged.
 - New `lib/security/firewall-exclusions.ts` is the planned firewall path list, with a catalog test against `app/api`.
 
 **Files:**

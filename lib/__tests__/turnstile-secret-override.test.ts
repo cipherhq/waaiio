@@ -28,7 +28,7 @@ describe('verifyTurnstileToken secret', () => {
   it('uses the given secret instead of TURNSTILE_SECRET_KEY', async () => {
     vi.stubEnv('TURNSTILE_SECRET_KEY', 'forms-secret');
     const fetchMock = mockSiteverify();
-    expect(await verifyTurnstileToken('tok', 'signin-secret')).toEqual({ ok: true });
+    expect(await verifyTurnstileToken('tok', { secret: 'signin-secret' })).toEqual({ ok: true });
     expect(sentSecret(fetchMock)).toBe('signin-secret');
   });
 
@@ -36,7 +36,16 @@ describe('verifyTurnstileToken secret', () => {
     vi.stubEnv('TURNSTILE_SECRET_KEY', 'forms-secret');
     vi.stubEnv('NODE_ENV', 'production');
     const fetchMock = mockSiteverify();
-    const res = await verifyTurnstileToken('tok', '');
+    const res = await verifyTurnstileToken('tok', { secret: '' });
+    expect(res).toMatchObject({ ok: false, status: 503 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('an unset override in production refuses and never falls back to the forms secret', async () => {
+    vi.stubEnv('TURNSTILE_SECRET_KEY', 'forms-secret');
+    vi.stubEnv('NODE_ENV', 'production');
+    const fetchMock = mockSiteverify();
+    const res = await verifyTurnstileToken('tok', { secret: undefined });
     expect(res).toMatchObject({ ok: false, status: 503 });
     expect(fetchMock).not.toHaveBeenCalled();
   });

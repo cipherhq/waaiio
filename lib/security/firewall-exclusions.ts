@@ -32,7 +32,6 @@ export const FIREWALL_SIGNIN_PAGES = [
 export const FIREWALL_EXCLUDED_PATTERNS: readonly RegExp[] = [
   /^\/api\/webhook(s)?(\/|$)/,              // all webhook routes, nested included
   /^\/api\/payments\/.*webhook/,            // payment webhooks (stripe, paypal, square, byo)
-  /^\/api\/payments\/webhook(\/|$)/,
   /^\/api\/[^?]*callback(\/|$)/,            // provider return and callback routes
   /^\/api\/whatsapp(\/|$)/,                 // WhatsApp, including the Flow callback
   /^\/api\/cron(\/|$)/,

@@ -6,7 +6,10 @@
  * Unit tests run the real lib/brute-force.ts against an in-memory fake of the
  * Upstash client shared by two separately imported module instances (two
  * "servers"). Handler tests run the real route handlers of all five callers
- * with that same fake store.
+ * (otp/verify, otp/send, email-otp, contracts/otp/verify, trial-credit/claim)
+ * with that same fake store. The unit test "customer, contract and merchant
+ * counts never affect each other" checks the new API; the handler test for
+ * customers' and contract signers' codes is the one that fails on old code.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -16,6 +19,7 @@ const h = vi.hoisted(() => {
   type Entry = { value: string; expiresAt: number | null };
   const data = new Map<string, Entry>();
   let down = false;
+  let writesDown = false;
   const live = (k: string): Entry | undefined => {
     const e = data.get(k);
     if (!e) return undefined;
@@ -23,17 +27,18 @@ const h = vi.hoisted(() => {
     return e;
   };
   const guard = () => { if (down) throw new Error('store unreachable'); };
+  const guardWrite = () => { guard(); if (writesDown) throw new Error('store refused write'); };
   const redis = {
     async pttl(k: string) { guard(); const e = live(k); if (!e) return -2; return e.expiresAt === null ? -1 : e.expiresAt - Date.now(); },
     async get(k: string) { guard(); const e = live(k); return e ? Number(e.value) : null; },
-    async set(k: string, v: string, opts?: { px?: number }) { guard(); data.set(k, { value: v, expiresAt: opts?.px ? Date.now() + opts.px : null }); return 'OK'; },
-    async del(...ks: string[]) { guard(); let n = 0; for (const k of ks) if (data.delete(k)) n++; return n; },
+    async set(k: string, v: string, opts?: { px?: number }) { guardWrite(); data.set(k, { value: v, expiresAt: opts?.px ? Date.now() + opts.px : null }); return 'OK'; },
+    async del(...ks: string[]) { guardWrite(); let n = 0; for (const k of ks) if (data.delete(k)) n++; return n; },
     multi() {
       const ops: Array<() => number> = [];
       const tx = {
         incr(k: string) { ops.push(() => { const e = live(k); const n = (e ? Number(e.value) : 0) + 1; data.set(k, { value: String(n), expiresAt: e?.expiresAt ?? null }); return n; }); return tx; },
         pexpire(k: string, ms: number) { ops.push(() => { const e = live(k); if (!e) return 0; e.expiresAt = Date.now() + ms; return 1; }); return tx; },
-        async exec() { guard(); return ops.map((op) => op()); },
+        async exec() { guardWrite(); return ops.map((op) => op()); },
       };
       return tx;
     },
@@ -42,7 +47,8 @@ const h = vi.hoisted(() => {
     data, redis,
     enabled: true,
     setDown(v: boolean) { down = v; },
-    reset() { data.clear(); down = false; },
+    setWritesDown(v: boolean) { writesDown = v; },
+    reset() { data.clear(); down = false; writesDown = false; },
   };
 });
 
@@ -175,6 +181,19 @@ describe('shared counting (unit)', () => {
     expect(captureMessage.mock.calls[0][1]).toMatchObject({ level: 'error', tags: { component: 'brute-force' } });
     for (const call of captureMessage.mock.calls) expect(JSON.stringify(call)).not.toContain('2348011112222');
   });
+
+  it('store serves reads but refuses writes: the per-server lock is still enforced, with an alert', async () => {
+    const a = await freshInstance();
+    h.setWritesDown(true);
+    for (let i = 0; i < 4; i++) expect((await a.recordFailure('merchant', `otp-phone:${PHONE}`)).locked).toBe(false);
+    expect((await a.recordFailure('merchant', `otp-phone:${PHONE}`)).locked).toBe(true);
+    const check = await a.checkBruteForce('merchant', `otp-phone:${PHONE}`);
+    expect(check.blocked).toBe(true);
+    expect(check.retryAfterMs).toBeGreaterThan(14 * 60_000);
+    expect(captureMessage).toHaveBeenCalled();
+    // Other keys and scopes are not affected by this server's fallback lock.
+    expect((await a.checkBruteForce('customer', `otp-phone:${PHONE}`)).blocked).toBe(false);
+  });
 });
 
 // ── Handler tests: the five callers, real handlers, real brute-force ──
@@ -195,6 +214,13 @@ vi.mock('@/lib/security/create-security-event', () => ({ createSecurityEvent: vi
 vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: async () => true }));
 vi.mock('@/lib/channels/meta-cloud', () => ({ MetaCloudService: class {} }));
 vi.mock('@/lib/channels/staging-whatsapp-routing', () => ({ isStagingWhatsAppRouting: () => false, loadStagingDesignatedChannel: vi.fn() }));
+vi.mock('@/lib/api-auth', () => ({
+  authenticateRequest: async () => ({ user: { id: 'user-1' }, businessId: 'biz-1', service: {} }),
+}));
+vi.mock('@/lib/trial-credit/verified-phone', () => ({
+  isConnectedWaaiioNumber: async () => false,
+  attachVerifiedPhone: vi.fn(async () => ({ ok: true })),
+}));
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { signInWithPassword: vi.fn(), getUser: async () => ({ data: { user: { id: 'user-1' } } }) } }) }));
 
 function contractChain() {
@@ -224,6 +250,7 @@ async function routes() {
     otpSend: (await import('@/app/api/auth/otp/send/route')).POST,
     emailOtp: (await import('@/app/api/auth/email-otp/route')).POST,
     contractVerify: (await import('@/app/api/contracts/otp/verify/route')).POST,
+    claim: (await import('@/app/api/trial-credit/claim/route')).POST,
   };
 }
 
@@ -261,6 +288,27 @@ describe('the callers keep their numbers and their own scope', () => {
     // ...but merchant sign-in codes from the same address are not.
     expect((await s.otpSend(post('http://localhost/api/auth/otp/send', { phone: PHONE }, '6.6.6.6'))).status).toBe(418);
     expect((await s.otpVerify(post('http://localhost/api/auth/otp/verify', { phone: PHONE, otp: '000000', pin_id: 'p' }, '6.6.6.6'))).status).toBe(401);
+  });
+
+  it('claim-credit shares the merchant phone count with otp/verify: 3 + 2 wrong codes, then 429 on both', async () => {
+    const s = await routes();
+    for (let i = 0; i < 3; i++) {
+      expect((await s.otpVerify(post('http://localhost/api/auth/otp/verify', { phone: PHONE, otp: '000000', pin_id: 'p' }, `12.0.0.${i}`))).status).toBe(401);
+    }
+    for (let i = 0; i < 2; i++) {
+      expect((await s.claim(post('http://localhost/api/trial-credit/claim', { business_id: 'biz-1', phone: PHONE, otp: '000000', pin_id: 'p' }))).status).toBe(401);
+    }
+    expect((await s.claim(post('http://localhost/api/trial-credit/claim', { business_id: 'biz-1', phone: PHONE, otp: '000000', pin_id: 'p' }))).status).toBe(429);
+    expect((await s.otpVerify(post('http://localhost/api/auth/otp/verify', { phone: PHONE, otp: '000000', pin_id: 'p' }, '12.0.0.99'))).status).toBe(429);
+  });
+
+  it('claim-credit: 5 wrong codes by one user lock that user across numbers', async () => {
+    const s = await routes();
+    for (let i = 0; i < 5; i++) {
+      const phone = `+23480222200${i}0`;
+      expect((await s.claim(post('http://localhost/api/trial-credit/claim', { business_id: 'biz-1', phone, otp: '000000', pin_id: 'p' }))).status).toBe(401);
+    }
+    expect((await s.claim(post('http://localhost/api/trial-credit/claim', { business_id: 'biz-1', phone: '+2348022220099', otp: '000000', pin_id: 'p' }))).status).toBe(429);
   });
 
   it('customer email-otp: 5 wrong codes on one email, then 429', async () => {
