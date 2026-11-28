@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Brute force: check IP-level block before sending OTP
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const ipCheck = checkBruteForce(`ip:${ip}`);
+    const ipCheck = await checkBruteForce('merchant', `ip:${ip}`);
     if (ipCheck.blocked) {
       return NextResponse.json(
         { message: 'Too many attempts. Please try again later.' },

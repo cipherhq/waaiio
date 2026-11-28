@@ -33,9 +33,9 @@ vi.mock('@/lib/logger', () => ({
   logger: { withContext: (ctx: Record<string, unknown>) => ({ error: (msg: string) => { m.logs.push({ ctx, msg }); } }) },
 }));
 vi.mock('@/lib/brute-force', () => ({
-  checkBruteForce: (key: string) => ({ blocked: m.bruteBlocked.has(key) }),
-  recordFailure: (key: string) => { m.failures.push(key); },
-  clearFailures: (key: string) => { m.cleared.push(key); },
+  checkBruteForce: (_scope: string, key: string) => ({ blocked: m.bruteBlocked.has(key) }),
+  recordFailure: (_scope: string, key: string) => { m.failures.push(key); },
+  clearFailures: (_scope: string, key: string) => { m.cleared.push(key); },
 }));
 
 function service() {

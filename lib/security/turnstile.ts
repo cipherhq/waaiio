@@ -29,19 +29,24 @@ export type TurnstileResult =
   | { ok: true }
   | { ok: false; status: 403 | 503; error: string };
 
-function resolveSecret(): string | null {
-  const secret = process.env.TURNSTILE_SECRET_KEY?.trim();
+function resolveSecret(override?: string): string | null {
+  const secret = (override ?? process.env.TURNSTILE_SECRET_KEY)?.trim();
   if (secret) return secret;
   if (process.env.NODE_ENV !== 'production') return TURNSTILE_TEST_SECRET_KEY;
   return null;
 }
 
-export async function verifyTurnstileToken(token: unknown): Promise<TurnstileResult> {
+/**
+ * @param secretOverride optional secret for a different widget (the sign-in
+ *   widget, #1175 S5). When omitted, TURNSTILE_SECRET_KEY is used, so public
+ *   forms and demo-request are unchanged.
+ */
+export async function verifyTurnstileToken(token: unknown, secretOverride?: string): Promise<TurnstileResult> {
   if (typeof token !== 'string' || token.length === 0 || token.length > MAX_TOKEN_LENGTH) {
     return { ok: false, status: 403, error: 'Please complete the security check and try again.' };
   }
 
-  const secret = resolveSecret();
+  const secret = resolveSecret(secretOverride);
   if (!secret) {
     logger.error('[TURNSTILE] TURNSTILE_SECRET_KEY is not set; refusing submission');
     return { ok: false, status: 503, error: 'This form cannot accept responses right now. Please try again later.' };

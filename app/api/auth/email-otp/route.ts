@@ -28,7 +28,7 @@ async function handleSend(request: NextRequest) {
 
     // Brute force: check IP-level block before proceeding
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const ipCheck = checkBruteForce(`ip:${ip}`);
+    const ipCheck = await checkBruteForce('customer', `ip:${ip}`);
     if (ipCheck.blocked) {
       return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
     }
@@ -83,11 +83,11 @@ async function handleVerify(request: NextRequest) {
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
 
     // Brute force: check both email-level and IP-level blocks (defense-in-depth)
-    const emailBf = checkBruteForce(`otp:${emailLower}`);
+    const emailBf = await checkBruteForce('customer', `otp:${emailLower}`);
     if (emailBf.blocked) {
       return NextResponse.json({ error: 'Too many failed attempts. Please try again later.' }, { status: 429 });
     }
-    const ipBf = checkBruteForce(`ip:${ip}`);
+    const ipBf = await checkBruteForce('customer', `ip:${ip}`);
     if (ipBf.blocked) {
       return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
     }
@@ -102,8 +102,8 @@ async function handleVerify(request: NextRequest) {
 
     if (!result.valid) {
       // Record brute force failure for both email and IP (defense-in-depth)
-      recordFailure(`otp:${emailLower}`);
-      recordFailure(`ip:${ip}`);
+      await recordFailure('customer', `otp:${emailLower}`);
+      await recordFailure('customer', `ip:${ip}`);
 
       const errorMap: Record<string, string> = {
         invalid_challenge: 'No code found. Request a new one.',
@@ -122,8 +122,8 @@ async function handleVerify(request: NextRequest) {
     }
 
     // Verified — clear brute force records
-    clearFailures(`otp:${emailLower}`);
-    clearFailures(`ip:${ip}`);
+    await clearFailures('customer', `otp:${emailLower}`);
+    await clearFailures('customer', `ip:${ip}`);
 
     // Generate HMAC token proving this email was verified (valid 15 min)
     const { createHmac } = await import('crypto');
