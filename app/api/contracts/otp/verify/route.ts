@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     if (rl) return rl;
 
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const ipBf = checkBruteForce(`ip:${ip}`);
+    const ipBf = await checkBruteForce('contract', `ip:${ip}`);
     if (ipBf.blocked) {
       return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
     }
@@ -82,14 +82,14 @@ export async function POST(request: NextRequest) {
     const { timingSafeEqual } = await import('crypto');
     const otpStr = String(otp).trim();
     if (otpStr.length !== record.otp_code.length || !timingSafeEqual(Buffer.from(record.otp_code), Buffer.from(otpStr))) {
-      recordFailure(`contract-otp:${token}`);
-      recordFailure(`ip:${ip}`);
+      await recordFailure('contract', `contract-otp:${token}`);
+      await recordFailure('contract', `ip:${ip}`);
       return NextResponse.json({ error: 'Invalid code' }, { status: 400 });
     }
 
     // Verified — clear brute force records
-    clearFailures(`contract-otp:${token}`);
-    clearFailures(`ip:${ip}`);
+    await clearFailures('contract', `contract-otp:${token}`);
+    await clearFailures('contract', `ip:${ip}`);
 
     // Mark as verified
     await supabase

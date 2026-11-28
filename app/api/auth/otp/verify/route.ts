@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
     // Brute force: check phone-level and IP-level blocks
     if (phone) {
-      const phoneBf = checkBruteForce(`otp-phone:${phone}`);
+      const phoneBf = await checkBruteForce('merchant', `otp-phone:${phone}`);
       if (phoneBf.blocked) {
         return NextResponse.json(
           { message: 'Too many failed attempts. Please try again later.' },
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
         );
       }
     }
-    const ipBf = checkBruteForce(`ip:${ip}`);
+    const ipBf = await checkBruteForce('merchant', `ip:${ip}`);
     if (ipBf.blocked) {
       return NextResponse.json(
         { message: 'Too many attempts. Please try again later.' },
@@ -50,8 +50,8 @@ export async function POST(request: NextRequest) {
     const result = await verifyPhoneOtp(phone, otp, pin_id);
     if (!result.valid) {
       // Record brute force failure for both phone and IP
-      const phoneLock = recordFailure(`otp-phone:${phone}`);
-      const ipLock = recordFailure(`ip:${ip}`);
+      const phoneLock = await recordFailure('merchant', `otp-phone:${phone}`);
+      const ipLock = await recordFailure('merchant', `ip:${ip}`);
 
       // Create security alert on lockout
       if (phoneLock.locked || ipLock.locked) {
@@ -70,8 +70,8 @@ export async function POST(request: NextRequest) {
     }
 
     // OTP valid — clear brute force records
-    clearFailures(`otp-phone:${phone}`);
-    clearFailures(`ip:${ip}`);
+    await clearFailures('merchant', `otp-phone:${phone}`);
+    await clearFailures('merchant', `ip:${ip}`);
 
     // OTP verified — now find or create the Supabase user and create a session
     const serviceClient = createServiceClient();

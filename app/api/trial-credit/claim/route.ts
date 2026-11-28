@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
   // Same limits as the login code check.
   const limited = await rateLimitResponseAsync(`otp-verify:${phone}`, 5, 15 * 60 * 1000);
   if (limited) return limited;
-  if (checkBruteForce(`otp-phone:${phone}`).blocked || checkBruteForce(`claim-user:${user.id}`).blocked) {
+  if ((await checkBruteForce('merchant', `otp-phone:${phone}`)).blocked || (await checkBruteForce('merchant', `claim-user:${user.id}`)).blocked) {
     return NextResponse.json({ message: 'Too many attempts. Please try again later.' }, { status: 429 });
   }
 
@@ -64,12 +64,12 @@ export async function POST(request: NextRequest) {
 
     const result = await verifyPhoneOtp(phone, otp, pinId);
     if (!result.valid) {
-      recordFailure(`otp-phone:${phone}`);
-      recordFailure(`claim-user:${user.id}`);
+      await recordFailure('merchant', `otp-phone:${phone}`);
+      await recordFailure('merchant', `claim-user:${user.id}`);
       return NextResponse.json({ code: 'invalid_code', message: 'That code is wrong or has expired. Please try again.' }, { status: 401 });
     }
-    clearFailures(`otp-phone:${phone}`);
-    clearFailures(`claim-user:${user.id}`);
+    await clearFailures('merchant', `otp-phone:${phone}`);
+    await clearFailures('merchant', `claim-user:${user.id}`);
 
     const attached = await attachVerifiedPhone(service, user.id, phone);
     if (!attached.ok) {

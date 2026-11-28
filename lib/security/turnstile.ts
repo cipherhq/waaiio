@@ -29,21 +29,29 @@ export type TurnstileResult =
   | { ok: true }
   | { ok: false; status: 403 | 503; error: string };
 
-function resolveSecret(): string | null {
-  const secret = process.env.TURNSTILE_SECRET_KEY?.trim();
+function resolveSecret(opts?: { secret: string | undefined }): string | null {
+  // When opts is given, only opts.secret is used: an unset sign-in secret
+  // never falls back to the public-forms secret.
+  const secret = (opts ? opts.secret : process.env.TURNSTILE_SECRET_KEY)?.trim();
   if (secret) return secret;
   if (process.env.NODE_ENV !== 'production') return TURNSTILE_TEST_SECRET_KEY;
   return null;
 }
 
-export async function verifyTurnstileToken(token: unknown): Promise<TurnstileResult> {
+/**
+ * @param opts optional `{ secret }` for a different widget (the sign-in
+ *   widget, #1175 S5). When given, only that secret is used, even if it is
+ *   unset. When omitted, TURNSTILE_SECRET_KEY is used, so public forms and
+ *   demo-request are unchanged.
+ */
+export async function verifyTurnstileToken(token: unknown, opts?: { secret: string | undefined }): Promise<TurnstileResult> {
   if (typeof token !== 'string' || token.length === 0 || token.length > MAX_TOKEN_LENGTH) {
     return { ok: false, status: 403, error: 'Please complete the security check and try again.' };
   }
 
-  const secret = resolveSecret();
+  const secret = resolveSecret(opts);
   if (!secret) {
-    logger.error('[TURNSTILE] TURNSTILE_SECRET_KEY is not set; refusing submission');
+    logger.error('[TURNSTILE] Turnstile secret is not set; refusing submission');
     return { ok: false, status: 503, error: 'This form cannot accept responses right now. Please try again later.' };
   }
 

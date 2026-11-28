@@ -22,6 +22,15 @@ if (useRedis) {
   redis = new Redis({ url: redisUrl!, token: redisToken! });
 }
 
+/**
+ * The shared Upstash store, or null when it is not configured. Used by
+ * lib/brute-force.ts so code-attempt counts are shared across servers
+ * (#1175 S8).
+ */
+export function getSharedRedis(): Redis | null {
+  return redis;
+}
+
 // Cache Ratelimit instances by config key to avoid re-creating
 const rlCache = new Map<string, Ratelimit>();
 
