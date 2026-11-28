@@ -3,6 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { PASSWORD_MIN_LENGTH, PASSWORD_RULE_TEXT, newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
 
 export default function ActivateAdminInvitePage() {
   const router = useRouter();
@@ -14,11 +15,13 @@ export default function ActivateAdminInvitePage() {
   async function activate(event: FormEvent) {
     event.preventDefault();
     if (!accepted) return setError('You must accept the Terms and Privacy Policy yourself.');
+    const problem = newPasswordProblem(password);
+    if (problem) return setError(problem);
     setLoading(true);
     setError('');
     const supabase = createClient();
     const { error: passwordError } = await supabase.auth.updateUser({ password });
-    if (passwordError) { setError(passwordError.message); setLoading(false); return; }
+    if (passwordError) { setError(weakPasswordMessage(passwordError) ?? passwordError.message); setLoading(false); return; }
     const consent = await fetch('/api/account/consent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ marketing_emails: false, analytics: false, ai_processing: true, terms_accepted: true }) });
     if (!consent.ok) { setError('Your password was saved, but consent could not be recorded. Please retry.'); setLoading(false); return; }
     const response = await fetch('/api/onboarding/activate-admin-invite', { method: 'POST' });
@@ -38,9 +41,9 @@ export default function ActivateAdminInvitePage() {
     <form onSubmit={activate} className="w-full space-y-5 rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
       <div><h1 className="text-2xl font-bold text-gray-900">Activate your Waaiio account</h1><p className="mt-2 text-sm text-gray-600">Choose your own password and review the required policies. An administrator cannot accept these for you.</p></div>
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      <label className="block text-sm font-medium text-gray-700">New password<input className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-3" type="password" minLength={8} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
+      <label className="block text-sm font-medium text-gray-700">New password<input className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-3" type="password" minLength={PASSWORD_MIN_LENGTH} autoComplete="new-password" aria-describedby="activate-password-rule" value={password} onChange={event => setPassword(event.target.value)} required /><span id="activate-password-rule" className="mt-1 block text-xs font-normal text-gray-500">{PASSWORD_RULE_TEXT}</span></label>
       <label className="flex items-start gap-3 text-sm text-gray-700"><input className="mt-1" type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /><span>I have read and accept the <a className="text-brand underline" href="/terms" target="_blank">Terms</a> and <a className="text-brand underline" href="/privacy" target="_blank">Privacy Policy</a>.</span></label>
-      <button className="w-full rounded-xl bg-brand px-4 py-3 font-semibold text-white disabled:opacity-50" disabled={loading || password.length < 8 || !accepted}>{loading ? 'Activating…' : 'Activate account'}</button>
+      <button className="w-full rounded-xl bg-brand px-4 py-3 font-semibold text-white disabled:opacity-50" disabled={loading || password.length < PASSWORD_MIN_LENGTH || !accepted}>{loading ? 'Activating…' : 'Activate account'}</button>
     </form>
   </main>;
 }

@@ -1,5 +1,12 @@
 {
   "version": "5.0",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "WELCOME": ["OWNER_DETAILS"],
+    "OWNER_DETAILS": ["BUSINESS_DETAILS"],
+    "BUSINESS_DETAILS": ["FEATURES"],
+    "FEATURES": []
+  },
   "screens": [
     {
       "id": "WELCOME",
@@ -16,7 +23,8 @@
             "label": "Continue",
             "on-click-action": {
               "name": "navigate",
-              "next": { "type": "screen", "name": "OWNER_DETAILS" }
+              "next": { "type": "screen", "name": "OWNER_DETAILS" },
+              "payload": { "password_error": "" }
             }
           }
         ]
@@ -26,19 +34,25 @@
       "id": "OWNER_DETAILS",
       "title": "Your Details",
       "terminal": false,
+      "data": {
+        "password_error": { "type": "string", "__example__": "Use at least 8 characters." }
+      },
       "layout": {
         "type": "SingleColumnLayout",
         "children": [
           { "type": "TextInput", "name": "first_name", "label": "First Name", "required": true },
           { "type": "TextInput", "name": "last_name", "label": "Last Name", "required": true },
           { "type": "TextInput", "name": "email", "label": "Email", "input-type": "email", "required": true },
-          { "type": "TextInput", "name": "password", "label": "Password", "input-type": "password", "required": true, "helper-text": "Minimum 6 characters" },
+          { "type": "TextInput", "name": "password", "label": "Password", "input-type": "password", "required": true, "helper-text": "Use at least 8 characters.", "error-message": "${data.password_error}" },
           {
             "type": "Footer",
             "label": "Next",
             "on-click-action": {
-              "name": "navigate",
-              "next": { "type": "screen", "name": "BUSINESS_DETAILS" }
+              "name": "data_exchange",
+              "payload": {
+                "screen": "OWNER_DETAILS",
+                "password": "${form.password}"
+              }
             }
           }
         ]

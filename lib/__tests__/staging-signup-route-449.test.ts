@@ -42,7 +42,7 @@ describe('#449 staging signup route', () => {
     const response = await POST(request);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      message: 'Password must be at least 6 characters.',
+      message: 'Use at least 8 characters.',
     });
   });
 });

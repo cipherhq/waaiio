@@ -23,6 +23,7 @@ import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/li
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { useOnboardingPersistence, clearOnboardingDraft, type OnboardingDraft } from '@/hooks/useOnboardingPersistence';
 import { buildMerchantLink, buildShortMerchantLink } from '@/lib/url';
+import { newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
 import type { User } from '@supabase/supabase-js';
 import {
   StepAuth,
@@ -638,7 +639,6 @@ function OnboardingWizard() {
   async function handleEmailSignup(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !password) return;
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     setAuthLoading(true);
     setError('');
     try {
@@ -664,6 +664,12 @@ function OnboardingWizard() {
         setStep('category');
         return;
       }
+
+      // #1175 F6/F7: the new-password rule applies only when a new account is
+      // created. The existing-account check above keeps working for older,
+      // shorter passwords.
+      const passwordProblem = newPasswordProblem(password);
+      if (passwordProblem) { setError(passwordProblem); return; }
 
       // Dedicated staging creates an immediately usable test account on the
       // server, then signs in with the same email/password. Production never
@@ -708,6 +714,8 @@ function OnboardingWizard() {
         // Friendly error messages
         if (signUpError.message.includes('already registered') || signUpError.message.includes('already been registered')) {
           setError('This email is already registered. Try signing in instead, or use a different email.');
+        } else if (weakPasswordMessage(signUpError)) {
+          setError(weakPasswordMessage(signUpError)!);
         } else if (signUpError.message.includes('rate limit')) {
           setError('Too many attempts. Please wait a few minutes and try again.');
         } else {
@@ -1081,7 +1089,7 @@ function OnboardingWizard() {
             )}
 
             {error && (
-              <div className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
+              <div role="alert" className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
                 {error}
                 <button onClick={() => setError('')} className="ml-2 font-semibold underline">Dismiss</button>
               </div>

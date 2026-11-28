@@ -8,6 +8,54 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { allocateSharedChannelForNewBusiness, SHARED_CHANNEL_FALLBACK_COUNTRIES } from '@/lib/onboarding/whatsapp-readiness';
+import { newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
+import { authUserExists } from '@/lib/onboarding/auth-user';
+
+const WEBSITE_SIGNUP_URL = 'https://www.waaiio.com/get-started';
+
+/**
+ * #1175 Q13 A: tell the merchant in WhatsApp why the password was refused,
+ * with a link to finish on the website. Sent from the shared channel for the
+ * country (same routing as the confirmation message below), inside the
+ * conversation the merchant just had with the Flow.
+ */
+async function findExistingAccountId(
+  supabase: ReturnType<typeof createServiceClient>,
+  email: string,
+): Promise<string | null> {
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('email', email)
+    .single();
+  return existing?.id ?? null;
+}
+
+async function sendPasswordRefusedNotice(
+  supabase: ReturnType<typeof createServiceClient>,
+  country: CountryCode,
+  customerPhone: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const resolver = new ChannelResolver(supabase);
+    let resolved = await resolver.getSharedChannelForCountry(country);
+    if (!resolved) {
+      for (const fb of SHARED_CHANNEL_FALLBACK_COUNTRIES[country] || []) {
+        resolved = await resolver.getSharedChannelForCountry(fb as CountryCode);
+        if (resolved) break;
+      }
+    }
+    if (!resolved) {
+      logger.warn('[WA-ONBOARD] No channel to send the password notice');
+      return;
+    }
+    const to = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+    await resolved.sender.sendText({ to, text: `${reason}\n\n${WEBSITE_SIGNUP_URL}` });
+  } catch (err) {
+    logger.error('[WA-ONBOARD] Password notice error:', err);
+  }
+}
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -49,32 +97,59 @@ export async function handleOnboardingComplete(
   try {
     // 1. Create user via admin API (skip email confirmation — WhatsApp verified)
     let userId: string;
-    const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { first_name: firstName, last_name: lastName },
-    });
+    const passwordProblem = newPasswordProblem(password);
+    if (passwordProblem) {
+      // #1175 F6: a new account needs the new-password rule. The current Flow
+      // checks this on its owner-details screen; an older published Flow does
+      // not, so check again here. When an auth account with this email already
+      // exists, keep today's "already registered" path exactly; the auth
+      // record, not the profile row, decides that.
+      if (!(await authUserExists(supabase, email))) {
+        await sendPasswordRefusedNotice(supabase, country, customerPhone, passwordProblem);
+        return { success: false, error: 'Password does not meet the rule' };
+      }
+      const existingId = await findExistingAccountId(supabase, email);
+      if (!existingId) {
+        return { success: false, error: 'Email already registered. Please log in at waaiio.com' };
+      }
+      userId = existingId;
+    } else {
+      const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { first_name: firstName, last_name: lastName },
+      });
 
-    if (authErr) {
-      // If user exists, try to find them
-      if (authErr.message?.includes('already been registered') || authErr.message?.includes('already exists')) {
-        const { data: existing } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', email)
-          .single();
-        if (existing) {
-          userId = existing.id;
+      const weakPassword = authErr ? weakPasswordMessage(authErr) : null;
+      if (weakPassword) {
+        // #1175 Q13 A: Supabase refused the password (for example, known from
+        // breach lists). Supabase reports an existing email before it checks
+        // the password, so this is a new account: tell the merchant in
+        // WhatsApp, with the website link. Nothing is attached or created.
+        await sendPasswordRefusedNotice(supabase, country, customerPhone, weakPassword);
+        return { success: false, error: 'Password refused' };
+      }
+      if (authErr) {
+        // If user exists, try to find them
+        if (authErr.message?.includes('already been registered') || authErr.message?.includes('already exists')) {
+          const { data: existing } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('email', email)
+            .single();
+          if (existing) {
+            userId = existing.id;
+          } else {
+            return { success: false, error: 'Email already registered. Please log in at waaiio.com' };
+          }
         } else {
-          return { success: false, error: 'Email already registered. Please log in at waaiio.com' };
+          logger.error('[WA-ONBOARD] Auth error:', authErr);
+          return { success: false, error: 'Failed to create account' };
         }
       } else {
-        logger.error('[WA-ONBOARD] Auth error:', authErr);
-        return { success: false, error: 'Failed to create account' };
+        userId = authData.user.id;
       }
-    } else {
-      userId = authData.user.id;
     }
 
     // 2. Check business count limit (prevent abuse — same as web onboarding)

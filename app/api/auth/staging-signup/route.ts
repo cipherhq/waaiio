@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getRateLimitKey, rateLimitResponseAsync } from '@/lib/rate-limit';
 import { isStagingTestMode } from '@/lib/staging-test-mode';
+import { newPasswordProblem, weakPasswordMessage } from '@/lib/password-policy';
 
 // Staging sign-up needs the invite code the Owner gives to testers. If the code
 // is not configured (or too short to be safe), sign-up stays closed.
@@ -32,8 +33,9 @@ export async function POST(request: NextRequest) {
   if (!email || !email.includes('@')) {
     return NextResponse.json({ message: 'Enter a valid email address.' }, { status: 400 });
   }
-  if (password.length < 6) {
-    return NextResponse.json({ message: 'Password must be at least 6 characters.' }, { status: 400 });
+  const passwordProblem = newPasswordProblem(password);
+  if (passwordProblem) {
+    return NextResponse.json({ message: passwordProblem }, { status: 400 });
   }
 
   const limit = await rateLimitResponseAsync(
@@ -59,6 +61,8 @@ export async function POST(request: NextRequest) {
   });
 
   if (error) {
+    const weak = weakPasswordMessage(error);
+    if (weak) return NextResponse.json({ message: weak }, { status: 400 });
     const message = String(error.message || '').toLowerCase();
     const alreadyExists = message.includes('already') || message.includes('registered');
 
